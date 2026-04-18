@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import type { KnownEnvironment } from "@t3tools/client-runtime";
 
-import type { WsRpcClient } from "~/rpc/wsRpcClient";
+import type { WsRpcClient } from "@t3tools/client-runtime";
 
 export interface EnvironmentConnection {
   readonly kind: "primary" | "saved";

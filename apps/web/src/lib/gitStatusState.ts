@@ -13,7 +13,7 @@ import {
   readEnvironmentConnection,
   subscribeEnvironmentConnections,
 } from "../environments/runtime";
-import type { WsRpcClient } from "~/rpc/wsRpcClient";
+import type { WsRpcClient } from "@t3tools/client-runtime";
 
 interface GitStatusState {
   readonly data: VcsStatusResult | null;

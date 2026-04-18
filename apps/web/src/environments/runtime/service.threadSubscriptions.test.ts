@@ -70,7 +70,8 @@ vi.mock("./connection", () => ({
   createEnvironmentConnection: mockCreateEnvironmentConnection,
 }));
 
-vi.mock("../../rpc/wsRpcClient", () => ({
+vi.mock("@t3tools/client-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime")>()),
   createWsRpcClient: mockCreateWsRpcClient,
 }));
 

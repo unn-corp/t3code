@@ -9,6 +9,8 @@ import {
   type ServerConfig,
   ThreadId,
 } from "@t3tools/contracts";
+import { createWsRpcClient as createBaseWsRpcClient, type WsRpcClient } from "@t3tools/client-runtime";
+
 import { type QueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 import {
@@ -62,10 +64,8 @@ import {
 } from "~/store";
 import { useTerminalUiStateStore } from "~/terminalUiStateStore";
 import { useUiStateStore } from "~/uiStateStore";
-import type { WsProtocolCloseContext } from "../../rpc/protocol";
 import { getServerConfig } from "../../rpc/serverState";
-import { WsTransport } from "../../rpc/wsTransport";
-import { createWsRpcClient, type WsRpcClient } from "../../rpc/wsRpcClient";
+import { WsTransport } from "~/rpc/wsTransport";
 import { appendVersionMismatchHint, resolveServerConfigVersionMismatch } from "../../versionSkew";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -73,6 +73,7 @@ import {
 } from "../../logicalProject";
 import { getClientSettings } from "~/hooks/useSettings";
 import { subscribeTerminalMetadata, terminalSessionManager } from "../../terminalSessionState";
+import { resetWsReconnectBackoff } from "~/rpc/wsConnectionState";
 
 type EnvironmentServiceState = {
   readonly queryClient: QueryClient;
@@ -1098,6 +1099,12 @@ function createEnvironmentConnectionHandlers() {
   };
 }
 
+function createWsRpcClient(transport: WsTransport): WsRpcClient {
+  return createBaseWsRpcClient(transport, {
+    beforeReconnect: () => resetWsReconnectBackoff(),
+  });
+}
+
 function createPrimaryEnvironmentClient(
   knownEnvironment: ReturnType<typeof getPrimaryKnownEnvironment>,
 ) {
@@ -1165,13 +1172,7 @@ function createSavedEnvironmentClient(
             lastErrorAt: isoNow(),
           });
         },
-        onClose: (
-          details: { readonly code: number; readonly reason: string },
-          context: WsProtocolCloseContext,
-        ) => {
-          if (context.intentional) {
-            return;
-          }
+        onClose: (details: { readonly code: number; readonly reason: string }) => {
           setRuntimeDisconnected(
             environmentId,
             appendVersionMismatchHint(

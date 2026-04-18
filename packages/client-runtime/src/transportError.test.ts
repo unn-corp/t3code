@@ -41,6 +41,9 @@ describe("sanitizeThreadErrorMessage", () => {
 
   it("preserves non-transport errors", () => {
     expect(sanitizeThreadErrorMessage("Thread not found")).toBe("Thread not found");
+    expect(sanitizeThreadErrorMessage("Select a base branch before sending.")).toBe(
+      "Select a base branch before sending.",
+    );
   });
 
   it("returns null for null/undefined", () => {

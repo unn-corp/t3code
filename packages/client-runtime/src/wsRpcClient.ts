@@ -122,10 +122,21 @@ export interface WsRpcClient {
   };
 }
 
-export function createWsRpcClient(transport: WsTransport): WsRpcClient {
+export interface CreateWsRpcClientOptions {
+  /** Runs immediately before `transport.reconnect()` (e.g. reset reconnect UI/backoff state). */
+  readonly beforeReconnect?: () => void;
+}
+
+export function createWsRpcClient(
+  transport: WsTransport,
+  options?: CreateWsRpcClientOptions,
+): WsRpcClient {
   return {
     dispose: () => transport.dispose(),
-    reconnect: () => transport.reconnect(),
+    reconnect: async () => {
+      options?.beforeReconnect?.();
+      await transport.reconnect();
+    },
     terminal: {
       open: (input) => transport.request((client) => client[WS_METHODS.terminalOpen](input)),
       attach: (input, listener, options) =>

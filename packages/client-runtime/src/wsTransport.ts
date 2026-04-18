@@ -1,4 +1,4 @@
-import { Cause, Duration, Effect, Exit, ManagedRuntime, Scope, Stream } from "effect";
+import { Cause, Duration, Effect, Exit, Layer, ManagedRuntime, Scope, Stream } from "effect";
 import { RpcClient } from "effect/unstable/rpc";
 
 import { isTransportConnectionErrorMessage } from "./transportError.ts";
@@ -9,6 +9,26 @@ import {
   type WsRpcProtocolClient,
   type WsRpcProtocolSocketUrlProvider,
 } from "./wsRpcProtocol.ts";
+
+export interface WsTransportOptions {
+  /**
+   * Merged into the transport `ManagedRuntime` alongside the RPC protocol layer
+   * (for example a `Tracer` layer for OTLP).
+   */
+  readonly tracingLayer?: Layer.Layer<never, never, never>;
+  /**
+   * Override protocol construction (defaults to {@link createWsRpcProtocolLayer}).
+   * The web app supplies its instrumented layer factory.
+   */
+  readonly createProtocolLayer?: (
+    url: WsRpcProtocolSocketUrlProvider,
+    lifecycleHandlers?: WsProtocolLifecycleHandlers,
+  ) => Layer.Layer<RpcClient.Protocol, never, never>;
+  /**
+   * Invoked at the start of {@link WsTransport.reconnect} before the session is replaced.
+   */
+  readonly onBeforeReconnect?: () => void;
+}
 
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
@@ -35,6 +55,7 @@ function formatErrorMessage(error: unknown): string {
 export class WsTransport {
   private readonly url: WsRpcProtocolSocketUrlProvider;
   private readonly lifecycleHandlers: WsProtocolLifecycleHandlers | undefined;
+  private readonly options: WsTransportOptions | undefined;
   private disposed = false;
   private hasReportedTransportDisconnect = false;
   private reconnectChain: Promise<void> = Promise.resolve();
@@ -43,9 +64,11 @@ export class WsTransport {
   constructor(
     url: WsRpcProtocolSocketUrlProvider,
     lifecycleHandlers?: WsProtocolLifecycleHandlers,
+    options?: WsTransportOptions,
   ) {
     this.url = url;
     this.lifecycleHandlers = lifecycleHandlers;
+    this.options = options;
     this.session = this.createSession();
   }
 
@@ -175,6 +198,12 @@ export class WsTransport {
         throw new Error("Transport disposed");
       }
 
+      try {
+        this.options?.onBeforeReconnect?.();
+      } catch {
+        // Ignore hook failures so reconnect can proceed.
+      }
+
       const previousSession = this.session;
       this.session = this.createSession();
       await this.closeSession(previousSession);
@@ -200,7 +229,12 @@ export class WsTransport {
   }
 
   private createSession(): TransportSession {
-    const runtime = ManagedRuntime.make(createWsRpcProtocolLayer(this.url, this.lifecycleHandlers));
+    const protocolFactory = this.options?.createProtocolLayer ?? createWsRpcProtocolLayer;
+    const protocolLayer = protocolFactory(this.url, this.lifecycleHandlers);
+    const rootLayer = this.options?.tracingLayer
+      ? Layer.mergeAll(protocolLayer, this.options.tracingLayer)
+      : protocolLayer;
+    const runtime = ManagedRuntime.make(rootLayer);
     const clientScope = runtime.runSync(Scope.make());
     return {
       runtime,

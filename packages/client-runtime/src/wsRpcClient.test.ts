@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("./wsTransport", () => ({
+vi.mock("./wsTransport.ts", () => ({
   WsTransport: class WsTransport {
     dispose = vi.fn(async () => undefined);
     reconnect = vi.fn(async () => undefined);
@@ -15,8 +15,8 @@ vi.mock("./wsTransport", () => ({
   },
 }));
 
-import { createWsRpcClient } from "./wsRpcClient";
-import { type WsTransport } from "./wsTransport";
+import { createWsRpcClient } from "./wsRpcClient.ts";
+import type { WsTransport } from "./wsTransport.ts";
 
 const baseLocalStatus: VcsStatusLocalResult = {
   isRepo: true,
@@ -34,7 +34,32 @@ const baseRemoteStatus: VcsStatusRemoteResult = {
   pr: null,
 };
 
-describe("wsRpcClient", () => {
+describe("createWsRpcClient", () => {
+  it("runs beforeReconnect before awaiting transport.reconnect", async () => {
+    const order: string[] = [];
+    const transport = {
+      dispose: vi.fn(async () => undefined),
+      reconnect: vi.fn(async () => {
+        order.push("reconnect");
+      }),
+      request: vi.fn(),
+      requestStream: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    } satisfies Pick<
+      WsTransport,
+      "dispose" | "reconnect" | "request" | "requestStream" | "subscribe"
+    >;
+
+    const client = createWsRpcClient(transport as unknown as WsTransport, {
+      beforeReconnect: () => {
+        order.push("beforeReconnect");
+      },
+    });
+
+    await client.reconnect();
+    expect(order).toEqual(["beforeReconnect", "reconnect"]);
+  });
+
   it("reduces vcs status stream events into flat status snapshots", () => {
     const subscribe = vi.fn(<TValue>(_connect: unknown, listener: (value: TValue) => void) => {
       for (const event of [
