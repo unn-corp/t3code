@@ -2414,17 +2414,19 @@ export function ConnectionsSettings() {
       }
     });
 
-    // Global ceiling on the whole flow — the IPC waits up to 2 minutes for
-    // the backend to come up (cold WSL boots + node-pty prep can be slow),
-    // the welcome wait is 45s after that, and reauth has its own retry loop.
-    // Cap the total so a hung step can't strand the modal forever.
+    // Global ceiling on the whole flow. The IPC handler has two stacked
+    // 2-minute waits worst-case (initial readiness + rollback readiness), so
+    // setWslBackend itself can legitimately take up to ~4 minutes before
+    // resolving; reauth adds another ~60s retry budget and the welcome race
+    // is bounded at 45s. We cap the total at 6 minutes so a true hang surfaces
+    // without firing prematurely while a legitimate rollback is in progress.
     let aborted = false;
     let flowTimeoutHandle: number | null = null;
     const flowTimeout = new Promise<never>((_, reject) => {
       flowTimeoutHandle = window.setTimeout(() => {
         aborted = true;
         reject(new Error("Backend swap took too long. Check WSL is responsive and try again."));
-      }, 180_000);
+      }, 360_000);
     });
 
     const runSwap = async () => {
