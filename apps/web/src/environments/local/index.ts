@@ -125,8 +125,15 @@ async function registerSecondaryLocalEnvironment(
     desktopLocal: { instanceId: bootstrap.id },
   };
 
-  useSavedEnvironmentRegistryStore.getState().upsert(record);
+  // Order is load-bearing: write the bearer to the secret store before
+  // upserting the record. The zustand subscriber on the registry fires
+  // a saved-env sync as soon as upsert lands, and that path reads the
+  // bearer back out of the secret store via readSavedEnvironmentBearerToken.
+  // If we upserted first, the sync could race ahead, find no bearer,
+  // and flip the runtime state to "requires-auth" before our explicit
+  // ensureSavedEnvironmentConnection call below runs.
   await writeSavedEnvironmentBearerToken(environmentId, bearerSession.sessionToken);
+  useSavedEnvironmentRegistryStore.getState().upsert(record);
   await ensureSavedEnvironmentConnection(record, {
     bearerToken: bearerSession.sessionToken,
     role: bearerSession.role,
