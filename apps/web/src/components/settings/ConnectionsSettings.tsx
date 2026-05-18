@@ -84,7 +84,10 @@ import {
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
-import { reconcileLocalSecondaryEnvironments } from "~/environments/local";
+import {
+  markSecondariesConfigured,
+  reconcileLocalSecondaryEnvironments,
+} from "~/environments/local";
 import type { WsRpcClient } from "~/rpc/wsRpcClient";
 import {
   type SavedEnvironmentRecord,
@@ -2387,7 +2390,13 @@ export function ConnectionsSettings() {
       setIsUpdatingWslBackend(true);
       setDesktopWslError(null);
       try {
-        setDesktopWslState(await apply());
+        const next = await apply();
+        setDesktopWslState(next);
+        // Keep the renderer's auto-retry loop awake while the user has
+        // WSL enabled, and let it park otherwise. Without this the
+        // loop would never resume after a fresh desktop install where
+        // the initial probe latched "no WSL configured".
+        markSecondariesConfigured(next.enabled);
         // The desktop orchestrator may take a moment to register the new
         // WSL instance with bootstrap info — fire the renderer reconciler
         // now to remove stale entries (toggle-off, distro change), then

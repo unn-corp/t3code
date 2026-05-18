@@ -69,6 +69,17 @@ const AUTO_RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 16_000, 30_000, 45_000, 60_00
 let autoRetryHandle: ReturnType<typeof setTimeout> | null = null;
 let autoRetryAttempt = 0;
 
+// Latched once we've confirmed the user has no WSL backend configured
+// on this host. The auto-retry loop polls getLocalEnvironmentBootstraps
+// every few seconds for up to ~4 minutes (the desktop-bootstrap TTL
+// window); on machines where the user will never enable WSL that's
+// just wasted IPC. setWslBackendEnabled IPC handlers in the settings
+// page already call reconcile with resetBudget: true, so flipping the
+// switch on later resumes the loop. We default to false (keep
+// retrying) so any pre-existing WSL setup still gets retried during
+// cold boot.
+let knownNoSecondariesConfigured = false;
+
 export interface LocalSecondaryReconcileBootstrapSnapshot {
   readonly id: string;
   readonly label: string;
@@ -394,19 +405,25 @@ async function reconcileOnce(): Promise<void> {
 
 function scheduleAutoRetry(): void {
   if (autoRetryHandle !== null) return;
+  // For hosts where the user has no WSL backend configured the retry
+  // loop never has work to do, so we'd otherwise IPC every 2-60s
+  // forever. setWslBackendEnabled clears this latch (via
+  // markSecondariesConfigured) when the user flips WSL on later.
+  if (knownNoSecondariesConfigured) return;
   if (autoRetryAttempt >= AUTO_RETRY_DELAYS_MS.length) {
     // Budget exhausted. Surface this through the store so the sidebar
     // can switch from "Connecting..." to "Couldn't connect, retry?".
     patchReconcileState({ budgetExhausted: true });
     return;
   }
-  // Note: we deliberately don't short-circuit when the current bootstraps
-  // list lacks any secondary entry. The desktop pool only publishes a
-  // backend's bootstrap once its first start cycle has produced a config
-  // (see desktop.ipc.window.getLocalEnvironmentBootstraps), so an in-flight
-  // WSL cold boot looks identical to "no WSL configured" from this side.
-  // We have to keep polling until either a secondary actually shows up or
-  // the budget runs out.
+  // Note: we deliberately don't short-circuit on an empty bootstraps
+  // list past the knownNoSecondariesConfigured check above. The desktop
+  // pool only publishes a backend's bootstrap once its first start
+  // cycle has produced a config (see
+  // desktop.ipc.window.getLocalEnvironmentBootstraps), so an in-flight
+  // WSL cold boot looks identical to "no WSL configured" from this
+  // side. We have to keep polling until either a secondary actually
+  // shows up or the budget runs out.
   const delay = AUTO_RETRY_DELAYS_MS[autoRetryAttempt];
   autoRetryAttempt += 1;
   autoRetryHandle = setTimeout(() => {
@@ -454,4 +471,28 @@ function runReconcile(options: { readonly resetBudget: boolean }): Promise<void>
 // runs out and we give up.
 export function reconcileLocalSecondaryEnvironments(): Promise<void> {
   return runReconcile({ resetBudget: true });
+}
+
+// Called by the settings page when the user enables/disables WSL.
+// Flips the "no secondaries here" latch so the auto-retry loop wakes
+// back up (or stays parked) accordingly. Asynchronously probes
+// getWslState at module init so non-WSL hosts park immediately
+// instead of burning ~4 minutes of polls before the budget runs out.
+export function markSecondariesConfigured(configured: boolean): void {
+  knownNoSecondariesConfigured = !configured;
+}
+
+if (typeof window !== "undefined") {
+  // Best-effort: any failure (no bridge, IPC error, missing field)
+  // keeps the default "stay polling" behavior intact.
+  void (async () => {
+    try {
+      const state = await window.desktopBridge?.getWslState();
+      if (state && !state.enabled) {
+        knownNoSecondariesConfigured = true;
+      }
+    } catch {
+      // ignore — fall through to default polling
+    }
+  })();
 }
