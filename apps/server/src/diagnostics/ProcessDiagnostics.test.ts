@@ -185,8 +185,14 @@ describe("ProcessDiagnostics", () => {
       assert.equal(diagnostics.processCount, 2);
       assert.equal(diagnostics.totalRssBytes, 6_000);
       assert.equal(diagnostics.totalCpuPercent, 4.75);
-      assert.deepEqual(diagnostics.processes.map((process) => process.pid), [101, 102]);
-      assert.deepEqual(diagnostics.processes.map((process) => process.depth), [0, 1]);
+      assert.deepEqual(
+        diagnostics.processes.map((process) => process.pid),
+        [101, 102],
+      );
+      assert.deepEqual(
+        diagnostics.processes.map((process) => process.depth),
+        [0, 1],
+      );
       assert.equal(Option.getOrNull(diagnostics.processes[0]!.pgid), 100);
       assert.deepEqual(diagnostics.processes[0]?.childPids, [102]);
     }),
@@ -231,7 +237,10 @@ describe("ProcessDiagnostics", () => {
         ],
       });
 
-      assert.deepEqual(diagnostics.processes.map((process) => process.pid), [101, 102, 103]);
+      assert.deepEqual(
+        diagnostics.processes.map((process) => process.pid),
+        [101, 102, 103],
+      );
     }),
   );
 
@@ -263,7 +272,10 @@ describe("ProcessDiagnostics", () => {
         Effect.provide(layer),
       );
 
-      assert.deepEqual(diagnostics.processes.map((process) => process.pid), [4242]);
+      assert.deepEqual(
+        diagnostics.processes.map((process) => process.pid),
+        [4242],
+      );
       assert.deepEqual(commands, [
         {
           command: "ps",
