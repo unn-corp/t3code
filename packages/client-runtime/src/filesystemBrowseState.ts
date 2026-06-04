@@ -72,8 +72,6 @@ export interface FilesystemBrowseManagerConfig<TKey extends string = string> {
   readonly subscribeClientChanges?: (listener: () => void) => () => void;
   readonly staleTime?: Duration.Input;
   readonly idleTtl?: Duration.Input;
-  readonly staleTimeMs?: number;
-  readonly idleTtlMs?: number;
 }
 
 export function createFilesystemBrowseManager<TKey extends string = string>(
@@ -89,10 +87,8 @@ export function createFilesystemBrowseManager<TKey extends string = string>(
   const refreshVersions = new Map<string, number>();
   const watched = new Map<string, WatchedEntry>();
   const refreshTargets = new Map<string, FilesystemBrowseTarget<TKey>>();
-  const staleTimeMs = Duration.toMillis(
-    config.staleTime ?? config.staleTimeMs ?? DEFAULT_STALE_TIME,
-  );
-  const idleTtlMs = Duration.toMillis(config.idleTtl ?? config.idleTtlMs ?? DEFAULT_IDLE_TTL);
+  const staleTimeMs = Duration.toMillis(config.staleTime ?? DEFAULT_STALE_TIME);
+  const idleTtlMs = Duration.toMillis(config.idleTtl ?? DEFAULT_IDLE_TTL);
 
   const watchedRefreshAtom = Atom.family((targetKey: string) =>
     Atom.make(() =>
