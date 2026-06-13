@@ -114,6 +114,36 @@ export interface LocalProviderUpdateOutcome {
   readonly provider: ServerProvider | null;
 }
 
+function dispatchProviderUpdate(
+  connection: EnvironmentConnection,
+  isPrimary: boolean,
+  driver: ProviderDriverKind,
+  instanceId: ProviderInstanceId,
+): Promise<LocalProviderUpdateOutcome> {
+  return connection.client.server
+    .updateProvider({ provider: driver, instanceId })
+    .then((payload) => ({
+      environmentId: connection.environmentId,
+      isPrimary,
+      driver,
+      instanceId,
+      provider:
+        payload.providers.find(
+          (candidate) => candidate.driver === driver && candidate.instanceId === instanceId,
+        ) ?? null,
+    }));
+}
+
+/** The live connection for a local environment, whether it is the primary or a saved secondary. */
+function readLocalEnvironmentConnection(
+  environmentId: EnvironmentId,
+): EnvironmentConnection | null {
+  const primary = getPrimaryEnvironmentConnection();
+  return primary.environmentId === environmentId
+    ? primary
+    : readEnvironmentConnection(environmentId);
+}
+
 /**
  * Dispatch a provider update to every connected local backend that has the
  * provider configured — the primary plus any local secondary (e.g. WSL) — and
@@ -128,25 +158,8 @@ export function updateProviderAcrossLocalEnvironments(
   primaryInstanceId: ProviderInstanceId,
 ): ReadonlyArray<Promise<LocalProviderUpdateOutcome>> {
   const primary = getPrimaryEnvironmentConnection();
-
-  const dispatch = (
-    connection: EnvironmentConnection,
-    instanceId: ProviderInstanceId,
-    isPrimary: boolean,
-  ): Promise<LocalProviderUpdateOutcome> =>
-    connection.client.server.updateProvider({ provider: driver, instanceId }).then((payload) => ({
-      environmentId: connection.environmentId,
-      isPrimary,
-      driver,
-      instanceId,
-      provider:
-        payload.providers.find(
-          (candidate) => candidate.driver === driver && candidate.instanceId === instanceId,
-        ) ?? null,
-    }));
-
   const dispatches: Array<Promise<LocalProviderUpdateOutcome>> = [
-    dispatch(primary, primaryInstanceId, true),
+    dispatchProviderUpdate(primary, true, driver, primaryInstanceId),
   ];
 
   for (const record of listSavedEnvironmentRecords()) {
@@ -164,10 +177,30 @@ export function updateProviderAcrossLocalEnvironments(
     if (!match) {
       continue; // provider not configured in this environment
     }
-    dispatches.push(dispatch(connection, match.instanceId, false));
+    dispatches.push(dispatchProviderUpdate(connection, false, driver, match.instanceId));
   }
 
   return dispatches;
+}
+
+/**
+ * Dispatch updates to a single local environment — the per-environment trigger
+ * behind the launch popover's split "update all" buttons. Each target carries
+ * the instance id resolved from that environment's own server config. Returns
+ * one in-flight outcome per target (empty if the environment is not connected).
+ */
+export function updateProvidersInEnvironment(
+  environmentId: EnvironmentId,
+  targets: ReadonlyArray<{ readonly driver: ProviderDriverKind; readonly instanceId: ProviderInstanceId }>,
+): ReadonlyArray<Promise<LocalProviderUpdateOutcome>> {
+  const connection = readLocalEnvironmentConnection(environmentId);
+  if (!connection) {
+    return [];
+  }
+  const isPrimary = connection.environmentId === getPrimaryEnvironmentConnection().environmentId;
+  return targets.map((target) =>
+    dispatchProviderUpdate(connection, isPrimary, target.driver, target.instanceId),
+  );
 }
 
 export function __setEnvironmentApiOverrideForTests(

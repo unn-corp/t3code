@@ -1,13 +1,24 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
 import type { LocalProviderUpdateOutcome } from "../environmentApi";
 import {
+  buildLocalEnvironmentUpdateGroups,
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
   collectProviderUpdateOutcomeSnapshots,
+  deriveEnvironmentDisplayLabel,
+  environmentGroupsWithUpdates,
   firstRejectedProviderUpdateMessage,
   firstUnsuccessfulSecondaryProviderOutcome,
+  localEnvironmentUpdateNotificationKey,
+  parseWslDistroFromInstanceId,
+  type LocalEnvironmentProvidersInput,
   getProviderUpdateInitialToastView,
   getProviderUpdateProgressToastView,
   getProviderUpdateRejectedToastView,
@@ -774,6 +785,149 @@ describe("provider update launch notification logic", () => {
 
       expect(collectProviderUpdateOutcomeSnapshots(results)).toEqual([primary]);
       expect(firstRejectedProviderUpdateMessage(results)).toBe("WebSocket closed");
+    });
+  });
+
+  describe("per-environment update grouping", () => {
+    const environment = (
+      input: {
+        readonly environmentId: string;
+        readonly providers: ReadonlyArray<ServerProvider>;
+      } & Partial<Omit<LocalEnvironmentProvidersInput, "environmentId" | "providers">>,
+    ): LocalEnvironmentProvidersInput => ({
+      environmentId: input.environmentId as EnvironmentId,
+      label: input.label ?? input.environmentId,
+      isPrimary: input.isPrimary ?? false,
+      connectionState: input.connectionState ?? "ready",
+      providers: input.providers,
+    });
+
+    it("groups each environment's outdated one-click candidates", () => {
+      const result = buildLocalEnvironmentUpdateGroups([
+        environment({
+          environmentId: "env-windows",
+          label: "Windows",
+          isPrimary: true,
+          providers: [provider({ driver: driver("codex"), latestVersion: "1.1.0" })],
+        }),
+        environment({
+          environmentId: "env-wsl",
+          label: "WSL",
+          providers: [provider({ driver: driver("codex"), latestVersion: "1.1.0" })],
+        }),
+      ]);
+
+      expect(result.isAnySettling).toBe(false);
+      expect(result.groups.map((group) => group.label)).toEqual(["Windows", "WSL"]);
+      expect(result.groups.every((group) => group.candidates.length === 1)).toBe(true);
+    });
+
+    it("flags settling while a secondary backend is still connecting", () => {
+      const result = buildLocalEnvironmentUpdateGroups([
+        environment({
+          environmentId: "env-windows",
+          isPrimary: true,
+          providers: [provider({ driver: driver("codex") })],
+        }),
+        environment({ environmentId: "env-wsl", connectionState: "connecting", providers: [] }),
+      ]);
+
+      expect(result.isAnySettling).toBe(true);
+      expect(
+        result.groups.find((group) => group.environmentId === ("env-wsl" as EnvironmentId))
+          ?.isSettling,
+      ).toBe(true);
+    });
+
+    it("keeps only environments that have a one-click update on offer", () => {
+      const { groups } = buildLocalEnvironmentUpdateGroups([
+        environment({
+          environmentId: "env-windows",
+          isPrimary: true,
+          providers: [provider({ driver: driver("codex") })],
+        }),
+        environment({
+          environmentId: "env-wsl",
+          providers: [
+            provider({ driver: driver("codex"), advisoryStatus: "current", latestVersion: null }),
+          ],
+        }),
+      ]);
+
+      expect(environmentGroupsWithUpdates(groups).map((group) => group.environmentId)).toEqual([
+        "env-windows",
+      ]);
+    });
+
+    it("keys the notification by environment, driver and latest version", () => {
+      const noUpdates = buildLocalEnvironmentUpdateGroups([
+        environment({
+          environmentId: "env-windows",
+          isPrimary: true,
+          providers: [
+            provider({ driver: driver("codex"), advisoryStatus: "current", latestVersion: null }),
+          ],
+        }),
+      ]);
+      expect(localEnvironmentUpdateNotificationKey(noUpdates.groups)).toBeNull();
+
+      const both = buildLocalEnvironmentUpdateGroups([
+        environment({
+          environmentId: "env-windows",
+          isPrimary: true,
+          providers: [provider({ driver: driver("codex"), latestVersion: "1.1.0" })],
+        }),
+        environment({
+          environmentId: "env-wsl",
+          providers: [provider({ driver: driver("codex"), latestVersion: "1.1.0" })],
+        }),
+      ]);
+      const key = localEnvironmentUpdateNotificationKey(both.groups);
+      expect(key).toContain("env-windows=codex:1.1.0");
+      expect(key).toContain("env-wsl=codex:1.1.0");
+    });
+
+    it("labels environments by platform so they are distinguishable", () => {
+      expect(
+        deriveEnvironmentDisplayLabel({
+          isWsl: false,
+          wslDistro: null,
+          platformOs: "windows",
+          fallbackLabel: "Jgratton24",
+        }),
+      ).toBe("Windows");
+      expect(
+        deriveEnvironmentDisplayLabel({
+          isWsl: true,
+          wslDistro: null,
+          platformOs: "linux",
+          fallbackLabel: "Jgratton24",
+        }),
+      ).toBe("WSL");
+      expect(
+        deriveEnvironmentDisplayLabel({
+          isWsl: true,
+          wslDistro: "ubuntu",
+          platformOs: "linux",
+          fallbackLabel: "Jgratton24",
+        }),
+      ).toBe("WSL · ubuntu");
+      expect(
+        deriveEnvironmentDisplayLabel({
+          isWsl: false,
+          wslDistro: null,
+          platformOs: undefined,
+          fallbackLabel: "My Device",
+        }),
+      ).toBe("My Device");
+    });
+
+    it("parses the WSL distro from the backend instance id", () => {
+      expect(parseWslDistroFromInstanceId("wsl:ubuntu")).toBe("ubuntu");
+      expect(parseWslDistroFromInstanceId("wsl:default")).toBeNull();
+      expect(parseWslDistroFromInstanceId("wsl:")).toBeNull();
+      expect(parseWslDistroFromInstanceId("ssh:host")).toBeNull();
+      expect(parseWslDistroFromInstanceId(undefined)).toBeNull();
     });
   });
 });

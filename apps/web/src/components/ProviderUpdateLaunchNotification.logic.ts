@@ -1,6 +1,8 @@
 import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
+  type EnvironmentId,
+  type ExecutionEnvironmentPlatformOs,
   type ProviderDriverKind,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -567,4 +569,125 @@ function getFailedProviderUpdateDescription(providers: ReadonlyArray<ServerProvi
     }
   }
   return `${formatProviderList(providers)} failed to update. Check provider settings for details.`;
+}
+
+// ===========================================================================
+// Per-environment update grouping
+//
+// The launch popover splits its single "update all" trigger into one trigger
+// per local environment (Windows + WSL). Each environment owns its provider
+// instances, so candidates and progress are computed from that environment's
+// own provider list; the dispatch targets that environment's connection.
+// ===========================================================================
+
+const WSL_INSTANCE_ID_PREFIX = "wsl:";
+
+/** The distro name from a WSL backend instance id ("wsl:ubuntu" -> "ubuntu"), or null for the default. */
+export function parseWslDistroFromInstanceId(instanceId: string | undefined): string | null {
+  if (!instanceId || !instanceId.startsWith(WSL_INSTANCE_ID_PREFIX)) {
+    return null;
+  }
+  const distro = instanceId.slice(WSL_INSTANCE_ID_PREFIX.length).trim();
+  return distro.length === 0 || distro === "default" ? null : distro;
+}
+
+/**
+ * A human label that distinguishes local environments by platform (so the
+ * popover shows "Windows" / "WSL" rather than the account name twice). WSL is
+ * identified by its backend instance id; everything else falls back to the
+ * reported OS, then the environment's own label.
+ */
+export function deriveEnvironmentDisplayLabel(input: {
+  readonly isWsl: boolean;
+  readonly wslDistro: string | null;
+  readonly platformOs: ExecutionEnvironmentPlatformOs | undefined;
+  readonly fallbackLabel: string;
+}): string {
+  if (input.isWsl) {
+    return input.wslDistro ? `WSL · ${input.wslDistro}` : "WSL";
+  }
+  switch (input.platformOs) {
+    case "windows":
+      return "Windows";
+    case "darwin":
+      return "macOS";
+    case "linux":
+      return "Linux";
+    default:
+      return input.fallbackLabel;
+  }
+}
+
+/** Connection state of a local environment, normalized across primary/secondary sources. */
+export type EnvironmentUpdateConnectionState = "connecting" | "ready" | "disconnected" | "error";
+
+export interface LocalEnvironmentProvidersInput {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly isPrimary: boolean;
+  readonly connectionState: EnvironmentUpdateConnectionState;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}
+
+export interface LocalEnvironmentUpdateGroup {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly isPrimary: boolean;
+  /** True while this environment's backend is still connecting (e.g. WSL booting). */
+  readonly isSettling: boolean;
+  /** Outdated, one-click-updatable providers in this environment. */
+  readonly candidates: ProviderUpdateCandidate[];
+  /** Full provider list for this environment, used to derive live update progress. */
+  readonly providers: ReadonlyArray<ServerProvider>;
+}
+
+/**
+ * Build one update group per local environment, pairing each environment's
+ * outdated one-click candidates with its own provider list, and report whether
+ * any environment is still settling (so the caller can defer the popover).
+ */
+export function buildLocalEnvironmentUpdateGroups(
+  environments: ReadonlyArray<LocalEnvironmentProvidersInput>,
+): { groups: LocalEnvironmentUpdateGroup[]; isAnySettling: boolean } {
+  const groups = environments.map((environment) => ({
+    environmentId: environment.environmentId,
+    label: environment.label,
+    isPrimary: environment.isPrimary,
+    isSettling: environment.connectionState === "connecting",
+    candidates: collectProviderUpdateCandidates(environment.providers).filter((candidate) =>
+      canOneClickUpdateProviderCandidate(candidate, environment.providers),
+    ),
+    providers: environment.providers,
+  }));
+  const isAnySettling = environments.some(
+    (environment) => environment.connectionState === "connecting",
+  );
+  return { groups, isAnySettling };
+}
+
+/** Groups that actually have a one-click update available, in display order (primary first). */
+export function environmentGroupsWithUpdates(
+  groups: ReadonlyArray<LocalEnvironmentUpdateGroup>,
+): LocalEnvironmentUpdateGroup[] {
+  return groups.filter((group) => group.candidates.length > 0);
+}
+
+/**
+ * Stable key over the set of (environment, driver, latest version) updates on
+ * offer, so the popover is shown once per distinct set and re-shown when it
+ * changes.
+ */
+export function localEnvironmentUpdateNotificationKey(
+  groups: ReadonlyArray<LocalEnvironmentUpdateGroup>,
+): string | null {
+  const parts = environmentGroupsWithUpdates(groups)
+    .map((group) => {
+      const providerParts = group.candidates
+        .map((candidate) => `${candidate.driver}:${candidate.versionAdvisory.latestVersion}`)
+        .toSorted()
+        .join(",");
+      return `${group.environmentId}=${providerParts}`;
+    })
+    .toSorted();
+  return parts.length > 0 ? parts.join("|") : null;
 }
