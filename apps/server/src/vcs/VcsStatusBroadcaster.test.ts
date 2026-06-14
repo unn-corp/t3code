@@ -10,12 +10,14 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type {
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
+import { GitManagerError } from "@t3tools/contracts";
 
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -146,6 +148,71 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteInvalidationCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("keeps the cached snapshot unchanged when a refresh branch fails", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      failRemoteStatus: false,
+    };
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () =>
+            Effect.sync(() => {
+              state.localStatusCalls += 1;
+              return state.currentLocalStatus;
+            }),
+          remoteStatus: () =>
+            Effect.suspend(() => {
+              state.remoteStatusCalls += 1;
+              return state.failRemoteStatus
+                ? Effect.fail(
+                    new GitManagerError({
+                      operation: "VcsStatusBroadcaster.test",
+                      detail: "remote status failed",
+                    }),
+                  )
+                : Effect.succeed(state.currentRemoteStatus);
+            }),
+          invalidateLocalStatus: () =>
+            Effect.sync(() => {
+              state.localInvalidationCalls += 1;
+            }),
+          invalidateRemoteStatus: () =>
+            Effect.sync(() => {
+              state.remoteInvalidationCalls += 1;
+            }),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      state.currentLocalStatus = {
+        ...baseLocalStatus,
+        refName: "feature/partial-refresh",
+      };
+      state.currentRemoteStatus = {
+        ...baseRemoteStatus,
+        aheadCount: 3,
+      };
+      state.failRemoteStatus = true;
+
+      const refreshExit = yield* broadcaster.refreshStatus("/repo").pipe(Effect.exit);
+      const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      assert.isTrue(Exit.isFailure(refreshExit));
+      assert.deepStrictEqual(cached, baseStatus);
+    }).pipe(Effect.provide(testLayer));
   });
 
   it.effect("refreshes only the cached local snapshot when requested", () => {
@@ -308,6 +375,48 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.remoteStatusCalls, 0);
       assert.equal(state.remoteInvalidationCalls, 0);
     }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("delays automatic refresh when a cached remote snapshot is available", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      const scope = yield* Scope.make();
+      const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
+      yield* Stream.runForEach(
+        broadcaster.streamStatus(
+          { cwd: "/repo" },
+          { automaticRemoteRefreshInterval: Effect.succeed(Duration.minutes(1)) },
+        ),
+        (event) =>
+          event._tag === "snapshot"
+            ? Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore)
+            : Effect.void,
+      ).pipe(Effect.forkIn(scope));
+
+      yield* Deferred.await(snapshotDeferred);
+      assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 0);
+
+      yield* TestClock.adjust(Duration.seconds(59));
+      assert.equal(state.remoteStatusCalls, 1);
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* Effect.yieldNow;
+      assert.equal(state.remoteStatusCalls, 2);
+      assert.equal(state.remoteInvalidationCalls, 1);
+
+      yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.provide(Layer.merge(makeTestLayer(state), TestClock.layer())));
   });
 
   it("backs off remote refresh failures exponentially and honors larger configured intervals", () => {

@@ -9,6 +9,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CodexSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -32,10 +33,8 @@ import {
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
-import {
-  getModelSelectionBooleanOptionValue,
-  getModelSelectionStringOptionValue,
-} from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
@@ -46,12 +45,13 @@ const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
  */
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
   codexConfig: CodexSettings,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment?: NodeJS.ProcessEnv,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* Effect.service(ServerConfig);
+  const resolvedEnvironment = environment ?? process.env;
 
   type MaterializedImageAttachments = {
     readonly imagePaths: ReadonlyArray<string>;
@@ -181,7 +181,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
-      const command = ChildProcess.make(
+      const serviceTier = getCodexServiceTierOptionValue(modelSelection);
+      const spawnCommand = yield* resolveSpawnCommand(
         codexConfig.binaryPath || "codex",
         [
           "exec",
@@ -193,9 +194,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           modelSelection.model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
-          ...(getModelSelectionBooleanOptionValue(modelSelection, "fastMode") === true
-            ? ["--config", `service_tier="fast"`]
-            : []),
+          ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
           "--output-schema",
           schemaPath,
           "--output-last-message",
@@ -203,18 +202,19 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
           "-",
         ],
-        {
-          env: {
-            ...environment,
-            ...(codexConfig.homePath ? { CODEX_HOME: expandHomePath(codexConfig.homePath) } : {}),
-          },
-          cwd,
-          shell: process.platform === "win32",
-          stdin: {
-            stream: Stream.encodeText(Stream.make(prompt)),
-          },
-        },
+        { env: resolvedEnvironment },
       );
+      const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        env: {
+          ...resolvedEnvironment,
+          ...(codexConfig.homePath ? { CODEX_HOME: expandHomePath(codexConfig.homePath) } : {}),
+        },
+        cwd,
+        shell: spawnCommand.shell,
+        stdin: {
+          stream: Stream.encodeText(Stream.make(prompt)),
+        },
+      });
 
       const child = yield* commandSpawner
         .spawn(command)

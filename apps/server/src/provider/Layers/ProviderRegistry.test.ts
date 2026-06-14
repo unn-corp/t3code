@@ -594,6 +594,77 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
         ]);
       });
 
+      it.effect("does not run provider probes during layer construction", () =>
+        Effect.gen(function* () {
+          const codexDriver = ProviderDriverKind.make("codex");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const initialProvider = {
+            instanceId: codexInstanceId,
+            driver: codexDriver,
+            status: "warning",
+            enabled: true,
+            installed: false,
+            auth: { status: "unknown" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: null,
+            message: "Checking Codex provider status.",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const refreshCalls = yield* Ref.make(0);
+          const instance = {
+            instanceId: codexInstanceId,
+            driverKind: codexDriver,
+            continuationIdentity: {
+              driverKind: codexDriver,
+              continuationKey: "codex:instance:codex",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: codexDriver,
+                packageName: null,
+              }),
+              getSnapshot: Effect.succeed(initialProvider),
+              refresh: Ref.update(refreshCalls, (count) => count + 1).pipe(
+                Effect.andThen(Effect.never),
+              ),
+              streamChanges: Stream.empty,
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
+            getInstance: (instanceId) =>
+              Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          });
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-background-refresh-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry;
+            assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
+            assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it("persists merged provider snapshots for the providers that were refreshed", () => {
         const previousProviders = [
           {
@@ -968,7 +1039,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
 
       // This test intentionally avoids `mockCommandSpawnerLayer` so the real
       // `probeCodexAppServerProvider` path runs — including the full
-      // `codex app-server` RPC handshake via `CodexClient.layerCommand`.
+      // `codex app-server` RPC handshake via `CodexClient.layerChildProcess`.
       // We point `binaryPath` at a name that cannot exist on any machine so
       // the real `ChildProcessSpawner` deterministically returns ENOENT; the
       // probe wraps that as `CodexAppServerSpawnError` and
@@ -1042,7 +1113,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry;
-            const providers = yield* registry.getProviders;
+            let providers = yield* registry.getProviders;
+            for (
+              let attempts = 0;
+              attempts < 50 &&
+              providers.find((provider) => provider.instanceId === "codex_personal")?.status !==
+                "error";
+              attempts += 1
+            ) {
+              yield* Effect.yieldNow;
+              providers = yield* registry.getProviders;
+            }
             const codexPersonal = providers.find(
               (provider) => provider.instanceId === "codex_personal",
             );
@@ -1072,14 +1153,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
       // instance and rebuild it so a fresh probe runs with the new binary.
       // This test drives the real settings stream → registry reconcile →
       // aggregator sync pipeline and asserts that `getProviders` reflects
-      // the new probe's outcome. If `syncLiveSources` stops awaiting the
-      // rebuilt instance's refresh (previous bug mode), the aggregator
-      // keeps the old snapshot and this test fails.
+      // the new background probe's outcome.
       //
       it.effect("re-probes when settings change the codex binaryPath", () =>
         Effect.gen(function* () {
           const firstMissing = `t3code_codex_first_`;
           const secondMissing = `t3code_codex_second_`;
+          const spawnedCommands: Array<string> = [];
           const serverSettings = yield* makeMutableServerSettingsService(
             decodeServerSettings(
               deepMerge(encodedDefaultServerSettings, {
@@ -1106,10 +1186,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             Layer.provideMerge(TestHttpClientLive),
             Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
             Layer.provideMerge(OpenCodeRuntimeLive),
-            // `it.live` does not inherit layers from the outer `it.layer`
-            // wrapper, so provide `NodeServices.layer` inline. This is the
-            // same real `ChildProcessSpawner` + `FileSystem` + `Path`
-            // services that production uses.
+            Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
+              ChildProcessSpawner.make((command) => {
+                spawnedCommands.push((command as { readonly command: string }).command);
+                return spawner.spawn(command);
+              }),
+            ),
             Layer.provideMerge(NodeServices.layer),
           );
           const runtimeServices = yield* Layer.build(providerRegistryLayer).pipe(
@@ -1120,23 +1202,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             const registry = yield* ProviderRegistry;
             // Boot-time probe: the default codex instance is enabled with
             // `firstMissing`, so the real spawner yields ENOENT and the
-            // snapshot should be `status: "error"`. What *distinguishes*
-            // the two probe runs is `checkedAt` — each probe stamps a
-            // fresh DateTime, so we capture it and assert it advances
-            // after the settings mutation.
-            const initialProviders = yield* registry.getProviders;
+            // snapshot should be `status: "error"`.
+            let initialProviders = yield* registry.getProviders;
+            for (
+              let attempts = 0;
+              attempts < 50 &&
+              initialProviders.find((provider) => provider.instanceId === "codex")?.status !==
+                "error";
+              attempts += 1
+            ) {
+              yield* TestClock.adjust("10 millis");
+              yield* Effect.yieldNow;
+              initialProviders = yield* registry.getProviders;
+            }
             const initialCodex = initialProviders.find(
               (provider) => provider.instanceId === "codex",
             );
             assert.strictEqual(initialCodex?.status, "error");
             assert.strictEqual(initialCodex?.installed, false);
-            const initialCheckedAt = initialCodex?.checkedAt;
-            assert.notStrictEqual(initialCheckedAt, undefined);
-
-            // The rebuilt instance may re-probe synchronously during the
-            // settings update. Advance the TestClock first so `checkedAt`
-            // can safely act as the fresh-probe marker this assertion uses.
-            yield* TestClock.adjust("1 second");
+            assert.deepStrictEqual(spawnedCommands, [firstMissing]);
 
             // Drive a settings change. The Hydration layer's
             // `SettingsWatcherLive` consumes this via `streamChanges`,
@@ -1144,21 +1228,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             // envelope changed because `binaryPath` differs → `entryEqual`
             // is false). The registry's `Stream.runForEach(
             // instanceRegistry.streamChanges, () => syncLiveSources)`
-            // fires `syncLiveSources`, which subscribes + awaits a fresh
-            // refresh on the rebuilt instance.
+            // fires `syncLiveSources`, which subscribes and launches a fresh
+            // background refresh on the rebuilt instance.
             yield* serverSettings.updateSettings({
               providers: {
                 codex: { enabled: true, binaryPath: secondMissing },
               },
             });
 
-            // Poll with TestClock until `checkedAt` advances or we hit a
-            // generous virtual 3-second ceiling.
+            // Poll until the injected process boundary observes the new
+            // executable. This verifies the public settings-to-probe behavior
+            // without depending on timestamps assigned by TestClock.
             const refreshed = yield* Effect.gen(function* () {
               for (let attempts = 0; attempts < 60; attempts += 1) {
                 const providers = yield* registry.getProviders;
                 const codex = providers.find((provider) => provider.instanceId === "codex");
-                if (codex !== undefined && codex.checkedAt !== initialCheckedAt) {
+                if (
+                  codex !== undefined &&
+                  codex.status === "error" &&
+                  spawnedCommands.includes(secondMissing)
+                ) {
                   return providers;
                 }
                 yield* TestClock.adjust("50 millis");
@@ -1168,11 +1257,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
             });
 
             const reprobedCodex = refreshed.find((provider) => provider.instanceId === "codex");
-            assert.notStrictEqual(
-              reprobedCodex?.checkedAt,
-              initialCheckedAt,
-              "Expected a fresh probe after settings change, got the stale snapshot",
-            );
+            assert.deepStrictEqual(spawnedCommands, [firstMissing, secondMissing]);
             assert.strictEqual(reprobedCodex?.status, "error");
             assert.strictEqual(reprobedCodex?.installed, false);
           }).pipe(Effect.provide(runtimeServices));

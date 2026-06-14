@@ -1,4 +1,4 @@
-import { useAuth, useUser, useUserProfileModal } from "@clerk/expo";
+import { useAuth, useUser } from "@clerk/expo";
 import * as Notifications from "expo-notifications";
 import { Link, Stack, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
@@ -13,6 +13,7 @@ import { setLiveActivityUpdatesEnabled } from "../../features/agent-awareness/li
 import { requestAgentNotificationPermission } from "../../features/agent-awareness/notificationPermissions";
 import { refreshAgentAwarenessRegistration } from "../../features/agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../../features/cloud/managedRelayState";
+import { useClerkSettingsSheetDetent } from "../../features/cloud/ClerkSettingsSheetDetent";
 import {
   hasCloudPublicConfig,
   resolveRelayClerkTokenOptions,
@@ -66,9 +67,9 @@ function LocalSettingsRouteScreen() {
 function ConfiguredSettingsRouteScreen() {
   const insets = useSafeAreaInsets();
   const { push } = useRouter();
+  const { expand: expandClerkSheet } = useClerkSettingsSheetDetent();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
-  const { isAvailable: isUserProfileModalAvailable, presentUserProfile } = useUserProfileModal();
   const { savedConnectionsById } = useRemoteEnvironmentState();
   const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>("checking");
   const [liveActivityStatus, setLiveActivityStatus] = useState<LiveActivityStatus>("checking");
@@ -266,15 +267,9 @@ function ConfiguredSettingsRouteScreen() {
       push("/settings/waitlist");
       return;
     }
-    if (isUserProfileModalAvailable) {
-      void presentUserProfile();
-      return;
-    }
-    Alert.alert(
-      "T3 Cloud unavailable",
-      "Native T3 Cloud account management is not available in this build.",
-    );
-  }, [isLoaded, isSignedIn, isUserProfileModalAvailable, presentUserProfile, push]);
+    expandClerkSheet();
+    push("/settings/auth");
+  }, [expandClerkSheet, isLoaded, isSignedIn, push]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -340,7 +335,7 @@ type SymbolName = ComponentProps<typeof SymbolView>["name"];
 function SettingsSection(props: { readonly title: string; readonly children: ReactNode }) {
   return (
     <View className="gap-2">
-      <Text className="px-2 font-t3-bold text-[17px] text-foreground-tertiary">{props.title}</Text>
+      <Text className="px-2 text-[13px] font-t3-medium text-foreground-muted">{props.title}</Text>
       <View
         className="overflow-hidden rounded-[28px] bg-card"
         style={{ borderCurve: "continuous" }}

@@ -19,6 +19,7 @@ import {
   ChevronDownIcon,
   CloudUploadIcon,
   ExternalLinkIcon,
+  GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
   LockIcon,
@@ -70,7 +71,7 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { refreshVcsStatus, useVcsStatus } from "~/lib/vcsStatusState";
+import { getVcsStatusDataForTarget, refreshVcsStatus, useVcsStatus } from "~/lib/vcsStatusState";
 import { useSourceControlDiscovery } from "~/lib/sourceControlDiscoveryState";
 import { newCommandId, randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
@@ -1057,10 +1058,13 @@ export default function GitActionsControl({
     [persistThreadBranchSync],
   );
 
-  const { data: gitStatus, error: gitStatusError } = useVcsStatus({
-    environmentId: activeEnvironmentId,
-    cwd: gitCwd,
-  });
+  const vcsStatusTarget = useMemo(
+    () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
+    [activeEnvironmentId, gitCwd],
+  );
+  const gitStatusQuery = useVcsStatus(vcsStatusTarget);
+  const { error: gitStatusError } = gitStatusQuery;
+  const gitStatus = getVcsStatusDataForTarget(gitStatusQuery, vcsStatusTarget);
   const sourceControlPresentation = useMemo(
     () => getSourceControlPresentation(gitStatus?.sourceControlProvider),
     [gitStatus?.sourceControlProvider],
@@ -1611,7 +1615,10 @@ export default function GitActionsControl({
             void initAction.run();
           }}
         >
-          {initAction.isPending ? "Initializing..." : "Initialize Git"}
+          <GitBranchPlusIcon className="size-3.5" aria-hidden />
+          <span className="ml-0.5">
+            {initAction.isPending ? "Initializing..." : "Initialize Git"}
+          </span>
         </Button>
       ) : (
         <Group aria-label="Git actions" className="shrink-0">

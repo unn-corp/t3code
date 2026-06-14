@@ -1,7 +1,7 @@
-import { FileDiff, Virtualizer } from "@pierre/diffs/react";
+import { Virtualizer } from "@pierre/diffs/react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import type { TurnId } from "@t3tools/contracts";
+import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -20,11 +20,12 @@ import {
   useState,
 } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
+import { type DraftId } from "../composerDraftStore";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { useVcsStatus } from "~/lib/vcsStatusState";
 import { cn } from "~/lib/utils";
+import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { readLocalApi } from "../localApi";
-import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
 import {
@@ -41,6 +42,7 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { AnnotatableFileDiff } from "./diffs/AnnotatableFileDiff";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
@@ -53,6 +55,8 @@ const DIFF_PANEL_UNSAFE_CSS = `
 [data-file],
 [data-error-wrapper],
 [data-virtualizer-buffer] {
+  --diffs-header-font-family: var(--font-sans) !important;
+  --diffs-font-family: var(--font-mono) !important;
   --diffs-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
   --diffs-light-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
   --diffs-dark-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
@@ -93,6 +97,37 @@ const DIFF_PANEL_UNSAFE_CSS = `
   z-index: 4;
   background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
   border-bottom: 1px solid var(--border) !important;
+  align-items: center !important;
+  font-family: var(--font-sans) !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  min-height: 32px !important;
+  padding-block: 6px !important;
+}
+
+[data-diffs-header] [data-header-content] {
+  align-items: center !important;
+  line-height: 1 !important;
+}
+
+[data-diffs-header] [data-metadata] {
+  align-items: center !important;
+  line-height: 1 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-diffs-header] [data-additions-count],
+[data-diffs-header] [data-deletions-count] {
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  font-variant-numeric: tabular-nums;
+  line-height: 1 !important;
+}
+
+[data-diffs-header] [data-change-icon],
+[data-diffs-header] [data-rename-icon] {
+  display: block;
+  flex-shrink: 0;
 }
 
 [data-title] {
@@ -103,6 +138,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
   text-decoration: underline;
   text-decoration-color: transparent;
   text-underline-offset: 2px;
+  font-family: var(--font-sans) !important;
 }
 
 [data-title]:hover {
@@ -113,11 +149,12 @@ const DIFF_PANEL_UNSAFE_CSS = `
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
+  composerDraftTarget: ScopedThreadRef | DraftId;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
-export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
+export default function DiffPanel({ mode = "inline", composerDraftTarget }: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
@@ -184,6 +221,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const selectedCheckpointTurnCount =
     selectedTurn &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
+  const reviewSectionId = selectedTurn ? `turn:${selectedTurn.turnId}` : "conversation";
+  const reviewSectionTitle = selectedTurn
+    ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
+    : "All turns";
   const selectedCheckpointRange = useMemo(
     () =>
       typeof selectedCheckpointTurnCount === "number"
@@ -294,16 +335,22 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     target?.scrollIntoView({ block: "nearest" });
   }, [selectedFilePath, renderableFiles]);
 
-  const openDiffFileInEditor = useCallback(
+  const openDiffFile = useCallback(
     (filePath: string) => {
-      const api = readLocalApi();
-      if (!api) return;
-      const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
-      void openInPreferredEditor(api, targetPath).catch((error) => {
-        console.warn("Failed to open diff file in editor.", error);
+      openDiffFilePrimaryAction({
+        threadRef: routeThreadRef,
+        filePath,
+        activeCwd,
+        openInEditor: (targetPath) => {
+          const api = readLocalApi();
+          if (!api) return;
+          void openInPreferredEditor(api, targetPath).catch((error) => {
+            console.warn("Failed to open diff file in editor.", error);
+          });
+        },
       });
     },
-    [activeCwd],
+    [activeCwd, routeThreadRef],
   );
   const toggleDiffFileCollapsed = useCallback((fileKey: string) => {
     setCollapsedDiffFileKeys((current) => {
@@ -488,7 +535,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                         inferredCheckpointTurnCountByTurnId[summary.turnId] ??
                         "?"}
                     </span>
-                    <span className="text-[9px] leading-tight opacity-70">
+                    <span className="text-[9px] leading-tight opacity-70 tabular-nums">
                       {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                     </span>
                   </div>
@@ -630,11 +677,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           return node.hasAttribute("data-title");
                         });
                         if (!clickedHeader) return;
-                        openDiffFileInEditor(filePath);
+                        openDiffFile(filePath);
                       }}
                     >
-                      <FileDiff
+                      <AnnotatableFileDiff
                         fileDiff={fileDiff}
+                        filePath={filePath}
+                        sectionId={reviewSectionId}
+                        sectionTitle={reviewSectionTitle}
+                        composerDraftTarget={composerDraftTarget}
                         renderHeaderPrefix={() => (
                           <Tooltip>
                             <TooltipTrigger

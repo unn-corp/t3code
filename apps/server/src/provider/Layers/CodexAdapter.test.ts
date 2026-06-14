@@ -271,7 +271,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         provider: ProviderDriverKind.make("codex"),
         threadId: asThreadId("thread-1"),
         modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
-          { id: "fastMode", value: true },
+          { id: "serviceTier", value: "priority" },
         ]),
         runtimeMode: "full-access",
       });
@@ -281,7 +281,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         cwd: process.cwd(),
         model: "gpt-5.3-codex",
         providerInstanceId: ProviderInstanceId.make("codex"),
-        serviceTier: "fast",
+        serviceTier: "priority",
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
@@ -344,7 +344,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
           input: "hello",
           modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
             { id: "reasoningEffort", value: "high" },
-            { id: "fastMode", value: true },
+            { id: "serviceTier", value: "priority" },
           ]),
           attachments: [],
         }),
@@ -354,7 +354,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         input: "hello",
         model: "gpt-5.3-codex",
         effort: "high",
-        serviceTier: "fast",
+        serviceTier: "priority",
       });
     }),
   );
@@ -398,7 +398,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
             "gpt-5.3-codex",
             [
               { id: "reasoningEffort", value: "high" },
-              { id: "fastMode", value: true },
+              { id: "serviceTier", value: "flex" },
             ],
           ),
           attachments: [],
@@ -409,7 +409,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         input: "hello",
         model: "gpt-5.3-codex",
         effort: "high",
-        serviceTier: "fast",
+        serviceTier: "flex",
       });
     }).pipe(Effect.provide(customLayer));
   });
@@ -488,6 +488,64 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       assert.equal(firstEvent.value.itemId, "msg_1");
       assert.equal(firstEvent.value.turnId, "turn-1");
       assert.equal(firstEvent.value.payload.itemType, "assistant_message");
+    }),
+  );
+
+  it.effect("labels MCP lifecycle entries with server and tool names", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-mcp-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("mcp_1"),
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "mcpToolCall",
+            id: "mcp_1",
+            server: "t3-code",
+            tool: "preview_status",
+            arguments: {},
+            durationMs: 12,
+            error: null,
+            result: { content: [{ type: "text", text: "attached" }] },
+            status: "completed",
+          },
+        },
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") {
+        return;
+      }
+      assert.equal(firstEvent.value.payload.itemType, "mcp_tool_call");
+      assert.equal(firstEvent.value.payload.title, "t3-code · preview_status");
+      assert.deepStrictEqual(firstEvent.value.payload.data, {
+        completedAtMs: 1_778_000_000_000,
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "mcpToolCall",
+          id: "mcp_1",
+          server: "t3-code",
+          tool: "preview_status",
+          arguments: {},
+          durationMs: 12,
+          error: null,
+          result: { content: [{ type: "text", text: "attached" }] },
+          status: "completed",
+        },
+      });
     }),
   );
 
