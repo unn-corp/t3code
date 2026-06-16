@@ -498,9 +498,22 @@ const make = Effect.gen(function* () {
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
         yield* electronWindow.reveal(existingWindow.value);
-      } else {
-        yield* createMainIfBackendReady;
+        return;
       }
+      // No real main window yet. While the backend is still cold-booting,
+      // re-reveal the connecting splash so taskbar/dock activation brings it
+      // back instead of doing nothing. Once the backend is ready we fall
+      // through to (re)create the real main -- including retrying a previously
+      // failed open the pool swallowed -- rather than latching onto the splash.
+      const backendReady = yield* Ref.get(backendReadyRef);
+      if (!backendReady) {
+        const splash = yield* Ref.get(splashWindowRef);
+        if (Option.isSome(splash)) {
+          yield* electronWindow.reveal(splash.value);
+          return;
+        }
+      }
+      yield* createMainIfBackendReady;
     }).pipe(Effect.withSpan("desktop.window.activate")),
     createMainIfBackendReady,
     showConnectingSplash,
