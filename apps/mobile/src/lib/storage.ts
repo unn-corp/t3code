@@ -35,7 +35,9 @@ const CachedShellSnapshotSchema = Schema.Struct({
   snapshotReceivedAt: Schema.String,
   snapshot: OrchestrationShellSnapshot,
 });
-const decodeCachedShellSnapshot = Schema.decodeUnknownOption(CachedShellSnapshotSchema);
+const CachedShellSnapshotJson = Schema.fromJsonString(CachedShellSnapshotSchema);
+const decodeCachedShellSnapshotJson = Schema.decodeUnknownOption(CachedShellSnapshotJson);
+const encodeCachedShellSnapshotJson = Schema.encodeOption(CachedShellSnapshotJson);
 
 async function readStorageItem(key: string): Promise<string | null> {
   return await SecureStore.getItemAsync(key);
@@ -80,8 +82,7 @@ export async function loadCachedShellSnapshot(
       return null;
     }
 
-    const parsed = JSON.parse(await file.text()) as unknown;
-    const decoded = decodeCachedShellSnapshot(parsed);
+    const decoded = decodeCachedShellSnapshotJson(await file.text());
     if (Option.isNone(decoded) || decoded.value.environmentId !== environmentId) {
       return null;
     }
@@ -106,11 +107,15 @@ export async function saveCachedShellSnapshot(
       snapshotReceivedAt: new Date().toISOString(),
       snapshot,
     };
+    const encoded = encodeCachedShellSnapshotJson(document);
+    if (Option.isNone(encoded)) {
+      return;
+    }
 
     if (!file.exists) {
       file.create({ intermediates: true, overwrite: true });
     }
-    file.write(JSON.stringify(document));
+    file.write(encoded.value);
   } catch {
     // Cache persistence is best-effort and should never block live data.
   }

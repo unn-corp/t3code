@@ -1,5 +1,4 @@
-import { it } from "@effect/vitest";
-import { describe, expect } from "vite-plus/test";
+import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
@@ -45,12 +44,12 @@ describe("makeDrainableWorker", () => {
         yield* Deferred.succeed(releaseFirst, undefined);
         yield* Deferred.await(secondStarted);
 
-        expect(yield* Deferred.isDone(drained)).toBe(false);
+        assert.equal(yield* Deferred.isDone(drained), false);
 
         yield* Deferred.succeed(releaseSecond, undefined);
         yield* Deferred.await(drained);
 
-        expect(processed).toEqual(["first", "second"]);
+        assert.deepStrictEqual(processed, ["first", "second"]);
       }),
     ),
   );
