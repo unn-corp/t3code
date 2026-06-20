@@ -137,8 +137,14 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           error.message,
           `Workspace file operation 'workspaceFileSystem.readFile' failed for 'image.bin' in '${cwd}'.`,
         );
-        assert.ok(error.cause instanceof Error);
-        assert.strictEqual((error.cause as Error).message, "Binary files cannot be previewed as text.");
+        assert.strictEqual(
+          (error.cause as { readonly _tag?: string })._tag,
+          "WorkspaceReadFileBinaryFileError",
+        );
+        assert.strictEqual(
+          (error.cause as { readonly message?: string }).message,
+          "Binary files cannot be previewed as text.",
+        );
       }),
     );
 
@@ -163,9 +169,12 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           error.message,
           `Workspace file operation 'workspaceFileSystem.readFile' failed for 'linked-secret.txt' in '${cwd}'.`,
         );
-        assert.ok(error.cause instanceof Error);
         assert.strictEqual(
-          (error.cause as Error).message,
+          (error.cause as { readonly _tag?: string })._tag,
+          "WorkspaceReadFileResolvedOutsideRootError",
+        );
+        assert.strictEqual(
+          (error.cause as { readonly message?: string }).message,
           "Workspace file path resolves outside the project root.",
         );
       }),

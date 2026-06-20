@@ -24,6 +24,46 @@ import * as WorkspacePaths from "./WorkspacePaths.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
+class WorkspaceReadFileResolvedOutsideRootError extends Schema.TaggedErrorClass<WorkspaceReadFileResolvedOutsideRootError>()(
+  "WorkspaceReadFileResolvedOutsideRootError",
+  {
+    cwd: Schema.String,
+    relativePath: Schema.String,
+    realWorkspaceRoot: Schema.String,
+    realTargetPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Workspace file path resolves outside the project root.";
+  }
+}
+
+class WorkspaceReadFileNotFileError extends Schema.TaggedErrorClass<WorkspaceReadFileNotFileError>()(
+  "WorkspaceReadFileNotFileError",
+  {
+    cwd: Schema.String,
+    relativePath: Schema.String,
+    fileType: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Workspace path is not a file.";
+  }
+}
+
+class WorkspaceReadFileBinaryFileError extends Schema.TaggedErrorClass<WorkspaceReadFileBinaryFileError>()(
+  "WorkspaceReadFileBinaryFileError",
+  {
+    cwd: Schema.String,
+    relativePath: Schema.String,
+    nulByteOffset: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return "Binary files cannot be previewed as text.";
+  }
+}
+
 export class WorkspaceFileSystemError extends Schema.TaggedErrorClass<WorkspaceFileSystemError>()(
   "WorkspaceFileSystemError",
   {
@@ -96,22 +136,40 @@ export const make = Effect.gen(function* () {
           path.isAbsolute(relativeRealPath)
         ) {
           return yield* Effect.fail(
-            new Error("Workspace file path resolves outside the project root."),
+            new WorkspaceReadFileResolvedOutsideRootError({
+              cwd: input.cwd,
+              relativePath: target.relativePath,
+              realWorkspaceRoot,
+              realTargetPath,
+            }),
           );
         }
 
         const handle = yield* fileSystem.open(realTargetPath, { flag: "r" });
         const stat = yield* handle.stat;
         if (stat.type !== "File") {
-          return yield* Effect.fail(new Error("Workspace path is not a file."));
+          return yield* Effect.fail(
+            new WorkspaceReadFileNotFileError({
+              cwd: input.cwd,
+              relativePath: target.relativePath,
+              fileType: stat.type,
+            }),
+          );
         }
         const byteLength = Number(stat.size);
         const bytesToRead = Math.min(byteLength, PROJECT_READ_FILE_MAX_BYTES);
         const buffer = new Uint8Array(bytesToRead);
         const bytesRead = yield* handle.read(buffer);
         const fileBytes = buffer.subarray(0, Number(bytesRead));
-        if (fileBytes.includes(0)) {
-          return yield* Effect.fail(new Error("Binary files cannot be previewed as text."));
+        const nulByteOffset = fileBytes.indexOf(0);
+        if (nulByteOffset !== -1) {
+          return yield* Effect.fail(
+            new WorkspaceReadFileBinaryFileError({
+              cwd: input.cwd,
+              relativePath: target.relativePath,
+              nulByteOffset,
+            }),
+          );
         }
         const contents = new TextDecoder("utf-8").decode(fileBytes);
         return {
