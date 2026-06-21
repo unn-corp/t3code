@@ -33,6 +33,7 @@ const decodeDesktopSshEnvironmentEnsureResult = Schema.decodeUnknownEffect(
 );
 
 const isSshHttpBridgeError = Schema.is(SshHttpBridgeError);
+const isDesktopSshEnvironmentRequestError = Schema.is(DesktopSshEnvironmentRequestError);
 
 function jsonResponse(request: HttpClientRequest.HttpClientRequest, body: unknown, status = 200) {
   return HttpClientResponse.fromWeb(
@@ -167,7 +168,8 @@ describe("SSH environment IPC", () => {
       assert(Option.isSome(failure));
       const error = failure.value;
 
-      assert.instanceOf(error, DesktopSshEnvironmentRequestError);
+      assert.isTrue(isDesktopSshEnvironmentRequestError(error));
+      if (!isDesktopSshEnvironmentRequestError(error)) return;
       assert.equal(error.operation, "fetch-environment-descriptor");
       assert.equal(isSshHttpBridgeError(error.cause), false);
     }).pipe(Effect.provide(layer));
@@ -193,7 +195,8 @@ describe("SSH environment IPC", () => {
       assert(Option.isSome(failure));
       const error = failure.value;
 
-      assert.instanceOf(error, DesktopSshEnvironmentRequestError);
+      assert.isTrue(isDesktopSshEnvironmentRequestError(error));
+      if (!isDesktopSshEnvironmentRequestError(error)) return;
       assert.equal(isSshHttpBridgeError(error.cause), true);
       assert.equal(requestCount, 0);
     }).pipe(Effect.provide(layer));

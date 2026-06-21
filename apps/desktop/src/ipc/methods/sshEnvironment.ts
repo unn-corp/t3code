@@ -3,7 +3,7 @@ import {
   fetchRemoteSessionState,
   issueRemoteWebSocketTicket,
   isRemoteEnvironmentAuthUndeclaredStatusError,
-  type RemoteEnvironmentAuthError,
+  RemoteEnvironmentAuthError,
 } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import {
@@ -34,7 +34,6 @@ import {
   SshTunnelSpawnError,
 } from "@t3tools/ssh/errors";
 import { resolveLoopbackSshHttpBaseUrl } from "@t3tools/ssh/tunnel";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -43,13 +42,19 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 import * as DesktopSshEnvironment from "../../ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "../../ssh/DesktopSshPasswordPrompts.ts";
 
-type DesktopSshEnvironmentRequestOperation =
-  | "fetch-environment-descriptor"
-  | "bootstrap-bearer-session"
-  | "fetch-session-state"
-  | "issue-websocket-ticket";
+const DesktopSshEnvironmentRequestOperation = Schema.Literals([
+  "fetch-environment-descriptor",
+  "bootstrap-bearer-session",
+  "fetch-session-state",
+  "issue-websocket-ticket",
+]);
+type DesktopSshEnvironmentRequestOperation = typeof DesktopSshEnvironmentRequestOperation.Type;
 
-type DesktopSshEnvironmentRequestCause = RemoteEnvironmentAuthError | SshHttpBridgeError;
+const DesktopSshEnvironmentRequestCause = Schema.Union([
+  RemoteEnvironmentAuthError,
+  SshHttpBridgeError,
+]);
+type DesktopSshEnvironmentRequestCause = typeof DesktopSshEnvironmentRequestCause.Type;
 
 const desktopSshPasswordPromptCancellationReasons = {
   DesktopSshPromptCancelledError: "user-cancelled",
@@ -108,14 +113,15 @@ function readSshHttpStatus(cause: DesktopSshEnvironmentRequestCause): number | n
   return null;
 }
 
-export class DesktopSshEnvironmentRequestError extends Data.TaggedError(
+export class DesktopSshEnvironmentRequestError extends Schema.TaggedErrorClass<DesktopSshEnvironmentRequestError>()(
   "DesktopSshEnvironmentRequestError",
-)<{
-  readonly operation: DesktopSshEnvironmentRequestOperation;
-  readonly cause: DesktopSshEnvironmentRequestCause;
-  readonly sshHttpStatus: number | null;
-}> {
-  override get message() {
+  {
+    operation: DesktopSshEnvironmentRequestOperation,
+    cause: DesktopSshEnvironmentRequestCause,
+    sshHttpStatus: Schema.NullOr(Schema.Number),
+  },
+) {
+  override get message(): string {
     const prefix = this.sshHttpStatus === null ? "" : `[ssh_http:${this.sshHttpStatus}] `;
     return `${prefix}SSH remote API request failed during ${this.operation}.`;
   }
