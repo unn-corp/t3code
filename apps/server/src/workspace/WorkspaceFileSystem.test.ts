@@ -188,7 +188,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         });
         assert.instanceOf(error.cause, PlatformError.PlatformError);
         assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "NotFound");
-        assert.equal((error.cause as PlatformError.PlatformError).method, "realPath");
+        assert.equal((error.cause as PlatformError.PlatformError).reason.method, "realPath");
       }),
     );
   });
