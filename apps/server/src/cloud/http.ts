@@ -902,6 +902,7 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
         requestNonce: proof.nonce,
         status: "pending_approval",
         approvalStatus: connectAuthorization.status,
+        requestedAt: DateTime.formatIso(connectAuthorization.client.requestedAt),
       } satisfies RelayEnvironmentMintResponseProofPayload;
       const responseProof = yield* signRelayJwt({
         privateKey: keyPair.privateKey,
@@ -919,7 +920,7 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
         status: "pending_approval",
         clientProofKeyThumbprint: proof.clientProofKeyThumbprint,
         approvalStatus: connectAuthorization.status,
-        requestedAt: DateTime.formatIso(connectAuthorization.client.requestedAt),
+        requestedAt: responsePayload.requestedAt,
         proof: responseProof,
       } satisfies RelayEnvironmentMintResponseShape;
 

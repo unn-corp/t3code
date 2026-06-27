@@ -811,6 +811,7 @@ export const RelayEnvironmentMintPendingApprovalResponseProofPayload = Schema.St
   requestNonce: TrimmedNonEmptyString,
   status: Schema.Literal("pending_approval"),
   approvalStatus: AuthConnectClientStatus,
+  requestedAt: TrimmedNonEmptyString,
 });
 export type RelayEnvironmentMintPendingApprovalResponseProofPayload =
   typeof RelayEnvironmentMintPendingApprovalResponseProofPayload.Type;

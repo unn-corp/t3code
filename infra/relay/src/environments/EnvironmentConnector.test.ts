@@ -124,6 +124,7 @@ function signPendingMintResponse(
   request: RelayCloudMintCredentialRequest,
   overrides: Partial<RelayEnvironmentMintPendingApprovalResponseProofPayload> = {},
   privateKey = environmentKeyPair.privateKey,
+  responseOverrides: Partial<RelayEnvironmentMintResponse> = {},
 ): RelayEnvironmentMintResponse {
   const requestProof = decodeRequestProof<RelayCloudMintCredentialProofPayload>(request.proof);
   const payload = {
@@ -138,14 +139,16 @@ function signPendingMintResponse(
     requestNonce: requestProof.nonce,
     status: "pending_approval",
     approvalStatus: "pending",
+    requestedAt: "2026-06-06T00:00:00.000Z",
     ...overrides,
   } satisfies RelayEnvironmentMintPendingApprovalResponseProofPayload;
   return {
     status: "pending_approval",
     clientProofKeyThumbprint: payload.clientProofKeyThumbprint,
     approvalStatus: payload.approvalStatus,
-    requestedAt: "2026-06-06T00:00:00.000Z",
+    requestedAt: payload.requestedAt,
     proof: signTestJwt(payload, RELAY_MINT_RESPONSE_TYP, privateKey),
+    ...responseOverrides,
   };
 }
 
@@ -743,6 +746,38 @@ describe("EnvironmentConnector", () => {
         approvalStatus: "pending",
         requestedAt: "2026-06-06T00:00:00.000Z",
       });
+    }).pipe(Effect.provide(connectorTestLayer(execute)));
+  });
+
+  it.effect("rejects pending approval responses with a tampered requestedAt", () => {
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        const mintRequest = decodeMintRequestBody(requestBodyText(request));
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            signPendingMintResponse(mintRequest, {}, environmentKeyPair.privateKey, {
+              requestedAt: "2026-06-06T00:01:00.000Z",
+            }),
+            { status: 200 },
+          ),
+        );
+      });
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const result = yield* Effect.exit(
+        connector.connect({
+          userId: "user_123",
+          environmentId: "env-connector-test",
+          clientProofKeyThumbprint: "client-proof-key-thumbprint",
+        }),
+      );
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.cause.toString()).toContain("EnvironmentMintResponseInvalid");
+      }
     }).pipe(Effect.provide(connectorTestLayer(execute)));
   });
 

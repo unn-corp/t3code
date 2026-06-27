@@ -260,7 +260,8 @@ function verifyEnvironmentResponse(input: {
           "status" in proof &&
           proof.status === "pending_approval" &&
           proof.approvalStatus === response.approvalStatus &&
-          proof.clientProofKeyThumbprint === response.clientProofKeyThumbprint
+          proof.clientProofKeyThumbprint === response.clientProofKeyThumbprint &&
+          proof.requestedAt === response.requestedAt
         );
       }
 
