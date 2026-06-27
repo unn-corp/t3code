@@ -1,6 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
-  PanResponder,
   Platform,
   PlatformColor,
   Pressable,
@@ -8,6 +7,8 @@ import {
   View,
   type AccessibilityActionEvent,
 } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { runOnJS } from "react-native-reanimated";
 
 const ACCESSIBILITY_RESIZE_STEP = 24;
 
@@ -27,30 +28,32 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   latestProps.current = props;
   const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const panResponder = useMemo(
+  const handleResizeStart = useCallback(() => {
+    setDragging(true);
+    latestProps.current.onResizeStart?.();
+  }, []);
+  const handleResize = useCallback((translationX: number) => {
+    latestProps.current.onResizeBy(translationX * latestProps.current.resizeDirection);
+  }, []);
+  const handleResizeEnd = useCallback(() => {
+    setDragging(false);
+    latestProps.current.onResizeEnd?.();
+  }, []);
+  const resizeGesture = useMemo(
     () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_event, gesture) => {
-          const horizontalDistance = Math.abs(gesture.dx);
-          return horizontalDistance >= 4 && horizontalDistance > Math.abs(gesture.dy) * 1.25;
-        },
-        onPanResponderGrant: () => {
-          setDragging(true);
-          latestProps.current.onResizeStart?.();
-        },
-        onPanResponderMove: (_event, gesture) => {
-          latestProps.current.onResizeBy(gesture.dx * latestProps.current.resizeDirection);
-        },
-        onPanResponderRelease: () => {
-          setDragging(false);
-          latestProps.current.onResizeEnd?.();
-        },
-        onPanResponderTerminate: () => {
-          setDragging(false);
-          latestProps.current.onResizeEnd?.();
-        },
-      }),
-    [],
+      Gesture.Pan()
+        .activeOffsetX([-4, 4])
+        .failOffsetY([-24, 24])
+        .onStart(() => {
+          runOnJS(handleResizeStart)();
+        })
+        .onUpdate((event) => {
+          runOnJS(handleResize)(event.translationX);
+        })
+        .onFinalize(() => {
+          runOnJS(handleResizeEnd)();
+        }),
+    [handleResize, handleResizeEnd, handleResizeStart],
   );
 
   const handleAccessibilityAction = (event: AccessibilityActionEvent) => {
@@ -64,25 +67,26 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   };
 
   return (
-    <Pressable
-      {...panResponder.panHandlers}
-      accessibilityActions={[
-        { name: "increment", label: "Make pane wider" },
-        { name: "decrement", label: "Make pane narrower" },
-      ]}
-      accessibilityLabel={props.accessibilityLabel}
-      accessibilityRole="adjustable"
-      accessibilityValue={{
-        now: Math.round(props.currentWidth),
-        text: `${Math.round(props.currentWidth)} points wide`,
-      }}
-      onAccessibilityAction={handleAccessibilityAction}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
-      style={styles.hitTarget}
-    >
-      <View style={[styles.line, (hovered || dragging) && styles.activeLine]} />
-    </Pressable>
+    <GestureDetector gesture={resizeGesture}>
+      <Pressable
+        accessibilityActions={[
+          { name: "increment", label: "Make pane wider" },
+          { name: "decrement", label: "Make pane narrower" },
+        ]}
+        accessibilityLabel={props.accessibilityLabel}
+        accessibilityRole="adjustable"
+        accessibilityValue={{
+          now: Math.round(props.currentWidth),
+          text: `${Math.round(props.currentWidth)} points wide`,
+        }}
+        onAccessibilityAction={handleAccessibilityAction}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
+        style={styles.hitTarget}
+      >
+        <View style={[styles.line, (hovered || dragging) && styles.activeLine]} />
+      </Pressable>
+    </GestureDetector>
   );
 }
 
@@ -92,8 +96,9 @@ const styles = StyleSheet.create({
     cursor: "pointer",
     justifyContent: "center",
     marginHorizontal: -22,
+    position: "relative",
     width: 44,
-    zIndex: 20,
+    zIndex: 100,
   },
   line: {
     alignSelf: "center",

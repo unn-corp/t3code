@@ -40,11 +40,15 @@ export function ThreadSwipeable(props: {
   readonly backgroundColor: ColorValue;
   readonly children: (close: () => void) => ReactNode;
   readonly containerStyle?: StyleProp<ViewStyle>;
+  readonly enableTrackpadSwipe?: boolean;
   readonly fullSwipeWidth: number;
   readonly onDelete: () => void;
   readonly onSwipeableClose?: (methods: SwipeableMethods) => void;
   readonly onSwipeableWillOpen?: (methods: SwipeableMethods) => void;
   readonly primaryAction: ThreadSwipePrimaryAction;
+  readonly simultaneousWithExternalGesture?: ComponentProps<
+    typeof ReanimatedSwipeable
+  >["simultaneousWithExternalGesture"];
   readonly threadTitle: string;
 }) {
   const swipeableRef = useRef<SwipeableMethods | null>(null);
@@ -65,7 +69,7 @@ export function ThreadSwipeable(props: {
       childrenContainerStyle={{ backgroundColor: props.backgroundColor }}
       containerStyle={[{ backgroundColor: props.backgroundColor }, props.containerStyle]}
       dragOffsetFromRightEdge={8}
-      enableTrackpadTwoFingerGesture
+      enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
       friction={1}
       onSwipeableClose={() => {
         fullSwipeArmedRef.current = false;
@@ -112,6 +116,7 @@ export function ThreadSwipeable(props: {
         />
       )}
       rightThreshold={THREAD_SWIPE_ACTIONS_WIDTH * 0.42}
+      simultaneousWithExternalGesture={props.simultaneousWithExternalGesture}
     >
       {props.children(close)}
     </ReanimatedSwipeable>

@@ -3,11 +3,13 @@ import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "expo-symbols";
 import { useRouter } from "expo-router";
-import { memo, useCallback, useMemo, useRef, useState } from "react";
-import type { ColorValue } from "react-native";
-import { Pressable, StyleSheet, TextInput, View } from "react-native";
+import { memo, useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
+import type { ColorValue, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
+import { Pressable, StyleSheet, TextInput, View, useColorScheme } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -32,11 +34,23 @@ import { useThreadListActions } from "../home/useThreadListActions";
 import { WorkspaceConnectionStatus } from "../home/WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "../home/workspace-connection-status";
 import { SidebarHeaderActions } from "./sidebar-header-actions";
+import { SidebarFilterButton } from "./sidebar-filter-button";
 import { threadStatusTone } from "./threadPresentation";
+
+const SIDEBAR_STICKY_HEADER_HEIGHT = 94;
+const SIDEBAR_STICKY_HEADER_FADE_HEIGHT = 38;
+const IOS_SYSTEM_BLUE_DARK = "#0A84FF";
+const IOS_SYSTEM_BLUE_LIGHT = "#007AFF";
+const IOS_SEARCH_FILL_DARK = "rgba(118, 118, 128, 0.24)";
+const IOS_SEARCH_FILL_LIGHT = "rgba(118, 118, 128, 0.12)";
+const IOS_SELECTED_FOREGROUND = "#FFFFFF";
+const IOS_SELECTED_MUTED_FOREGROUND = "rgba(255, 255, 255, 0.78)";
 
 const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
   readonly backgroundColor: ColorValue;
+  readonly foregroundColor: ColorValue;
   readonly fullSwipeWidth: number;
+  readonly mutedColor: ColorValue;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
@@ -45,6 +59,11 @@ const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
   readonly pressedBackgroundColor: ColorValue;
   readonly selected: boolean;
   readonly selectedBackgroundColor: ColorValue;
+  readonly selectedForegroundColor: ColorValue;
+  readonly selectedMutedColor: ColorValue;
+  readonly simultaneousSwipeGesture?: ComponentProps<
+    typeof ThreadSwipeable
+  >["simultaneousWithExternalGesture"];
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
 }) {
@@ -52,7 +71,9 @@ const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
   const [hovered, setHovered] = useState(false);
   const {
     backgroundColor,
+    foregroundColor,
     fullSwipeWidth,
+    mutedColor,
     onArchiveThread,
     onDeleteThread,
     onSelectThread,
@@ -61,6 +82,9 @@ const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
     pressedBackgroundColor,
     selected,
     selectedBackgroundColor,
+    selectedForegroundColor,
+    selectedMutedColor,
+    simultaneousSwipeGesture,
     thread,
     environmentLabel,
   } = props;
@@ -96,16 +120,26 @@ const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
   const subtitle = [environmentLabel, thread.branch].filter((part): part is string =>
     Boolean(part),
   );
+  const statusTone = threadStatusTone(thread);
+  const displayedStatusTone = selected
+    ? {
+        ...statusTone,
+        pillClassName: "bg-white/20",
+        textClassName: "text-white",
+      }
+    : statusTone;
 
   return (
     <ThreadSwipeable
       backgroundColor={backgroundColor}
       containerStyle={styles.threadRowContainer}
+      enableTrackpadSwipe
       fullSwipeWidth={fullSwipeWidth}
       onDelete={handleDelete}
       onSwipeableClose={onSwipeableClose}
       onSwipeableWillOpen={onSwipeableWillOpen}
       primaryAction={primaryAction}
+      simultaneousWithExternalGesture={simultaneousSwipeGesture}
       threadTitle={thread.title}
     >
       {() => (
@@ -132,21 +166,33 @@ const ThreadNavigationRow = memo(function ThreadNavigationRow(props: {
             ]}
           >
             <View style={styles.threadText}>
-              <Text className="text-base font-t3-medium" numberOfLines={1}>
+              <Text
+                className="text-base font-t3-medium"
+                numberOfLines={1}
+                style={{ color: selected ? selectedForegroundColor : foregroundColor }}
+              >
                 {thread.title}
               </Text>
               <View style={styles.threadMetadata}>
                 {subtitle.length > 0 ? (
-                  <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
+                  <Text
+                    className="min-w-0 flex-1 text-xs"
+                    numberOfLines={1}
+                    style={{ color: selected ? selectedMutedColor : mutedColor }}
+                  >
                     {subtitle.join(" · ")}
                   </Text>
                 ) : null}
-                <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                <Text
+                  className="text-xs"
+                  numberOfLines={1}
+                  style={{ color: selected ? selectedMutedColor : mutedColor }}
+                >
                   {relativeTime(thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt)}
                 </Text>
               </View>
             </View>
-            <StatusPill {...threadStatusTone(thread)} size="compact" />
+            <StatusPill {...displayedStatusTone} size="compact" />
           </Pressable>
           <ControlPillMenu actions={threadActions} onPressAction={handleMenuAction}>
             <Pressable
@@ -185,14 +231,18 @@ export function ThreadNavigationSidebar(props: {
   readonly onRequestVisibility: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const colorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const router = useRouter();
   const projects = useProjects();
   const threads = useThreadShells();
   const { state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [searchQuery, setSearchQuery] = useState("");
+  const [headerIsOverContent, setHeaderIsOverContent] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
+  const headerIsOverContentRef = useRef(false);
+  const sidebarScrollGesture = useMemo(() => Gesture.Native(), []);
   const { archiveThread, confirmDeleteThread } = useThreadListActions();
   const environments = useMemo(
     () =>
@@ -240,6 +290,7 @@ export function ThreadNavigationSidebar(props: {
       ]),
     [groups],
   );
+  const showsConnectionStatus = shouldShowWorkspaceConnectionStatus(catalogState);
   const listMenuActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -340,9 +391,16 @@ export function ThreadNavigationSidebar(props: {
   const foregroundColor = useThemeColor("--color-foreground");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const placeholderColor = useThemeColor("--color-placeholder");
-  const searchBackgroundColor = useThemeColor("--color-subtle-strong");
-  const selectedBackgroundColor = useThemeColor("--color-subtle-strong");
+  const searchBackgroundColor =
+    colorScheme === "dark" ? IOS_SEARCH_FILL_DARK : IOS_SEARCH_FILL_LIGHT;
+  const selectedBackgroundColor =
+    colorScheme === "dark" ? IOS_SYSTEM_BLUE_DARK : IOS_SYSTEM_BLUE_LIGHT;
+  const selectedForegroundColor = IOS_SELECTED_FOREGROUND;
+  const selectedMutedColor = IOS_SELECTED_MUTED_FOREGROUND;
   const pressedBackgroundColor = useThemeColor("--color-subtle");
+  const listThemeKey = `${colorScheme}:${String(backgroundColor)}:${String(selectedBackgroundColor)}`;
+  const headerFadeColor = String(backgroundColor);
+  const topListInset = insets.top + SIDEBAR_STICKY_HEADER_HEIGHT - 6;
   const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
     if (openSwipeableRef.current !== methods) {
       openSwipeableRef.current?.close();
@@ -361,6 +419,14 @@ export function ThreadNavigationSidebar(props: {
     },
     [props.onSelectThread],
   );
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const next = event.nativeEvent.contentOffset.y > 6;
+    if (headerIsOverContentRef.current === next) {
+      return;
+    }
+    headerIsOverContentRef.current = next;
+    setHeaderIsOverContent(next);
+  }, []);
   const focusSearch = useCallback(() => {
     if (!props.visible) {
       props.onRequestVisibility();
@@ -376,9 +442,9 @@ export function ThreadNavigationSidebar(props: {
       if (item.kind === "section") {
         return (
           <Text
-            style={styles.sectionTitle}
-            className="text-xs font-t3-bold text-foreground-muted"
+            className="text-xs font-t3-bold"
             numberOfLines={1}
+            style={[styles.sectionTitle, { color: mutedColor }]}
           >
             {item.title}
           </Text>
@@ -388,8 +454,11 @@ export function ThreadNavigationSidebar(props: {
       return (
         <View style={styles.threadItem}>
           <ThreadNavigationRow
+            key={`${item.key}:${listThemeKey}`}
             backgroundColor={backgroundColor}
+            foregroundColor={foregroundColor}
             fullSwipeWidth={props.width - 20}
+            mutedColor={mutedColor}
             onArchiveThread={archiveThread}
             onDeleteThread={confirmDeleteThread}
             onSelectThread={handleSelectThread}
@@ -398,6 +467,9 @@ export function ThreadNavigationSidebar(props: {
             pressedBackgroundColor={pressedBackgroundColor}
             selected={item.key === props.selectedThreadKey}
             selectedBackgroundColor={selectedBackgroundColor}
+            selectedForegroundColor={selectedForegroundColor}
+            selectedMutedColor={selectedMutedColor}
+            simultaneousSwipeGesture={sidebarScrollGesture}
             thread={thread}
             environmentLabel={savedConnectionsById[thread.environmentId]?.environmentLabel ?? null}
           />
@@ -407,6 +479,7 @@ export function ThreadNavigationSidebar(props: {
     [
       archiveThread,
       backgroundColor,
+      foregroundColor,
       confirmDeleteThread,
       handleSelectThread,
       handleSwipeableClose,
@@ -416,8 +489,15 @@ export function ThreadNavigationSidebar(props: {
       props.width,
       savedConnectionsById,
       selectedBackgroundColor,
+      listThemeKey,
+      mutedColor,
+      selectedForegroundColor,
+      selectedMutedColor,
     ],
   );
+  const filterIcon = hasCustomHomeListOptions(options)
+    ? "line.3.horizontal.decrease.circle.fill"
+    : "line.3.horizontal.decrease.circle";
 
   return (
     <View
@@ -429,88 +509,138 @@ export function ThreadNavigationSidebar(props: {
           backgroundColor,
           borderRightColor: borderColor,
           borderRightWidth: StyleSheet.hairlineWidth,
-          paddingTop: insets.top,
         },
       ]}
     >
-      <View style={styles.header}>
-        <Text className="flex-1 text-2xl font-t3-bold" numberOfLines={1}>
-          Threads
-        </Text>
-        <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
-          <Pressable
-            accessibilityLabel="Filter and sort threads"
-            accessibilityRole="button"
-            hitSlop={4}
-            style={({ pressed }) => [
-              styles.headerButton,
-              { backgroundColor: pressed ? pressedBackgroundColor : "transparent" },
+      <View style={{ flex: 1, paddingBottom: insets.bottom }}>
+        <GestureDetector gesture={sidebarScrollGesture}>
+          <LegendList
+            data={listItems}
+            estimatedItemSize={58}
+            extraData={listThemeKey}
+            getItemType={(item) => item.kind}
+            keyExtractor={(item) => item.key}
+            renderItem={renderListItem}
+            contentContainerStyle={[
+              styles.threadListContent,
+              {
+                paddingBottom: 16 + insets.bottom,
+                paddingTop: showsConnectionStatus ? topListInset + 94 : topListInset,
+              },
             ]}
-          >
-            <SymbolView
-              name={
-                hasCustomHomeListOptions(options)
-                  ? "line.3.horizontal.decrease.circle.fill"
-                  : "line.3.horizontal.decrease.circle"
-              }
-              size={18}
-              tintColor={mutedColor}
-              type="monochrome"
-            />
-          </Pressable>
-        </ControlPillMenu>
-        <SidebarHeaderActions
-          onOpenSettings={props.onOpenSettings}
-          onStartNewTask={props.onStartNewTask}
-        />
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            onScroll={handleScroll}
+            onScrollBeginDrag={() => openSwipeableRef.current?.close()}
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator={false}
+            style={styles.threadList}
+            ListEmptyComponent={
+              <Text className="px-2 py-4 text-sm" style={{ color: mutedColor }}>
+                {searchQuery.trim().length > 0 ? "No matching threads" : "No threads yet"}
+              </Text>
+            }
+          />
+        </GestureDetector>
       </View>
 
-      {shouldShowWorkspaceConnectionStatus(catalogState) ? (
-        <View style={styles.connectionStatus}>
-          <WorkspaceConnectionStatus
-            onPress={() => router.push("/settings/environments")}
-            state={catalogState}
-            variant="sidebar"
+      <View
+        pointerEvents="box-none"
+        style={[
+          styles.stickyHeader,
+          {
+            paddingTop: insets.top,
+          },
+        ]}
+      >
+        <View
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[
+            styles.stickyHeaderWash,
+            {
+              height: insets.top + SIDEBAR_STICKY_HEADER_HEIGHT + SIDEBAR_STICKY_HEADER_FADE_HEIGHT,
+            },
+          ]}
+        >
+          <Svg width="100%" height="100%">
+            <Defs>
+              <LinearGradient id="sidebar-header-wash" x1="0%" x2="0%" y1="0%" y2="100%">
+                <Stop
+                  offset="0%"
+                  stopColor={headerFadeColor}
+                  stopOpacity={headerIsOverContent ? (colorScheme === "dark" ? 0.72 : 0.58) : 0}
+                />
+                <Stop
+                  offset="62%"
+                  stopColor={headerFadeColor}
+                  stopOpacity={headerIsOverContent ? (colorScheme === "dark" ? 0.52 : 0.42) : 0}
+                />
+                <Stop
+                  offset="86%"
+                  stopColor={headerFadeColor}
+                  stopOpacity={headerIsOverContent ? (colorScheme === "dark" ? 0.18 : 0.14) : 0}
+                />
+                <Stop offset="100%" stopColor={headerFadeColor} stopOpacity={0} />
+              </LinearGradient>
+            </Defs>
+            <Rect width="100%" height="100%" fill="url(#sidebar-header-wash)" />
+          </Svg>
+        </View>
+        <View style={styles.header}>
+          <Text
+            className="flex-1 text-2xl font-t3-bold"
+            numberOfLines={1}
+            style={{ color: foregroundColor }}
+          >
+            Threads
+          </Text>
+          <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
+            <SidebarFilterButton accessibilityLabel="Filter and sort threads" icon={filterIcon} />
+          </ControlPillMenu>
+          <SidebarHeaderActions
+            onOpenSettings={props.onOpenSettings}
+            onStartNewTask={props.onStartNewTask}
           />
         </View>
-      ) : null}
 
-      <View style={[styles.searchField, { backgroundColor: searchBackgroundColor }]}>
-        <SymbolView name="magnifyingglass" size={15} tintColor={mutedColor} type="monochrome" />
-        <TextInput
-          ref={searchInputRef}
-          accessibilityLabel="Search threads"
-          autoCapitalize="none"
-          autoCorrect={false}
-          clearButtonMode="while-editing"
-          onChangeText={setSearchQuery}
-          placeholder="Search"
-          placeholderTextColor={placeholderColor}
-          returnKeyType="search"
-          style={[styles.searchInput, { color: foregroundColor }]}
-          value={searchQuery}
-        />
-      </View>
+        <View
+          style={[
+            styles.searchField,
+            {
+              backgroundColor: searchBackgroundColor,
+              borderColor:
+                colorScheme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.72)",
+            },
+          ]}
+        >
+          <SymbolView name="magnifyingglass" size={15} tintColor={mutedColor} type="monochrome" />
+          <TextInput
+            ref={searchInputRef}
+            accessibilityLabel="Search threads"
+            autoCapitalize="none"
+            autoCorrect={false}
+            clearButtonMode="while-editing"
+            onChangeText={setSearchQuery}
+            placeholder="Search"
+            placeholderTextColor={placeholderColor}
+            returnKeyType="search"
+            style={[styles.searchInput, { color: foregroundColor }]}
+            value={searchQuery}
+          />
+          <SymbolView name="mic.fill" size={14} tintColor={mutedColor} type="monochrome" />
+        </View>
 
-      <View style={{ flex: 1, paddingBottom: insets.bottom }}>
-        <LegendList
-          data={listItems}
-          estimatedItemSize={58}
-          getItemType={(item) => item.kind}
-          keyExtractor={(item) => item.key}
-          renderItem={renderListItem}
-          contentContainerStyle={styles.threadListContent}
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-          onScrollBeginDrag={() => openSwipeableRef.current?.close()}
-          showsVerticalScrollIndicator={false}
-          style={styles.threadList}
-          ListEmptyComponent={
-            <Text className="px-2 py-4 text-sm text-foreground-muted">
-              {searchQuery.trim().length > 0 ? "No matching threads" : "No threads yet"}
-            </Text>
-          }
-        />
+        {showsConnectionStatus ? (
+          <View style={styles.connectionStatus}>
+            <WorkspaceConnectionStatus
+              onPress={() => router.push("/settings/environments")}
+              state={catalogState}
+              variant="sidebar"
+            />
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -520,39 +650,46 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  stickyHeader: {
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    zIndex: 4,
+  },
+  stickyHeaderWash: {
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
   header: {
     height: 44,
-    paddingLeft: 18,
+    paddingLeft: 14,
     paddingRight: 8,
     flexDirection: "row",
     alignItems: "center",
     gap: 2,
   },
-  headerButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 11,
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-  },
   connectionStatus: {
     paddingTop: 10,
+    paddingHorizontal: 14,
   },
   searchField: {
-    height: 36,
-    marginTop: 6,
-    marginHorizontal: 14,
-    paddingLeft: 10,
-    paddingRight: 5,
-    borderRadius: 10,
+    height: 34,
+    marginTop: 5,
+    marginHorizontal: 12,
+    paddingLeft: 9,
+    paddingRight: 10,
+    borderRadius: 17,
+    borderWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    gap: 6,
   },
   searchInput: {
     flex: 1,
-    height: 36,
+    height: 34,
     paddingVertical: 0,
     paddingHorizontal: 0,
     fontFamily: "DMSans_400Regular",
@@ -563,8 +700,6 @@ const styles = StyleSheet.create({
   },
   threadListContent: {
     paddingHorizontal: 10,
-    paddingTop: 16,
-    paddingBottom: 16,
   },
   sectionTitle: {
     paddingHorizontal: 8,

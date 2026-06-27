@@ -4,7 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, Pressable, ScrollView, Text as RNText, View } from "react-native";
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  Text as RNText,
+  View,
+  useColorScheme,
+} from "react-native";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { useWorkspaceState } from "../../state/workspace";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -235,6 +242,7 @@ function ThreadRouteContent(
     threadId?: string | string[];
   }>();
   const [drawerVisible, setDrawerVisible] = useState(false);
+  const [headerMaterialVisible, setHeaderMaterialVisible] = useState(false);
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
   const threadId = firstRouteParam(params.threadId);
@@ -278,9 +286,20 @@ function ThreadRouteContent(
   );
 
   /* ─── Native header theming ──────────────────────────────────────── */
+  const colorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const iconColor = String(useThemeColor("--color-icon"));
   const foregroundColor = String(useThemeColor("--color-foreground"));
   const secondaryFg = String(useThemeColor("--color-foreground-secondary"));
+  const screenBackgroundColor = String(useThemeColor("--color-screen"));
+  const usesEdgeToEdgeGlassHeader = USES_NATIVE_GLASS_HEADER && !layout.usesSplitView;
+  // Compact/iPhone stacks use the edge-to-edge UIKit material seen in Messages.
+  // iPad split view keeps a clean pane header; native iPad Messages/Mail reserve
+  // the stronger glass treatment for local controls/floating elements instead.
+  const glassHeaderBlurEffect =
+    colorScheme === "dark"
+      ? ("systemUltraThinMaterialDark" as const)
+      : ("systemUltraThinMaterialLight" as const);
+  const showGlassHeaderMaterial = usesEdgeToEdgeGlassHeader && headerMaterialVisible;
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
@@ -569,27 +588,28 @@ function ThreadRouteContent(
       <Stack.Screen
         options={{
           headerShown: true,
-          headerTransparent: USES_NATIVE_GLASS_HEADER,
-          headerBlurEffect: USES_NATIVE_GLASS_HEADER ? "systemThinMaterial" : undefined,
-          headerShadowVisible: false,
-          ...(USES_NATIVE_GLASS_HEADER
+          headerTransparent: usesEdgeToEdgeGlassHeader,
+          headerBlurEffect: showGlassHeaderMaterial ? glassHeaderBlurEffect : undefined,
+          headerShadowVisible: showGlassHeaderMaterial,
+          ...(usesEdgeToEdgeGlassHeader
             ? { headerStyle: { backgroundColor: "transparent" } }
             : {
-                headerStyle: { backgroundColor: "transparent" },
+                headerStyle: { backgroundColor: screenBackgroundColor },
                 headerShadowVisible: false,
               }),
           headerTintColor: iconColor,
           headerBackVisible: !layout.usesSplitView,
           headerBackTitle: "",
-          scrollEdgeEffects: {
-            // The native header material handles the effect on iOS 27 because
-            // this virtualized list is not discoverable by the stack's native
-            // first-descendant scroll-view lookup.
-            top: USES_NATIVE_GLASS_HEADER ? "hidden" : TOP_SCROLL_EDGE_EFFECT,
-            bottom: "hidden",
-            left: "hidden",
-            right: "hidden",
-          },
+          ...(USES_NATIVE_GLASS_HEADER
+            ? {}
+            : {
+                scrollEdgeEffects: {
+                  top: TOP_SCROLL_EDGE_EFFECT,
+                  bottom: "hidden",
+                  left: "hidden",
+                  right: "hidden",
+                },
+              }),
         }}
       />
 
@@ -668,7 +688,8 @@ function ThreadRouteContent(
             threadCwd={selectedThreadCwd}
             selectedThreadQueueCount={composer.selectedThreadQueueCount}
             layoutVariant={layout.variant}
-            usesAutomaticContentInsets={USES_NATIVE_GLASS_HEADER}
+            usesAutomaticContentInsets={usesEdgeToEdgeGlassHeader}
+            onHeaderMaterialVisibilityChange={setHeaderMaterialVisible}
             onOpenDrawer={handleOpenDrawer}
             onOpenConnectionEditor={handleOpenConnectionEditor}
             onChangeDraftMessage={composer.onChangeDraftMessage}

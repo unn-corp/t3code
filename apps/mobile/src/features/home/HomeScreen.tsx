@@ -8,8 +8,9 @@ import type {
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
 import { ActivityIndicator, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import Animated, {
   Easing,
@@ -212,6 +213,9 @@ function ThreadRow(props: {
   readonly onDelete: () => void;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
+  readonly simultaneousSwipeGesture?: ComponentProps<
+    typeof ThreadSwipeable
+  >["simultaneousWithExternalGesture"];
   readonly isLast: boolean;
 }) {
   const { width: windowWidth } = useWindowDimensions();
@@ -241,6 +245,7 @@ function ThreadRow(props: {
         label: "Archive",
         onPress: props.onArchive,
       }}
+      simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
     >
       {(close) => (
@@ -336,6 +341,7 @@ function ThreadRow(props: {
 export function HomeScreen(props: HomeScreenProps) {
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
+  const homeScrollGesture = useMemo(() => Gesture.Native(), []);
   const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
 
@@ -400,104 +406,111 @@ export function HomeScreen(props: HomeScreenProps) {
 
   return (
     <View className="flex-1 bg-screen">
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        keyboardDismissMode="on-drag"
-        keyboardShouldPersistTaps="handled"
-        onScrollBeginDrag={() => openSwipeableRef.current?.close()}
-        className="flex-1"
-        contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingTop: 8,
-          paddingBottom: 24,
-          gap: 20,
-        }}
-      >
-        {!hasAnyThreads ? (
-          <View>
-            <EmptyState
-              title={emptyState.title}
-              detail={emptyState.detail}
-              actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
-              onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
-            />
-            {emptyState.loading ? (
-              <View className="absolute right-5 top-5">
-                <ActivityIndicator color={accentColor} />
-              </View>
-            ) : null}
-          </View>
-        ) : !hasResults && hasSearchQuery ? (
-          <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
-        ) : !hasResults && selectedEnvironmentLabel ? (
-          <EmptyState
-            title={`No threads in ${selectedEnvironmentLabel}`}
-            detail="Choose another environment or create a new task."
-          />
-        ) : !hasResults ? (
-          <EmptyState
-            title="No threads yet"
-            detail="Create a task to start a new coding session."
-          />
-        ) : (
-          projectGroups.map((group) => {
-            const isExpanded = expandedProjects.has(group.key);
-            const visibleThreads = isExpanded
-              ? group.threads
-              : group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
-
-            return (
-              <Animated.View
-                key={group.key}
-                collapsable={false}
-                exiting={threadRowExit}
-                layout={THREAD_LAYOUT_TRANSITION}
-                style={{ overflow: "hidden" }}
-              >
-                <ProjectGroupLabel
-                  isExpanded={isExpanded}
-                  onToggleExpand={() => toggleExpanded(group.key)}
-                  project={group.representative}
-                  title={group.title}
-                  totalThreadCount={group.threads.length}
-                />
-                <View
-                  className="overflow-hidden rounded-[20px] bg-card"
-                  style={{ borderCurve: "continuous" }}
-                >
-                  {visibleThreads.map((thread, i) => {
-                    const threadKey = `${thread.environmentId}:${thread.id}`;
-                    return (
-                      <Animated.View
-                        key={threadKey}
-                        collapsable={false}
-                        exiting={threadRowExit}
-                        layout={THREAD_LAYOUT_TRANSITION}
-                        style={{ overflow: "hidden" }}
-                      >
-                        <ThreadRow
-                          thread={thread}
-                          environmentLabel={
-                            props.savedConnectionsById[thread.environmentId]?.environmentLabel ??
-                            null
-                          }
-                          isLast={i === visibleThreads.length - 1}
-                          onArchive={() => props.onArchiveThread(thread)}
-                          onDelete={() => props.onDeleteThread(thread)}
-                          onPress={() => props.onSelectThread(thread)}
-                          onSwipeableClose={handleSwipeableClose}
-                          onSwipeableWillOpen={handleSwipeableWillOpen}
-                        />
-                      </Animated.View>
-                    );
-                  })}
+      <GestureDetector gesture={homeScrollGesture}>
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator={false}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={() => openSwipeableRef.current?.close()}
+          className="flex-1"
+          contentContainerStyle={{
+            paddingHorizontal: 16,
+            paddingTop: 8,
+            paddingBottom: 24,
+            gap: 20,
+          }}
+        >
+          {!hasAnyThreads ? (
+            <View>
+              <EmptyState
+                title={emptyState.title}
+                detail={emptyState.detail}
+                actionLabel={
+                  !props.catalogState.hasReadyEnvironment ? "Add environment" : undefined
+                }
+                onAction={
+                  !props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined
+                }
+              />
+              {emptyState.loading ? (
+                <View className="absolute right-5 top-5">
+                  <ActivityIndicator color={accentColor} />
                 </View>
-              </Animated.View>
-            );
-          })
-        )}
-      </ScrollView>
+              ) : null}
+            </View>
+          ) : !hasResults && hasSearchQuery ? (
+            <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+          ) : !hasResults && selectedEnvironmentLabel ? (
+            <EmptyState
+              title={`No threads in ${selectedEnvironmentLabel}`}
+              detail="Choose another environment or create a new task."
+            />
+          ) : !hasResults ? (
+            <EmptyState
+              title="No threads yet"
+              detail="Create a task to start a new coding session."
+            />
+          ) : (
+            projectGroups.map((group) => {
+              const isExpanded = expandedProjects.has(group.key);
+              const visibleThreads = isExpanded
+                ? group.threads
+                : group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
+
+              return (
+                <Animated.View
+                  key={group.key}
+                  collapsable={false}
+                  exiting={threadRowExit}
+                  layout={THREAD_LAYOUT_TRANSITION}
+                  style={{ overflow: "hidden" }}
+                >
+                  <ProjectGroupLabel
+                    isExpanded={isExpanded}
+                    onToggleExpand={() => toggleExpanded(group.key)}
+                    project={group.representative}
+                    title={group.title}
+                    totalThreadCount={group.threads.length}
+                  />
+                  <View
+                    className="overflow-hidden rounded-[20px] bg-card"
+                    style={{ borderCurve: "continuous" }}
+                  >
+                    {visibleThreads.map((thread, i) => {
+                      const threadKey = `${thread.environmentId}:${thread.id}`;
+                      return (
+                        <Animated.View
+                          key={threadKey}
+                          collapsable={false}
+                          exiting={threadRowExit}
+                          layout={THREAD_LAYOUT_TRANSITION}
+                          style={{ overflow: "hidden" }}
+                        >
+                          <ThreadRow
+                            thread={thread}
+                            environmentLabel={
+                              props.savedConnectionsById[thread.environmentId]?.environmentLabel ??
+                              null
+                            }
+                            isLast={i === visibleThreads.length - 1}
+                            onArchive={() => props.onArchiveThread(thread)}
+                            onDelete={() => props.onDeleteThread(thread)}
+                            onPress={() => props.onSelectThread(thread)}
+                            onSwipeableClose={handleSwipeableClose}
+                            onSwipeableWillOpen={handleSwipeableWillOpen}
+                            simultaneousSwipeGesture={homeScrollGesture}
+                          />
+                        </Animated.View>
+                      );
+                    })}
+                  </View>
+                </Animated.View>
+              );
+            })
+          )}
+        </ScrollView>
+      </GestureDetector>
       {shouldShowConnectionStatus ? (
         <View
           className="absolute left-0 right-0 items-center"

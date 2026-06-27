@@ -21,7 +21,6 @@ import Animated, {
 } from "react-native-reanimated";
 
 import {
-  constrainPrimarySidebarWidth,
   deriveFileInspectorPaneLayout,
   deriveLayout,
   deriveWorkspacePaneLayout,
@@ -36,7 +35,6 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
-import { WorkspacePaneDivider } from "./workspace-pane-divider";
 
 interface AdaptiveWorkspaceContextValue {
   readonly layout: Layout;
@@ -92,12 +90,7 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
   const pathname = usePathname();
   const router = useRouter();
   const activeRoleOwner = useRef<symbol | null>(null);
-  const primarySidebarResizeStartWidth = useRef(0);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
-  const [primarySidebarPreferredWidth, setPrimarySidebarPreferredWidth] = useState<number | null>(
-    null,
-  );
-  const [primarySidebarResizing, setPrimarySidebarResizing] = useState(false);
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
   const [supplementaryPanePreferredWidth, setSupplementaryPanePreferredWidth] = useState<
     number | null
@@ -113,18 +106,7 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
     threadId?: string | string[];
   }>();
   const baseLayout = useMemo(() => deriveLayout({ width, height }), [height, width]);
-  const layout = useMemo<Layout>(() => {
-    if (!baseLayout.usesSplitView || baseLayout.listPaneWidth === null) {
-      return baseLayout;
-    }
-    return {
-      ...baseLayout,
-      listPaneWidth: constrainPrimarySidebarWidth(
-        primarySidebarPreferredWidth ?? baseLayout.listPaneWidth,
-        width,
-      ),
-    };
-  }, [baseLayout, primarySidebarPreferredWidth, width]);
+  const layout = baseLayout;
   const fileInspector = useMemo(
     () =>
       deriveFileInspectorPaneLayout({
@@ -260,38 +242,16 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
   );
   useEffect(() => {
     const targetWidth = panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0;
-    renderedSidebarWidth.value = primarySidebarResizing
-      ? targetWidth
-      : withTiming(targetWidth, {
-          duration: panes.primarySidebarVisible ? 220 : 160,
-          easing: panes.primarySidebarVisible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
-          reduceMotion: ReduceMotion.System,
-        });
-  }, [
-    layout.listPaneWidth,
-    panes.primarySidebarVisible,
-    primarySidebarResizing,
-    renderedSidebarWidth,
-  ]);
+    renderedSidebarWidth.value = withTiming(targetWidth, {
+      duration: panes.primarySidebarVisible ? 220 : 160,
+      easing: panes.primarySidebarVisible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+      reduceMotion: ReduceMotion.System,
+    });
+  }, [layout.listPaneWidth, panes.primarySidebarVisible, renderedSidebarWidth]);
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     opacity: Math.min(1, renderedSidebarWidth.value / 80),
     width: renderedSidebarWidth.value,
   }));
-  const beginPrimarySidebarResize = useCallback(() => {
-    primarySidebarResizeStartWidth.current = layout.listPaneWidth ?? 0;
-    setPrimarySidebarResizing(true);
-  }, [layout.listPaneWidth]);
-  const resizePrimarySidebarBy = useCallback(
-    (delta: number) => {
-      setPrimarySidebarPreferredWidth(
-        constrainPrimarySidebarWidth(primarySidebarResizeStartWidth.current + delta, width),
-      );
-    },
-    [width],
-  );
-  const endPrimarySidebarResize = useCallback(() => {
-    setPrimarySidebarResizing(false);
-  }, []);
 
   const handleSelectThread = useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -346,16 +306,6 @@ export function AdaptiveWorkspaceLayout(props: { readonly children: ReactNode })
                 onStartNewTask={handleStartNewTask}
               />
             </Animated.View>
-          ) : null}
-          {layout.usesSplitView && panes.primarySidebarVisible ? (
-            <WorkspacePaneDivider
-              accessibilityLabel="Resize thread sidebar"
-              currentWidth={layout.listPaneWidth ?? 0}
-              resizeDirection={1}
-              onResizeStart={beginPrimarySidebarResize}
-              onResizeBy={resizePrimarySidebarBy}
-              onResizeEnd={endPrimarySidebarResize}
-            />
           ) : null}
           <View collapsable={false} style={{ flex: 1 }}>
             {props.children}

@@ -70,6 +70,7 @@ export interface ThreadDetailScreenProps {
   readonly serverConfig: T3ServerConfig | null;
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
+  readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onOpenDrawer: () => void;
   readonly onOpenConnectionEditor: () => void;
   readonly onChangeDraftMessage: (value: string) => void;
@@ -389,6 +390,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               contentMaxWidth={contentMaxWidth}
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
+              onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
               skills={selectedProviderSkills}
             />
           </View>

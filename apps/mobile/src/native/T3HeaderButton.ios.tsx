@@ -3,7 +3,11 @@ import type { NativeSyntheticEvent, StyleProp, ViewProps, ViewStyle } from "reac
 
 interface NativeHeaderButtonProps extends ViewProps {
   readonly label: string;
-  readonly systemImage: "gearshape" | "square.and.pencil";
+  readonly systemImage:
+    | "gearshape"
+    | "line.3.horizontal.decrease.circle"
+    | "line.3.horizontal.decrease.circle.fill"
+    | "square.and.pencil";
   readonly onTriggered: (event: NativeSyntheticEvent<Record<string, never>>) => void;
 }
 
