@@ -64,7 +64,16 @@ export default function HomeRouteScreen() {
             headerTitle: "",
           }}
         />
-        <WorkspaceSidebarToolbar />
+        <WorkspaceSidebarToolbar
+          afterSidebarButton={
+            <Stack.Toolbar.Button
+              accessibilityLabel="Start new task"
+              icon="square.and.pencil"
+              onPress={() => router.push("/new")}
+              separateBackground
+            />
+          }
+        />
         <WorkspaceEmptyDetail />
       </>
     );
