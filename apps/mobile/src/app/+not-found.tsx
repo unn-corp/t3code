@@ -7,6 +7,14 @@ import { AppText as Text } from "../components/AppText";
 export default function NotFoundRoute() {
   const screenBgStyle = StyleSheet.flatten(useResolveClassNames("bg-screen"));
   const primaryBgStyle = StyleSheet.flatten(useResolveClassNames("bg-primary"));
+  const returnHomeButtonStyle = StyleSheet.flatten([
+    {
+      borderRadius: 999,
+      paddingHorizontal: 20,
+      paddingVertical: 14,
+    },
+    primaryBgStyle,
+  ]);
 
   return (
     <ScrollView
@@ -25,16 +33,7 @@ export default function NotFoundRoute() {
         Route not found
       </Text>
       <Link href="/" asChild>
-        <Pressable
-          style={[
-            {
-              borderRadius: 999,
-              paddingHorizontal: 20,
-              paddingVertical: 14,
-            },
-            primaryBgStyle,
-          ]}
-        >
+        <Pressable style={returnHomeButtonStyle}>
           <Text className="text-base font-t3-bold text-primary-foreground">Return home</Text>
         </Pressable>
       </Link>
