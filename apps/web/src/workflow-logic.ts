@@ -335,6 +335,7 @@ export function deriveWorkflowRuns(
   options?: { readonly sessionActive?: boolean | undefined },
 ): WorkflowRun[] {
   const ordered = [...activities].toSorted(compareWorkflowActivityOrder);
+  const workflowTaskIds = collectWorkflowTaskIds(activities);
   const runs = new Map<string, MutableWorkflowRun>();
 
   const ensureRun = (taskId: string, activity: OrchestrationThreadActivity): MutableWorkflowRun => {
@@ -439,10 +440,15 @@ export function deriveWorkflowRuns(
         break;
       }
       case "task.completed": {
-        const run = runs.get(taskId);
-        if (!run) {
+        // Order-robust terminal handling: a completion for a known workflow
+        // task creates the run if its task.started has not been applied yet
+        // (adopted runs can carry inverted provider sequences across CLI
+        // restarts); the later-applied started only fills metadata and can
+        // never resurrect a terminal status.
+        if (!runs.has(taskId) && !workflowTaskIds.has(taskId)) {
           break;
         }
+        const run = ensureRun(taskId, activity);
         run.revision += 1;
         run.updatedAt = activity.createdAt;
         run.status =

@@ -1,4 +1,9 @@
-import { EventId, type OrchestrationThreadActivity, TurnId } from "@t3tools/contracts";
+import {
+  NonNegativeInt,
+  EventId,
+  type OrchestrationThreadActivity,
+  TurnId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -20,6 +25,7 @@ function buildActivity(overrides: {
   tone?: OrchestrationThreadActivity["tone"];
   payload?: Record<string, unknown>;
   turnId?: string;
+  sequence?: number;
 }): OrchestrationThreadActivity {
   return {
     id: EventId.make(overrides.id ?? `activity-${nextActivityId++}`),
@@ -30,6 +36,9 @@ function buildActivity(overrides: {
     tone: overrides.tone ?? "info",
     payload: overrides.payload ?? {},
     turnId: overrides.turnId ? TurnId.make(overrides.turnId) : null,
+    ...(overrides.sequence !== undefined
+      ? { sequence: NonNegativeInt.make(overrides.sequence) }
+      : {}),
   };
 }
 
@@ -274,6 +283,23 @@ describe("deriveWorkflowRuns", () => {
     expect(agents.map((agent) => agent.status)).toEqual(["done", "error", "error"]);
     expect(agents[1]?.error).toBe("Interrupted before completion");
     expect(run?.agentCounts).toEqual({ total: 3, queued: 0, running: 0, done: 1, error: 2 });
+  });
+
+  it("applies a completion even when it sorts before its task.started", () => {
+    const completed = buildActivity({
+      id: "completed-task-1",
+      kind: "task.completed",
+      createdAt: "2026-02-23T00:00:00.500Z",
+      sequence: 1,
+      payload: { taskId: "task-1", status: "completed", detail: "done" },
+    });
+    // Same-timestamp + inverted sequence (adopted runs can reset provider
+    // sequence): the started activity sorts after the completion.
+    const started = { ...workflowStartedActivity("task-1"), sequence: NonNegativeInt.make(5) };
+    const runs = deriveWorkflowRuns([completed, started]);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("completed");
+    expect(runs[0]?.name).toBe("spec");
   });
 
   it("keeps a running run untouched while the session is active", () => {
