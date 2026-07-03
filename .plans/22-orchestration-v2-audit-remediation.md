@@ -27,7 +27,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [ ] 9. Route shared-codex-session native logs to the correct thread's file
 - [ ] 10. Coalesce streaming-delta event persistence (~2800x amplification)
 - [x] 11. Assistant text segments merged without separator (fixed in worktree — add regression fixture)
-- [ ] 12. OpenCode `file_search` items drop error/output
+- [x] 12. OpenCode `file_search` items drop error/output
 - [ ] 13. Low-severity backlog (see section)
 - [ ] 14. Cursor SDK unhandled `write EPIPE` crashes the backend child (recurring, post-SDK-bump) — reported upstream to Cursor, on hold
 - [x] 15. Stale Claude session: first message after idle gap always fails, retry succeeds
@@ -414,7 +414,11 @@ sqlite3 -readonly ~/.t3/userdata-v2/state.sqlite \
    WHERE turn_item_id='turn-item:provider:opencode:native-item:prt_f15692f30001qL66As1xsUCQXc';"
 ```
 
-- [ ] Status: not started
+- [x] Status: FIXED — file_search contract gains optional output/error; OpenCode adapter maps
+      part.state.output/error by terminal status. App-verified with a real OpenCode agent
+      (successful read → output populated; missing file → status failed with the provider's
+      "File not found: ..." error preserved). Grok/ACP file_search already carries
+      results[].preview; its redaction gap stays in the low backlog.
 
 ## 13. Low-severity backlog
 
