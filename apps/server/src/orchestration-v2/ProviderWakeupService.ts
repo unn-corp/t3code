@@ -160,6 +160,11 @@ const dispatchWakeup = (orchestrator: OrchestratorV2Shape, input: ProviderWakeup
     Effect.asVoid,
   );
 
+type WakeupThreadState = {
+  readonly inFlight: true;
+  readonly followUp: ProviderWakeupRequest | null;
+};
+
 export const runWakeupDispatcher: Effect.Effect<
   never,
   never,
@@ -171,33 +176,45 @@ export const runWakeupDispatcher: Effect.Effect<
     // Wakeups dispatch concurrently, one in flight per thread: quiescence
     // waiting for one busy thread must not head-of-line-block every other
     // thread's wakeup (which could be superseded while it waits). A wakeup
-    // arriving while its thread already has one in flight is coalesced away —
-    // the adapter buffers all pending activity behind a single attach.
-    const inFlightThreads = yield* Ref.make(new Set<ThreadId>());
+    // arriving while its thread already has one in flight parks in that
+    // thread's follow-up slot (keep-latest — the adapter buffers all pending
+    // activity behind a single attach, so intermediate requests are
+    // redundant) and dispatches after the in-flight attempt finishes, even
+    // when that attempt gave up or failed.
+    const threadStates = yield* Ref.make(new Map<ThreadId, WakeupThreadState>());
+
+    const drainThread = (input: ProviderWakeupRequest): Effect.Effect<void> =>
+      dispatchWakeup(orchestrator, input).pipe(
+        Effect.andThen(
+          Ref.modify(threadStates, (current) => {
+            const state = current.get(input.threadId);
+            const next = new Map(current);
+            if (state?.followUp != null) {
+              next.set(input.threadId, { inFlight: true, followUp: null });
+              return [state.followUp, next] as const;
+            }
+            next.delete(input.threadId);
+            return [null, next] as const;
+          }),
+        ),
+        Effect.flatMap((followUp) => (followUp === null ? Effect.void : drainThread(followUp))),
+      );
+
     return yield* relay.take.pipe(
       Effect.flatMap((input) =>
-        Ref.modify(inFlightThreads, (current) => {
+        Ref.modify(threadStates, (current) => {
+          const next = new Map(current);
           if (current.has(input.threadId)) {
-            return [false, current] as const;
+            next.set(input.threadId, { inFlight: true, followUp: input });
+            return [false, next] as const;
           }
-          const next = new Set(current);
-          next.add(input.threadId);
+          next.set(input.threadId, { inFlight: true, followUp: null });
           return [true, next] as const;
         }).pipe(
           Effect.flatMap((claimed) =>
             claimed
-              ? dispatchWakeup(orchestrator, input).pipe(
-                  Effect.ensuring(
-                    Ref.update(inFlightThreads, (current) => {
-                      const next = new Set(current);
-                      next.delete(input.threadId);
-                      return next;
-                    }),
-                  ),
-                  Effect.forkScoped,
-                  Effect.asVoid,
-                )
-              : Effect.logInfo("orchestration-v2.provider-wakeup.coalesced", {
+              ? drainThread(input).pipe(Effect.forkScoped, Effect.asVoid)
+              : Effect.logInfo("orchestration-v2.provider-wakeup.follow-up-parked", {
                   threadId: input.threadId,
                   providerThreadId: input.providerThreadId,
                   origin: input.origin,
