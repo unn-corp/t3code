@@ -476,9 +476,15 @@ export const RootStack = createNativeStackNavigator({
       options: {
         gestureEnabled: true,
         headerShown: false,
-        presentation: "formSheet",
-        sheetAllowedDetents: [0.92],
-        sheetGrabberVisible: true,
+        // Android pushes the flow as a regular full page — the draft should
+        // read like a thread that just doesn't exist yet; iOS keeps the sheet.
+        ...(Platform.OS === "android"
+          ? { presentation: "card" as const }
+          : {
+              presentation: "formSheet" as const,
+              sheetAllowedDetents: [0.92],
+              sheetGrabberVisible: true,
+            }),
       },
     }),
     NotFound: createNativeStackScreen({
