@@ -52,6 +52,10 @@ export function buildModelPickerSearchText(model: ModelPickerSearchableModel): s
   );
 }
 
+export function normalizeModelPickerSearchQuery(query: string): string {
+  return normalizeSearchQuery(query);
+}
+
 export function scoreModelPickerSearch(
   model: ModelPickerSearchableModel,
   query: string,

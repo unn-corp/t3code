@@ -5,12 +5,27 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import {
+  memo,
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type ChangeEvent,
+  type KeyboardEvent,
+  type RefObject,
+} from "react";
 import { SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
-import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
+import {
+  buildModelPickerSearchText,
+  normalizeModelPickerSearchQuery,
+  scoreModelPickerSearch,
+} from "./modelPickerSearch";
 import { Combobox, ComboboxEmpty, ComboboxInput, ComboboxListVirtualized } from "../ui/combobox";
 import { ModelEsque } from "./providerIconUtils";
 import {
@@ -42,6 +57,72 @@ type ModelPickerItem = {
 };
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
+
+const ModelPickerSearchInput = memo(function ModelPickerSearchInput(props: {
+  inputRef: RefObject<HTMLInputElement | null>;
+  onNormalizedSearchQueryChange: (query: string) => void;
+  onRequestClose?: () => void;
+  onSelectHighlightedModel: () => boolean;
+}) {
+  const { inputRef, onNormalizedSearchQueryChange, onRequestClose, onSelectHighlightedModel } =
+    props;
+  const [rawSearchQuery, setRawSearchQuery] = useState("");
+  const publishedSearchQueryRef = useRef(normalizeModelPickerSearchQuery(rawSearchQuery));
+
+  const handleSearchChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const nextRawSearchQuery = event.target.value;
+      setRawSearchQuery(nextRawSearchQuery);
+
+      const nextSearchQuery = normalizeModelPickerSearchQuery(nextRawSearchQuery);
+      if (nextSearchQuery === publishedSearchQueryRef.current) {
+        return;
+      }
+      publishedSearchQueryRef.current = nextSearchQuery;
+      onNormalizedSearchQueryChange(nextSearchQuery);
+    },
+    [onNormalizedSearchQueryChange],
+  );
+
+  const handleSearchKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onRequestClose?.();
+        return;
+      }
+      if (event.key === "Enter" && onSelectHighlightedModel()) {
+        (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      event.stopPropagation();
+    },
+    [onRequestClose, onSelectHighlightedModel],
+  );
+
+  return (
+    <ComboboxInput
+      ref={inputRef}
+      className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
+      inputClassName="rounded-none bg-transparent text-sm"
+      placeholder="Search models..."
+      showTrigger={false}
+      startAddon={
+        <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/55" />
+      }
+      value={rawSearchQuery}
+      onChange={handleSearchChange}
+      onKeyDown={handleSearchKeyDown}
+      onMouseDown={(event) => event.stopPropagation()}
+      onTouchStart={(event) => event.stopPropagation()}
+      size="sm"
+      unstyled
+    />
+  );
+});
 
 // Split a `${instanceId}:${slug}` combobox key back into its pieces. Slugs
 // can contain colons (e.g. some vendor model ids), so we only split on the
@@ -221,7 +302,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   }, [modelOptionsByInstance, entryByInstanceId, readyInstanceSet]);
 
   const isLocked = props.lockedProvider !== null;
-  const isSearching = searchQuery.trim().length > 0;
+  const isSearching = searchQuery.length > 0;
   const lockedDisabledInstanceIds = useMemo(() => {
     if (!isLocked) {
       return undefined;
@@ -261,7 +342,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     let result = flatModels;
 
     // Apply tokenized fuzzy search across the combined provider/model search fields.
-    if (searchQuery.trim()) {
+    if (searchQuery) {
       const rankedMatches = result
         .map((model) => ({
           model,
@@ -385,6 +466,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     },
     [entryByInstanceId, getModelDisabledReason, modelOptionsByInstance, onInstanceModelChange],
   );
+  const selectHighlightedModel = useCallback((): boolean => {
+    const highlightedModelKey = highlightedModelKeyRef.current;
+    if (!highlightedModelKey) {
+      return false;
+    }
+    const { instanceId, slug } = splitInstanceModelKey(highlightedModelKey);
+    handleModelSelect(slug, instanceId);
+    return true;
+  }, [handleModelSelect]);
 
   const toggleFavorite = useCallback(
     (instanceId: ProviderInstanceId, model: string) => {
@@ -577,42 +667,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             {/* Search bar */}
             <div className="px-4 pt-2.5">
               <div className="-translate-y-px border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
-                <ComboboxInput
-                  ref={searchInputRef}
-                  className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
-                  inputClassName="rounded-none bg-transparent text-sm"
-                  placeholder="Search models..."
-                  showTrigger={false}
-                  startAddon={
-                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/55" />
-                  }
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      props.onRequestClose?.();
-                      return;
-                    }
-                    if (e.key === "Enter" && highlightedModelKeyRef.current) {
-                      (
-                        e as typeof e & { preventBaseUIHandler?: () => void }
-                      ).preventBaseUIHandler?.();
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const { instanceId, slug } = splitInstanceModelKey(
-                        highlightedModelKeyRef.current,
-                      );
-                      handleModelSelect(slug, instanceId);
-                      return;
-                    }
-                    e.stopPropagation();
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onTouchStart={(e) => e.stopPropagation()}
-                  size="sm"
-                  unstyled
+                <ModelPickerSearchInput
+                  inputRef={searchInputRef}
+                  onNormalizedSearchQueryChange={setSearchQuery}
+                  onRequestClose={props.onRequestClose}
+                  onSelectHighlightedModel={selectHighlightedModel}
                 />
               </div>
             </div>
