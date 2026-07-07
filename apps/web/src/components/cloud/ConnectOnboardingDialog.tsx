@@ -4,9 +4,9 @@ import { CheckIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  CONNECT_ONBOARDING_STORAGE_KEY,
-  ConnectOnboardingStateSchema,
-  EMPTY_CONNECT_ONBOARDING_STATE,
+  CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
+  ConnectOnboardingOptOutSchema,
+  EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
 } from "~/cloud/connectOnboarding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
@@ -16,6 +16,7 @@ import { cn } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import {
   Dialog,
   DialogDescription,
@@ -29,12 +30,13 @@ import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 
 /**
- * Post-sign-in onboarding wizard for T3 Connect. Opens once per account (per
- * browser) after the user is signed in: first prompts to publish this
+ * Post-sign-in onboarding wizard for T3 Connect. Opens on every in-session
+ * sign-in — sign-out removes the connected relay environments, so each new
+ * session starts with no devices to reach. It first prompts to publish this
  * environment (managed tunnel + agent activity, both defaulting on) when the
  * current session is authorized to manage the relay link, then lists the
  * account's T3 Connect environments so every device can be connected right
- * away. Dismissing the dialog counts as completion — it never nags twice.
+ * away. A cold load with a restored session does not count as a sign-in.
  */
 export function ConnectOnboardingDialog() {
   if (!hasCloudPublicConfig()) return null;
@@ -46,10 +48,10 @@ type OnboardingStep = "publish" | "devices";
 
 function ConfiguredConnectOnboardingDialog() {
   const { isLoaded, isSignedIn, userId } = useAuth();
-  const [onboardingState, setOnboardingState] = useLocalStorage(
-    CONNECT_ONBOARDING_STORAGE_KEY,
-    EMPTY_CONNECT_ONBOARDING_STATE,
-    ConnectOnboardingStateSchema,
+  const [optOutState, setOptOutState] = useLocalStorage(
+    CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
+    EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
+    ConnectOnboardingOptOutSchema,
   );
 
   const desktopBridge = window.desktopBridge;
@@ -75,34 +77,54 @@ function ConfiguredConnectOnboardingDialog() {
     ? ["publish", "devices"]
     : ["devices"];
 
+  const [requestedAccount, setRequestedAccount] = useState<string | null>(null);
   const [openForAccount, setOpenForAccount] = useState<string | null>(null);
   const [step, setStep] = useState<OnboardingStep>("devices");
   const [exposeEnvironment, setExposeEnvironment] = useState(true);
   const [publishAgentActivity, setPublishAgentActivity] = useState(true);
+  const [dontShowAgain, setDontShowAgain] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const prefilledFromLinkStateRef = useRef(false);
+  const observedAccountRef = useRef<string | null | undefined>(undefined);
 
-  const completedAccounts = onboardingState.completedAccounts;
+  const optOutAccounts = optOutState.optOutAccounts;
 
+  // Every sign-in that completes during this session requests the wizard. A
+  // cold load observes undefined → account and must not re-prompt — only a
+  // null → account transition is a sign-in.
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || !userId) return;
-    if (openForAccount !== null) return;
-    if (completedAccounts.includes(userId)) return;
+    if (!isLoaded) return;
+    const previousAccount = observedAccountRef.current;
+    const nextAccount = isSignedIn && userId ? userId : null;
+    observedAccountRef.current = nextAccount;
+    if (previousAccount === null && nextAccount !== null) {
+      setRequestedAccount(nextAccount);
+    }
+  }, [isLoaded, isSignedIn, userId]);
+
+  // Open once the session scopes resolve so the step set is stable. Accounts
+  // that chose "Don't show this again" are skipped.
+  useEffect(() => {
+    if (requestedAccount === null || openForAccount !== null) return;
+    if (optOutAccounts.includes(requestedAccount)) {
+      setRequestedAccount(null);
+      return;
+    }
     if (!sessionScopesKnown) return;
+    setRequestedAccount(null);
     prefilledFromLinkStateRef.current = false;
     setExposeEnvironment(true);
     setPublishAgentActivity(true);
+    setDontShowAgain(false);
     setStep(canManageRelay && controller.linkState.target !== null ? "publish" : "devices");
-    setOpenForAccount(userId);
+    setOpenForAccount(requestedAccount);
   }, [
     canManageRelay,
-    completedAccounts,
     controller.linkState.target,
-    isLoaded,
-    isSignedIn,
     openForAccount,
+    optOutAccounts,
+    requestedAccount,
     sessionScopesKnown,
-    userId,
   ]);
 
   // Signing out (or switching accounts) mid-wizard invalidates everything the
@@ -111,7 +133,10 @@ function ConfiguredConnectOnboardingDialog() {
     if (openForAccount !== null && (!isSignedIn || userId !== openForAccount)) {
       setOpenForAccount(null);
     }
-  }, [isSignedIn, openForAccount, userId]);
+    if (requestedAccount !== null && (!isSignedIn || userId !== requestedAccount)) {
+      setRequestedAccount(null);
+    }
+  }, [isSignedIn, openForAccount, requestedAccount, userId]);
 
   // Toggles default on, but an environment that is already linked should show
   // its actual configuration instead of silently proposing to rewrite it.
@@ -130,12 +155,13 @@ function ConfiguredConnectOnboardingDialog() {
   const complete = () => {
     const account = openForAccount;
     setOpenForAccount(null);
-    if (!account) return;
-    setOnboardingState((state) =>
-      state.completedAccounts.includes(account)
-        ? state
-        : { completedAccounts: [...state.completedAccounts, account] },
-    );
+    if (account !== null && dontShowAgain) {
+      setOptOutState((state) =>
+        state.optOutAccounts.includes(account)
+          ? state
+          : { optOutAccounts: [...state.optOutAccounts, account] },
+      );
+    }
   };
 
   const applyPublishSelection = async () => {
@@ -194,22 +220,33 @@ function ConfiguredConnectOnboardingDialog() {
             <DevicesStep />
           )}
         </DialogPanel>
-        <DialogFooter variant="bare">
-          {step === "publish" ? (
-            <>
-              <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
-                Not now
-              </Button>
-              <Button
-                disabled={isApplying || (controller.linkState.isPending && linkStateData === null)}
-                onClick={() => void applyPublishSelection()}
-              >
-                {isApplying ? "Enabling…" : "Continue"}
-              </Button>
-            </>
-          ) : (
-            <Button onClick={complete}>Done</Button>
-          )}
+        <DialogFooter variant="bare" className="sm:justify-between">
+          <label className="flex cursor-pointer items-center gap-2 self-start text-xs text-muted-foreground sm:self-center">
+            <Checkbox
+              checked={dontShowAgain}
+              onCheckedChange={(checked) => setDontShowAgain(checked === true)}
+            />
+            Don&apos;t show this again
+          </label>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            {step === "publish" ? (
+              <>
+                <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
+                  Not now
+                </Button>
+                <Button
+                  disabled={
+                    isApplying || (controller.linkState.isPending && linkStateData === null)
+                  }
+                  onClick={() => void applyPublishSelection()}
+                >
+                  {isApplying ? "Enabling…" : "Continue"}
+                </Button>
+              </>
+            ) : (
+              <Button onClick={complete}>Done</Button>
+            )}
+          </div>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

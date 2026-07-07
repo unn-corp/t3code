@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import {
-  AuthRelayWriteScope,
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpConflictError,
@@ -76,13 +75,6 @@ const isEnvironmentCloudApiError = Schema.is(
 
 const MANAGED_ENDPOINT_PROVIDER_KIND =
   "cloudflare_tunnel" satisfies RelayManagedEndpointProviderKind;
-
-// "publish_only" links the environment to the relay for agent-activity
-// publishing alone: no managed tunnel is provisioned (mirrors the web client's
-// CloudLinkMode).
-export type CloudLinkMode = "managed" | "publish_only";
-
-const PUBLISH_ONLY_PROVIDER_KIND = "manual" satisfies RelayManagedEndpointProviderKind;
 
 function cloudEnvironmentLinkError(message: string) {
   return (cause: unknown) => {
@@ -267,7 +259,6 @@ function ensureConnectEndpointMatchesEnvironment(input: {
 export function linkEnvironmentToCloud(input: {
   readonly connection: SavedRemoteConnection;
   readonly clerkToken: string;
-  readonly mode?: CloudLinkMode;
 }): Effect.Effect<
   void,
   CloudEnvironmentLinkError,
@@ -280,10 +271,6 @@ export function linkEnvironmentToCloud(input: {
       });
     }
     const localBearerToken = input.connection.bearerToken;
-    const managedTunnelsEnabled = (input.mode ?? "managed") === "managed";
-    const providerKind = managedTunnelsEnabled
-      ? MANAGED_ENDPOINT_PROVIDER_KIND
-      : PUBLISH_ONLY_PROVIDER_KIND;
     const relayUrl = yield* requireRelayUrl();
     const relayClient = yield* ManagedRelay.ManagedRelayClient;
     const deviceId = yield* Effect.tryPromise({
@@ -301,7 +288,7 @@ export function linkEnvironmentToCloud(input: {
         payload: {
           notificationsEnabled: true,
           liveActivitiesEnabled,
-          managedTunnelsEnabled,
+          managedTunnelsEnabled: true,
         },
       })
       .pipe(
@@ -319,7 +306,7 @@ export function linkEnvironmentToCloud(input: {
           endpoint: {
             httpBaseUrl: input.connection.httpBaseUrl,
             wsBaseUrl: input.connection.wsBaseUrl,
-            providerKind,
+            providerKind: MANAGED_ENDPOINT_PROVIDER_KIND,
           },
           origin: endpointOrigin(input.connection.httpBaseUrl),
         },
@@ -333,7 +320,7 @@ export function linkEnvironmentToCloud(input: {
           proof,
           notificationsEnabled: true,
           liveActivitiesEnabled,
-          managedTunnelsEnabled,
+          managedTunnelsEnabled: true,
         },
       })
       .pipe(
@@ -341,7 +328,7 @@ export function linkEnvironmentToCloud(input: {
       );
     yield* ensureLinkedEnvironmentMatches({
       expectedEnvironmentId: input.connection.environmentId,
-      expectedProviderKind: providerKind,
+      expectedProviderKind: MANAGED_ENDPOINT_PROVIDER_KIND,
       link,
     });
 
@@ -359,91 +346,6 @@ export function linkEnvironmentToCloud(input: {
       })
       .pipe(
         Effect.mapError(cloudEnvironmentLinkError("Could not configure environment relay access.")),
-      );
-  });
-}
-
-function requireBearerToken(
-  connection: SavedRemoteConnection,
-): Effect.Effect<string, CloudEnvironmentLinkError> {
-  return connection.bearerToken
-    ? Effect.succeed(connection.bearerToken)
-    : Effect.fail(
-        new CloudEnvironmentLinkError({
-          message: "Only a locally paired bearer connection can publish over T3 Connect.",
-        }),
-      );
-}
-
-export interface EnvironmentConnectPublishState {
-  /**
-   * Whether the connection's session holds relay:write. `null` when the
-   * environment did not report session scopes (older servers) — callers should
-   * attempt publishing and surface the server's denial.
-   */
-  readonly canPublish: boolean | null;
-  readonly linked: boolean;
-  readonly managedTunnelActive: boolean;
-  readonly publishAgentActivity: boolean;
-}
-
-/**
- * Reads the environment-side publish authorization (session scopes) and relay
- * link state for a locally paired bearer connection.
- */
-export function getEnvironmentConnectPublishState(input: {
-  readonly connection: SavedRemoteConnection;
-}): Effect.Effect<
-  EnvironmentConnectPublishState,
-  CloudEnvironmentLinkError,
-  HttpClient.HttpClient
-> {
-  return Effect.gen(function* () {
-    const localBearerToken = yield* requireBearerToken(input.connection);
-    const environmentClient = yield* makeEnvironmentHttpApiClient(input.connection.httpBaseUrl);
-    const headers = { authorization: `Bearer ${localBearerToken}` };
-    const session = yield* environmentClient.auth
-      .session({ headers })
-      .pipe(Effect.mapError(cloudEnvironmentLinkError("Could not read the environment session.")));
-    const linkState = yield* environmentClient.connect
-      .linkState({ headers })
-      .pipe(
-        Effect.mapError(cloudEnvironmentLinkError("Could not read the environment link state.")),
-      );
-    return {
-      canPublish: !session.authenticated
-        ? false
-        : session.scopes === undefined
-          ? null
-          : session.scopes.includes(AuthRelayWriteScope),
-      linked: linkState.linked,
-      managedTunnelActive: linkState.managedTunnelActive ?? linkState.linked,
-      publishAgentActivity: linkState.publishAgentActivity,
-    };
-  });
-}
-
-/**
- * Sets the environment-server-side "publish agent activity" preference. The
- * link flow does not touch this secret, so clients opting into activity
- * publishing must call it explicitly.
- */
-export function setEnvironmentPublishAgentActivity(input: {
-  readonly connection: SavedRemoteConnection;
-  readonly publishAgentActivity: boolean;
-}): Effect.Effect<void, CloudEnvironmentLinkError, HttpClient.HttpClient> {
-  return Effect.gen(function* () {
-    const localBearerToken = yield* requireBearerToken(input.connection);
-    const environmentClient = yield* makeEnvironmentHttpApiClient(input.connection.httpBaseUrl);
-    yield* environmentClient.connect
-      .preferences({
-        headers: { authorization: `Bearer ${localBearerToken}` },
-        payload: { publishAgentActivity: input.publishAgentActivity },
-      })
-      .pipe(
-        Effect.mapError(
-          cloudEnvironmentLinkError("Could not update the environment publish preference."),
-        ),
       );
   });
 }

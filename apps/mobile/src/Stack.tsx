@@ -18,7 +18,7 @@ import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRo
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ClerkSettingsSheetDetentProvider } from "./features/cloud/ClerkSettingsSheetDetent";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
-import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboarding";
+import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
@@ -423,7 +423,7 @@ export const RootStack = createNativeStackNavigator({
       options: {
         gestureEnabled: true,
         presentation: "formSheet",
-        sheetAllowedDetents: [0.75, 0.95],
+        sheetAllowedDetents: [0.6, 0.95],
         sheetGrabberVisible: true,
       },
     }),

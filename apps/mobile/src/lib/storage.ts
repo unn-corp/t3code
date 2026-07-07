@@ -69,8 +69,8 @@ export interface Preferences {
   /** Code/diff font size override; null/absent means derived from baseFontSize. */
   readonly codeFontSize?: number | null;
   readonly codeWordBreak?: boolean;
-  /** Cloud account ids that already saw the T3 Connect onboarding sheet. */
-  readonly connectOnboardingCompletedAccounts?: ReadonlyArray<string>;
+  /** Cloud account ids that opted out of the T3 Connect onboarding sheet. */
+  readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
 }
 
 async function readStorageItem(key: MobileStorageKeyValue): Promise<string | null> {
@@ -169,7 +169,7 @@ export async function loadPreferences(): Promise<Preferences> {
     markdownFontSize?: number;
     codeFontSize?: number | null;
     codeWordBreak?: boolean;
-    connectOnboardingCompletedAccounts?: ReadonlyArray<string>;
+    connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -190,11 +190,10 @@ export async function loadPreferences(): Promise<Preferences> {
   if (typeof parsed.codeWordBreak === "boolean") {
     preferences.codeWordBreak = parsed.codeWordBreak;
   }
-  if (Array.isArray(parsed.connectOnboardingCompletedAccounts)) {
-    preferences.connectOnboardingCompletedAccounts =
-      parsed.connectOnboardingCompletedAccounts.filter(
-        (account): account is string => typeof account === "string",
-      );
+  if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
+    preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
+      (account): account is string => typeof account === "string",
+    );
   }
 
   return preferences;
