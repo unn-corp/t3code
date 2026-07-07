@@ -7,8 +7,11 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 
 import * as TraceDiagnostics from "./TraceDiagnostics.ts";
+
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
 function ns(ms: number): string {
   return String(BigInt(ms) * 1_000_000n);
@@ -23,7 +26,7 @@ function record(input: {
   readonly exit?: { readonly _tag: "Success" | "Failure" | "Interrupted"; readonly cause?: string };
   readonly events?: ReadonlyArray<unknown>;
 }) {
-  return JSON.stringify({
+  return encodeUnknownJsonString({
     type: "effect-span",
     name: input.name,
     traceId: input.traceId,
@@ -159,7 +162,7 @@ describe("TraceDiagnostics", () => {
         files: [
           {
             path: "/tmp/server.trace.ndjson",
-            text: JSON.stringify({
+            text: encodeUnknownJsonString({
               name: "server.noStart",
               traceId: "trace-no-start",
               spanId: "span-no-start",
