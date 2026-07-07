@@ -1,14 +1,14 @@
 import {
   EnvironmentId,
   OrchestrationV2ShellSnapshot,
-  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadDetailSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 2 as const;
+export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
 
 export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
@@ -20,7 +20,7 @@ export const StoredOrchestrationThreadSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   threadId: ThreadId,
-  thread: OrchestrationV2ThreadProjection,
+  snapshot: OrchestrationV2ThreadDetailSnapshot,
 });
 
 /** Invalid orchestration caches are disposable and must never block live synchronization. */

@@ -271,6 +271,9 @@ export type OrchestrationShellStreamEvent = typeof OrchestrationShellStreamEvent
 
 export const OrchestrationShellStreamItem = Schema.Union([
   Schema.Struct({
+    kind: Schema.Literal("synchronized"),
+  }),
+  Schema.Struct({
     kind: Schema.Literal("snapshot"),
     snapshot: OrchestrationShellSnapshot,
   }),
@@ -366,6 +369,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 
@@ -904,6 +908,9 @@ export const OrchestrationEvent = Schema.Union([
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 
 export const OrchestrationThreadStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("synchronized"),
+  }),
   Schema.Struct({
     kind: Schema.Literal("snapshot"),
     snapshot: OrchestrationThreadDetailSnapshot,

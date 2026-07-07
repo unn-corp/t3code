@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -178,6 +179,7 @@ describe("AcpAdapterV2", () => {
 
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -235,6 +237,7 @@ describe("AcpAdapterV2", () => {
       );
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -283,6 +286,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -385,6 +389,7 @@ describe("AcpAdapterV2", () => {
       );
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -471,6 +476,7 @@ describe("AcpAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("acp-test");
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,

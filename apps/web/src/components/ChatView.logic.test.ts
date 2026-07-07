@@ -1,4 +1,11 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, RunId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  RunId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Thread } from "../types";
@@ -402,6 +409,36 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
           status: "running",
           activeRunId: runningTurn.runId,
         },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("acknowledges a steering message projected onto the current running run", () => {
+    const runningRun = {
+      ...completedTurn,
+      status: "running" as const,
+      completedAt: null,
+    };
+    const runningRuntime = {
+      ...readySession,
+      status: "running" as const,
+      activeRunId: runningRun.runId,
+    };
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({ latestRun: runningRun, runtime: runningRuntime }),
+      { latestUserMessageId: MessageId.make("message-before-steer") },
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestRun: runningRun,
+        latestUserMessageId: MessageId.make("message-steer"),
+        runtime: runningRuntime,
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,

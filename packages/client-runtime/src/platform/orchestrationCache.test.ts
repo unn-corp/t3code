@@ -28,11 +28,12 @@ describe("orchestration cache envelopes", () => {
         schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
         environmentId,
         threadId: v2ThreadId,
-        thread: v2Projection,
+        snapshot: { snapshotSequence: 4, projection: v2Projection },
       });
 
       expect(shell.snapshot).toEqual(v2ShellSnapshot);
-      expect(thread.thread).toEqual(v2Projection);
+      expect(thread.snapshot.projection).toEqual(v2Projection);
+      expect(thread.snapshot.snapshotSequence).toBe(4);
     }),
   );
 

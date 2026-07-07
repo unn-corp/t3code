@@ -364,6 +364,7 @@ export async function waitForStartedServerThread(
 export interface LocalDispatchSnapshot {
   startedAt: string;
   preparingWorktree: boolean;
+  latestUserMessageId: ChatMessage["id"] | null;
   latestRunId: RunId | null;
   latestRunRequestedAt: string | null;
   latestRunStartedAt: string | null;
@@ -374,13 +375,14 @@ export interface LocalDispatchSnapshot {
 
 export function createLocalDispatchSnapshot(
   activeThread: Thread | undefined,
-  options?: { preparingWorktree?: boolean },
+  options?: { preparingWorktree?: boolean; latestUserMessageId?: ChatMessage["id"] | null },
 ): LocalDispatchSnapshot {
   const latestRun = activeThread?.latestRun ?? null;
   const runtime = activeThread?.runtime ?? null;
   return {
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
+    latestUserMessageId: options?.latestUserMessageId ?? null,
     latestRunId: latestRun?.runId ?? null,
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
@@ -394,6 +396,7 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   localDispatch: LocalDispatchSnapshot | null;
   phase: SessionPhase;
   latestRun: Thread["latestRun"] | null;
+  latestUserMessageId?: ChatMessage["id"] | null;
   runtime: Thread["runtime"] | null;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
@@ -408,6 +411,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
 
   const latestRun = input.latestRun ?? null;
   const runtime = input.runtime ?? null;
+  const latestUserMessageChanged =
+    input.localDispatch.latestUserMessageId !== (input.latestUserMessageId ?? null);
   const latestRunChanged =
     input.localDispatch.latestRunId !== (latestRun?.runId ?? null) ||
     input.localDispatch.latestRunRequestedAt !== (latestRun?.requestedAt ?? null) ||
@@ -415,6 +420,9 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.latestRunCompletedAt !== (latestRun?.completedAt ?? null);
 
   if (input.phase === "running") {
+    if (latestUserMessageChanged) {
+      return true;
+    }
     if (!latestRunChanged) {
       return false;
     }
