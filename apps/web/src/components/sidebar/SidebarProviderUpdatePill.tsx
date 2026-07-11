@@ -46,57 +46,26 @@ function useProviderUpdateVisibleAfterIso(
   return initialVisibleAfterIso ?? latestProviderCheckedAt(providers);
 }
 
-function useProviderUpdatePillTransition(view: ProviderUpdateSidebarPillView | null) {
-  const [renderedView, setRenderedView] = useState<ProviderUpdateSidebarPillView | null>(
-    () => view,
-  );
+function useProviderUpdatePillDismissal(view: ProviderUpdateSidebarPillView | null) {
   const [exitingKey, setExitingKey] = useState<string | null>(null);
-  const pendingViewRef = useRef<ProviderUpdateSidebarPillView | null>(null);
   const dismissAfterExitKeyRef = useRef<string | null>(null);
-  const displayedView = renderedView ?? view;
-  const dismissAfterVisibleMs = displayedView?.dismissAfterVisibleMs;
-  const viewKey = displayedView?.key ?? null;
+  const dismissAfterVisibleMs = view?.dismissAfterVisibleMs;
+  const viewKey = view?.key ?? null;
   const showDismissProgress =
-    dismissAfterVisibleMs !== undefined &&
-    displayedView?.tone !== "loading" &&
-    exitingKey !== viewKey;
+    dismissAfterVisibleMs !== undefined && view?.tone !== "loading" && exitingKey !== viewKey;
 
   const startExit = useCallback(
-    (key: string, nextView: ProviderUpdateSidebarPillView | null, dismissKey?: string) => {
+    (key: string, dismissKey?: string) => {
       if (exitingKey === key) {
         return;
       }
-      pendingViewRef.current = nextView;
       dismissAfterExitKeyRef.current = dismissKey ?? null;
       setExitingKey(key);
     },
     [exitingKey],
   );
 
-  useEffect(() => {
-    if (exitingKey !== null) {
-      return;
-    }
-    if (!renderedView) {
-      if (view) {
-        setRenderedView(view);
-      }
-      return;
-    }
-    if (!view) {
-      startExit(renderedView.key, null);
-      return;
-    }
-    if (view.key !== renderedView.key) {
-      startExit(renderedView.key, view);
-      return;
-    }
-  }, [exitingKey, renderedView, startExit, view]);
-
   const completeExit = useCallback(() => {
-    const nextRenderedView = pendingViewRef.current;
-    pendingViewRef.current = null;
-    setRenderedView(nextRenderedView);
     setExitingKey(null);
   }, []);
 
@@ -107,7 +76,6 @@ function useProviderUpdatePillTransition(view: ProviderUpdateSidebarPillView | n
   }, []);
 
   return {
-    displayedView,
     dismissAfterVisibleMs,
     exitingKey,
     showDismissProgress,
@@ -120,11 +88,7 @@ function useProviderUpdatePillTransition(view: ProviderUpdateSidebarPillView | n
 function useProviderUpdateAutoDismiss(input: {
   dismissAfterVisibleMs: number | undefined;
   exitingKey: string | null;
-  startExit: (
-    key: string,
-    nextView: ProviderUpdateSidebarPillView | null,
-    dismissKey?: string,
-  ) => void;
+  startExit: (key: string, dismissKey?: string) => void;
   viewKey: string | null;
 }) {
   const { dismissAfterVisibleMs, exitingKey, startExit, viewKey } = input;
@@ -137,7 +101,7 @@ function useProviderUpdateAutoDismiss(input: {
       return;
     }
     const timeoutId = window.setTimeout(() => {
-      startExit(viewKey, null, viewKey);
+      startExit(viewKey, viewKey);
     }, dismissAfterVisibleMs);
 
     return () => window.clearTimeout(timeoutId);
@@ -160,14 +124,14 @@ export function SidebarProviderUpdatePill() {
     void navigate({ to: "/settings/providers" });
   }, [navigate]);
   const {
-    displayedView,
     dismissAfterVisibleMs,
     exitingKey,
     showDismissProgress,
     startExit,
     completeExit,
     consumeDismissAfterExitKey,
-  } = useProviderUpdatePillTransition(view);
+  } = useProviderUpdatePillDismissal(view);
+  const displayedView = view;
   useProviderUpdateAutoDismiss({
     dismissAfterVisibleMs,
     exitingKey,
@@ -248,7 +212,7 @@ export function SidebarProviderUpdatePill() {
                 type="button"
                 aria-label="Dismiss provider update notice"
                 className="relative z-[1] mr-1 inline-flex size-5 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100"
-                onClick={() => startExit(displayedView.key, null, displayedView.key)}
+                onClick={() => startExit(displayedView.key, displayedView.key)}
               >
                 <XIcon className="size-3.5" />
               </button>
