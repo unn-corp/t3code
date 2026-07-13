@@ -3,8 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
 
 describe("collectComposerInlineTokens", () => {
-  it("collects file links, mentions, and skills with source ranges", () => {
-    const text = "Use $ui and inspect [Chat.tsx](src/Chat.tsx) with @AGENTS.md please";
+  it("collects file links, mentions, skills, and thread references with source ranges", () => {
+    const text =
+      "Use $ui and inspect [Chat.tsx](src/Chat.tsx) with @AGENTS.md then [Prior chat](t3-thread:///env-1/thread-2) please";
 
     expect(collectComposerInlineTokens(text)).toEqual([
       {
@@ -27,6 +28,16 @@ describe("collectComposerInlineTokens", () => {
         source: "@AGENTS.md",
         start: 50,
         end: 60,
+      },
+      {
+        type: "thread",
+        environmentId: "env-1",
+        threadId: "thread-2",
+        title: "Prior chat",
+        value: "Prior chat",
+        source: "[Prior chat](t3-thread:///env-1/thread-2)",
+        start: 66,
+        end: 107,
       },
     ]);
   });
@@ -80,5 +91,9 @@ describe("collectComposerInlineTokens", () => {
 
   it("ignores normal web links", () => {
     expect(collectComposerInlineTokens("Read [docs](https://example.com) first")).toEqual([]);
+  });
+
+  it("ignores malformed thread links", () => {
+    expect(collectComposerInlineTokens("Read [chat](t3-thread:///missing) first")).toEqual([]);
   });
 });
