@@ -19,6 +19,7 @@ import {
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  threadNeedsAttention,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
@@ -742,46 +743,67 @@ describe("resolveProjectStatusIndicator", () => {
 });
 
 describe("getVisibleThreadsForProject", () => {
-  it("includes the active thread even when it falls below the folded preview", () => {
-    const threads = Array.from({ length: 8 }, (_, index) =>
-      makeThread({
-        id: ThreadId.make(`thread-${index + 1}`),
-        title: `Thread ${index + 1}`,
-      }),
-    );
+  // Fixture threads are stamped 2026-03-09T10:00Z; this "now" puts them all
+  // far outside the recency window unless a test overrides their timestamps.
+  const NOW_MS = Date.parse("2026-03-12T10:00:00.000Z");
 
-    const result = getVisibleThreadsForProject({
+  type FoldThread = {
+    id: string;
+    createdAt: string;
+    updatedAt: string;
+    latestUserMessageAt?: string | null;
+  };
+
+  const makeFoldThread = (id: string, overrides: Partial<FoldThread> = {}): FoldThread => ({
+    id,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    ...overrides,
+  });
+
+  const foldThreads = (
+    threads: readonly FoldThread[],
+    overrides: Partial<{
+      activeThreadKey: string;
+      isThreadListExpanded: boolean;
+      previewLimit: number;
+      needsAttention: (thread: FoldThread) => boolean;
+    }> = {},
+  ) =>
+    getVisibleThreadsForProject({
       threads,
-      activeThreadId: ThreadId.make("thread-8"),
-      isThreadListExpanded: false,
-      previewLimit: 6,
+      getThreadKey: (thread) => thread.id,
+      activeThreadKey: overrides.activeThreadKey,
+      isThreadListExpanded: overrides.isThreadListExpanded ?? false,
+      previewLimit: overrides.previewLimit ?? 6,
+      nowMs: NOW_MS,
+      needsAttention: overrides.needsAttention ?? (() => false),
     });
+
+  it("includes the active thread even when it falls below the folded preview", () => {
+    const threads = Array.from({ length: 8 }, (_, index) => makeFoldThread(`thread-${index + 1}`));
+
+    const result = foldThreads(threads, { activeThreadKey: "thread-8" });
 
     expect(result.hasHiddenThreads).toBe(true);
     expect(result.visibleThreads.map((thread) => thread.id)).toEqual([
-      ThreadId.make("thread-1"),
-      ThreadId.make("thread-2"),
-      ThreadId.make("thread-3"),
-      ThreadId.make("thread-4"),
-      ThreadId.make("thread-5"),
-      ThreadId.make("thread-6"),
-      ThreadId.make("thread-8"),
+      "thread-1",
+      "thread-2",
+      "thread-3",
+      "thread-4",
+      "thread-5",
+      "thread-6",
+      "thread-8",
     ]);
-    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual([ThreadId.make("thread-7")]);
+    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual(["thread-7"]);
   });
 
   it("returns all threads when the list is expanded", () => {
-    const threads = Array.from({ length: 8 }, (_, index) =>
-      makeThread({
-        id: ThreadId.make(`thread-${index + 1}`),
-      }),
-    );
+    const threads = Array.from({ length: 8 }, (_, index) => makeFoldThread(`thread-${index + 1}`));
 
-    const result = getVisibleThreadsForProject({
-      threads,
-      activeThreadId: ThreadId.make("thread-8"),
+    const result = foldThreads(threads, {
+      activeThreadKey: "thread-8",
       isThreadListExpanded: true,
-      previewLimit: 6,
     });
 
     expect(result.hasHiddenThreads).toBe(true);
@@ -789,6 +811,108 @@ describe("getVisibleThreadsForProject", () => {
       threads.map((thread) => thread.id),
     );
     expect(result.hiddenThreads).toEqual([]);
+  });
+
+  it("keeps threads that need attention visible below the folded preview", () => {
+    const threads = Array.from({ length: 9 }, (_, index) => makeFoldThread(`thread-${index + 1}`));
+
+    const result = foldThreads(threads, {
+      needsAttention: (thread) => thread.id === "thread-9",
+    });
+
+    expect(result.visibleThreads.map((thread) => thread.id)).toContain("thread-9");
+    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual(["thread-7", "thread-8"]);
+  });
+
+  it("keeps threads with recent activity visible below the folded preview", () => {
+    const threads = [
+      ...Array.from({ length: 7 }, (_, index) => makeFoldThread(`thread-${index + 1}`)),
+      makeFoldThread("thread-recent", {
+        updatedAt: new Date(NOW_MS - 10 * 60 * 1000).toISOString(),
+      }),
+    ];
+
+    const result = foldThreads(threads);
+
+    expect(result.visibleThreads.map((thread) => thread.id)).toContain("thread-recent");
+    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual(["thread-7"]);
+  });
+
+  it("treats a recent agent completion as activity even when the prompt is old", () => {
+    // `updated_at` sorting prefers the latest user message, so recency must
+    // also consider `updatedAt` for threads whose agent finished after an
+    // old prompt.
+    const threads = [
+      ...Array.from({ length: 6 }, (_, index) => makeFoldThread(`thread-${index + 1}`)),
+      makeFoldThread("thread-finished", {
+        latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: new Date(NOW_MS - 5 * 60 * 1000).toISOString(),
+      }),
+    ];
+
+    const result = foldThreads(threads);
+
+    expect(result.visibleThreads.map((thread) => thread.id)).toContain("thread-finished");
+  });
+
+  it("caps recency-driven visibility but never drops attention threads", () => {
+    // 20 recent threads + 1 old attention thread; the cap (15) trims the
+    // recency overflow while the attention thread stays visible.
+    const recentThreads = Array.from({ length: 20 }, (_, index) =>
+      makeFoldThread(`recent-${String(index + 1).padStart(2, "0")}`, {
+        latestUserMessageAt: new Date(NOW_MS - (index + 1) * 60 * 1000).toISOString(),
+      }),
+    );
+    const threads = [...recentThreads, makeFoldThread("thread-attention")];
+
+    const result = foldThreads(threads, {
+      needsAttention: (thread) => thread.id === "thread-attention",
+    });
+
+    expect(result.hasHiddenThreads).toBe(true);
+    expect(result.visibleThreads.length).toBe(15);
+    expect(result.visibleThreads.map((thread) => thread.id)).toContain("thread-attention");
+    // The most recent candidates win the capped slots, so the trailing
+    // recent threads fold.
+    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual([
+      "recent-15",
+      "recent-16",
+      "recent-17",
+      "recent-18",
+      "recent-19",
+      "recent-20",
+    ]);
+  });
+
+  it("reports no hidden threads when every thread qualifies", () => {
+    const threads = Array.from({ length: 8 }, (_, index) =>
+      makeFoldThread(`thread-${index + 1}`, {
+        updatedAt: new Date(NOW_MS - 60 * 1000).toISOString(),
+      }),
+    );
+
+    const result = foldThreads(threads);
+
+    expect(result.hasHiddenThreads).toBe(false);
+    expect(result.visibleThreads.map((thread) => thread.id)).toEqual(
+      threads.map((thread) => thread.id),
+    );
+    expect(result.hiddenThreads).toEqual([]);
+  });
+});
+
+describe("threadNeedsAttention", () => {
+  it("is true when the thread has any status pill and false otherwise", () => {
+    const base = {
+      hasActionableProposedPlan: false,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      interactionMode: DEFAULT_INTERACTION_MODE,
+      latestTurn: null,
+      session: null,
+    };
+    expect(threadNeedsAttention({ ...base, hasPendingApprovals: true })).toBe(true);
+    expect(threadNeedsAttention(base)).toBe(false);
   });
 });
 

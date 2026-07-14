@@ -1,4 +1,5 @@
 import * as React from "react";
+import { MAX_SIDEBAR_THREAD_PREVIEW_COUNT } from "@t3tools/contracts/settings";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -442,19 +443,70 @@ export function resolveProjectStatusIndicator(
   return highestPriorityStatus;
 }
 
-export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input: {
+export const SIDEBAR_RECENT_THREAD_WINDOW_MS = 2 * 60 * 60 * 1000;
+
+export function threadNeedsAttention(thread: ThreadStatusInput): boolean {
+  return resolveThreadStatusPill({ thread }) !== null;
+}
+
+// `getThreadSortTimestamp("updated_at")` prefers the latest user message, so a
+// thread whose agent finished recently but whose prompt is hours old would not
+// count as recent activity without also considering `updatedAt`.
+function getThreadActivityTimestamp(thread: ThreadSortInput): number {
+  return Math.max(
+    getThreadSortTimestamp(thread, "updated_at"),
+    toSortableTimestamp(thread.updatedAt) ?? Number.NEGATIVE_INFINITY,
+  );
+}
+
+// The preview limit is a floor, not a ceiling: beyond the first N threads,
+// folding keeps visible the active thread, any thread that still needs the
+// user's attention (it has a status pill: pending approval/input, running,
+// plan ready, or unseen completion), and threads with activity inside the
+// recency window. Recent-but-quiet threads are capped so a busy afternoon of
+// launches doesn't unfold the whole list; attention and active threads are
+// never dropped by the cap.
+export function getVisibleThreadsForProject<T extends ThreadSortInput>(input: {
   threads: readonly T[];
-  activeThreadId: T["id"] | undefined;
+  getThreadKey: (thread: T) => string;
+  activeThreadKey: string | undefined;
   isThreadListExpanded: boolean;
   previewLimit: number;
+  nowMs: number;
+  needsAttention: (thread: T) => boolean;
 }): {
   hasHiddenThreads: boolean;
   visibleThreads: T[];
   hiddenThreads: T[];
 } {
-  const { activeThreadId, isThreadListExpanded, previewLimit, threads } = input;
-  const hasHiddenThreads = threads.length > previewLimit;
+  const { activeThreadKey, getThreadKey, isThreadListExpanded, previewLimit, threads } = input;
 
+  const visibleThreadKeys = new Set<string>();
+  for (const thread of threads.slice(0, previewLimit)) {
+    visibleThreadKeys.add(getThreadKey(thread));
+  }
+  for (const thread of threads) {
+    const threadKey = getThreadKey(thread);
+    if (threadKey === activeThreadKey || input.needsAttention(thread)) {
+      visibleThreadKeys.add(threadKey);
+    }
+  }
+
+  const maxAutoShownThreads = Math.max(previewLimit, MAX_SIDEBAR_THREAD_PREVIEW_COUNT);
+  const recencyCutoffMs = input.nowMs - SIDEBAR_RECENT_THREAD_WINDOW_MS;
+  const recentHiddenThreads = threads
+    .filter(
+      (thread) =>
+        !visibleThreadKeys.has(getThreadKey(thread)) &&
+        getThreadActivityTimestamp(thread) >= recencyCutoffMs,
+    )
+    .sort((a, b) => getThreadActivityTimestamp(b) - getThreadActivityTimestamp(a));
+  for (const thread of recentHiddenThreads) {
+    if (visibleThreadKeys.size >= maxAutoShownThreads) break;
+    visibleThreadKeys.add(getThreadKey(thread));
+  }
+
+  const hasHiddenThreads = visibleThreadKeys.size < threads.length;
   if (!hasHiddenThreads || isThreadListExpanded) {
     return {
       hasHiddenThreads,
@@ -463,30 +515,10 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
     };
   }
 
-  const previewThreads = threads.slice(0, previewLimit);
-  if (!activeThreadId || previewThreads.some((thread) => thread.id === activeThreadId)) {
-    return {
-      hasHiddenThreads: true,
-      hiddenThreads: threads.slice(previewLimit),
-      visibleThreads: previewThreads,
-    };
-  }
-
-  const activeThread = threads.find((thread) => thread.id === activeThreadId);
-  if (!activeThread) {
-    return {
-      hasHiddenThreads: true,
-      hiddenThreads: threads.slice(previewLimit),
-      visibleThreads: previewThreads,
-    };
-  }
-
-  const visibleThreadIds = new Set([...previewThreads, activeThread].map((thread) => thread.id));
-
   return {
     hasHiddenThreads: true,
-    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
-    visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
+    hiddenThreads: threads.filter((thread) => !visibleThreadKeys.has(getThreadKey(thread))),
+    visibleThreads: threads.filter((thread) => visibleThreadKeys.has(getThreadKey(thread))),
   };
 }
 

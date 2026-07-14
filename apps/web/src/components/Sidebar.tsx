@@ -185,10 +185,12 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
 import {
   getSidebarThreadIdsToPrewarm,
+  getVisibleThreadsForProject,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  threadNeedsAttention,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
@@ -1315,27 +1317,29 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const hasOverflowingThreads = visibleProjectThreads.length > sidebarThreadPreviewCount;
-    const previewThreads =
-      isThreadListExpanded || !hasOverflowingThreads
-        ? visibleProjectThreads
-        : visibleProjectThreads.slice(0, sidebarThreadPreviewCount);
-    const visibleThreadKeys = new Set(
-      [...previewThreads, ...(pinnedCollapsedThread ? [pinnedCollapsedThread] : [])].map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-    );
-    const renderedThreads = pinnedCollapsedThread
-      ? [pinnedCollapsedThread]
-      : visibleProjectThreads.filter((thread) =>
-          visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    // `Date.now()` is read inside the memo on purpose: the fold only
+    // re-evaluates when its inputs change, so rows never vanish from a
+    // static list just because the recency window slid past them.
+    const { hasHiddenThreads, visibleThreads, hiddenThreads } = getVisibleThreadsForProject({
+      threads: visibleProjectThreads,
+      getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      activeThreadKey: activeRouteThreadKey ?? undefined,
+      isThreadListExpanded,
+      previewLimit: sidebarThreadPreviewCount,
+      nowMs: Date.now(),
+      needsAttention: (thread) => {
+        const lastVisitedAt = lastVisitedAtByThreadKey.get(
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         );
-    const hiddenThreads = visibleProjectThreads.filter(
-      (thread) =>
-        !visibleThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-    );
+        return threadNeedsAttention({
+          ...thread,
+          ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
+        });
+      },
+    });
+    const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : visibleThreads;
     return {
-      hasOverflowingThreads,
+      hasOverflowingThreads: hasHiddenThreads,
       hiddenThreadStatus: resolveProjectStatusIndicator(
         hiddenThreads.map((thread) => resolveProjectThreadStatus(thread)),
       ),
@@ -1344,6 +1348,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       shouldShowThreadPanel: projectExpanded || pinnedCollapsedThread !== null,
     };
   }, [
+    activeRouteThreadKey,
     isThreadListExpanded,
     pinnedCollapsedThread,
     projectExpanded,
@@ -3106,6 +3111,7 @@ export default function Sidebar() {
   const projects = useProjects();
   const sidebarThreads = useThreadShells();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
+  const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const navigate = useNavigate();
@@ -3428,12 +3434,28 @@ export default function Sidebar() {
           return [];
         }
         const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-        const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
-        const previewThreads =
-          isThreadListExpanded || !hasOverflowingThreads
-            ? projectThreads
-            : projectThreads.slice(0, sidebarThreadPreviewCount);
-        const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
+        // Must mirror the fold in SidebarProjectThreadList's renderedThreads
+        // memo, otherwise jump-hint keys land on the wrong rows.
+        const { visibleThreads } = getVisibleThreadsForProject({
+          threads: projectThreads,
+          getThreadKey: (thread) =>
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          activeThreadKey,
+          isThreadListExpanded,
+          previewLimit: sidebarThreadPreviewCount,
+          nowMs: Date.now(),
+          needsAttention: (thread) => {
+            const lastVisitedAt =
+              threadLastVisitedAtById[
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+              ];
+            return threadNeedsAttention({
+              ...thread,
+              ...(lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
+            });
+          },
+        });
+        const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : visibleThreads;
         return renderedThreads.map((thread) =>
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         );
@@ -3445,6 +3467,7 @@ export default function Sidebar() {
       projectExpandedById,
       routeThreadKey,
       sortedProjects,
+      threadLastVisitedAtById,
       threadsByProjectKey,
     ],
   );
