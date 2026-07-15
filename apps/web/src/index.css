@@ -146,6 +146,11 @@
     @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
   }
 
+  .app-sidebar-surface,
+  .app-sidebar-surface [data-slot="sidebar-inner"] {
+    background: var(--sidebar-surface);
+  }
+
   .chat-composer-horizontal-inset {
     padding-inline-start: calc(env(safe-area-inset-left) + 0.75rem);
     padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);
@@ -168,7 +173,7 @@
   }
 
   .dark .chat-composer-glass {
-    background: var(--card);
+    background: var(--composer-surface);
     box-shadow: none;
   }
 
@@ -232,6 +237,8 @@
   --radius: 0.625rem;
   --background: var(--color-white);
   --app-chrome-background: var(--background);
+  --sidebar-surface: var(--card);
+  --composer-surface: var(--card);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
   --card-foreground: var(--color-neutral-800);
@@ -261,17 +268,19 @@
     color-scheme: dark;
     --background: var(--color-black);
     --app-chrome-background: var(--background);
+    --sidebar-surface: color-mix(in srgb, var(--color-black) 95%, var(--color-white));
+    --composer-surface: color-mix(in srgb, var(--color-black) 92%, var(--color-white));
     --foreground: var(--color-neutral-100);
-    --card: var(--color-neutral-900);
+    --card: color-mix(in srgb, var(--color-black) 96%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
-    --popover: var(--color-neutral-900);
+    --popover: color-mix(in srgb, var(--color-black) 90%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
     --primary: oklch(0.588 0.217 264);
     --primary-foreground: var(--color-white);
     --secondary: --alpha(var(--color-white) / 4%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 4%);
-    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+    --muted-foreground: var(--color-neutral-400);
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
     --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
