@@ -93,27 +93,20 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 // Row heights are fixed per variant so the list only changes shape at
 // lifecycle transitions (settle/unsettle), never from streaming updates.
-// Cards are bordered islands (the mock's language): the border carries the
-// state color, faint enough to read as a glow rather than a box.
-const CARD_BORDER_BY_STATUS: Record<SidebarV2Status, string> = {
-  approval: "border-amber-500/45 dark:border-amber-300/35",
-  working: "border-sky-500/40 dark:border-sky-300/30",
-  failed: "border-red-500/45 dark:border-red-400/35",
-  ready: "border-border",
-};
-
-const STATUS_DOT_BY_STATUS: Partial<Record<SidebarV2Status, string>> = {
-  approval: "bg-amber-500 dark:bg-amber-300/90",
-  working: "bg-sky-500 dark:bg-sky-300/80 animate-pulse",
-  failed: "bg-red-500 dark:bg-red-400/90",
+// Cards are square, hard-edged blocks: a solid full-saturation edge strip
+// carries the state color; the border stays neutral and high-contrast.
+const CARD_EDGE_BY_STATUS: Partial<Record<SidebarV2Status, string>> = {
+  approval: "bg-amber-500 dark:bg-amber-400",
+  working: "bg-sky-500 animate-status-pulse dark:bg-sky-400",
+  failed: "bg-red-500",
 };
 
 const STATUS_WORD_BY_STATUS: Partial<
   Record<SidebarV2Status, { label: string; className: string }>
 > = {
-  approval: { label: "Needs approval", className: "text-amber-600 dark:text-amber-300/90" },
-  working: { label: "Working", className: "text-sky-600 dark:text-sky-300/80" },
-  failed: { label: "Failed", className: "text-red-600 dark:text-red-400/90" },
+  approval: { label: "Needs approval", className: "text-amber-600 dark:text-amber-400" },
+  working: { label: "Working", className: "text-sky-600 dark:text-sky-400" },
+  failed: { label: "Failed", className: "text-red-600 dark:text-red-400" },
 };
 
 // The working timer re-renders once per second only for rows that show it.
@@ -309,12 +302,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   );
 
   const rowClassName = cn(
-    "group/v2-row relative w-full cursor-pointer select-none rounded-md text-left",
+    "group/v2-row relative w-full cursor-pointer select-none text-left",
     props.isActive
-      ? "bg-accent/85 dark:bg-accent/55"
+      ? "bg-foreground/10 dark:bg-white/[0.12]"
       : isSelected
-        ? "bg-primary/15 dark:bg-primary/22"
-        : "hover:bg-accent/60 dark:hover:bg-accent/40",
+        ? "bg-primary/15 dark:bg-primary/20"
+        : "hover:bg-foreground/5 dark:hover:bg-white/[0.06]",
   );
 
   const favicon = (
@@ -336,19 +329,26 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       onBlur={handleRenameBlur}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
-      className="min-w-0 flex-1 rounded border border-border bg-background px-1 text-[13px] text-foreground outline-none focus:border-ring"
+      className="min-w-0 flex-1 border border-border bg-background px-1 text-[13px] text-foreground outline-none focus:border-foreground"
     />
   ) : (
     <span
       className={cn(
-        "min-w-0 flex-1 truncate text-[13px]",
+        "min-w-0 flex-1 text-[13px] leading-5",
+        // Cards get two lines of title — a truncated single line hid too much.
         variant === "card"
-          ? isUnread
-            ? "font-semibold text-foreground"
-            : "font-medium text-foreground/85"
-          : isUnread
-            ? "font-medium text-foreground"
-            : "text-muted-foreground",
+          ? cn(
+              "line-clamp-2 break-words",
+              isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/90",
+            )
+          : cn(
+              "truncate transition-colors group-hover/v2-row:text-foreground",
+              props.isActive
+                ? "text-foreground"
+                : isUnread
+                  ? "font-medium text-muted-foreground"
+                  : "text-muted-foreground/60",
+            ),
       )}
     >
       {thread.title}
@@ -374,23 +374,38 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
         {props.showQuietDivider ? (
-          <div aria-hidden className="mx-2.5 mb-1 mt-2 h-px bg-border/60" />
+          <div aria-hidden className="mb-1.5 mt-2.5 flex items-center gap-2 px-0.5">
+            <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/60">
+              Settled
+            </span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
         ) : null}
         <div
           role="button"
           tabIndex={0}
           data-testid="sidebar-v2-row-slim"
-          className={cn(rowClassName, "flex h-[34px] items-center gap-2.5 rounded-lg px-2.5")}
+          className={cn(rowClassName, "flex h-[34px] items-center gap-2.5 px-2.5")}
           onClick={handleClick}
           onDoubleClick={handleDoubleClick}
           onKeyDown={handleKeyDown}
           onContextMenu={handleContextMenu}
         >
-          {favicon}
+          {/* Settled history recedes: desaturated and dimmed at rest, restored
+              on hover so the tail stays scannable when you're hunting. */}
+          <span
+            className={cn(
+              "shrink-0 transition-opacity",
+              !props.isActive &&
+                "opacity-40 grayscale group-hover/v2-row:opacity-100 group-hover/v2-row:grayscale-0",
+            )}
+          >
+            {favicon}
+          </span>
           {title}
           {prBadge}
           <span className="relative flex h-6 w-14 shrink-0 items-center justify-end">
-            <span className="text-[11px] tabular-nums text-muted-foreground/40 transition-opacity group-hover/v2-row:opacity-0">
+            <span className="font-mono text-[11px] tabular-nums text-muted-foreground/40 transition-opacity group-hover/v2-row:opacity-0">
               {props.jumpLabel ??
                 formatRelativeTimeLabel(thread.latestUserMessageAt ?? thread.updatedAt)}
             </span>
@@ -399,7 +414,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 type="button"
                 aria-label="Un-settle thread"
                 onClick={handleUnsettleClick}
-                className="absolute inset-y-0 right-0 inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/v2-row:opacity-100"
+                className="absolute inset-y-0 right-0 inline-flex items-center gap-1 border border-border bg-background px-2 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/v2-row:opacity-100"
               >
                 <Undo2Icon className="size-3" />
               </button>
@@ -408,7 +423,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 type="button"
                 aria-label="Settle thread"
                 onClick={handleSettleClick}
-                className="absolute inset-y-0 right-0 inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/v2-row:opacity-100"
+                className="absolute inset-y-0 right-0 inline-flex items-center gap-1 border border-border bg-background px-2 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/v2-row:opacity-100"
               >
                 <CheckIcon className="size-3" />
               </button>
@@ -419,7 +434,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     );
   }
 
-  const statusDot = STATUS_DOT_BY_STATUS[status];
+  const statusEdge = CARD_EDGE_BY_STATUS[status];
   const statusWord = STATUS_WORD_BY_STATUS[status];
   const diff = latestTurnDiff(thread);
   const workingTimer =
@@ -430,46 +445,44 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   return (
     <li
       data-thread-item
-      className="list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_74px]"
+      className="list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_88px]"
     >
       <div
         role="button"
         tabIndex={0}
         data-testid="sidebar-v2-row-card"
         className={cn(
-          "group/v2-row relative w-full cursor-pointer select-none rounded-xl border bg-card/60 px-3 py-2.5 text-left transition-colors",
-          CARD_BORDER_BY_STATUS[status],
+          "group/v2-row relative w-full cursor-pointer select-none overflow-hidden border bg-card py-2 pl-[15px] pr-3 text-left transition-colors dark:bg-white/[0.04]",
           props.isActive
-            ? "bg-accent/70 dark:bg-accent/40"
+            ? "border-foreground/70 bg-foreground/5 dark:border-foreground/75 dark:bg-white/[0.08]"
             : isSelected
-              ? "bg-primary/12 dark:bg-primary/18"
-              : "hover:bg-accent/50 dark:hover:bg-accent/30",
+              ? "border-primary/70 bg-primary/10 dark:bg-primary/15"
+              : "border-black/12 hover:border-black/30 dark:border-white/12 dark:hover:border-white/30",
         )}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onKeyDown={handleKeyDown}
         onContextMenu={handleContextMenu}
       >
-        <div className="flex items-center gap-2.5">
-          {statusDot ? (
-            <span aria-hidden className={cn("size-2 shrink-0 rounded-full", statusDot)} />
-          ) : (
-            favicon
-          )}
+        {statusEdge ? (
+          <span aria-hidden className={cn("absolute inset-y-0 left-0 w-[3px]", statusEdge)} />
+        ) : null}
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 shrink-0">{favicon}</span>
           {title}
           {diff ? (
-            <span className="shrink-0 font-mono text-[11px]">
+            <span className="shrink-0 font-mono text-[11px] leading-5">
               <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}
               <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
             </span>
           ) : null}
-          <span className="relative flex h-6 w-16 shrink-0 items-center justify-end">
+          <span className="relative flex h-5 w-16 shrink-0 items-center justify-end">
             <span
               className={cn(
                 "font-mono text-[11px] tabular-nums transition-opacity group-hover/v2-row:opacity-0",
                 status === "approval"
-                  ? "text-amber-600 dark:text-amber-300/90"
-                  : "text-muted-foreground/50",
+                  ? "text-amber-600 dark:text-amber-400"
+                  : "text-muted-foreground/70",
               )}
             >
               {props.jumpLabel ?? workingTimer ?? threadTimeLabel(thread, status)}
@@ -478,16 +491,21 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               type="button"
               aria-label="Settle thread"
               onClick={handleSettleClick}
-              className="absolute inset-y-0 right-0 inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/v2-row:opacity-100"
+              className="absolute inset-y-0 right-0 inline-flex items-center gap-1 border border-border bg-background px-2 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/v2-row:opacity-100"
             >
               <CheckIcon className="size-3" />
               Settle
             </button>
           </span>
         </div>
-        <div className="mt-1.5 flex items-center gap-2 pl-[18px] text-[11px] text-muted-foreground/60">
+        <div className="mt-1.5 flex items-center gap-2 pl-[26px] text-[11px] text-muted-foreground/70">
           {statusWord ? (
-            <span className={cn("shrink-0 font-medium", statusWord.className)}>
+            <span
+              className={cn(
+                "shrink-0 font-mono text-[10px] font-semibold uppercase tracking-[0.08em]",
+                statusWord.className,
+              )}
+            >
               {statusWord.label}
             </span>
           ) : null}
@@ -498,7 +516,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
           ) : (
             <>
               {thread.branch ? (
-                <span className="min-w-0 truncate font-mono text-muted-foreground/50">
+                <span className="min-w-0 truncate font-mono text-muted-foreground/70">
                   {thread.branch}
                 </span>
               ) : null}
@@ -1242,10 +1260,10 @@ export default function SidebarV2() {
                   aria-selected={projectScopeKey === null}
                   onClick={() => setProjectScopeKey(null)}
                   className={cn(
-                    "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    "shrink-0 border px-2.5 py-1 font-mono text-[11px] font-medium uppercase tracking-wide transition-colors",
                     projectScopeKey === null
-                      ? "border-foreground/25 bg-accent text-foreground"
-                      : "border-border bg-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                      ? "border-foreground bg-foreground text-background"
+                      : "border-black/15 text-muted-foreground hover:border-black/40 hover:text-foreground dark:border-white/15 dark:hover:border-white/40",
                   )}
                 >
                   All
@@ -1262,10 +1280,10 @@ export default function SidebarV2() {
                     aria-selected={isScoped}
                     onClick={() => setProjectScopeKey(isScoped ? null : scopeKey)}
                     className={cn(
-                      "flex shrink-0 items-center gap-1.5 rounded-full border py-1 pl-1.5 pr-2.5 text-[11px] font-medium transition-colors",
+                      "flex shrink-0 items-center gap-1.5 border py-1 pl-1.5 pr-2.5 font-mono text-[11px] font-medium transition-colors",
                       isScoped
-                        ? "border-foreground/25 bg-accent text-foreground"
-                        : "border-border bg-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                        ? "border-foreground bg-foreground/10 text-foreground dark:bg-white/[0.1]"
+                        : "border-black/15 text-muted-foreground hover:border-black/40 hover:text-foreground dark:border-white/15 dark:hover:border-white/40",
                     )}
                   >
                     <ProjectFavicon
@@ -1284,7 +1302,7 @@ export default function SidebarV2() {
                       type="button"
                       aria-label="Add project"
                       onClick={openAddProjectCommandPalette}
-                      className="flex size-6 shrink-0 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground/60 transition-colors hover:border-solid hover:bg-accent/60 hover:text-foreground"
+                      className="flex size-6 shrink-0 items-center justify-center border border-dashed border-black/20 text-muted-foreground/60 transition-colors hover:border-solid hover:border-black/40 hover:text-foreground dark:border-white/20 dark:hover:border-white/40"
                     />
                   }
                 >
@@ -1351,7 +1369,7 @@ export default function SidebarV2() {
                   <button
                     type="button"
                     onClick={openAddProjectCommandPalette}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    className="inline-flex items-center gap-1.5 border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   >
                     <PlusIcon className="size-3" />
                     Add project
