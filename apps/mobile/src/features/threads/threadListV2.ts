@@ -36,7 +36,9 @@ export function resolveThreadListV2Status(
 export function sortThreadsForListV2<T extends { readonly id: string; readonly createdAt: string }>(
   threads: readonly T[],
 ): T[] {
-  return [...threads].toSorted(
+  // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023
+  // change-by-copy array methods.
+  return [...threads].sort(
     (left, right) =>
       Date.parse(right.createdAt) - Date.parse(left.createdAt) || left.id.localeCompare(right.id),
   );
@@ -84,7 +86,7 @@ export function buildThreadListV2Items(input: {
   }
 
   const orderedActive = sortThreadsForListV2(active);
-  const orderedSettled = settled.toSorted(
+  const orderedSettled = [...settled].sort(
     (left, right) =>
       Date.parse(right.latestUserMessageAt ?? right.updatedAt) -
       Date.parse(left.latestUserMessageAt ?? left.updatedAt),
