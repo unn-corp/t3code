@@ -1,10 +1,16 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
 
+import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
 import { NoActiveThreadState } from "../components/NoActiveThreadState";
+import { sortProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
+import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useProjects, useThreadShells } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
@@ -19,7 +25,68 @@ function ChatIndexRouteView() {
     return <HostedStaticOnboardingState />;
   }
 
+  return <IndexDraftLanding />;
+}
+
+/**
+ * Landing on the index route drops straight into a draft thread for the most
+ * recently active project, so the first screen is a prompt instead of a dead
+ * end. Falls back to an add-project hero when no project exists yet.
+ */
+function IndexDraftLanding() {
+  const projects = useProjects();
+  const threads = useThreadShells();
+  const handleNewThread = useNewThreadHandler();
+  const startedRef = useRef(false);
+
+  const mostRecentProject = useMemo(
+    () => sortProjectsForSidebar(projects, threads, "updated_at")[0] ?? null,
+    [projects, threads],
+  );
+
+  useEffect(() => {
+    if (mostRecentProject === null || startedRef.current) {
+      return;
+    }
+    startedRef.current = true;
+    void handleNewThread(scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id), {
+      replace: true,
+    });
+  }, [handleNewThread, mostRecentProject]);
+
+  if (mostRecentProject === null) {
+    return <NoProjectsHero />;
+  }
   return <NoActiveThreadState />;
+}
+
+function NoProjectsHero() {
+  const openAddProject = useOpenAddProjectCommandPalette();
+
+  return (
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+        <Empty className="flex-1">
+          <div className="w-full max-w-lg px-8 py-12">
+            <EmptyHeader className="max-w-none">
+              <EmptyTitle className="text-foreground text-2xl sm:text-3xl">
+                What should we work on?
+              </EmptyTitle>
+              <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
+                Add a project to start your first thread.
+              </EmptyDescription>
+              <div className="mt-6 flex justify-center">
+                <Button size="sm" onClick={openAddProject}>
+                  <PlusIcon className="size-4" />
+                  Add project
+                </Button>
+              </div>
+            </EmptyHeader>
+          </div>
+        </Empty>
+      </div>
+    </SidebarInset>
+  );
 }
 
 export const Route = createFileRoute("/_chat/")({

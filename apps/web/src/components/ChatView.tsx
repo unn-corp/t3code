@@ -201,6 +201,7 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -2063,6 +2064,7 @@ function ChatViewContent(props: ChatViewProps) {
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
+  const isDraftHeroState = isLocalDraftThread && timelineEntries.length === 0 && !isWorking;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
@@ -5101,6 +5103,7 @@ function ChatViewContent(props: ChatViewProps) {
                 contentInsetEndAdjustment={composerOverlayHeight}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
+                hideEmptyPlaceholder={isDraftHeroState}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
@@ -5123,23 +5126,45 @@ function ChatViewContent(props: ChatViewProps) {
               )}
             </div>
 
-            {/* Input bar */}
+            {/* Input bar — centered hero while a draft has no messages, docked at the bottom otherwise */}
             <div
               ref={setComposerOverlayElement}
               data-chat-composer-overlay="true"
-              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
+              className={
+                isDraftHeroState
+                  ? "pointer-events-none absolute inset-0 z-20 flex flex-col pt-1.5 sm:pt-2"
+                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
+              }
             >
-              <div
-                aria-hidden="true"
-                className="chat-composer-horizontal-inset pointer-events-none absolute inset-x-0 top-1.5 bottom-0 z-0 sm:top-2"
-              >
-                <div className="relative mx-auto h-full w-full max-w-3xl overflow-clip rounded-t-[20px]">
-                  <div className="chat-composer-shared-blur absolute -inset-8" />
+              {/* Equal flexible spacers keep the hero group vertically stable:
+                  whatever mounts below (branch toolbar, banners) grows into the
+                  bottom spacer instead of re-centering the headline. */}
+              {isDraftHeroState ? <div className="min-h-0 flex-1 basis-0" /> : null}
+              {isDraftHeroState ? (
+                <div className="chat-composer-horizontal-inset pb-8">
+                  <DraftHeroHeadline
+                    activeProjectRef={activeProjectRef}
+                    activeProjectTitle={activeProject?.title ?? null}
+                  />
                 </div>
-              </div>
+              ) : (
+                <div
+                  aria-hidden="true"
+                  className="chat-composer-horizontal-inset pointer-events-none absolute inset-x-0 top-1.5 bottom-0 z-0 sm:top-2"
+                >
+                  <div className="relative mx-auto h-full w-full max-w-3xl overflow-clip rounded-t-[20px]">
+                    <div className="chat-composer-shared-blur absolute -inset-8" />
+                  </div>
+                </div>
+              )}
               <div className="chat-composer-horizontal-inset">
                 <div className="pointer-events-auto relative z-10 isolate">
-                  <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                  {/* In the hero layout the banner hangs below the composer without
+                      contributing height, so connect/reconnect churn cannot
+                      re-center the headline and composer. */}
+                  {isDraftHeroState ? null : (
+                    <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                  )}
                   <div className="relative z-10">
                     <ChatComposer
                       composerRef={composerRef}
@@ -5216,41 +5241,52 @@ function ChatViewContent(props: ChatViewProps) {
                 </div>
               </div>
               <div
-                className={cn(
-                  "chat-composer-horizontal-inset chat-composer-lower-chrome relative z-10",
-                  isGitRepo
-                    ? "pb-[calc(env(safe-area-inset-bottom)+0.25rem)]"
-                    : "pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]",
-                )}
+                className={isDraftHeroState ? "flex min-h-0 flex-1 basis-0 flex-col" : "contents"}
               >
-                {isGitRepo && (
-                  <div className="pointer-events-auto">
-                    <BranchToolbar
-                      environmentId={activeThread.environmentId}
-                      threadId={activeThread.id}
-                      {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                      onEnvModeChange={onEnvModeChange}
-                      startFromOrigin={startFromOrigin}
-                      onStartFromOriginChange={onStartFromOriginChange}
-                      {...(canOverrideServerThreadEnvMode
-                        ? { effectiveEnvModeOverride: envMode }
-                        : {})}
-                      {...(canOverrideServerThreadEnvMode
-                        ? {
-                            activeThreadBranchOverride: activeThreadBranch,
-                            onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
-                          }
-                        : {})}
-                      envLocked={envLocked}
-                      onComposerFocusRequest={scheduleComposerFocus}
-                      {...(canCheckoutPullRequestIntoThread
-                        ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                        : {})}
-                      {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                      availableEnvironments={logicalProjectEnvironments}
-                    />
+                <div
+                  className={cn(
+                    "chat-composer-horizontal-inset chat-composer-lower-chrome relative z-10",
+                    isGitRepo
+                      ? "pb-[calc(env(safe-area-inset-bottom)+0.25rem)]"
+                      : "pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]",
+                  )}
+                >
+                  {isGitRepo && (
+                    <div className="pointer-events-auto">
+                      <BranchToolbar
+                        environmentId={activeThread.environmentId}
+                        threadId={activeThread.id}
+                        {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                        onEnvModeChange={onEnvModeChange}
+                        startFromOrigin={startFromOrigin}
+                        onStartFromOriginChange={onStartFromOriginChange}
+                        {...(canOverrideServerThreadEnvMode
+                          ? { effectiveEnvModeOverride: envMode }
+                          : {})}
+                        {...(canOverrideServerThreadEnvMode
+                          ? {
+                              activeThreadBranchOverride: activeThreadBranch,
+                              onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+                            }
+                          : {})}
+                        envLocked={envLocked}
+                        onComposerFocusRequest={scheduleComposerFocus}
+                        {...(canCheckoutPullRequestIntoThread
+                          ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                          : {})}
+                        {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                        availableEnvironments={logicalProjectEnvironments}
+                      />
+                    </div>
+                  )}
+                </div>
+                {isDraftHeroState ? (
+                  <div className="chat-composer-horizontal-inset pt-1">
+                    <div className="pointer-events-auto">
+                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                    </div>
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
 
