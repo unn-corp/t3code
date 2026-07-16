@@ -35,8 +35,7 @@ type ComposerThreadInlineToken = Extract<ComposerInlineToken, { type: "thread" }
 const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 const FILE_LINK_TOKEN_REGEX = /(^|\s)\[((?:\\.|[^\]\\])*)\]\(([^)\s]+)\)(?=\s)/g;
-const THREAD_LINK_TOKEN_REGEX =
-  /(^|\s)\[((?:\\.|[^\]\\])*)\]\((t3-thread:\/\/\/[^)\s]+)\)(?=\s|$)/g;
+const THREAD_LINK_TOKEN_REGEX = /(^|\s)\[((?:\\.|[^\]\\])*)\]\((t3-thread:\/\/\/[^)\s]+)\)/g;
 const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 
