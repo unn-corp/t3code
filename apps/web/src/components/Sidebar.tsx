@@ -2754,7 +2754,7 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
     >
       <SidebarTrigger className="md:hidden" />
       <SidebarBrand />
-      <MainSidebarToggle className="ml-auto max-md:hidden md:mr-2" />
+      <MainSidebarToggle className="ml-auto max-md:hidden md:mr-2 [[data-sidebar-state=collapsed]_&]:hidden" />
     </SidebarHeader>
   );
 });
