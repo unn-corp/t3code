@@ -301,7 +301,7 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
 
-    it.effect("surfaces corrupted shadow checkpoint refs instead of treating them as missing", () =>
+    it.effect("surfaces corrupt shadow refs on lookup and repairs them during recapture", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir("checkpoint-store-shadow-corrupt-ref-test-");
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
@@ -327,7 +327,16 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
           checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef }),
         );
         expect(error._tag).toBe("VcsProcessExitError");
-        expect(error.message).toContain("git rev-parse");
+        expect(error.message).toContain("git for-each-ref");
+
+        const sourcePath = NodePath.join(tmp, "source.txt");
+        yield* writeTextFile(sourcePath, "recaptured\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+        expect(yield* checkpointStore.hasCheckpointRef({ cwd: tmp, checkpointRef })).toBe(true);
+
+        yield* writeTextFile(sourcePath, "changed again\n");
+        expect(yield* checkpointStore.restoreCheckpoint({ cwd: tmp, checkpointRef })).toBe(true);
+        expect(yield* fileSystem.readFileString(sourcePath)).toBe("recaptured\n");
       }),
     );
 

@@ -24,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import type { CheckpointStoreError } from "./Errors.ts";
+import { CHECKPOINT_REFS_PREFIX } from "./Utils.ts";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
 import { ServerConfig } from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -146,6 +147,27 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly checkpointRef: CheckpointRef;
   }) {
+    const refResult = yield* runShadowGit({
+      operation: "CheckpointStore.shadow.resolveCheckpointRef",
+      cwd: input.cwd,
+      args: ["for-each-ref", "--format=%(objectname)", "--", input.checkpointRef],
+      allowNonZeroExit: true,
+    });
+    const refStdout = refResult.stdout.trim();
+    const refStderr = refResult.stderr.trim();
+    if (refResult.exitCode !== 0 || refStderr.length > 0) {
+      return yield* new VcsProcessExitError({
+        operation: "CheckpointStore.shadow.resolveCheckpointRef",
+        command: "git for-each-ref",
+        cwd: input.cwd,
+        exitCode: refResult.exitCode === 0 ? 1 : refResult.exitCode,
+        detail: refStderr || "Failed to resolve shadow checkpoint ref.",
+      });
+    }
+    if (refStdout.length === 0) {
+      return null;
+    }
+
     const result = yield* runShadowGit({
       operation: "CheckpointStore.shadow.resolveCheckpointCommit",
       cwd: input.cwd,
@@ -154,24 +176,84 @@ export const make = Effect.gen(function* () {
     });
     const stdout = result.stdout.trim();
     const stderr = result.stderr.trim();
-    if (result.exitCode === 1 && stdout.length === 0 && stderr.length === 0) {
-      return null;
-    }
     if (result.exitCode !== 0) {
       return yield* new VcsProcessExitError({
         operation: "CheckpointStore.shadow.resolveCheckpointCommit",
         command: "git rev-parse",
         cwd: input.cwd,
         exitCode: result.exitCode,
-        detail: stderr || "Failed to resolve shadow checkpoint commit.",
+        detail: stderr || `Checkpoint ref ${input.checkpointRef} does not resolve to a commit.`,
       });
     }
     return stdout.length > 0 ? stdout : null;
   });
 
+  const repairBrokenLooseShadowRef = Effect.fn("CheckpointStore.repairBrokenLooseShadowRef")(
+    function* (input: {
+      readonly cwd: string;
+      readonly checkpointRef: CheckpointRef;
+      readonly error: VcsProcessExitError;
+    }) {
+      const checkpointRef = String(input.checkpointRef);
+      const segments = checkpointRef.split("/");
+      const isManagedCheckpointRef =
+        checkpointRef.startsWith(`${CHECKPOINT_REFS_PREFIX}/`) &&
+        segments.every(
+          (segment) =>
+            segment.length > 0 && segment !== "." && segment !== ".." && !segment.includes("\\"),
+        );
+      const isBrokenRefError =
+        /(?:ignoring broken ref|bad ref|reference broken|bad object|does not resolve to a commit)/iu.test(
+          input.error.detail,
+        ) && input.error.detail.includes(checkpointRef);
+      if (!isManagedCheckpointRef || !isBrokenRefError) {
+        return yield* input.error;
+      }
+
+      const looseRefPath = NodePath.join(shadowRepositoryPath(input.cwd), ...segments);
+      const looseRefExists = yield* fileSystem.exists(looseRefPath).pipe(
+        Effect.mapError(
+          (error) =>
+            new VcsProcessExitError({
+              operation: "CheckpointStore.shadow.repairBrokenLooseRef.exists",
+              command: "filesystem exists",
+              cwd: input.cwd,
+              exitCode: -1,
+              detail: error.message,
+            }),
+        ),
+      );
+      if (!looseRefExists) {
+        return yield* input.error;
+      }
+      yield* fileSystem.remove(looseRefPath, { force: true }).pipe(
+        Effect.mapError(
+          (error) =>
+            new VcsProcessExitError({
+              operation: "CheckpointStore.shadow.repairBrokenLooseRef.remove",
+              command: "filesystem remove",
+              cwd: input.cwd,
+              exitCode: -1,
+              detail: error.message,
+            }),
+        ),
+      );
+      yield* Effect.logWarning("removed corrupt loose shadow checkpoint ref before recapture", {
+        checkpointRef: input.checkpointRef,
+        cwd: input.cwd,
+      });
+    },
+  );
+
   const shadowCheckpoints: VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("CheckpointStore.shadow.captureCheckpoint")(function* (input) {
       const gitDir = shadowRepositoryPath(input.cwd);
+      yield* resolveShadowCommit(input).pipe(
+        Effect.asVoid,
+        Effect.catchTag("VcsProcessExitError", (error) =>
+          repairBrokenLooseShadowRef({ ...input, error }),
+        ),
+      );
       const tempIndexPath = NodePath.join(gitDir, `t3-checkpoint-index-${NodeCrypto.randomUUID()}`);
       const env: NodeJS.ProcessEnv = {
         ...process.env,
