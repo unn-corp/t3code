@@ -62,6 +62,25 @@ export function countConversationTurns(messages: ReadonlyArray<{ readonly role: 
   return messages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0);
 }
 
+function conversationTurnCountForTurn(
+  messages: ReadonlyArray<{
+    readonly role: string;
+    readonly turnId: TurnId | null;
+  }>,
+  turnId: TurnId,
+): number | undefined {
+  let turnCount = 0;
+  for (const message of messages) {
+    if (message.role === "user") {
+      turnCount += 1;
+    }
+    if (message.role === "assistant" && sameId(message.turnId, turnId)) {
+      return turnCount > 0 ? turnCount : undefined;
+    }
+  }
+  return undefined;
+}
+
 function maxCheckpointTurnCount(
   checkpoints: ReadonlyArray<{ readonly checkpointTurnCount: number }>,
 ): number {
@@ -412,10 +431,9 @@ const make = Effect.gen(function* () {
         (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
       );
       const currentTurnCount = maxCheckpointTurnCount(thread.checkpoints);
-      const conversationTurnCount = countConversationTurns(thread.messages);
       const nextTurnCount = existingPlaceholder
-        ? Math.max(existingPlaceholder.checkpointTurnCount, conversationTurnCount)
-        : Math.max(currentTurnCount + 1, conversationTurnCount);
+        ? existingPlaceholder.checkpointTurnCount
+        : (conversationTurnCountForTurn(thread.messages, turnId) ?? currentTurnCount + 1);
 
       yield* captureAndDispatchCheckpoint({
         threadId: thread.id,
@@ -485,7 +503,7 @@ const make = Effect.gen(function* () {
       turnId,
       thread,
       cwd: checkpointCwd,
-      turnCount: Math.max(checkpointTurnCount, countConversationTurns(thread.messages)),
+      turnCount: checkpointTurnCount,
       status: "ready",
       assistantMessageId: event.payload.assistantMessageId ?? undefined,
       createdAt: event.payload.completedAt,

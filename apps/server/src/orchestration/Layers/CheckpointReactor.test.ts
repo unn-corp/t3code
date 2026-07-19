@@ -787,6 +787,81 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
+  it("keeps the authoritative turn count when a placeholder is processed late", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    for (const turnNumber of [1, 2]) {
+      const turnId = asTurnId(`late-placeholder-turn-${turnNumber}`);
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-late-placeholder-user-${turnNumber}`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`late-placeholder-user-${turnNumber}`),
+            role: "user",
+            text: `User ${turnNumber}`,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make(`cmd-late-placeholder-assistant-delta-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`late-placeholder-assistant-${turnNumber}`),
+          delta: `Assistant ${turnNumber}`,
+          turnId,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`cmd-late-placeholder-assistant-complete-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`late-placeholder-assistant-${turnNumber}`),
+          turnId,
+          createdAt,
+        }),
+      );
+    }
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-late-placeholder-diff"),
+        threadId,
+        turnId: asTurnId("late-placeholder-turn-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "missing",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 1) &&
+        entry.activities.some((activity) => activity.kind === "checkpoint.captured"),
+    );
+    expect(thread.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 1)).toBe(
+      true,
+    );
+    expect(thread.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 2)).toBe(
+      false,
+    );
+  });
+
   it("ignores non-v2 checkpoint.captured runtime events", async () => {
     const harness = await createHarness();
     const createdAt = "2026-01-01T00:00:00.000Z";
