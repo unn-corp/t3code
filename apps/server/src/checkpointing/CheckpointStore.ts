@@ -160,7 +160,9 @@ export const make = Effect.gen(function* () {
         command: "git for-each-ref",
         cwd: input.cwd,
         exitCode: refResult.exitCode === 0 ? 1 : refResult.exitCode,
-        detail: refStderr || "Failed to resolve shadow checkpoint ref.",
+        detail: "Failed to resolve shadow checkpoint ref.",
+        stderrLength: refStderr.length,
+        stderrTruncated: refResult.stderrTruncated,
       });
     }
     if (refStdout.length === 0) {
@@ -181,7 +183,9 @@ export const make = Effect.gen(function* () {
         command: "git rev-parse",
         cwd: input.cwd,
         exitCode: result.exitCode,
-        detail: stderr || `Checkpoint ref ${input.checkpointRef} does not resolve to a commit.`,
+        detail: `Checkpoint ref ${input.checkpointRef} does not resolve to a commit.`,
+        stderrLength: stderr.length,
+        stderrTruncated: result.stderrTruncated,
       });
     }
     return stdout.length > 0 ? stdout : null;
@@ -302,7 +306,9 @@ export const make = Effect.gen(function* () {
           command: "git diff",
           cwd: input.cwd,
           exitCode: result.exitCode,
-          detail: result.stderr.trim() || "Checkpoint ref is unavailable for diff operation.",
+          detail: "Checkpoint ref is unavailable for diff operation.",
+          stderrLength: result.stderr.trim().length,
+          stderrTruncated: result.stderrTruncated,
         });
       }
       return result.stdout;
