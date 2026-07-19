@@ -413,6 +413,7 @@ describe("CheckpointReactor", () => {
 
     return {
       engine,
+      runPromise: <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect),
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
       cwd,
@@ -424,7 +425,7 @@ describe("CheckpointReactor", () => {
     const harness = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-capture"),
@@ -828,7 +829,7 @@ describe("CheckpointReactor", () => {
     );
   });
 
-  it("continues processing runtime events after a single checkpoint runtime failure", async () => {
+  it("captures completed turns in a non-Git workspace and continues processing", async () => {
     const nonRepositorySessionCwd = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3-checkpoint-runtime-non-repo-"),
     );
@@ -879,13 +880,13 @@ describe("CheckpointReactor", () => {
       turnId: asTurnId("turn-after-runtime-failure"),
     });
 
-    await waitForGitRefExists(
-      harness.cwd,
-      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 1),
     );
+    expect(thread.checkpoints).toHaveLength(1);
     expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
-    ).toBe(true);
+      thread.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
+    ).toBe(false);
   });
 
   it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
@@ -967,6 +968,87 @@ describe("CheckpointReactor", () => {
     expect(
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
     ).toBe(false);
+  });
+
+  it("reverts legacy conversation turns that predate filesystem checkpoints", async () => {
+    const harness = await createHarness();
+    const threadId = ThreadId.make("thread-1");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-legacy-session-set"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    for (const turnNumber of [1, 2]) {
+      const turnId = asTurnId(`legacy-turn-${turnNumber}`);
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-legacy-user-${turnNumber}`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`legacy-user-${turnNumber}`),
+            role: "user",
+            text: `User ${turnNumber}`,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make(`cmd-legacy-assistant-delta-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`legacy-assistant-${turnNumber}`),
+          delta: `Assistant ${turnNumber}`,
+          turnId,
+          createdAt,
+        }),
+      );
+      await harness.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`cmd-legacy-assistant-complete-${turnNumber}`),
+          threadId,
+          messageId: MessageId.make(`legacy-assistant-${turnNumber}`),
+          turnId,
+          createdAt,
+        }),
+      );
+    }
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-legacy-revert-request"),
+        threadId,
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+      threadId,
+      numTurns: 1,
+    });
   });
 
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {

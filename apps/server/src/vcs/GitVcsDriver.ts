@@ -747,19 +747,36 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
-      yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
-      });
-      yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["clean", "-fd", "--", "."],
-      });
-
       const headExists = yield* hasHeadCommit(input.cwd);
+      if (!headExists) {
+        // In an unborn repository every restored path is still untracked from
+        // Git's perspective. Clean first so we remove post-checkpoint files
+        // without immediately deleting the files restored from the snapshot.
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["clean", "-fd", "--", "."],
+        });
+      }
+      yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: [
+          "restore",
+          "--source",
+          commitOid,
+          "--worktree",
+          ...(headExists ? ["--staged"] : []),
+          "--",
+          ".",
+        ],
+      });
       if (headExists) {
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["clean", "-fd", "--", "."],
+        });
         yield* execute({
           operation,
           cwd: input.cwd,

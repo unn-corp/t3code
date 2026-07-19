@@ -99,15 +99,12 @@ function retainThreadMessagesAfterRevert(
   const retainedUserCount = messages.filter(
     (message) => message.role === "user" && retainedMessageIds.has(message.id),
   ).length;
-  const missingUserCount = Math.max(0, turnCount - retainedUserCount);
+  // Reverting "to" a user message keeps that selected prompt visible. The
+  // payload count represents completed turns before it, so retain one extra user message.
+  const missingUserCount = Math.max(0, turnCount + 1 - retainedUserCount);
   if (missingUserCount > 0) {
     const fallbackUserMessages = messages
-      .filter(
-        (message) =>
-          message.role === "user" &&
-          !retainedMessageIds.has(message.id) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
+      .filter((message) => message.role === "user" && !retainedMessageIds.has(message.id))
       .toSorted(
         (left, right) =>
           left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
@@ -128,7 +125,9 @@ function retainThreadMessagesAfterRevert(
         (message) =>
           message.role === "assistant" &&
           !retainedMessageIds.has(message.id) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
+          (retainedTurnIds.size === 0 ||
+            message.turnId === null ||
+            retainedTurnIds.has(message.turnId)),
       )
       .toSorted(
         (left, right) =>

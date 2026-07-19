@@ -2395,6 +2395,11 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           turnId: "turn-1",
           role: "assistant",
         },
+        {
+          messageId: "user-remove",
+          turnId: "turn-2",
+          role: "user",
+        },
       ]);
     }),
   );

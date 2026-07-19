@@ -690,6 +690,7 @@ describe("orchestration projector", () => {
       [
         { role: "user", text: "First edit" },
         { role: "assistant", text: "Updated README to v2.\n" },
+        { role: "user", text: "Second edit" },
       ],
     );
     expect(
@@ -699,7 +700,7 @@ describe("orchestration projector", () => {
     expect(thread?.latestTurn?.turnId).toBe("turn-1");
   });
 
-  it("does not fallback-retain messages tied to removed turn IDs", async () => {
+  it("retains the selected user prompt even when it is tied to the reverted turn", async () => {
     const createdAt = "2026-02-26T12:00:00.000Z";
     const model = createEmptyReadModel(createdAt);
 
@@ -849,7 +850,10 @@ describe("orchestration projector", () => {
         role: message.role,
         turnId: message.turnId,
       })),
-    ).toEqual([{ id: "assistant-keep", role: "assistant", turnId: "turn-1" }]);
+    ).toEqual([
+      { id: "assistant-keep", role: "assistant", turnId: "turn-1" },
+      { id: "user-remove", role: "user", turnId: "turn-2" },
+    ]);
   });
 
   it("caps message and checkpoint retention for long-lived threads", async () => {

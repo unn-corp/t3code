@@ -210,12 +210,7 @@ function retainProjectionMessagesAfterRevert(
 ): ReadonlyArray<ProjectionThreadMessage> {
   const retainedMessageIds = new Set<string>();
   const retainedTurnIds = new Set<string>();
-  const keptTurns = turns.filter(
-    (turn) =>
-      turn.turnId !== null &&
-      turn.checkpointTurnCount !== null &&
-      turn.checkpointTurnCount <= turnCount,
-  );
+  const keptTurns = retainProjectionTurnsAfterRevert(turns, turnCount);
   for (const turn of keptTurns) {
     if (turn.turnId !== null) {
       retainedTurnIds.add(turn.turnId);
@@ -241,15 +236,12 @@ function retainProjectionMessagesAfterRevert(
   const retainedUserCount = messages.filter(
     (message) => message.role === "user" && retainedMessageIds.has(message.messageId),
   ).length;
-  const missingUserCount = Math.max(0, turnCount - retainedUserCount);
+  // Keep the selected user prompt (the message immediately after the retained turns),
+  // while pruning its response and every message that follows it.
+  const missingUserCount = Math.max(0, turnCount + 1 - retainedUserCount);
   if (missingUserCount > 0) {
     const fallbackUserMessages = messages
-      .filter(
-        (message) =>
-          message.role === "user" &&
-          !retainedMessageIds.has(message.messageId) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
+      .filter((message) => message.role === "user" && !retainedMessageIds.has(message.messageId))
       .toSorted(
         (left, right) =>
           left.createdAt.localeCompare(right.createdAt) ||
@@ -287,20 +279,39 @@ function retainProjectionMessagesAfterRevert(
   return messages.filter((message) => retainedMessageIds.has(message.messageId));
 }
 
+function retainProjectionTurnsAfterRevert(
+  turns: ReadonlyArray<ProjectionTurn>,
+  turnCount: number,
+): ReadonlyArray<ProjectionTurn> {
+  const checkpointedTurns = turns.filter(
+    (turn) =>
+      turn.turnId !== null &&
+      turn.checkpointTurnCount !== null &&
+      turn.checkpointTurnCount <= turnCount,
+  );
+  if (turns.some((turn) => turn.checkpointTurnCount !== null)) {
+    return checkpointedTurns;
+  }
+
+  return turns
+    .filter((turn) => turn.turnId !== null)
+    .toSorted(
+      (left, right) =>
+        left.requestedAt.localeCompare(right.requestedAt) ||
+        (left.turnId ?? "").localeCompare(right.turnId ?? ""),
+    )
+    .slice(0, turnCount);
+}
+
 function retainProjectionActivitiesAfterRevert(
   activities: ReadonlyArray<ProjectionThreadActivity>,
   turns: ReadonlyArray<ProjectionTurn>,
   turnCount: number,
 ): ReadonlyArray<ProjectionThreadActivity> {
   const retainedTurnIds = new Set<string>(
-    turns
-      .filter(
-        (turn) =>
-          turn.turnId !== null &&
-          turn.checkpointTurnCount !== null &&
-          turn.checkpointTurnCount <= turnCount,
-      )
-      .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
+    retainProjectionTurnsAfterRevert(turns, turnCount).flatMap((turn) =>
+      turn.turnId === null ? [] : [turn.turnId],
+    ),
   );
   return activities.filter(
     (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
@@ -313,14 +324,9 @@ function retainProjectionProposedPlansAfterRevert(
   turnCount: number,
 ): ReadonlyArray<ProjectionThreadProposedPlan> {
   const retainedTurnIds = new Set<string>(
-    turns
-      .filter(
-        (turn) =>
-          turn.turnId !== null &&
-          turn.checkpointTurnCount !== null &&
-          turn.checkpointTurnCount <= turnCount,
-      )
-      .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
+    retainProjectionTurnsAfterRevert(turns, turnCount).flatMap((turn) =>
+      turn.turnId === null ? [] : [turn.turnId],
+    ),
   );
   return proposedPlans.filter(
     (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
@@ -772,19 +778,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
 
-          const retainedTurns = yield* projectionTurnRepository.listByThreadId({
+          const existingTurns = yield* projectionTurnRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
+          const retainedTurns = retainProjectionTurnsAfterRevert(
+            existingTurns,
+            event.payload.turnCount,
+          );
           let latestTurnId: ProjectionTurn["turnId"] = null;
           let latestCheckpointTurnCount = -1;
           for (let index = 0; index < retainedTurns.length; index += 1) {
             const turn = retainedTurns[index];
-            if (
-              !turn ||
-              turn.turnId === null ||
-              turn.checkpointTurnCount === null ||
-              turn.checkpointTurnCount > event.payload.turnCount
-            ) {
+            if (!turn || turn.turnId === null) {
+              continue;
+            }
+            if (turn.checkpointTurnCount === null) {
+              latestTurnId = turn.turnId;
               continue;
             }
             if (turn.checkpointTurnCount > latestCheckpointTurnCount) {
@@ -1305,11 +1314,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const existingTurns = yield* projectionTurnRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
-          const keptTurns = existingTurns.filter(
-            (turn) =>
-              turn.turnId !== null &&
-              turn.checkpointTurnCount !== null &&
-              turn.checkpointTurnCount <= event.payload.turnCount,
+          const keptTurns = retainProjectionTurnsAfterRevert(
+            existingTurns,
+            event.payload.turnCount,
           );
           yield* projectionTurnRepository.deleteByThreadId({
             threadId: event.payload.threadId,

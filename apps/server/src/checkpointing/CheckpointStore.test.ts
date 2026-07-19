@@ -112,9 +112,112 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
       }),
     );
+
+    it.effect("treats a standalone project nested under another repository as non-Git", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const project = NodePath.join(tmp, "project");
+        yield* git(tmp, ["init"]);
+        yield* fileSystem.makeDirectory(project);
+
+        expect(yield* checkpointStore.isGitRepository(project)).toBe(false);
+      }),
+    );
   });
 
   describe("diffCheckpoints", () => {
+    it.effect("captures and restores an initialized repository before its first commit", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-unborn-git-test-");
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-unborn-git-checkpoint-store");
+        const baselineRef = checkpointRefForThreadTurn(threadId, 0);
+        const sourcePath = NodePath.join(tmp, "source.txt");
+
+        yield* git(tmp, ["init"]);
+        yield* writeTextFile(sourcePath, "before\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: baselineRef });
+        yield* writeTextFile(sourcePath, "after\n");
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: tmp,
+            checkpointRef: baselineRef,
+          }),
+        ).toBe(true);
+        const fileSystem = yield* FileSystem.FileSystem;
+        expect(yield* fileSystem.readFileString(sourcePath)).toBe("before\n");
+      }),
+    );
+
+    it.effect("uses shadow checkpoints for a project nested under an unrelated repository", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-nested-project-test-");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const project = NodePath.join(tmp, "project");
+        const threadId = ThreadId.make("thread-nested-project-checkpoint-store");
+        const baselineRef = checkpointRefForThreadTurn(threadId, 0);
+        const changedRef = checkpointRefForThreadTurn(threadId, 1);
+        const createdPath = NodePath.join(project, "created.txt");
+
+        yield* git(tmp, ["init"]);
+        yield* fileSystem.makeDirectory(project);
+        yield* checkpointStore.captureCheckpoint({ cwd: project, checkpointRef: baselineRef });
+        yield* writeTextFile(createdPath, "created\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: project, checkpointRef: changedRef });
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: project,
+            checkpointRef: baselineRef,
+          }),
+        ).toBe(true);
+        expect(yield* fileSystem.exists(createdPath)).toBe(false);
+        expect(yield* checkpointStore.isGitRepository(project)).toBe(false);
+      }),
+    );
+
+    it.effect("captures and restores files without initializing Git in the workspace", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir("checkpoint-store-shadow-test-");
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-shadow-checkpoint-store");
+        const baselineRef = checkpointRefForThreadTurn(threadId, 0);
+        const changedRef = checkpointRefForThreadTurn(threadId, 1);
+        const sourcePath = NodePath.join(tmp, "source.txt");
+        const createdPath = NodePath.join(tmp, "created.txt");
+
+        yield* writeTextFile(sourcePath, "before\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: baselineRef });
+        yield* writeTextFile(sourcePath, "after\n");
+        yield* writeTextFile(createdPath, "new\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: changedRef });
+
+        const diff = yield* checkpointStore.diffCheckpoints({
+          cwd: tmp,
+          fromCheckpointRef: baselineRef,
+          toCheckpointRef: changedRef,
+          ignoreWhitespace: false,
+        });
+        expect(diff).toContain("+after");
+        expect(diff).toContain("created.txt");
+
+        expect(
+          yield* checkpointStore.restoreCheckpoint({
+            cwd: tmp,
+            checkpointRef: baselineRef,
+          }),
+        ).toBe(true);
+        const fileSystem = yield* FileSystem.FileSystem;
+        expect(yield* fileSystem.readFileString(sourcePath)).toBe("before\n");
+        expect(yield* fileSystem.exists(createdPath)).toBe(false);
+        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
+      }),
+    );
+
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
