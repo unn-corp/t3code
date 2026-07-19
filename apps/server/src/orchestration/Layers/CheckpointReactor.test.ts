@@ -1066,6 +1066,69 @@ describe("CheckpointReactor", () => {
     });
   });
 
+  it("does not rewind conversation when a shadow filesystem checkpoint is missing", async () => {
+    const workspace = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-shadow-revert-"));
+    tempDirs.push(workspace);
+    NodeFS.writeFileSync(NodePath.join(workspace, "keep.txt"), "unchanged\n", "utf8");
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      projectWorkspaceRoot: workspace,
+      threadWorktreePath: workspace,
+      providerSessionCwd: workspace,
+    });
+    const threadId = ThreadId.make("thread-1");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-shadow-missing-session-set"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-shadow-missing-checkpoint-summary"),
+        threadId,
+        turnId: asTurnId("shadow-missing-turn"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+
+    await harness.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-shadow-missing-revert"),
+        threadId,
+        turnCount: 0,
+        createdAt,
+      }),
+    );
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
+    );
+    expect(thread.checkpoints).toHaveLength(1);
+    expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+    expect(NodeFS.readFileSync(NodePath.join(workspace, "keep.txt"), "utf8")).toBe("unchanged\n");
+  });
+
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {
     const harness = await createHarness({ providerName: ProviderDriverKind.make("claudeAgent") });
     const createdAt = "2026-01-01T00:00:00.000Z";

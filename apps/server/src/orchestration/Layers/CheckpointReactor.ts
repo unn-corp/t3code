@@ -655,34 +655,30 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    if (checkpointTurnCount > 0) {
-      const summarizedCheckpoint = thread.checkpoints.find(
-        (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
-      );
-      const targetCheckpointRef =
-        summarizedCheckpoint?.checkpointRef ??
-        checkpointRefForThreadTurn(event.payload.threadId, event.payload.turnCount);
-      const restored = yield* checkpointStore.restoreCheckpoint({
-        cwd: sessionRuntime.value.cwd,
-        checkpointRef: targetCheckpointRef,
-        fallbackToHead: event.payload.turnCount === 0,
-      });
-      if (!restored && summarizedCheckpoint) {
-        yield* appendRevertFailureActivity({
-          threadId: event.payload.threadId,
-          turnCount: event.payload.turnCount,
-          detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
-          createdAt: now,
-        }).pipe(Effect.catch(() => Effect.void));
-        return;
-      }
-
-      if (restored) {
-        // Refresh the workspace entry index so the @-mention file picker
-        // reflects the reverted filesystem state.
-        yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
-      }
+    const summarizedCheckpoint = thread.checkpoints.find(
+      (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
+    );
+    const targetCheckpointRef =
+      summarizedCheckpoint?.checkpointRef ??
+      checkpointRefForThreadTurn(event.payload.threadId, event.payload.turnCount);
+    const restored = yield* checkpointStore.restoreCheckpoint({
+      cwd: sessionRuntime.value.cwd,
+      checkpointRef: targetCheckpointRef,
+      fallbackToHead: event.payload.turnCount === 0,
+    });
+    if (!restored) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}. Conversation history was not changed.`,
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
     }
+
+    // Refresh the workspace entry index so the @-mention file picker reflects
+    // the reverted filesystem state before conversation history is rewound.
+    yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {

@@ -217,6 +217,9 @@ export const make = Effect.gen(function* () {
     restoreCheckpoint: Effect.fn("CheckpointStore.shadow.restoreCheckpoint")(function* (input) {
       const commit = yield* resolveShadowCommit(input);
       if (!commit) {
+        // Shadow repositories intentionally have no HEAD: every restorable
+        // state must be addressed by its explicit checkpoint ref. Fail closed
+        // so callers never roll conversation history back without matching files.
         return false;
       }
       const tempIndexPath = NodePath.join(
