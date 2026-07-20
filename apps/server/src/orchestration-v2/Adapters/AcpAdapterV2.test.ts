@@ -459,6 +459,7 @@ function makeTurnInput(input: {
 describe("AcpAdapterV2", () => {
   it.live("cleans detached fixtures when an assertion aborts the test scope", () =>
     Effect.gen(function* () {
+      if (process.platform !== "linux") return;
       const fileSystem = yield* FileSystem.FileSystem;
       let published: ReadonlyArray<number> = [];
       const failed = yield* Effect.scoped(
@@ -603,6 +604,7 @@ describe("AcpAdapterV2", () => {
       });
       const instanceId = ProviderInstanceId.make("acp-test-unexpected-termination");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -662,6 +664,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("reaps detached native work when the provider exits before explicit teardown", () =>
     Effect.gen(function* () {
+      if (process.platform !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
@@ -678,6 +681,7 @@ describe("AcpAdapterV2", () => {
       );
       const instanceId = ProviderInstanceId.make("acp-test-provider-exit");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -743,6 +747,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("surfaces reduced guarantee when delegated cgroup containment is unavailable", () =>
     Effect.gen(function* () {
+      if (process.platform !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
@@ -756,6 +761,7 @@ describe("AcpAdapterV2", () => {
         | undefined;
       const instanceId = ProviderInstanceId.make("acp-test-cgroup-unavailable");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -829,6 +835,7 @@ describe("AcpAdapterV2", () => {
       };
       const instanceId = ProviderInstanceId.make("acp-test-cgroup-join-failure");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -978,6 +985,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -1176,6 +1184,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -1419,6 +1428,7 @@ describe("AcpAdapterV2", () => {
       const releaseResponseAcknowledgement = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -1515,6 +1525,7 @@ describe("AcpAdapterV2", () => {
       const releaseResponseAcknowledgement = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make("acp-test-reordered-elicitation");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -1617,6 +1628,7 @@ describe("AcpAdapterV2", () => {
       const responseLifecycle: Array<string> = [];
       const instanceId = ProviderInstanceId.make("acp-test-normal-close-held-response");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -1724,6 +1736,7 @@ describe("AcpAdapterV2", () => {
       const responseLifecycle: Array<string> = [];
       const instanceId = ProviderInstanceId.make("acp-test-close-wins-registration");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -1834,6 +1847,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test-pending-response-timeout");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -1970,6 +1984,7 @@ describe("AcpAdapterV2", () => {
       const releaseNativeHook = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make("acp-test-pending-response-cancel");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -2089,6 +2104,7 @@ describe("AcpAdapterV2", () => {
           const releaseResponseAcknowledgement = yield* Deferred.make<void>();
           const instanceId = ProviderInstanceId.make(`acp-test-${name}`);
           const adapter = makeAcpAdapterV2({
+            crypto: yield* Crypto.Crypto,
             instanceId,
             flavor: {
               driver: ACP_TEST_DRIVER,
@@ -2185,6 +2201,7 @@ describe("AcpAdapterV2", () => {
       const releaseResponseAcknowledgement = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make("acp-test-url-elicitation");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -2275,6 +2292,7 @@ describe("AcpAdapterV2", () => {
       const releaseNativeHook = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make("acp-test-missing-response-ack");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -2365,6 +2383,7 @@ describe("AcpAdapterV2", () => {
       const releaseTeardown = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -2575,6 +2594,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -2670,6 +2690,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -2776,6 +2797,7 @@ describe("AcpAdapterV2", () => {
         const instanceId = ProviderInstanceId.make("acp-test");
         let subagentPhase: "spawn" | "complete" = "spawn";
         const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -2935,6 +2957,7 @@ describe("AcpAdapterV2", () => {
         let cancelCalled = false;
         let runtimeOrdinalSeen = 0;
         const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -3117,6 +3140,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -3207,6 +3231,7 @@ describe("AcpAdapterV2", () => {
         let cancelCalled = false;
         let runtimeOrdinalSeen = 0;
         const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -3404,6 +3429,7 @@ describe("AcpAdapterV2", () => {
           | null;
       } = { current: null };
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -3540,6 +3566,7 @@ describe("AcpAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("acp-test");
       let runtimeOrdinalSeen = 0;
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -3673,6 +3700,7 @@ describe("AcpAdapterV2", () => {
         type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
         let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
         const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -3983,6 +4011,7 @@ describe("AcpAdapterV2", () => {
         const promptWireReturned = yield* Deferred.make<void>();
         const releasePromptCompletion = yield* Deferred.make<void>();
         const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -4142,6 +4171,7 @@ describe("AcpAdapterV2", () => {
         const continuationRequests: Array<ProviderContinuationRequest> = [];
         const instanceId = ProviderInstanceId.make("acp-test");
         const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -4255,6 +4285,126 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect(
+    "keeps a dispatched continuation offer sticky until a turn starts or the worker drops it",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const continuationRequests: Array<ProviderContinuationRequest> = [];
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const instanceId = ProviderInstanceId.make("acp-test");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            enablePostSettleContinuation: true,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              }),
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                continuationRequests.push(request);
+              }),
+          },
+        });
+        const threadId = ThreadId.make("thread-acp-sticky-continuation-dispatch");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-acp-sticky-continuation-dispatch",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+        );
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: "mock-session-1:turn:1",
+        });
+        let terminalStatus: string | null = null;
+        while (terminalStatus === null) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
+            terminalStatus = event.status;
+          }
+        }
+        assert.equal(terminalStatus, "completed");
+        assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
+
+        const lateTool = (toolCallId: string) =>
+          sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              title: "Late tool result",
+              kind: "other",
+              status: "completed",
+              rawOutput: { output: toolCallId },
+            },
+          });
+        yield* lateTool("first-late-result");
+        assert.lengthOf(continuationRequests, 1);
+        const first = continuationRequests[0]!;
+        assert.isDefined(first.dispatchIfCurrent);
+        assert.isTrue(Option.isSome(yield* first.dispatchIfCurrent!(Effect.void)));
+
+        yield* lateTool("second-frame-before-dispatched-turn-starts");
+        assert.lengthOf(
+          continuationRequests,
+          1,
+          "late frames must not enqueue duplicate continuations during dispatch-to-start",
+        );
+
+        assert.isDefined(first.clearIfCurrent);
+        yield* first.clearIfCurrent!();
+        yield* lateTool("new-result-after-worker-drop");
+        assert.lengthOf(continuationRequests, 2);
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect(
     "holds a settled turn until the injected monitor report streams instead of finalizing into it",
     () =>
       Effect.gen(function* () {
@@ -4271,6 +4421,7 @@ describe("AcpAdapterV2", () => {
         const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
         const instanceId = ProviderInstanceId.make("acp-test");
         const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -4430,6 +4581,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -4679,6 +4831,7 @@ describe("AcpAdapterV2", () => {
       let terminatorCallCount = 0;
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -4885,6 +5038,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -4974,6 +5128,7 @@ describe("AcpAdapterV2", () => {
       let runtimeOrdinalSeen = 0;
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -5137,6 +5292,7 @@ describe("AcpAdapterV2", () => {
         },
       });
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -5480,6 +5636,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -5605,6 +5762,7 @@ describe("AcpAdapterV2", () => {
       let runtimeOrdinalSeen = 0;
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -5721,6 +5879,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("direct Stop skips uninterruptible ACP cancel and recovers after native teardown", () =>
     Effect.gen(function* () {
+      if (process.platform !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
@@ -5739,6 +5898,7 @@ describe("AcpAdapterV2", () => {
       let cancelCalled = false;
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -6006,6 +6166,7 @@ describe("AcpAdapterV2", () => {
         const instanceId = ProviderInstanceId.make("acp-test");
         let subagentPhase: "spawn" | "complete" = "spawn";
         const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -6156,6 +6317,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("restart_active terminates native work and reloads a clean runtime", () =>
     Effect.gen(function* () {
+      if (process.platform !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
@@ -6173,6 +6335,7 @@ describe("AcpAdapterV2", () => {
       );
       const instanceId = ProviderInstanceId.make("acp-test");
       const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
