@@ -115,6 +115,8 @@ export const make = Effect.gen(function* () {
       "checkpoints",
       NodeCrypto.createHash("sha256").update(NodePath.resolve(cwd)).digest("hex"),
     );
+  const canonicalizeWorkspacePath = (value: string) =>
+    fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => NodePath.resolve(value)));
 
   const runShadowGit = Effect.fn("CheckpointStore.runShadowGit")(function* (input: {
     readonly operation: string;
@@ -337,22 +339,24 @@ export const make = Effect.gen(function* () {
   ) {
     const handle = yield* vcsRegistry.detect({ cwd });
     const workspaceOwnsRepository =
-      handle !== null && NodePath.resolve(handle.repository.rootPath) === NodePath.resolve(cwd);
+      handle !== null &&
+      (yield* canonicalizeWorkspacePath(handle.repository.rootPath)) ===
+        (yield* canonicalizeWorkspacePath(cwd));
     return workspaceOwnsRepository
       ? (handle.driver.checkpoints ?? shadowCheckpoints)
       : shadowCheckpoints;
   });
 
-  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = (cwd) =>
-    vcsRegistry
-      .detect({ cwd, requestedKind: "git" })
-      .pipe(
-        Effect.map(
-          (repository) =>
-            repository !== null &&
-            NodePath.resolve(repository.repository.rootPath) === NodePath.resolve(cwd),
-        ),
-      );
+  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = Effect.fn(
+    "CheckpointStore.isGitRepository",
+  )(function* (cwd) {
+    const repository = yield* vcsRegistry.detect({ cwd, requestedKind: "git" });
+    return (
+      repository !== null &&
+      (yield* canonicalizeWorkspacePath(repository.repository.rootPath)) ===
+        (yield* canonicalizeWorkspacePath(cwd))
+    );
+  });
 
   const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(
     "captureCheckpoint",

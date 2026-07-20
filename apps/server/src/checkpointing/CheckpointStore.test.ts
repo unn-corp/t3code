@@ -114,6 +114,21 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("recognizes an owned Git repository through a symbolic path alias", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const repositoryPath = NodePath.join(tmp, "repository");
+        const aliasPath = NodePath.join(tmp, "repository-alias");
+        yield* fileSystem.makeDirectory(repositoryPath);
+        yield* initRepoWithCommit(repositoryPath);
+        yield* fileSystem.symlink(repositoryPath, aliasPath);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        expect(yield* checkpointStore.isGitRepository(aliasPath)).toBe(true);
+      }),
+    );
+
     it.effect("treats a standalone project nested under another repository as non-Git", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
