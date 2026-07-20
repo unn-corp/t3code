@@ -19,6 +19,7 @@ import {
   ThreadId,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -459,7 +460,7 @@ function makeTurnInput(input: {
 describe("AcpAdapterV2", () => {
   it.live("cleans detached fixtures when an assertion aborts the test scope", () =>
     Effect.gen(function* () {
-      if (process.platform !== "linux") return;
+      if ((yield* HostProcessPlatform) !== "linux") return;
       const fileSystem = yield* FileSystem.FileSystem;
       let published: ReadonlyArray<number> = [];
       const failed = yield* Effect.scoped(
@@ -664,7 +665,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("reaps detached native work when the provider exits before explicit teardown", () =>
     Effect.gen(function* () {
-      if (process.platform !== "linux") return;
+      if ((yield* HostProcessPlatform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
@@ -747,7 +748,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("surfaces reduced guarantee when delegated cgroup containment is unavailable", () =>
     Effect.gen(function* () {
-      if (process.platform !== "linux") return;
+      if ((yield* HostProcessPlatform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
@@ -5879,7 +5880,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("direct Stop skips uninterruptible ACP cancel and recovers after native teardown", () =>
     Effect.gen(function* () {
-      if (process.platform !== "linux") return;
+      if ((yield* HostProcessPlatform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
@@ -6317,7 +6318,7 @@ describe("AcpAdapterV2", () => {
 
   it.live("restart_active terminates native work and reloads a clean runtime", () =>
     Effect.gen(function* () {
-      if (process.platform !== "linux") return;
+      if ((yield* HostProcessPlatform) !== "linux") return;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;

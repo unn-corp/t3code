@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -213,8 +214,11 @@ describe("ProviderContinuationService", () => {
             getThreadProjection: () =>
               Effect.succeed({
                 ...projection,
-                thread: { ...projection.thread, archivedAt: "2026-07-20T00:00:00.000Z" },
-              } as OrchestrationV2ThreadProjection),
+                thread: {
+                  ...projection.thread,
+                  archivedAt: DateTime.makeUnsafe("2026-07-20T00:00:00.000Z"),
+                },
+              }),
           }),
         ),
         Effect.scoped,
