@@ -917,6 +917,38 @@ const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(fu
   return yield* net.reserveLoopbackPort();
 });
 
+export function buildSupervisedSshTunnelArgs(input: {
+  readonly target: DesktopSshEnvironmentTarget;
+  readonly batchMode: "yes" | "no";
+  readonly localPort: number;
+  readonly remotePort: number;
+  readonly hostSpec: string;
+}): ReadonlyArray<string> {
+  return [
+    ...baseSshArgs(input.target, { batchMode: input.batchMode }),
+    // This process owns the tunnel lifecycle. Inherited ControlMaster settings
+    // can otherwise hand the forward to an existing master and let `ssh -N`
+    // exit while the manager believes it still supervises the connection.
+    "-o",
+    "ControlMaster=no",
+    "-o",
+    "ControlPath=none",
+    "-o",
+    "ControlPersist=no",
+    "-o",
+    "ExitOnForwardFailure=yes",
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=3",
+    "-n",
+    "-N",
+    "-L",
+    `${input.localPort}:127.0.0.1:${input.remotePort}`,
+    input.hostSpec,
+  ];
+}
+
 const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: {
   readonly key: string;
   readonly resolvedTarget: DesktopSshEnvironmentTarget;
@@ -956,22 +988,13 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         }),
     ),
   );
-  const args = [
-    ...baseSshArgs(input.resolvedTarget, {
-      batchMode: input.authOptions.batchMode ?? "no",
-    }),
-    "-o",
-    "ExitOnForwardFailure=yes",
-    "-o",
-    "ServerAliveInterval=15",
-    "-o",
-    "ServerAliveCountMax=3",
-    "-n",
-    "-N",
-    "-L",
-    `${input.localPort}:127.0.0.1:${input.remotePort}`,
+  const args = buildSupervisedSshTunnelArgs({
+    target: input.resolvedTarget,
+    batchMode: input.authOptions.batchMode ?? "no",
+    localPort: input.localPort,
+    remotePort: input.remotePort,
     hostSpec,
-  ];
+  });
   const sshCommand = yield* resolveSshCommand;
   const tunnelCommand = [sshCommand, ...args];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

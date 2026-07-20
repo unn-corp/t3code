@@ -14,6 +14,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
 import {
+  buildSupervisedSshTunnelArgs,
   buildRemoteLaunchScript,
   buildRemotePairingScript,
   buildRemoteStopScript,
@@ -89,6 +90,50 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 }
 
 describe("ssh tunnel scripts", () => {
+  it("disables connection multiplexing for the supervised port-forward command", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    assert.deepEqual(
+      buildSupervisedSshTunnelArgs({
+        target,
+        batchMode: "no",
+        localPort: 41_773,
+        remotePort: 3_773,
+        hostSpec: "julius@devbox",
+      }),
+      [
+        "-o",
+        "BatchMode=no",
+        "-o",
+        "ConnectTimeout=10",
+        "-p",
+        "2222",
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
+        "-o",
+        "ControlPersist=no",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=3",
+        "-n",
+        "-N",
+        "-L",
+        "41773:127.0.0.1:3773",
+        "julius@devbox",
+      ],
+    );
+  });
+
   it("builds the remote t3 runner with npx and npm fallbacks", () => {
     const script = buildRemoteT3RunnerScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE });
 
@@ -381,6 +426,17 @@ describe("ssh tunnel scripts", () => {
 
       const first = yield* manager.ensureEnvironment(target);
       assert.equal(first.httpBaseUrl, "http://127.0.0.1:41773/");
+
+      const firstTunnelArgs = spawnedCommands.find((args) => args.includes("-N"));
+      assert.isDefined(firstTunnelArgs);
+      assert.include(firstTunnelArgs, "ControlMaster=no");
+      assert.include(firstTunnelArgs, "ControlPath=none");
+      assert.include(firstTunnelArgs, "ControlPersist=no");
+      for (const args of spawnedCommands.filter((entry) => !entry.includes("-N"))) {
+        assert.notInclude(args, "ControlMaster=no");
+        assert.notInclude(args, "ControlPath=none");
+        assert.notInclude(args, "ControlPersist=no");
+      }
 
       yield* manager.disconnectEnvironment(target);
       assert.equal(tunnelKillCount, 1);
