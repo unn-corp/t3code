@@ -38,6 +38,7 @@ import {
 import { ServerConfig } from "../config.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+export const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
@@ -642,7 +643,13 @@ const collectOutput = Effect.fnUntraced(function* (
   };
 });
 
-export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
+export interface GitVcsDriverCoreOptions {
+  readonly worktreeRemoveTimeoutMs?: number;
+}
+
+export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* (
+  options: GitVcsDriverCoreOptions = {},
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -2395,7 +2402,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     args.push(input.path);
     yield* executeGit("GitVcsDriver.removeWorktree", input.cwd, args, {
-      timeoutMs: 15_000,
+      // Removing untracked dependency trees is filesystem-bound and can take
+      // minutes on Windows. Keep the operation supervised, but give it a
+      // cleanup-specific ceiling instead of the short interactive deadline.
+      timeoutMs: options.worktreeRemoveTimeoutMs ?? WORKTREE_REMOVE_TIMEOUT_MS,
       fallbackErrorDetail: "git worktree remove failed",
     });
   });

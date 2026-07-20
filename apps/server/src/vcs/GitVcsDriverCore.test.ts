@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, describe } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -8,11 +9,16 @@ import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
-import { splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import {
+  makeGitVcsDriverCore,
+  splitNullSeparatedGitStdoutPaths,
+  WORKTREE_REMOVE_TIMEOUT_MS,
+} from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -37,6 +43,55 @@ const makeNonRepositoryHandle = () =>
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
   });
+
+const makeWorktreeRemovalLayer = (input: {
+  readonly exitCode: Effect.Effect<ChildProcessSpawner.ExitCode>;
+  readonly commands: Array<ReadonlyArray<string>>;
+  readonly timeoutMs?: number;
+}) => {
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      if (!ChildProcess.isStandardCommand(command)) {
+        return assert.fail("expected a standard Git command");
+      }
+      input.commands.push(command.args);
+      let running = true;
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: input.exitCode.pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              running = false;
+            }),
+          ),
+        ),
+        isRunning: Effect.sync(() => running),
+        kill: () =>
+          Effect.sync(() => {
+            running = false;
+          }),
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+  const nodeServicesLayer = Layer.merge(
+    NodeServices.layer,
+    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  );
+
+  return Layer.effect(
+    GitVcsDriver.GitVcsDriver,
+    makeGitVcsDriverCore(
+      input.timeoutMs === undefined ? {} : { worktreeRemoveTimeoutMs: input.timeoutMs },
+    ),
+  ).pipe(Layer.provide(ServerConfigLayer), Layer.provideMerge(nodeServicesLayer));
+};
 
 const makeTmpDir = (
   prefix = "git-vcs-driver-test-",
@@ -641,6 +696,53 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect("uses the extended deadline while allowing a slow worktree removal", () => {
+      const commands: Array<ReadonlyArray<string>> = [];
+      const layer = makeWorktreeRemovalLayer({
+        commands,
+        exitCode: Effect.sleep(Duration.millis(50)).pipe(
+          Effect.as(ChildProcessSpawner.ExitCode(0)),
+        ),
+        timeoutMs: 100,
+      });
+
+      return TestClock.withLive(
+        Effect.gen(function* () {
+          assert.equal(WORKTREE_REMOVE_TIMEOUT_MS, 300_000);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.removeWorktree({ cwd: "/repo", path: "/repo-worktrees/feature" });
+
+          assert.deepStrictEqual(commands, [["worktree", "remove", "/repo-worktrees/feature"]]);
+        }).pipe(Effect.provide(layer)),
+      );
+    });
+
+    it.effect("still fails a worktree removal that exceeds its cleanup deadline", () => {
+      const commands: Array<ReadonlyArray<string>> = [];
+      const layer = makeWorktreeRemovalLayer({
+        commands,
+        exitCode: Effect.never,
+        timeoutMs: 25,
+      });
+
+      return TestClock.withLive(
+        Effect.gen(function* () {
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const error = yield* driver
+            .removeWorktree({ cwd: "/repo", path: "/repo-worktrees/stuck" })
+            .pipe(Effect.flip);
+
+          assert.deepInclude(error, {
+            _tag: "GitCommandError",
+            operation: "GitVcsDriver.removeWorktree",
+            detail: "Git command timed out.",
+            cwd: "/repo",
+          });
+          assert.deepStrictEqual(commands, [["worktree", "remove", "/repo-worktrees/stuck"]]);
+        }).pipe(Effect.provide(layer)),
+      );
+    });
+
     it.effect("creates and removes a worktree for a new refName", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
