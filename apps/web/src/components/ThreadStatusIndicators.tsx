@@ -20,6 +20,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
+import { changeRequestLookupWarning } from "./ThreadStatusIndicators.logic";
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -38,29 +39,6 @@ export interface TerminalStatusIndicator {
 }
 
 export type ThreadPr = VcsStatusResult["pr"];
-
-export function changeRequestLookupWarning(
-  threadBranch: string | null,
-  gitStatus: VcsStatusResult | null,
-): string | null {
-  if (
-    threadBranch === null ||
-    gitStatus === null ||
-    gitStatus.refName !== threadBranch ||
-    gitStatus.changeRequestLookup._tag !== "failed"
-  ) {
-    return null;
-  }
-  const presentation = resolveChangeRequestPresentation(gitStatus.sourceControlProvider);
-  switch (gitStatus.changeRequestLookup.reason) {
-    case "authentication_required":
-      return `${presentation.shortName} status unavailable: authentication required.`;
-    case "provider_unavailable":
-      return `${presentation.shortName} status unavailable: provider integration unavailable.`;
-    case "lookup_failed":
-      return `${presentation.shortName} status unavailable: lookup failed.`;
-  }
-}
 
 export function prStatusIndicator(
   pr: ThreadPr,

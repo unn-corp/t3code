@@ -2,7 +2,8 @@ import { ThreadId, type VcsStatusResult } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { changeRequestLookupWarning, ThreadWorktreeIndicator } from "./ThreadStatusIndicators";
+import { changeRequestLookupWarning } from "./ThreadStatusIndicators.logic";
+import { ThreadWorktreeIndicator } from "./ThreadStatusIndicators";
 
 const failedStatus: VcsStatusResult = {
   isRepo: true,
@@ -33,6 +34,22 @@ describe("changeRequestLookupWarning", () => {
 
   it("does not leak warnings across branches", () => {
     expect(changeRequestLookupWarning("feature/other", failedStatus)).toBeNull();
+  });
+
+  it("keeps the refresh warning when a cached open PR remains actionable", () => {
+    expect(
+      changeRequestLookupWarning("feature/sidebar-indicator", {
+        ...failedStatus,
+        pr: {
+          number: 42,
+          title: "Cached open PR",
+          url: "https://example.com/pr/42",
+          baseRef: "main",
+          headRef: "feature/sidebar-indicator",
+          state: "open",
+        },
+      }),
+    ).toBe("PR status unavailable: authentication required.");
   });
 });
 

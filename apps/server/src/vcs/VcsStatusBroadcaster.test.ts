@@ -790,6 +790,7 @@ describe("VcsStatusBroadcaster", () => {
         const secondRefresh = yield* Effect.forkChild(
           broadcaster.refreshChangeRequestStatus("/repo"),
         );
+        yield* Effect.yieldNow;
         yield* TestClock.adjust(Duration.millis(10));
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(firstRefresh);

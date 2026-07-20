@@ -15,13 +15,13 @@ import {
 } from "lucide-react";
 import {
   ChangeRequestStatusIcon,
-  changeRequestLookupWarning,
   prStatusIndicator,
   resolveThreadPr,
   terminalStatusFromRunningIds,
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
+import { changeRequestLookupWarning } from "./ThreadStatusIndicators.logic";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
