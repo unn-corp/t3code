@@ -14,15 +14,30 @@ export const REQUIRED_UNPACKED_RUNTIME_FILES = [
 
 interface DesktopAfterPackContext {
   readonly appOutDir: string;
+  readonly electronPlatformName: string;
+  readonly packager: {
+    readonly appInfo: {
+      readonly productFilename: string;
+    };
+  };
 }
 
-export async function verifyUnpackedRuntimeFiles(appOutDir: string): Promise<void> {
-  const unpackedNodeModules = NodePath.join(
-    appOutDir,
-    "resources",
-    "app.asar.unpacked",
-    "node_modules",
-  );
+export function resolveUnpackedNodeModules(context: DesktopAfterPackContext): string {
+  const resourcesDirectory =
+    context.electronPlatformName === "darwin"
+      ? NodePath.join(
+          context.appOutDir,
+          `${context.packager.appInfo.productFilename}.app`,
+          "Contents",
+          "Resources",
+        )
+      : NodePath.join(context.appOutDir, "resources");
+
+  return NodePath.join(resourcesDirectory, "app.asar.unpacked", "node_modules");
+}
+
+export async function verifyUnpackedRuntimeFiles(context: DesktopAfterPackContext): Promise<void> {
+  const unpackedNodeModules = resolveUnpackedNodeModules(context);
   const missingFiles: string[] = [];
 
   for (const relativeFile of REQUIRED_UNPACKED_RUNTIME_FILES) {
@@ -44,5 +59,5 @@ export async function verifyUnpackedRuntimeFiles(appOutDir: string): Promise<voi
 }
 
 export async function afterPack(context: DesktopAfterPackContext): Promise<void> {
-  await verifyUnpackedRuntimeFiles(context.appOutDir);
+  await verifyUnpackedRuntimeFiles(context);
 }

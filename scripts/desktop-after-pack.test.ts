@@ -7,22 +7,31 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   REQUIRED_UNPACKED_RUNTIME_FILES,
+  resolveUnpackedNodeModules,
   verifyUnpackedRuntimeFiles,
 } from "./desktop-after-pack.ts";
 
 const temporaryDirectories: string[] = [];
 
-async function createPackagedRuntimeFixture(): Promise<{
+async function createPackagedRuntimeFixture(platform: "darwin" | "linux" | "win32"): Promise<{
   readonly root: string;
-  readonly appOutDir: string;
+  readonly context: Parameters<typeof verifyUnpackedRuntimeFiles>[0];
   readonly unpackedNodeModules: string;
 }> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3code-after-pack-"));
   temporaryDirectories.push(root);
-  const appOutDir = NodePath.join(root, "win-unpacked");
+  const appOutDir = NodePath.join(root, `${platform}-unpacked`);
+  const productFilename = "T3 Code";
+  const context = {
+    appOutDir,
+    electronPlatformName: platform,
+    packager: { appInfo: { productFilename } },
+  };
   const unpackedNodeModules = NodePath.join(
     appOutDir,
-    "resources",
+    ...(platform === "darwin"
+      ? [`${productFilename}.app`, "Contents", "Resources"]
+      : ["resources"]),
     "app.asar.unpacked",
     "node_modules",
   );
@@ -33,7 +42,7 @@ async function createPackagedRuntimeFixture(): Promise<{
     await NodeFSP.writeFile(filePath, `${relativeFile}\n`);
   }
 
-  return { root, appOutDir, unpackedNodeModules };
+  return { root, context, unpackedNodeModules };
 }
 
 afterEach(async () => {
@@ -45,18 +54,22 @@ afterEach(async () => {
 });
 
 describe("desktop afterPack", () => {
-  it("accepts a complete unpacked runtime closure", async () => {
-    const fixture = await createPackagedRuntimeFixture();
+  it.each(["win32", "linux", "darwin"] as const)(
+    "accepts a complete %s unpacked runtime closure",
+    async (platform) => {
+      const fixture = await createPackagedRuntimeFixture(platform);
 
-    await verifyUnpackedRuntimeFiles(fixture.appOutDir);
-  });
+      expect(resolveUnpackedNodeModules(fixture.context)).toBe(fixture.unpackedNodeModules);
+      await verifyUnpackedRuntimeFiles(fixture.context);
+    },
+  );
 
   it("fails the build when unpacked runtime payloads are missing", async () => {
-    const fixture = await createPackagedRuntimeFixture();
+    const fixture = await createPackagedRuntimeFixture("win32");
     await NodeFSP.rm(NodePath.join(fixture.unpackedNodeModules, "effect/dist/Context.js"));
     await NodeFSP.rm(NodePath.join(fixture.unpackedNodeModules, "mime/package.json"));
 
-    await expect(verifyUnpackedRuntimeFiles(fixture.appOutDir)).rejects.toThrow(
+    await expect(verifyUnpackedRuntimeFiles(fixture.context)).rejects.toThrow(
       /effect\/dist\/Context\.js, mime\/package\.json/u,
     );
   });
