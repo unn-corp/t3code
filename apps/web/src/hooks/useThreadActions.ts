@@ -97,7 +97,7 @@ export function useThreadActions() {
   }, [router]);
 
   const archiveThread = useCallback(
-    async (target: ScopedThreadRef) => {
+    async (target: ScopedThreadRef, opts: { onArchived?: () => void } = {}) => {
       const resolved = resolveThreadTarget(target);
       if (!resolved) return AsyncResult.success(undefined);
       const { thread, threadRef } = resolved;
@@ -123,6 +123,8 @@ export function useThreadActions() {
       if (archiveResult._tag === "Failure") {
         return archiveResult;
       }
+      refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+      opts.onArchived?.();
 
       if (shouldNavigateToDraft) {
         const navigationResult = await settlePromise(() =>
@@ -131,11 +133,9 @@ export function useThreadActions() {
         if (navigationResult._tag === "Failure") {
           return navigationResult;
         }
-        refreshArchivedThreadsForEnvironment(threadRef.environmentId);
         return archiveResult;
       }
 
-      refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       return archiveResult;
     },
     [archiveThreadMutation, getCurrentRouteThreadRef, resolveThreadTarget],
