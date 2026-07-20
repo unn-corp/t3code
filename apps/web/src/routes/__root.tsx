@@ -28,6 +28,7 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { useClientSettings } from "../hooks/useSettings";
+import { useMarkLiveCompletedThreadsUnread } from "../hooks/useMarkLiveCompletedThreadsUnread";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -133,12 +134,18 @@ function RootRouteView() {
         <SshPasswordPromptDialog />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
+        <CompletedThreadUnreadTracker />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function CompletedThreadUnreadTracker() {
+  useMarkLiveCompletedThreadsUnread();
+  return null;
 }
 
 function DocumentTitleSync() {
