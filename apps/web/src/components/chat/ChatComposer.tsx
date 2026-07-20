@@ -43,7 +43,11 @@ import {
   replaceTextRange,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import {
+  deriveComposerSendState,
+  readFileAsDataUrl,
+  resolveComposerAttachmentMimeType,
+} from "../ChatView.logic";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -1392,7 +1396,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         await Promise.all(
           composerImages.map(async (image) => {
             try {
-              const dataUrl = await readFileAsDataUrl(image.file);
+              const dataUrl = await readFileAsDataUrl(image.file, image.mimeType);
               stagedAttachmentById.set(image.id, {
                 type: image.type,
                 id: image.id,
@@ -1811,13 +1815,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`;
         break;
       }
-      const isImage = file.type.startsWith("image/");
+      const mimeType = resolveComposerAttachmentMimeType(file);
+      const isImage = mimeType.startsWith("image/");
       const previewUrl = URL.createObjectURL(file);
       nextImages.push({
         type: isImage ? "image" : "file",
         id: randomUUID(),
         name: file.name || (isImage ? "image" : "file"),
-        mimeType: file.type || "application/octet-stream",
+        mimeType,
         sizeBytes: file.size,
         previewUrl,
         file,

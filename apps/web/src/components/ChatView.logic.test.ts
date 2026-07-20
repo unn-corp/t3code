@@ -6,9 +6,9 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import type { Thread } from "../types";
+import type { ChatMessage, Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -20,6 +20,10 @@ import {
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  collectUserMessageBlobPreviewUrls,
+  normalizeDataUrlMimeType,
+  resolveComposerAttachmentMimeType,
+  revokeUserMessagePreviewUrls,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -76,6 +80,81 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+function makeAttachmentMessage(): ChatMessage {
+  return {
+    id: MessageId.make("message-with-attachments"),
+    role: "user",
+    text: "Inspect these files",
+    turnId: null,
+    createdAt: now,
+    updatedAt: now,
+    streaming: false,
+    attachments: [
+      {
+        type: "image",
+        id: "image-1",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 10,
+        previewUrl: "blob:image-preview",
+      },
+      {
+        type: "file",
+        id: "file-1",
+        name: "debug.log",
+        mimeType: "text/plain",
+        sizeBytes: 20,
+        previewUrl: "blob:file-preview",
+      },
+    ],
+  };
+}
+
+describe("attachment preview lifecycle", () => {
+  it("collects and revokes blob previews for images and files", () => {
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const message = makeAttachmentMessage();
+
+    expect(collectUserMessageBlobPreviewUrls(message)).toEqual([
+      "blob:image-preview",
+      "blob:file-preview",
+    ]);
+    revokeUserMessagePreviewUrls(message);
+
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    expect(revokeObjectURL).toHaveBeenNthCalledWith(1, "blob:image-preview");
+    expect(revokeObjectURL).toHaveBeenNthCalledWith(2, "blob:file-preview");
+    revokeObjectURL.mockRestore();
+  });
+});
+
+describe("composer attachment MIME types", () => {
+  it("recovers image MIME types from names when the browser reports a generic type", () => {
+    expect(resolveComposerAttachmentMimeType({ name: "capture.PNG", type: "" })).toBe("image/png");
+    expect(
+      resolveComposerAttachmentMimeType({
+        name: "capture.webp",
+        type: "application/octet-stream",
+      }),
+    ).toBe("image/webp");
+  });
+
+  it("preserves a specific browser MIME type and keeps unknown files generic", () => {
+    expect(resolveComposerAttachmentMimeType({ name: "capture.png", type: "text/plain" })).toBe(
+      "text/plain",
+    );
+    expect(resolveComposerAttachmentMimeType({ name: "payload.bin", type: "" })).toBe(
+      "application/octet-stream",
+    );
+  });
+
+  it("rewrites a FileReader data URL with the resolved attachment MIME type", () => {
+    expect(
+      normalizeDataUrlMimeType("data:application/octet-stream;base64,iVBORw0KGgo=", "image/png"),
+    ).toBe("data:image/png;base64,iVBORw0KGgo=");
+  });
+});
 
 describe("buildThreadTurnInterruptInput", () => {
   it("targets the session's active running turn", () => {

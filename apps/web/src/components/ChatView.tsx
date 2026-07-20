@@ -4187,7 +4187,7 @@ function ChatViewContent(props: ChatViewProps) {
         name: image.name,
         mimeType: image.mimeType,
         sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
+        dataUrl: await readFileAsDataUrl(image.file, image.mimeType),
       })),
     );
     const optimisticAttachments = composerImagesSnapshot.map((image) => ({

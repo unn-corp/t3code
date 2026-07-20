@@ -144,9 +144,6 @@ export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
     return;
   }
   for (const attachment of message.attachments) {
-    if (attachment.type !== "image") {
-      continue;
-    }
     revokeBlobPreviewUrl(attachment.previewUrl);
   }
 }
@@ -157,11 +154,59 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   }
   const previewUrls: string[] = [];
   for (const attachment of message.attachments) {
-    if (attachment.type !== "image") continue;
     if (!attachment.previewUrl || !attachment.previewUrl.startsWith("blob:")) continue;
     previewUrls.push(attachment.previewUrl);
   }
   return previewUrls;
+}
+
+const FALLBACK_IMAGE_MIME_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
+  ".gif": "image/gif",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".tif": "image/tiff",
+  ".tiff": "image/tiff",
+  ".webp": "image/webp",
+};
+
+const GENERIC_BINARY_MIME_TYPES = new Set([
+  "",
+  "application/octet-stream",
+  "application/unknown",
+  "application/x-unknown",
+  "binary/octet-stream",
+]);
+
+export function resolveComposerAttachmentMimeType(file: {
+  readonly name: string;
+  readonly type: string;
+}): string {
+  const declaredMimeType = file.type.trim().toLowerCase();
+  if (!GENERIC_BINARY_MIME_TYPES.has(declaredMimeType)) {
+    return declaredMimeType;
+  }
+  const normalizedName = file.name.trim().toLowerCase();
+  const extensionIndex = normalizedName.lastIndexOf(".");
+  const extension = extensionIndex >= 0 ? normalizedName.slice(extensionIndex) : "";
+  return (
+    FALLBACK_IMAGE_MIME_TYPE_BY_EXTENSION[extension] ||
+    declaredMimeType ||
+    "application/octet-stream"
+  );
+}
+
+export function normalizeDataUrlMimeType(dataUrl: string, mimeType: string): string {
+  const separatorIndex = dataUrl.indexOf(",");
+  if (!dataUrl.startsWith("data:") || separatorIndex < 0) {
+    return dataUrl;
+  }
+  return `data:${mimeType};base64,${dataUrl.slice(separatorIndex + 1)}`;
 }
 
 export interface PullRequestDialogState {
@@ -169,18 +214,18 @@ export interface PullRequestDialogState {
   key: number;
 }
 
-export function readFileAsDataUrl(file: File): Promise<string> {
+export function readFileAsDataUrl(file: File, mimeType?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.addEventListener("load", () => {
       if (typeof reader.result === "string") {
-        resolve(reader.result);
+        resolve(mimeType ? normalizeDataUrlMimeType(reader.result, mimeType) : reader.result);
         return;
       }
-      reject(new Error("Could not read image data."));
+      reject(new Error("Could not read attachment data."));
     });
     reader.addEventListener("error", () => {
-      reject(reader.error ?? new Error("Failed to read image."));
+      reject(reader.error ?? new Error("Failed to read attachment."));
     });
     reader.readAsDataURL(file);
   });
