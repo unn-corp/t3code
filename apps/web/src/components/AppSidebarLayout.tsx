@@ -169,7 +169,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           // surface instead of matching it, so its bordered cards read as
           // raised blocks.
           useSidebarV2
-            ? "border-r border-black/15 bg-neutral-100 text-foreground dark:border-white/10 dark:bg-neutral-950"
+            ? "border-r border-black/15 bg-neutral-100 text-foreground [--sidebar-stage-fade:var(--color-neutral-100)] dark:border-white/10 dark:bg-neutral-950 dark:[--sidebar-stage-fade:var(--color-neutral-950)]"
             : "border-r border-border bg-card text-foreground"
         }
         resizable={{

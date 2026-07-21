@@ -232,8 +232,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   /* Stage-channel sidebar art; ::after ramps to the sidebar bg color and the
-     mask lets the surface grain show through at the boundary. */
+     mask lets the surface grain show through at the boundary. Panels whose
+     background differs from the app chrome (e.g. sidebar v2) override
+     --sidebar-stage-fade so the art fades into their own surface color. */
   .sidebar-stage-backdrop {
+    --stage-fade: var(--sidebar-stage-fade, var(--app-chrome-background));
     mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
     -webkit-mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
   }
@@ -246,12 +249,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       to bottom,
       transparent 0%,
       transparent 28%,
-      color-mix(in srgb, var(--app-chrome-background) 10%, transparent) 40%,
-      color-mix(in srgb, var(--app-chrome-background) 30%, transparent) 52%,
-      color-mix(in srgb, var(--app-chrome-background) 58%, transparent) 64%,
-      color-mix(in srgb, var(--app-chrome-background) 82%, transparent) 75%,
-      color-mix(in srgb, var(--app-chrome-background) 96%, transparent) 85%,
-      var(--app-chrome-background) 93%
+      color-mix(in srgb, var(--stage-fade) 10%, transparent) 40%,
+      color-mix(in srgb, var(--stage-fade) 30%, transparent) 52%,
+      color-mix(in srgb, var(--stage-fade) 58%, transparent) 64%,
+      color-mix(in srgb, var(--stage-fade) 82%, transparent) 75%,
+      color-mix(in srgb, var(--stage-fade) 96%, transparent) 85%,
+      var(--stage-fade) 93%
     );
   }
 
