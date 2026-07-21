@@ -192,6 +192,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
+import { resolveResumeSessionSource } from "../resumeSessionSource";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
@@ -2919,20 +2920,18 @@ function ChatViewContent(props: ChatViewProps) {
       setDraftThreadContext,
     ],
   );
-  const activeProviderDriver = activeProviderStatus?.driver;
   /**
    * Provider the `/resume` picker reads from: the one the composer is showing.
    *
-   * Deliberately not `activeProviderDriver`, which resolves through
+   * Deliberately not `activeProviderStatus`, which resolves through
    * `activeThread?.session?.providerInstanceId` and therefore follows whatever the
    * thread is *bound* to. Once a resume bound a session, the next /resume listed
    * that driver instead of the selected one, so a thread would offer 16 Claude
    * conversations and then 4 Codex ones moments later. Sessions are per driver and
    * per account, so listing and resuming must both follow the selection.
    */
-  const resumeProviderDriver = selectedProvider;
-  const resumeProviderInstanceId =
-    selectedProviderInstanceId ?? defaultInstanceIdForDriver(selectedProvider);
+  const { driver: resumeProviderDriver, providerInstanceId: resumeProviderInstanceId } =
+    resolveResumeSessionSource({ selectedProvider, selectedProviderInstanceId });
   const runListCodexSessions = useAtomCommand(codexSessions.list, "list codex sessions");
   const runResumeCodexSession = useAtomCommand(codexSessions.resume, "resume codex session");
   /** /resume: the Codex sessions on disk that this thread could continue. */

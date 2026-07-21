@@ -1298,6 +1298,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerImagesRef.current = composerImages;
   }, [composerImages, composerImagesRef]);
 
+  // Drop the loaded conversations once the menu closes. They used to survive, so
+  // the next "/" or "/resume" reopened straight onto the previous list and Enter
+  // picked a conversation instead of running the command, resuming something the
+  // user never chose. Each /resume should list afresh.
+  useEffect(() => {
+    if (composerMenuOpen) return;
+    setCodexSessionOptions((existing) => (existing.length === 0 ? existing : []));
+    setResumeListedEmpty(false);
+  }, [composerMenuOpen]);
+
   useEffect(() => {
     composerTerminalContextsRef.current = composerTerminalContexts;
   }, [composerTerminalContexts, composerTerminalContextsRef]);
