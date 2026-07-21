@@ -1,0 +1,1424 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Subagent Observability — UI Mockups</title>
+    <style>
+      :root {
+        --bg: #000;
+        --fg: #fff;
+        --muted: #9ca3af;
+        --faint: #6b7280;
+        --border-doc: #26262b;
+        --surface-doc: #0d0d0f;
+        --accent: #7c86ff;
+
+        /* T3 dark theme tokens (from apps/web/src/index.css) */
+        --t3-bg: #101012; /* neutral-950 mixed 95% w/ white */
+        --t3-card: #151517;
+        --t3-fg: #f5f5f5; /* neutral-100 */
+        --t3-muted-fg: #86868c;
+        --t3-border: rgba(255, 255, 255, 0.06);
+        --t3-accent: rgba(255, 255, 255, 0.04);
+        --t3-primary: oklch(0.588 0.217 264);
+        --t3-sky: #38bdf8;
+        --t3-emerald: #34d399;
+        --t3-amber: #fbbf24;
+        --t3-indigo: #818cf8;
+        --t3-violet: #a78bfa;
+        --t3-red: #f87171;
+        --t3-radius: 10px;
+        --mono: "SF Mono", "JetBrains Mono", Consolas, Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          15px/1.6 -apple-system,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 1060px;
+        margin: 0 auto;
+        padding: 48px 24px 120px;
+      }
+      h1 {
+        font-size: 30px;
+        margin: 0 0 8px;
+        letter-spacing: -0.02em;
+      }
+      h2 {
+        font-size: 22px;
+        margin: 64px 0 4px;
+        letter-spacing: -0.01em;
+      }
+      h3 {
+        font-size: 15px;
+        margin: 24px 0 8px;
+      }
+      p,
+      li {
+        color: #d4d4d8;
+      }
+      .sub {
+        color: var(--muted);
+        margin: 0 0 4px;
+        font-size: 14px;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 12.5px;
+        background: #141417;
+        border: 1px solid var(--border-doc);
+        border-radius: 5px;
+        padding: 1px 5px;
+        color: #e4e4e7;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 14px 0;
+        font-size: 13.5px;
+      }
+      th,
+      td {
+        border: 1px solid var(--border-doc);
+        padding: 7px 10px;
+        text-align: left;
+        vertical-align: top;
+        color: #d4d4d8;
+      }
+      th {
+        background: #141417;
+        font-weight: 600;
+        color: #fff;
+      }
+      .pill {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 2px 9px;
+        border-radius: 999px;
+        letter-spacing: 0.02em;
+      }
+      .pill.a {
+        background: color-mix(in srgb, var(--t3-sky) 18%, transparent);
+        color: var(--t3-sky);
+      }
+      .pill.b {
+        background: color-mix(in srgb, var(--t3-violet) 18%, transparent);
+        color: var(--t3-violet);
+      }
+      .pill.c {
+        background: color-mix(in srgb, var(--t3-emerald) 18%, transparent);
+        color: var(--t3-emerald);
+      }
+      .pill.rec {
+        background: color-mix(in srgb, var(--t3-amber) 16%, transparent);
+        color: var(--t3-amber);
+      }
+      .verdict {
+        border-left: 3px solid var(--accent);
+        background: var(--surface-doc);
+        border-radius: 0 10px 10px 0;
+        padding: 12px 16px;
+        margin: 18px 0;
+      }
+      .proscons {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin: 14px 0;
+      }
+      @media (max-width: 720px) {
+        .proscons {
+          grid-template-columns: 1fr;
+        }
+      }
+      .pc {
+        background: var(--surface-doc);
+        border: 1px solid var(--border-doc);
+        border-radius: 10px;
+        padding: 12px 16px;
+        font-size: 13.5px;
+      }
+      .pc b {
+        display: block;
+        margin-bottom: 6px;
+      }
+      .pc.good b {
+        color: var(--t3-emerald);
+      }
+      .pc.bad b {
+        color: var(--t3-red);
+      }
+      .pc ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+
+      /* ---------- mock chrome ---------- */
+      .mock {
+        background: var(--t3-bg);
+        border: 1px solid #2c2c31;
+        border-radius: 14px;
+        overflow: hidden;
+        margin: 20px 0 8px;
+        font-family:
+          "DM Sans",
+          -apple-system,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+        font-size: 12.5px;
+        line-height: 1.45;
+        color: var(--t3-fg);
+        box-shadow: 0 24px 64px -32px rgba(0, 0, 0, 0.9);
+      }
+      .mock .titlebar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 38px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--t3-border);
+        color: var(--t3-muted-fg);
+        font-size: 11.5px;
+      }
+      .dots {
+        display: flex;
+        gap: 5px;
+      }
+      .dots span {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #333338;
+      }
+      .titlebar .crumb {
+        margin-left: 8px;
+      }
+      .titlebar .spacer {
+        flex: 1;
+      }
+      .titlebar .tbicon {
+        width: 20px;
+        height: 20px;
+        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--t3-muted-fg);
+      }
+      .titlebar .tbicon.active {
+        background: var(--t3-accent);
+        color: var(--t3-fg);
+      }
+
+      .mockbody {
+        display: flex;
+        min-height: 430px;
+      }
+      .chatcol {
+        flex: 1.35;
+        padding: 16px 18px;
+        border-right: 1px solid var(--t3-border);
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .panelcol {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        background: color-mix(in srgb, var(--t3-bg) 60%, #0b0b0d);
+      }
+
+      .msg {
+        max-width: 88%;
+        margin-bottom: 12px;
+      }
+      .msg.user {
+        margin-left: auto;
+        background: var(--t3-accent);
+        border: 1px solid var(--t3-border);
+        border-radius: 14px 14px 4px 14px;
+        padding: 8px 12px;
+      }
+      .msg.assistant {
+        color: #d8d8dc;
+      }
+      .ghost {
+        height: 8px;
+        border-radius: 4px;
+        background: #232327;
+        margin: 7px 0;
+      }
+      .ghost.w60 {
+        width: 60%;
+      }
+      .ghost.w80 {
+        width: 80%;
+      }
+      .ghost.w40 {
+        width: 40%;
+      }
+
+      .workrow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--t3-muted-fg);
+        padding: 5px 8px;
+        border-radius: 8px;
+        font-size: 12px;
+      }
+      .workrow .wicon {
+        opacity: 0.7;
+      }
+      .workrow .check {
+        color: var(--t3-emerald);
+        margin-left: auto;
+      }
+
+      .composer {
+        margin-top: auto;
+        border: 1px solid var(--t3-border);
+        border-radius: 16px;
+        background: color-mix(in srgb, var(--t3-card) 55%, transparent);
+        padding: 10px 14px;
+        color: var(--t3-muted-fg);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .composer .send {
+        margin-left: auto;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: var(--t3-primary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 13px;
+      }
+
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .dot.run {
+        background: var(--t3-sky);
+        animation: pulse 2s infinite;
+      }
+      .dot.done {
+        background: var(--t3-emerald);
+      }
+      .dot.wait {
+        background: var(--t3-amber);
+      }
+      .dot.fail {
+        background: var(--t3-red);
+      }
+      .dot.pend {
+        background: #52525b;
+      }
+      @keyframes pulse {
+        0%,
+        40% {
+          opacity: 1;
+        }
+        50%,
+        90% {
+          opacity: 0.45;
+        }
+        100% {
+          opacity: 1;
+        }
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 1px 7px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+      }
+      .chip.model {
+        color: var(--t3-violet);
+        background: color-mix(in srgb, var(--t3-violet) 12%, transparent);
+      }
+      .chip.role {
+        color: var(--t3-muted-fg);
+        background: var(--t3-accent);
+      }
+      .chip.provider {
+        color: var(--t3-muted-fg);
+        border-color: var(--t3-border);
+      }
+
+      .mono {
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .meta {
+        color: var(--t3-muted-fg);
+        font-size: 11px;
+      }
+      figcaption {
+        color: var(--faint);
+        font-size: 12.5px;
+        margin: 8px 0 0;
+      }
+      figure {
+        margin: 22px 0 34px;
+      }
+
+      /* ---------- Option A: agent cards panel ---------- */
+      .ptabs {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        height: 38px;
+        padding: 0 10px;
+        border-bottom: 1px solid var(--t3-border);
+        font-size: 11.5px;
+        color: var(--t3-muted-fg);
+      }
+      .ptab {
+        padding: 4px 10px;
+        border-radius: 7px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .ptab.active {
+        background: var(--t3-accent);
+        color: var(--t3-fg);
+      }
+      .ptab .badge {
+        min-width: 15px;
+        height: 15px;
+        padding: 0 4px;
+        border-radius: 999px;
+        background: var(--t3-sky);
+        color: #06222e;
+        font-size: 9.5px;
+        font-weight: 800;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .panelscroll {
+        padding: 12px;
+        overflow: hidden;
+        flex: 1;
+      }
+
+      .agentcard {
+        background: var(--t3-card);
+        border: 1px solid var(--t3-border);
+        border-radius: var(--t3-radius);
+        padding: 10px 12px;
+        margin-bottom: 8px;
+      }
+      .agentcard .rowtop {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .agentcard .name {
+        font-weight: 600;
+        font-size: 12.5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .agentcard .time {
+        margin-left: auto;
+        color: var(--t3-muted-fg);
+        font-size: 11px;
+        font-family: var(--mono);
+      }
+      .agentcard .activity {
+        color: var(--t3-muted-fg);
+        font-size: 11.5px;
+        margin-top: 5px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .agentcard .stats {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 7px;
+      }
+      .stats .tok {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--t3-fg);
+      }
+      .stats .tok b {
+        font-weight: 700;
+      }
+      .stats .sep {
+        color: #3f3f46;
+      }
+      .phasehdr {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 8px 6px 5px;
+        font-size: 10px;
+        color: var(--t3-muted-fg);
+      }
+      .phasehdr .ph {
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      .phasehdr .line {
+        flex: 1;
+        height: 1px;
+        background: var(--t3-border);
+      }
+      .scriptlink {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--t3-indigo);
+      }
+      .groups {
+        color: var(--t3-muted-fg);
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+        margin: 12px 4px 7px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .groups:first-child {
+        margin-top: 0;
+      }
+      .groups .line {
+        flex: 1;
+        height: 1px;
+        background: var(--t3-border);
+      }
+      .summarybar {
+        border-top: 1px solid var(--t3-border);
+        padding: 9px 14px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        color: var(--t3-muted-fg);
+        font-size: 11px;
+      }
+
+      /* ---------- Option B: inline strip ---------- */
+      .strip {
+        border: 1px solid var(--t3-border);
+        border-radius: 12px;
+        overflow: hidden;
+        background: color-mix(in srgb, var(--t3-card) 80%, transparent);
+        margin: 10px 0;
+      }
+      .striphead {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        font-size: 12px;
+        color: var(--t3-fg);
+      }
+      .striphead .caret {
+        margin-left: auto;
+        color: var(--t3-muted-fg);
+      }
+      .striprow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-top: 1px solid var(--t3-border);
+        font-size: 11.5px;
+      }
+      .striprow .nm {
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .striprow .act {
+        color: var(--t3-muted-fg);
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        flex: 1;
+      }
+      .striprow .tk {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--t3-muted-fg);
+      }
+      .facepile {
+        display: flex;
+        margin-left: 2px;
+      }
+      .face {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 2px solid var(--t3-card);
+        margin-left: -5px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 8px;
+        font-weight: 800;
+      }
+
+      /* ---------- Option C: mission control ---------- */
+      .mc {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+      }
+      .mchead {
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--t3-border);
+      }
+      .mcphases {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .phase {
+        flex: 1;
+        height: 4px;
+        border-radius: 2px;
+        background: #232327;
+        position: relative;
+      }
+      .phase.done {
+        background: var(--t3-emerald);
+        opacity: 0.75;
+      }
+      .phase.run {
+        background: var(--t3-sky);
+      }
+      .phaselabels {
+        display: flex;
+        gap: 6px;
+        margin-top: 4px;
+      }
+      .phaselabels span {
+        flex: 1;
+        font-size: 9.5px;
+        color: var(--t3-muted-fg);
+        text-align: center;
+      }
+      .mcbody {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+      }
+      .mctree {
+        flex: 1.05;
+        border-right: 1px solid var(--t3-border);
+        padding: 10px 8px;
+        overflow: hidden;
+      }
+      .mcdetail {
+        flex: 1.4;
+        padding: 12px 14px;
+        min-width: 0;
+      }
+      .trow {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 4px 8px;
+        border-radius: 7px;
+        font-size: 11.5px;
+        white-space: nowrap;
+      }
+      .trow.sel {
+        background: var(--t3-accent);
+      }
+      .trow .tname {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .trow .ttok {
+        margin-left: auto;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--t3-muted-fg);
+      }
+      .indent1 {
+        padding-left: 24px;
+      }
+      .indent2 {
+        padding-left: 40px;
+      }
+      .feed {
+        border: 1px solid var(--t3-border);
+        border-radius: 9px;
+        background: var(--t3-card);
+        padding: 8px 10px;
+        margin-top: 10px;
+      }
+      .feeditem {
+        display: flex;
+        gap: 8px;
+        padding: 3px 0;
+        color: var(--t3-muted-fg);
+        font-size: 11px;
+      }
+      .feeditem .ts {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: #5b5b63;
+        flex-shrink: 0;
+      }
+      .kv {
+        display: flex;
+        gap: 16px;
+        margin-top: 10px;
+        flex-wrap: wrap;
+      }
+      .kv div b {
+        display: block;
+        font-size: 10px;
+        color: var(--t3-muted-fg);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .kv div span {
+        font-size: 12px;
+        font-family: var(--mono);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="sub">
+        T3 Code · Plan 2 of 2 · 2026-07-20 · rev 2 (post-review) · companion:
+        <a href="./subagent-observability-spec.html">audit &amp; tech spec</a>
+      </p>
+      <h1>Subagent Observability: UI Mockups</h1>
+      <p>
+        Three directions for surfacing live subagents and workflows. All three consume the same
+        <code>ThreadAgentSnapshot[]</code> from the spec, use T3's existing tokens (DM Sans, the
+        sky/emerald/amber status language, <code>animate-status-pulse</code> dots,
+        <code>Badge</code> chips), and mount without new layout regions. They differ in
+        <em>where attention lives</em>.
+      </p>
+      <p class="sub" style="border-left: 3px solid var(--t3-emerald); padding: 6px 12px">
+        Rev 2 after adversarial review (Fable + gpt-5.6-sol): every promised feature is now pinned
+        to a contract field and milestone (<a href="#milestones">table below</a>),
+        transport/staleness states are specified instead of assumed free, the Stop control is
+        explicitly out of v1 scope, and the Agents surface stays reachable from the panel "+" menu
+        even before any agent has run.
+      </p>
+
+      <table>
+        <tr>
+          <th></th>
+          <th>Direction</th>
+          <th>One-liner</th>
+          <th>Best when</th>
+        </tr>
+        <tr>
+          <td><span class="pill a">A</span></td>
+          <td>Agents panel (right-panel surface)</td>
+          <td>A first-class "Agents" tab beside Diff/Files/Browser with one card per agent</td>
+          <td>You want to watch a fleet while reading the chat</td>
+        </tr>
+        <tr>
+          <td><span class="pill b">B</span></td>
+          <td>Inline live strip</td>
+          <td>A collapsed roster docked above the composer that expands in place</td>
+          <td>Glanceable awareness with zero layout cost</td>
+        </tr>
+        <tr>
+          <td><span class="pill c">C</span></td>
+          <td>Mission control</td>
+          <td>Tree + drill-in split view with workflow phase bar</td>
+          <td>Heavy workflow runs; debugging what an agent did</td>
+        </tr>
+      </table>
+
+      <!-- ================= OPTION A ================= -->
+      <h2>
+        <span class="pill a">Option A</span> Agents panel — a right-panel surface
+        <span class="pill rec">recommended core</span>
+      </h2>
+      <p>
+        Adds <code>kind: "agents"</code> to the existing right-panel workspace. A tab with a live
+        count badge sits beside Diff/Files/Browser; the panel shows one compact card per agent,
+        grouped by origin (workflow vs. direct spawns), with a summary footer aggregating burn.
+        Cards expand in place to the recent-activity feed.
+      </p>
+
+      <figure>
+        <div class="mock">
+          <div class="titlebar">
+            <div class="dots"><span></span><span></span><span></span></div>
+            <span class="crumb">t3code · fix-auth-flow</span>
+            <div class="spacer"></div>
+            <span class="tbicon">▤</span><span class="tbicon active">▥</span>
+          </div>
+          <div class="mockbody">
+            <div class="chatcol">
+              <div class="msg user">
+                Audit the auth flow and fix the session-refresh race — use a workflow.
+              </div>
+              <div class="msg assistant">
+                <div class="ghost w80"></div>
+                <div class="ghost w60"></div>
+                <div class="workrow">
+                  <span class="wicon">⚙</span> Workflow: audit-auth-flow
+                  <span class="check">·</span>
+                </div>
+                <div class="workrow">
+                  <span class="dot run"></span> Working for
+                  <span class="mono" data-timer="312"></span> · 4 agents running
+                </div>
+              </div>
+              <div class="composer">
+                Reply…
+                <div class="send">↑</div>
+              </div>
+            </div>
+            <div class="panelcol">
+              <div class="ptabs">
+                <span class="ptab active">⛬ Agents <span class="badge">4</span></span>
+                <span class="ptab">Diff</span><span class="ptab">Files</span
+                ><span class="ptab">+</span>
+              </div>
+              <div class="panelscroll">
+                <div class="groups">
+                  Workflow · audit-auth-flow <span class="line"></span>
+                  <span class="scriptlink">{} script</span>
+                </div>
+                <div class="phasehdr">
+                  <span class="ph" style="color: var(--t3-emerald)">✓ Audit</span
+                  ><span class="line"></span>
+                </div>
+                <div class="agentcard" style="opacity: 0.72">
+                  <div class="rowtop">
+                    <span class="dot done"></span><span class="name">audit:auth-entrypoints</span
+                    ><span class="time">4m 02s</span>
+                  </div>
+                  <div class="activity">Found 3 candidate races · report → /tmp/audit/entry.md</div>
+                  <div class="stats">
+                    <span class="tok"><b>118.4k</b> tok</span><span class="sep">·</span
+                    ><span class="meta">41 tools</span>
+                  </div>
+                </div>
+                <div class="phasehdr">
+                  <span class="ph" style="color: var(--t3-sky)">Verify</span
+                  ><span class="meta" style="text-transform: none">2 running · 1 done</span
+                  ><span class="line"></span>
+                </div>
+                <div class="agentcard">
+                  <div class="rowtop">
+                    <span class="dot run"></span><span class="name">verify:session-refresh</span
+                    ><span class="chip model">sonnet</span
+                    ><span class="time" data-timer="94"></span>
+                  </div>
+                  <div class="activity">▸ Reproducing the race in sessionRefresh.test.ts</div>
+                  <div class="stats">
+                    <span class="tok"
+                      ><b>41.2k</b> tok <span style="color: var(--t3-sky)">↑</span></span
+                    ><span class="sep">·</span><span class="meta">12 tools</span>
+                  </div>
+                </div>
+                <div class="agentcard">
+                  <div class="rowtop">
+                    <span class="dot run"></span><span class="name">verify:token-rotation</span
+                    ><span class="chip model">sonnet</span
+                    ><span class="time" data-timer="87"></span>
+                  </div>
+                  <div class="activity">▸ Read apps/server/src/auth/rotate.ts</div>
+                  <div class="stats">
+                    <span class="tok"
+                      ><b>26.0k</b> tok <span style="color: var(--t3-sky)">↑</span></span
+                    ><span class="sep">·</span><span class="meta">8 tools</span>
+                  </div>
+                </div>
+                <div class="phasehdr">
+                  <span class="ph" style="opacity: 0.5">Fix</span
+                  ><span class="meta" style="text-transform: none">pending</span
+                  ><span class="line"></span>
+                </div>
+                <div class="groups" style="margin-top: 14px">
+                  Direct spawns <span class="line"></span>
+                </div>
+                <div class="agentcard">
+                  <div class="rowtop">
+                    <span class="dot wait"></span><span class="name">Marlow</span
+                    ><span class="chip role">explorer</span><span class="chip provider">codex</span
+                    ><span class="time" data-timer="203"></span>
+                  </div>
+                  <div class="activity">
+                    Waiting on approval · <span class="mono">/root/marlow</span>
+                  </div>
+                  <div class="stats">
+                    <span class="tok"><b>61.8k</b> tok</span><span class="sep">·</span
+                    ><span class="meta" style="color: var(--t3-amber)">blocked 41s</span>
+                  </div>
+                </div>
+              </div>
+              <div class="summarybar">
+                <span><span class="dot run" style="display: inline-block"></span> 3 running</span>
+                <span>1 waiting</span>
+                <span style="margin-left: auto" class="mono">Σ 247k tok</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption>
+          Option A — "Agents" as a peer of Diff/Files. Workflow agents group under real phase
+          headers (✓ done / running counts / pending) from the snapshot's <code>phases</code> list;
+          "{} script" opens the workflow's JS file in the file surface. Token burn is a plain
+          counter with a live-tick ▲ — burn is unbounded, so it must not look like progress toward
+          completion. Amber = blocked on approval (clicking jumps to the prompt).
+        </figcaption>
+      </figure>
+
+      <div class="proscons">
+        <div class="pc good">
+          <b>Pros</b>
+          <ul>
+            <li>Zero new layout machinery — tab strip, docking, sheet mode, resize all exist</li>
+            <li>Persistent: watch agents while scrolling chat; count badge when hidden</li>
+            <li>Cards scale from 1 subagent to a 10-agent workflow (groups + scroll)</li>
+            <li>Natural home for phase-2 drill-in (card → expanded feed)</li>
+          </ul>
+        </div>
+        <div class="pc bad">
+          <b>Cons</b>
+          <ul>
+            <li>Competes for the right panel with Diff/Browser (tab switching)</li>
+            <li>Hidden by default on &lt;980px until the user opens the sheet</li>
+            <li>Discovery depends on noticing the tab badge</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ================= OPTION B ================= -->
+      <h2>
+        <span class="pill b">Option B</span> Inline live strip — agents live in the conversation
+      </h2>
+      <p>
+        No panel at all: a roster strip docks between the timeline and the composer whenever ≥1
+        agent is live, replacing the bare "Working…" row. Collapsed, it's one line with a face-pile
+        and aggregate burn; expanded, one row per agent. Terminal states fold into the timeline as
+        ordinary work-log entries. Inspired by the existing turn-fold ("Worked for 4m 12s")
+        language.
+      </p>
+
+      <figure>
+        <div class="mock">
+          <div class="titlebar">
+            <div class="dots"><span></span><span></span><span></span></div>
+            <span class="crumb">t3code · fix-auth-flow</span>
+            <div class="spacer"></div>
+            <span class="tbicon">▤</span><span class="tbicon">▥</span>
+          </div>
+          <div class="mockbody">
+            <div class="chatcol" style="flex: 1; border-right: 0">
+              <div class="msg user">
+                Audit the auth flow and fix the session-refresh race — use a workflow.
+              </div>
+              <div class="msg assistant">
+                <div class="ghost w80"></div>
+                <div class="ghost w40"></div>
+                <div class="workrow">
+                  <span class="wicon">✓</span> audit:auth-entrypoints — 3 candidate races
+                  <span class="check">✓</span>
+                </div>
+              </div>
+
+              <div class="strip">
+                <div class="striphead">
+                  <span class="dot run"></span>
+                  <b>4 agents</b>
+                  <div class="facepile">
+                    <span class="face" style="background: #164e63; color: #7dd3fc">V</span>
+                    <span class="face" style="background: #164e63; color: #7dd3fc">V</span>
+                    <span class="face" style="background: #3b2f14; color: #fbbf24">M</span>
+                    <span class="face" style="background: #14321f; color: #34d399">A</span>
+                  </div>
+                  <span class="meta"
+                    >· Verify 2/3 · <span class="mono" data-timer="312"></span> ·
+                    <span class="mono">Σ 247k</span></span
+                  >
+                  <span class="caret">▾</span>
+                </div>
+                <div class="striprow">
+                  <span class="dot run"></span><span class="nm">verify:session-refresh</span
+                  ><span class="act">Reproducing the race in sessionRefresh.test.ts</span
+                  ><span class="tk">41.2k · <span data-timer="94"></span></span>
+                </div>
+                <div class="striprow">
+                  <span class="dot run"></span><span class="nm">verify:token-rotation</span
+                  ><span class="act">Read apps/server/src/auth/rotate.ts</span
+                  ><span class="tk">26.0k · <span data-timer="87"></span></span>
+                </div>
+                <div class="striprow">
+                  <span class="dot wait"></span
+                  ><span class="nm">Marlow <span class="chip role">explorer</span></span
+                  ><span class="act">Waiting on approval — Review approval request</span
+                  ><span class="tk">61.8k · <span data-timer="203"></span></span>
+                </div>
+                <div class="striprow" style="opacity: 0.65">
+                  <span class="dot done"></span><span class="nm">audit:auth-entrypoints</span
+                  ><span class="act">Done · 3 candidate races found</span
+                  ><span class="tk">118.4k · 4m 02s</span>
+                </div>
+              </div>
+
+              <div class="composer">
+                Reply…
+                <div class="send">↑</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption>
+          Option B — the roster is part of the conversation flow. Collapsed by default to a single
+          line; the ▾ expands rows in place. Rows click through to a drill-in sheet.
+        </figcaption>
+      </figure>
+
+      <div class="proscons">
+        <div class="pc good">
+          <b>Pros</b>
+          <ul>
+            <li>Impossible to miss — agents appear exactly where you're already looking</li>
+            <li>Works identically on mobile/narrow (no panel dependency)</li>
+            <li>Cheapest build: one component + the existing work-log fold pattern</li>
+            <li>Keeps the right panel free for Diff/Browser</li>
+          </ul>
+        </div>
+        <div class="pc bad">
+          <b>Cons</b>
+          <ul>
+            <li>Competes with the composer for vertical space when expanded</li>
+            <li>No room for rich per-agent detail — drill-in must open elsewhere</li>
+            <li>Long fleets (10+) need truncation ("+6 more")</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ================= OPTION C ================= -->
+      <h2><span class="pill c">Option C</span> Mission control — tree + drill-in split</h2>
+      <p>
+        The maximal version, for when a workflow is the main event: the right panel (or maximized
+        panel) becomes a two-pane console. Left: the agent tree — workflow → phases → agents, Codex
+        agent paths shown as real hierarchy. Right: the selected agent's live dossier — status,
+        model, burn breakdown, and a streaming activity feed built from
+        <code>recentActivity</code> (phase 2: full transcript). A phase progress bar sits on top.
+      </p>
+
+      <figure>
+        <div class="mock">
+          <div class="titlebar">
+            <div class="dots"><span></span><span></span><span></span></div>
+            <span class="crumb">t3code · fix-auth-flow · Agents</span>
+            <div class="spacer"></div>
+            <span class="tbicon">⤢</span>
+          </div>
+          <div class="mockbody" style="min-height: 460px">
+            <div class="panelcol" style="flex: 1">
+              <div class="mc">
+                <div class="mchead">
+                  <div style="display: flex; align-items: center; gap: 8px">
+                    <span class="dot run"></span><b style="font-size: 13px">audit-auth-flow</b>
+                    <span class="chip provider">workflow</span>
+                    <span class="scriptlink">{} script</span>
+                    <span class="meta" style="margin-left: auto"
+                      ><span class="mono" data-timer="312"></span> ·
+                      <span class="mono">Σ 247k tok</span> · 41 tools</span
+                    >
+                  </div>
+                  <div class="mcphases">
+                    <div class="phase done"></div>
+                    <div class="phase run"></div>
+                    <div class="phase"></div>
+                  </div>
+                  <div class="phaselabels">
+                    <span>Audit ✓</span><span>Verify 2/3</span><span>Fix</span>
+                  </div>
+                </div>
+                <div class="mcbody">
+                  <div class="mctree">
+                    <div class="trow">
+                      <span style="color: var(--t3-muted-fg)">▾</span
+                      ><b class="tname">Phase: Verify</b>
+                    </div>
+                    <div class="trow sel indent1">
+                      <span class="dot run"></span><span class="tname">verify:session-refresh</span
+                      ><span class="ttok">41.2k</span>
+                    </div>
+                    <div class="trow indent1">
+                      <span class="dot run"></span><span class="tname">verify:token-rotation</span
+                      ><span class="ttok">26.0k</span>
+                    </div>
+                    <div class="trow indent1">
+                      <span class="dot pend"></span><span class="tname">verify:cookie-scope</span
+                      ><span class="ttok">queued</span>
+                    </div>
+                    <div class="trow" style="margin-top: 6px">
+                      <span style="color: var(--t3-muted-fg)">▾</span
+                      ><b class="tname">Phase: Audit</b>
+                    </div>
+                    <div class="trow indent1" style="opacity: 0.65">
+                      <span class="dot done"></span><span class="tname">audit:auth-entrypoints</span
+                      ><span class="ttok">118.4k</span>
+                    </div>
+                    <div class="trow" style="margin-top: 6px">
+                      <span style="color: var(--t3-muted-fg)">▾</span
+                      ><b class="tname">Direct · codex</b>
+                    </div>
+                    <div class="trow indent1">
+                      <span class="dot wait"></span
+                      ><span class="tname">Marlow <span class="chip role">explorer</span></span
+                      ><span class="ttok">61.8k</span>
+                    </div>
+                    <div class="trow indent2">
+                      <span class="dot run"></span
+                      ><span class="tname mono">/marlow/grep_worker</span
+                      ><span class="ttok">8.1k</span>
+                    </div>
+                  </div>
+                  <div class="mcdetail">
+                    <div style="display: flex; align-items: center; gap: 8px">
+                      <span class="dot run"></span
+                      ><b style="font-size: 13px">verify:session-refresh</b>
+                      <span class="chip model">sonnet</span>
+                      <span
+                        class="meta"
+                        style="margin-left: auto"
+                        title="v2+ only — no per-agent stop API exists in T3 today"
+                        >⏹ Stop</span
+                      >
+                    </div>
+                    <div class="kv">
+                      <div><b>Elapsed</b><span data-timer="94"></span></div>
+                      <div><b>Tokens</b><span>41.2k</span></div>
+                      <div><b>Tools</b><span>12</span></div>
+                      <div><b>Runs</b><span>1</span></div>
+                    </div>
+                    <div class="meta" style="margin-top: 10px">
+                      Prompt: “Adversarially verify: session refresh race in refreshSession() — try
+                      to reproduce…”
+                    </div>
+                    <div class="feed">
+                      <div class="feeditem">
+                        <span class="ts">18:42:11</span
+                        ><span>▸ Bash · vp test run sessionRefresh.test.ts</span>
+                      </div>
+                      <div class="feeditem">
+                        <span class="ts">18:41:56</span
+                        ><span>▸ Edit · sessionRefresh.test.ts (+34)</span>
+                      </div>
+                      <div class="feeditem">
+                        <span class="ts">18:41:20</span
+                        ><span>▸ Read · apps/server/src/auth/refresh.ts</span>
+                      </div>
+                      <div class="feeditem">
+                        <span class="ts">18:40:58</span
+                        ><span>▸ Grep · "refreshSession" — 14 matches</span>
+                      </div>
+                      <div class="feeditem" style="opacity: 0.6">
+                        <span class="ts">18:40:41</span><span>Spawned · fork: last 2 turns</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption>
+          Option C — tree honors real structure: workflow phases (Claude) and nested agent paths
+          (Codex, <code>/marlow/grep_worker</code>). The dossier pane streams the recent-activity
+          feed. <strong>Stop is v2+ only</strong>: no per-subagent interrupt exists in T3's command
+          set today, and Codex exposes interruption only as a model tool — it needs its own protocol
+          work.
+        </figcaption>
+      </figure>
+
+      <div class="proscons">
+        <div class="pc good">
+          <b>Pros</b>
+          <ul>
+            <li>Only option that shows structure: phases, nesting, queue state</li>
+            <li>Drill-in is first-class, not an afterthought — best debugging surface</li>
+            <li>Maximized mode turns T3 into a genuine fleet console</li>
+          </ul>
+        </div>
+        <div class="pc bad">
+          <b>Cons</b>
+          <ul>
+            <li>Most surface area to build and maintain (~2–3× Option A)</li>
+            <li>Overkill for the common case of 1–2 subagents</li>
+            <li>Split panes need ≥ the maximized panel width to breathe</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ================= RECOMMENDATION ================= -->
+      <h2>Recommendation</h2>
+      <div class="verdict">
+        <p style="margin: 0 0 8px">
+          <strong>Ship A, seed it with B's collapsed line, grow into C.</strong> These aren't
+          mutually exclusive — they're one system at three zoom levels. But (review pushback,
+          accepted) they are <em>not</em> all "the same data at more room": each step up needs
+          specific contract fields to exist first. The milestones below make that explicit so the UI
+          never promises what the wire can't deliver.
+        </p>
+        <ol style="margin: 0">
+          <li>
+            <strong>v1:</strong> Option A panel + Option B's
+            <em>collapsed one-liner only</em> (replacing today's bare "Working…" row; clicking it
+            opens the panel). Strictly limited to v1-milestone fields.
+          </li>
+          <li>
+            <strong>v1.5:</strong> in-card expansion in the panel → the recent-activity feed (C's
+            dossier content, without the split layout) + approval deep-links.
+          </li>
+          <li>
+            <strong>v2:</strong> when maximized, the Agents surface upgrades to C's tree + dossier
+            layout. Stop/steer controls land here — they need new provider-command plumbing, not
+            just layout.
+          </li>
+        </ol>
+      </div>
+
+      <h3 id="milestones">Feature → contract field → milestone</h3>
+      <p class="sub">
+        Every visible affordance in the mocks, pinned to its data source. Nothing ships ahead of its
+        row.
+      </p>
+      <table>
+        <tr>
+          <th>UI affordance</th>
+          <th>Contract field(s)</th>
+          <th>Milestone</th>
+        </tr>
+        <tr>
+          <td>Name, type chip, status dot, elapsed, token bar</td>
+          <td><code>name, agentType, status, firstStartedAt/lastActivityAt, usage</code></td>
+          <td>v1</td>
+        </tr>
+        <tr>
+          <td>"What it's doing" line</td>
+          <td>
+            <code>currentActivity</code> (AI summary when enabled) with
+            <code>lastToolName</code> fallback
+          </td>
+          <td>v1</td>
+        </tr>
+        <tr>
+          <td>Workflow grouping + phase headers (✓ Audit / Verify / Fix pending)</td>
+          <td>
+            <code>kind, parentAgentId, phaseIndex</code> per agent + ordered <code>phases</code> on
+            the workflow snapshot (phase status derived: done = all members settled, running = any
+            running, pending = no members yet)
+          </td>
+          <td>v1</td>
+        </tr>
+        <tr>
+          <td>"{} script" → workflow JS in file surface</td>
+          <td>
+            <code>scriptPath</code> from <code>WorkflowOutput</code> (Claude-only; Codex has no
+            workflow concept)
+          </td>
+          <td>v1</td>
+        </tr>
+        <tr>
+          <td>Amber row → jump to pending approval</td>
+          <td><code>approvalRequestId</code> (spec §5.1) + existing approval panel focus</td>
+          <td>v1.5</td>
+        </tr>
+        <tr>
+          <td>"attempt 2 — retrying"</td>
+          <td>
+            <code>activationCount</code> + <code>errorMessage</code> (Claude workflows only —
+            <code>workflow_progress.attempt</code>; no Codex source)
+          </td>
+          <td>v1.5</td>
+        </tr>
+        <tr>
+          <td>Recent-activity feed in card/dossier</td>
+          <td><code>recentActivity</code> ring buffer</td>
+          <td>v1.5</td>
+        </tr>
+        <tr>
+          <td>Result link ("report → /tmp/…")</td>
+          <td><code>resultSummary</code> (path rendering is client-side sniffing)</td>
+          <td>v1.5</td>
+        </tr>
+        <tr>
+          <td>"While you were away" divider, stale badges</td>
+          <td><code>updatedAt</code> + client sync watermark from subscription state</td>
+          <td>v1.5</td>
+        </tr>
+        <tr>
+          <td>Full transcript dossier, per-agent tool feed</td>
+          <td><code>outputFile</code> + <code>getAgentTranscript</code> RPC (spec §5.5)</td>
+          <td>v2</td>
+        </tr>
+        <tr>
+          <td>Stop / steer buttons</td>
+          <td>new provider commands — not in the observability contract at all</td>
+          <td>v2+</td>
+        </tr>
+      </table>
+      <p class="sub">
+        Cut from the mocks after review: the "Isolation: worktree" stat (no wire source for either
+        provider) and the reasoning-effort chip (Codex v2 parent items don't carry effort; revisit
+        if a child-settings source is plumbed). The per-card provider chip is derived from the
+        thread's session, not a snapshot field.
+      </p>
+
+      <h3>Shared component inventory (all options)</h3>
+      <table>
+        <tr>
+          <th>Piece</th>
+          <th>Reuses</th>
+        </tr>
+        <tr>
+          <td>Status dot + pulse</td>
+          <td>
+            <code>animate-status-pulse</code>, <code>resolveThreadStatusPill</code> color language
+            (sky=running, emerald=done, amber=waiting, red=failed, zinc=queued)
+          </td>
+        </tr>
+        <tr>
+          <td>Elapsed timers</td>
+          <td>
+            <code>WorkingTimer</code> self-ticking DOM-write pattern (no React commits per tick)
+          </td>
+        </tr>
+        <tr>
+          <td>Model/role chips</td>
+          <td><code>Badge</code> variants</td>
+        </tr>
+        <tr>
+          <td>Token burn counter</td>
+          <td>
+            Plain <code>tabular-nums</code> count + live-tick indicator. <em>Not</em> a bar/ring:
+            burn has no denominator, and a fill implies progress. (<code>ContextWindowMeter</code>'s
+            ring stays where a real denominator exists — context windows.)
+          </td>
+        </tr>
+        <tr>
+          <td>Activity feed rows</td>
+          <td><code>SimpleWorkEntryRow</code> / work-log derivation, filtered by agentId</td>
+        </tr>
+        <tr>
+          <td>Panel shell / tabs / sheet</td>
+          <td><code>RightPanelTabs</code> + <code>PreviewPanelShell</code> resize + maximize</td>
+        </tr>
+      </table>
+
+      <h3>States to design past the happy path</h3>
+      <ul>
+        <li>
+          <strong>Empty / discovery:</strong> the tab auto-appears once the thread has any agent
+          (and persists with settled history), but the surface is <em>always</em> reachable from the
+          right panel's "+" add-menu with an explanatory empty state — so users can discover it
+          before ever triggering an agent.
+        </li>
+        <li>
+          <strong>Idle vs done (Codex):</strong> a Codex agent that finished a run is
+          <em>idle and resumable</em>, not completed — dimmed sky dot, "idle · resumable" label. If
+          the model sends it a follow-up, the card re-activates (run count increments, elapsed
+          resumes). Distinct from Claude's terminal green check.
+        </li>
+        <li>
+          <strong>Waiting on approval:</strong> amber row links straight to the pending approval via
+          <code>approvalRequestId</code> (highest-value click in the whole feature; v1.5).
+        </li>
+        <li>
+          <strong>Failure:</strong> red dot + <code>errorMessage</code> snippet on the card; Claude
+          workflow agents show attempt count ("attempt 2 — retrying"). Codex has no retry signal —
+          failed is failed.
+        </li>
+        <li>
+          <strong>Transport states (separate axis from agent lifecycle):</strong> loading (skeleton
+          cards), synchronizing, live, reconnecting (dim panel + "reconnecting…" banner, timers
+          freeze at <code>lastActivityAt</code>), and subscription-error. While disconnected,
+          running agents get a stale badge after 30s past <code>updatedAt</code> — a snapshot can't
+          distinguish "still running" from "died while we were away", so the UI must not pretend it
+          can.
+        </li>
+        <li>
+          <strong>Orphaned:</strong> if the provider session exits, the server sweeps non-terminal
+          agents to <code>stopped</code> ("orphaned on session exit") — the panel shows them as
+          stopped with that reason, no zombie spinners.
+        </li>
+        <li>
+          <strong>Reconnect catch-up:</strong> settled-while-away agents (settled
+          <code>updatedAt</code> newer than the client's last-sync watermark) group under a "while
+          you were away" divider (v1.5).
+        </li>
+        <li>
+          <strong>Overflow:</strong> &gt;8 agents → group headers become sticky, settled groups
+          auto-collapse; the reducer caps settled agents carried in the roster at 50/thread (oldest
+          settled pruned first).
+        </li>
+      </ul>
+
+      <script>
+        // Live elapsed timers for the mocks (mirrors the WorkingTimer pattern).
+        const t0 = Date.now();
+        const fmt = (s) =>
+          s >= 60 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s` : `${s}s`;
+        const els = document.querySelectorAll("[data-timer]");
+        const tick = () => {
+          const d = Math.floor((Date.now() - t0) / 1000);
+          els.forEach((el) => {
+            el.textContent = fmt(parseInt(el.dataset.timer, 10) + d);
+          });
+        };
+        tick();
+        setInterval(tick, 1000);
+      </script>
+    </main>
+  </body>
+</html>

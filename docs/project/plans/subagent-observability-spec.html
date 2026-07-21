@@ -1,0 +1,1235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Subagent Observability — Audit &amp; Tech Spec</title>
+    <style>
+      :root {
+        --bg: #000;
+        --fg: #fff;
+        --muted: #9ca3af;
+        --faint: #6b7280;
+        --surface: #0d0d0f;
+        --surface2: #141417;
+        --border: #26262b;
+        --accent: #7c86ff;
+        --sky: #38bdf8;
+        --emerald: #34d399;
+        --amber: #fbbf24;
+        --red: #f87171;
+        --violet: #a78bfa;
+        --mono: "SF Mono", "JetBrains Mono", Consolas, Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          15px/1.6 -apple-system,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 48px 24px 120px;
+      }
+      h1 {
+        font-size: 30px;
+        line-height: 1.2;
+        margin: 0 0 8px;
+        letter-spacing: -0.02em;
+      }
+      h2 {
+        font-size: 21px;
+        margin: 56px 0 12px;
+        letter-spacing: -0.01em;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 8px;
+      }
+      h3 {
+        font-size: 16px;
+        margin: 28px 0 8px;
+      }
+      p,
+      li {
+        color: #d4d4d8;
+      }
+      .sub {
+        color: var(--muted);
+        margin: 0 0 4px;
+        font-size: 14px;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      code,
+      pre {
+        font-family: var(--mono);
+        font-size: 12.5px;
+      }
+      code {
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        padding: 1px 5px;
+        color: #e4e4e7;
+      }
+      pre {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 16px;
+        overflow-x: auto;
+        line-height: 1.55;
+        color: #d4d4d8;
+      }
+      pre code {
+        background: none;
+        border: 0;
+        padding: 0;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 12px 0;
+        font-size: 13.5px;
+      }
+      th,
+      td {
+        border: 1px solid var(--border);
+        padding: 7px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: var(--surface2);
+        font-weight: 600;
+      }
+      td {
+        color: #d4d4d8;
+      }
+      .tag {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid;
+      }
+      .tag.yes {
+        color: var(--emerald);
+        border-color: color-mix(in srgb, var(--emerald) 40%, transparent);
+      }
+      .tag.partial {
+        color: var(--amber);
+        border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+      }
+      .tag.no {
+        color: var(--red);
+        border-color: color-mix(in srgb, var(--red) 40%, transparent);
+      }
+      .tag.new {
+        color: var(--violet);
+        border-color: color-mix(in srgb, var(--violet) 40%, transparent);
+      }
+      .cols {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      @media (max-width: 780px) {
+        .cols {
+          grid-template-columns: 1fr;
+        }
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px 18px;
+      }
+      .card h3 {
+        margin-top: 0;
+      }
+      .callout {
+        border-left: 3px solid var(--accent);
+        background: var(--surface);
+        border-radius: 0 10px 10px 0;
+        padding: 12px 16px;
+        margin: 16px 0;
+      }
+      .callout.warn {
+        border-left-color: var(--amber);
+      }
+      .callout.fix {
+        border-left-color: var(--emerald);
+      }
+      .k {
+        color: var(--sky);
+      }
+      .s {
+        color: var(--emerald);
+      }
+      .c {
+        color: var(--faint);
+      }
+      .toc {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px 20px;
+        margin-top: 24px;
+      }
+      .toc ol {
+        margin: 0;
+        padding-left: 20px;
+      }
+      .toc li {
+        margin: 3px 0;
+      }
+      figure {
+        margin: 20px 0;
+      }
+      figcaption {
+        color: var(--faint);
+        font-size: 12.5px;
+        margin-top: 6px;
+        text-align: center;
+      }
+      .small {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .num {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--faint);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="sub">
+        T3 Code · Plan 1 of 2 · 2026-07-20 · rev 3 (minimal transport) · companion:
+        <a href="./subagent-observability-ui.html">UI mockups</a>
+      </p>
+      <h1>Subagent Observability: Audit &amp; Tech Spec</h1>
+      <p>
+        Expose Codex&nbsp;v2 subagents and Claude Code subagents + workflows in a live T3 panel: who
+        is running, what they're doing, token burn, elapsed time, and a drill-in. One generic
+        interface; both providers plug into it.
+      </p>
+
+      <div class="callout fix">
+        <strong>Rev 2 — adversarially reviewed</strong> by a Fable subagent and gpt-5.6-sol (codex),
+        both verifying claims against source. Material corrections: (1)&nbsp;Codex
+        <strong>v2 does not emit the rich <code>collabAgentToolCall</code> spawn items</strong> —
+        that's v1; the v2 tracker is now keyed on <code>subAgentActivity</code> + child
+        <code>thread/started</code> metadata, and T3's child-thread suppression turns out not to
+        engage for v2 at all. (2)&nbsp;Codex agents are <strong>reusable identities</strong>, so the
+        snapshot now separates identity from activations and adds an <code>idle</code> state.
+        (3)&nbsp;Persistence is now <strong>material-transitions-only</strong> (1s ticks stay in
+        memory) because orchestration events are append-only and replay reads are global. Full
+        review notes: <code>/tmp/subagent-audit/review/</code>.<br /><br />
+        <strong>Rev 3 — minimal transport.</strong> The bespoke stream event, subscriber gating,
+        projection table, migration, and capability flag are all deleted: the roster now ships as
+        one <code>agent.snapshot</code> <em>activity kind</em> through the existing
+        append/persist/replay channel, latest-wins on the client — the exact pattern the
+        context-window meter already uses. Server delta shrinks to: contract types, two adapters,
+        one reducer in ingestion. Rev 2's bespoke design remains in this doc's git history as the
+        graduation path if fleets outgrow the activity channel.
+      </div>
+
+      <div class="toc">
+        <ol>
+          <li><a href="#audit-codex">Audit: Codex v2 ("collab" / MultiAgentV2)</a></li>
+          <li><a href="#audit-claude">Audit: Claude Agent SDK (subagents + workflows)</a></li>
+          <li><a href="#audit-t3">Audit: T3's existing pipeline</a></li>
+          <li><a href="#matrix">Unified data-availability matrix</a></li>
+          <li><a href="#design">Design: the generic interface</a></li>
+          <li><a href="#server">Server changes</a></li>
+          <li><a href="#client">Client changes</a></li>
+          <li><a href="#phasing">Phasing, risks, open questions</a></li>
+        </ol>
+      </div>
+
+      <h2 id="audit-codex">1 · Audit: Codex v2</h2>
+      <p class="sub">
+        Sources: codex-rs @ bb947e8e (2026-07-13); T3's generated schema pin 678157ac. Initial audit
+        corrected by adversarial review — v1/v2 item emission re-verified handler by handler.
+      </p>
+
+      <p>
+        <strong>The core fact: every v2 subagent is a full app-server thread.</strong> There are no
+        dedicated subagent RPCs — spawn/send/wait are <em>model tools</em>, not client methods. The
+        client observes subagents as ordinary threads plus parent-side thread items.
+      </p>
+
+      <ul>
+        <li>
+          <strong>v1 vs v2.</strong> <code>features.multi_agent</code> (v1, stable) vs
+          <code>features.multi_agent_v2</code> (under development, default off) — but the
+          <strong>model catalog forces v2 for gpt-5.6-sol and gpt-5.6-terra</strong> (<code
+            >models.json: multi_agent_version: "v2"</code
+          >), so on the models we care about it's on with zero config. v2 has no depth limit;
+          concurrency defaults to 4 (<code>max_concurrent_threads_per_session</code>).
+        </li>
+        <li>
+          <strong>Identity &amp; lineage</strong> arrive on the standard
+          <code>thread/started</code> notification. The <code>Thread</code> object carries
+          <code>parentThreadId</code>, shared <code>sessionId</code>,
+          <code>agentNickname</code> (random, e.g. "Marlow"), <code>agentRole</code> (agent_type:
+          explorer/awaiter/custom), and
+          <code>source.subAgent.threadSpawn.{depth, agentPath}</code> with hierarchical paths like
+          <code>/root/researcher</code>.
+          <strong
+            >Clients are auto-subscribed to child-thread events — no subscribe call needed.</strong
+          >
+        </li>
+        <li>
+          <strong>Parent-side items — v1 and v2 emit differently</strong> (this is where the first
+          draft was wrong):
+          <ul>
+            <li>
+              <strong>v1</strong> emits rich <code>collabAgentToolCall</code> items for
+              spawn/send/resume/close/wait, carrying <code>receiverThreadIds</code>,
+              <code>prompt</code>, <code>model</code>, <code>reasoningEffort</code>, and
+              <code>agentsStates</code> (child thread id → <code>{status, message}</code>).
+            </li>
+            <li>
+              <strong>v2</strong> emits
+              <code
+                >subAgentActivity {kind: started|interacted|interrupted, agentThreadId,
+                agentPath}</code
+              >
+              on spawn/message/interrupt (<code>multi_agents_v2/spawn.rs:142</code> emits
+              <em>only</em> this — verified, no <code>CollabAgentToolCall</code> anywhere in the v2
+              spawn path). The only v2 <code>collabAgentToolCall</code> emitter is
+              <code>wait</code>, and it ships with <strong>empty</strong>
+              <code>receiverThreadIds</code> /
+              <code>agentsStates</code> (<code>multi_agents_v2/wait.rs:85,90</code>).
+              Model/prompt/agentsStates are <em>not</em> on v2 parent items.
+            </li>
+          </ul>
+          Consequence: under v2, per-agent status and model must come from the
+          <em>child thread's own stream</em> (<code>thread/status/changed</code>,
+          <code>turn/started|completed</code>, <code>thread/settings/updated</code>), not from
+          parent items.
+        </li>
+        <li>
+          <strong>Per-agent token burn is free:</strong>
+          <code
+            >thread/tokenUsage/updated {threadId, turnId, tokenUsage: {total, last,
+            modelContextWindow}}</code
+          >
+          fires per child thread with input/cached/output/reasoning breakdowns. No server-side tree
+          rollup — client sums.
+        </li>
+        <li>
+          <strong>Agents are reusable identities, not one-shot tasks.</strong>
+          <code>send_message</code>/<code>followup_task</code> re-target an existing child thread
+          and trigger new turns on it (interaction events at <code>event_mapping.rs:133-178</code>).
+          A child <code>turn/completed</code> means "this run finished", not "this agent is done" —
+          the agent sits idle and resumable.
+        </li>
+        <li>
+          <strong>Reference consumer:</strong> the Codex TUI builds its <code>/agent</code> UI from
+          notifications alone — it caches child threads from
+          <code>subAgentActivity</code>/<code>thread/started</code>, buffers the last ~6 item
+          summaries per child, labels agents "<code>{nickname} [{role}]</code>".
+        </li>
+        <li>
+          <strong>Not exposed:</strong> the live <code>AgentRegistry</code> (model-facing
+          <code>list_agents</code> only), tree token rollups, per-agent "current activity" endpoint.
+          <code>thread/list?parentThreadId/ancestorThreadId</code> subtree filters are
+          experimental-gated and newer than T3's schema pin.
+        </li>
+      </ul>
+
+      <div class="callout">
+        <strong>T3 schema verdict:</strong> the vendored <code>effect-codex-app-server</code> pin
+        already has everything needed — <code>subAgentActivity</code>,
+        <code>collabAgentToolCall</code>,
+        <code>Thread.parentThreadId/agentNickname/agentRole</code> +
+        <code>source.subAgent.threadSpawn</code>, <code>thread/tokenUsage/updated</code>. No
+        regeneration required to ship.
+      </div>
+
+      <div class="callout warn">
+        <strong
+          >T3's child-thread suppression does not engage for v2 — child chatter behavior today is
+          unverified.</strong
+        >
+        <code>CodexSessionRuntime.rememberCollabReceiverTurns</code> learns child threads only from
+        <code>collabAgentToolCall.receiverThreadIds</code>; under v2 those are empty, so the
+        <code>collabReceiverTurns</code> map never populates and the suppression list is inert. What
+        v2 child-thread notifications actually do to the parent timeline today (leak in? get dropped
+        elsewhere?) must be established with a <strong>live v2 wire probe</strong> — this is the
+        entry gate for the Codex slice (§8). The suppression narrative in the first draft applied
+        only to v1 models (e.g. gpt-5.6-luna).
+      </div>
+
+      <h2 id="audit-claude">2 · Audit: Claude Agent SDK</h2>
+      <p class="sub">
+        Sources: @anthropic-ai/claude-agent-sdk 0.3.170 type declarations, CLI 2.1.214 binary, and a
+        live <code>stream-json</code> wire probe (real subagent spawn captured). All SDK-type claims
+        below re-verified by both reviewers.
+      </p>
+
+      <p>
+        <strong>The core fact: a complete task lifecycle already streams over stdio</strong>, keyed
+        by <code>task_id</code> + <code>tool_use_id</code>, covering subagents, background shells,
+        monitors, and workflows uniformly:
+      </p>
+
+      <pre><code><span class="k">task_started</span>      {task_id, tool_use_id, description, subagent_type?, task_type?, workflow_name?, prompt?}
+<span class="k">task_progress</span>     {task_id, description, usage:{total_tokens, tool_uses, duration_ms}, last_tool_name?, summary?}
+<span class="k">task_updated</span>      {task_id, patch:{status: pending|running|completed|failed|killed|paused, end_time?, is_backgrounded?, error?}}
+<span class="k">task_notification</span> {task_id, status: completed|failed|stopped, summary, usage?, output_file}</code></pre>
+
+      <ul>
+        <li>
+          <strong>Subagent messages</strong> arrive on the main stream tagged
+          <code>parent_tool_use_id</code> + <code>subagent_type</code> +
+          <code>task_description</code>. By default only tool_use/tool_result blocks are forwarded;
+          <code>forwardSubagentText: true</code> forwards the full nested transcript.
+        </li>
+        <li>
+          <strong>"What it's doing right now":</strong> <code>last_tool_name</code> on every
+          progress tick and <code>tool_progress</code> heartbeats (<code
+            >tool_name, elapsed_time_seconds, parent_tool_use_id, task_id</code
+          >) are free. <code>agentProgressSummaries: true</code> additionally forks each running
+          subagent every ~30s for an AI-written present-tense summary in
+          <code>task_progress.summary</code> — <em>real recurring model calls</em> (SDK default is
+          off), so this is a per-instance setting, not a default (§8).
+        </li>
+        <li>
+          <strong>Workflows:</strong> <code>task_started</code> carries
+          <code>task_type:'local_workflow'</code> + <code>workflow_name</code>;
+          <code>task_progress</code> carries an <em>undeclared-but-real</em>
+          <code>workflow_progress</code> array (wire-probe confirmed) with
+          <code>workflow_phase {index, title}</code> and
+          <code
+            >workflow_agent {label, phaseIndex, phaseTitle, agentId, model, state, startedAt,
+            attempt, lastToolName, promptPreview, resultPreview, tokens, toolCalls, error}</code
+          >
+          entries. Not in <code>sdk.d.ts</code>; consume defensively behind a schema guard.
+          Per-agent full results are files-only (<code>journal.jsonl</code>,
+          <code>agent-&lt;id&gt;.jsonl</code>).
+        </li>
+        <li>
+          <strong>Usage granularity:</strong> per task (<code>total_tokens</code> only, no USD), per
+          message (if forwarded), per model + costUSD on the turn <code>result.modelUsage</code>,
+          session-wide via an explicitly-unstable control request.
+        </li>
+        <li>
+          <strong>Rosters:</strong> the typed <code>background_tasks</code> control request returns
+          the live task list (<code>BackgroundTaskSummary[]</code>) — this is the stable
+          roster/reconciliation source. A <code>background_tasks_changed</code> stream event was
+          also observed on the wire but is undeclared and its literal doesn't appear in the CLI
+          binary strings — treat as bonus signal only, never a dependency.
+        </li>
+        <li>
+          <strong>Gaps needing upstream:</strong> no model field on task events, no start_time on
+          <code>task_started</code> (use receive time), no per-subagent USD,
+          <code>workflow_progress</code> untyped.
+        </li>
+      </ul>
+
+      <div class="callout warn">
+        <strong>Today T3's ClaudeAdapter maps the lifecycle but strips the linkage.</strong>
+        <code>task.started/progress/completed</code> runtime events exist and are persisted, but
+        <code>subagent_type</code>, <code>tool_use_id</code>, <code>workflow_name</code>,
+        <code>prompt</code>, <code>output_file</code> are dropped; <code>task_updated</code> falls
+        into the unknown-subtype warning path (status transitions lost);
+        <code>parent_tool_use_id</code> traffic is filtered out of usage accounting. Raw payloads
+        survive in <code>raw.payload</code> on the <em>ephemeral</em> runtime events (NDJSON logs) —
+        recoverable at the adapter, but <strong>not</strong> from the durable store, so pre-feature
+        history cannot be backfilled (§5.5).
+      </div>
+
+      <h2 id="audit-t3">3 · Audit: T3's existing pipeline</h2>
+
+      <figure>
+        <svg
+          viewBox="0 0 900 190"
+          style="width: 100%; height: auto"
+          role="img"
+          aria-label="Event pipeline diagram"
+        >
+          <defs>
+            <marker
+              id="arr"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto-start-reverse"
+            >
+              <path d="M0 0 L10 5 L0 10 z" fill="#6b7280" />
+            </marker>
+          </defs>
+          <g font-family="ui-monospace, Menlo, monospace" font-size="11" fill="#e4e4e7">
+            <rect x="8" y="18" width="140" height="64" rx="9" fill="#0d0d0f" stroke="#26262b" />
+            <text x="78" y="42" text-anchor="middle" fill="#38bdf8">Codex app-server</text>
+            <text x="78" y="58" text-anchor="middle" fill="#38bdf8">Claude SDK</text>
+            <text x="78" y="74" text-anchor="middle" fill="#6b7280">(stdio)</text>
+
+            <rect x="188" y="18" width="128" height="64" rx="9" fill="#0d0d0f" stroke="#26262b" />
+            <text x="252" y="46" text-anchor="middle">Adapters</text>
+            <text x="252" y="63" text-anchor="middle" fill="#6b7280" font-size="10">normalize</text>
+
+            <rect x="356" y="18" width="176" height="64" rx="9" fill="#0d0d0f" stroke="#7c86ff" />
+            <text x="444" y="41" text-anchor="middle" fill="#a5b4fc">ProviderRuntimeEventV2</text>
+            <text x="444" y="58" text-anchor="middle" fill="#6b7280" font-size="10">
+              task.* · item.* · turn.*
+            </text>
+            <text x="444" y="72" text-anchor="middle" fill="#6b7280" font-size="10">
+              PubSub (in-memory)
+            </text>
+
+            <rect x="572" y="18" width="150" height="64" rx="9" fill="#0d0d0f" stroke="#26262b" />
+            <text x="647" y="41" text-anchor="middle">Ingestion</text>
+            <text x="647" y="58" text-anchor="middle" fill="#6b7280" font-size="10">
+              lossy → activities
+            </text>
+            <text x="647" y="72" text-anchor="middle" fill="#6b7280" font-size="10">
+              SQLite + projections
+            </text>
+
+            <rect x="762" y="18" width="130" height="64" rx="9" fill="#0d0d0f" stroke="#26262b" />
+            <text x="827" y="41" text-anchor="middle">WS subscribe</text>
+            <text x="827" y="58" text-anchor="middle" fill="#6b7280" font-size="10">
+              snapshot + deltas
+            </text>
+            <text x="827" y="72" text-anchor="middle" fill="#6b7280" font-size="10">
+              → atoms → React
+            </text>
+
+            <line x1="148" y1="50" x2="186" y2="50" stroke="#6b7280" marker-end="url(#arr)" />
+            <line x1="316" y1="50" x2="354" y2="50" stroke="#6b7280" marker-end="url(#arr)" />
+            <line x1="532" y1="50" x2="570" y2="50" stroke="#6b7280" marker-end="url(#arr)" />
+            <line x1="722" y1="50" x2="760" y2="50" stroke="#6b7280" marker-end="url(#arr)" />
+
+            <rect
+              x="356"
+              y="118"
+              width="366"
+              height="50"
+              rx="9"
+              fill="none"
+              stroke="#fbbf24"
+              stroke-dasharray="4 4"
+            />
+            <text x="539" y="139" text-anchor="middle" fill="#fbbf24" font-size="11">
+              the gap: rich runtime events are compressed into
+            </text>
+            <text x="539" y="156" text-anchor="middle" fill="#fbbf24" font-size="11">
+              append-only activity rows; linkage fields dropped
+            </text>
+            <line x1="539" y1="116" x2="539" y2="86" stroke="#fbbf24" stroke-dasharray="4 4" />
+          </g>
+        </svg>
+        <figcaption>
+          Two-tier pipeline: ephemeral runtime events → durable orchestration events → websocket.
+        </figcaption>
+      </figure>
+
+      <ul>
+        <li>
+          <strong>The right abstractions already exist.</strong>
+          <code>ProviderRuntimeEventV2</code> already has
+          <code>task.started/progress/completed</code> (Claude emits them today, persisted and
+          streamed to clients as <code>thread.activity-appended</code>), a
+          <code>collab_agent_tool_call</code> canonical item type, and typed
+          <code>ThreadTokenUsageSnapshot</code>.
+        </li>
+        <li>
+          <strong>Snapshot+delta is a solved pattern:</strong> <code>subscribeShell</code>/<code
+            >subscribeThread</code
+          >
+          do live-buffer-first attach, snapshot-or-replay with <code>afterSequence</code>,
+          sequence-deduped deltas. <code>projection_thread_sessions</code> is the precedent for an
+          upserted per-thread mutable row.
+        </li>
+        <li>
+          <strong>Two cost facts that constrain the design</strong> (surfaced in review):
+          <ul>
+            <li>
+              Every accepted orchestration command <em>appends an immutable event</em> before
+              updating any projection — "upsert" describes the projection, not the event store.
+              High-frequency dispatches are permanent rows.
+            </li>
+            <li>
+              <code>subscribeThread</code>'s <code>afterSequence</code> catch-up reads the
+              <em>global</em> event range after the cursor and filters per-thread afterward
+              (<code>ws.ts:1385-1395</code>), and shell resume falls back to full snapshots beyond
+              <code>SHELL_RESUME_MAX_GAP = 1000</code>. Fleet-wide event volume taxes every
+              reconnect.
+            </li>
+          </ul>
+          → persistence must be <strong>material transitions only</strong> (§5.3).
+        </li>
+        <li>
+          <strong>Compat asymmetry that shaped the transport:</strong>
+          <code>OrchestrationEvent</code> is a closed <code>Schema.Union</code> decoded by the RPC
+          client — a <em>new event type</em> breaks old clients (fails decode) and would need
+          per-subscriber gating. But <code>OrchestrationThreadActivity.kind</code> is an open string
+          with <code>payload: Schema.Unknown</code> — a <em>new activity kind</em> flows through
+          every layer untouched. That's why §5.3 ships the roster as an activity kind, not an event
+          type.
+        </li>
+        <li>
+          <strong>Gaps:</strong> only Claude emits <code>task.*</code> (Codex/OpenCode emit only
+          item lifecycles; ACP nothing). Task payloads lack name/model/parent-linkage and
+          <code>usage</code> is untyped. Tool activities carry no owning-agent id. Turn cost never
+          reaches the client.
+        </li>
+        <li>
+          <strong>Client:</strong> the right panel (<code>rightPanelStore</code> surfaces:
+          plan/diff/files/file/preview/terminal) is the natural mount; <code>PlanSidebar</code> is
+          the structural template; <code>WorkingTimer</code> (DOM-write ticking, no React commits),
+          <code>Badge</code> variants, <code>animate-status-pulse</code>, and
+          <code>SimpleWorkEntryRow</code> are the primitives to reuse. Mobile shares state via
+          <code>client-runtime</code> but duplicates presentation — put new derivation helpers in
+          <code>client-runtime</code>.
+        </li>
+      </ul>
+
+      <h2 id="matrix">4 · Unified data-availability matrix</h2>
+      <p class="small">
+        "Wire" = the provider protocol T3 already speaks. "T3 today" = what actually reaches the
+        browser now.
+      </p>
+
+      <table>
+        <tr>
+          <th>Datum</th>
+          <th>Codex v2 wire</th>
+          <th>Claude wire</th>
+          <th>T3 today</th>
+          <th>Plan</th>
+        </tr>
+        <tr>
+          <td>Agent id</td>
+          <td><span class="tag yes">yes</span> child thread id (UUIDv7)</td>
+          <td><span class="tag yes">yes</span> <code>task_id</code> + <code>tool_use_id</code></td>
+          <td>taskId only (Claude)</td>
+          <td>normalize to <code>agentId</code> + keep <code>provider</code></td>
+        </tr>
+        <tr>
+          <td>Name / label</td>
+          <td>
+            <span class="tag yes">yes</span> nickname + role + path (child
+            <code>thread/started</code>)
+          </td>
+          <td><span class="tag yes">yes</span> description, subagent_type, name, workflow label</td>
+          <td>description only</td>
+          <td><code>name</code> + <code>agentType</code></td>
+        </tr>
+        <tr>
+          <td>Model</td>
+          <td>
+            <span class="tag partial">partial</span> child thread settings — <em>not</em> on v2
+            parent items
+          </td>
+          <td>
+            <span class="tag partial">partial</span> workflow agents yes; plain subagents only if
+            text forwarded
+          </td>
+          <td>—</td>
+          <td>optional <code>model</code></td>
+        </tr>
+        <tr>
+          <td>Status / lifecycle</td>
+          <td>
+            <span class="tag yes">yes</span> child thread/status + turn events (idle ≠ terminal)
+          </td>
+          <td><span class="tag yes">yes</span> task_updated + task_notification</td>
+          <td>started/completed only; <code>task_updated</code> dropped</td>
+          <td>7-state enum incl. <code>idle</code></td>
+        </tr>
+        <tr>
+          <td>Current activity</td>
+          <td><span class="tag yes">yes</span> child item stream</td>
+          <td><span class="tag yes">yes</span> last_tool_name; AI summaries opt-in</td>
+          <td>lastToolName forwarded but not surfaced per-agent</td>
+          <td><code>currentActivity</code> + recent feed</td>
+        </tr>
+        <tr>
+          <td>Token burn</td>
+          <td><span class="tag yes">yes</span> per-thread breakdowns</td>
+          <td><span class="tag yes">yes</span> total_tokens per task</td>
+          <td>untyped blob</td>
+          <td>typed <code>usage</code></td>
+        </tr>
+        <tr>
+          <td>Start / end time</td>
+          <td><span class="tag yes">yes</span> thread/turn timestamps</td>
+          <td><span class="tag partial">partial</span> end_time yes; start = receive time</td>
+          <td>activity createdAt</td>
+          <td><code>firstStartedAt/lastActivityAt/endedAt</code></td>
+        </tr>
+        <tr>
+          <td>Parent linkage</td>
+          <td><span class="tag yes">yes</span> parentThreadId + depth + path</td>
+          <td><span class="tag partial">partial</span> tool_use_id, 1 level on stream</td>
+          <td>—</td>
+          <td><code>parentAgentId</code></td>
+        </tr>
+        <tr>
+          <td>Workflow phases / retries</td>
+          <td><span class="tag no">n/a</span> (paths encode tree)</td>
+          <td>
+            <span class="tag partial">partial</span> undeclared
+            <code>workflow_progress</code> (incl. <code>attempt</code>)
+          </td>
+          <td>—</td>
+          <td>workflow agents = child agents with <code>phaseTitle</code>, <code>attempt</code></td>
+        </tr>
+        <tr>
+          <td>Cost USD</td>
+          <td><span class="tag no">no</span></td>
+          <td><span class="tag partial">partial</span> per-model per-turn only</td>
+          <td>—</td>
+          <td>out of scope v1</td>
+        </tr>
+      </table>
+
+      <h2 id="design">5 · Design: the generic interface</h2>
+
+      <p>
+        <strong>Principle: don't invent a new pipeline — enrich the one that exists.</strong> The
+        <code>task.*</code> runtime-event family is already the provider-agnostic "unit of delegated
+        work". We (a) extend its payloads with the missing typed fields, (b) make the Codex adapter
+        synthesize the same events from v2 notifications, and (c) have ingestion fold them into one
+        upserted snapshot per agent that rides the existing <code>subscribeThread</code> stream —
+        with persistence limited to material transitions.
+      </p>
+
+      <h3>5.1 Contract: identity + activations <span class="tag new">new</span></h3>
+      <p class="small">
+        Review-driven shape change: a Codex agent is a durable, re-activatable identity while a
+        Claude task is a one-shot execution. The snapshot models the <em>identity</em> with rollups
+        of its activations, so a follow-up doesn't destroy history and elapsed time stays
+        meaningful.
+      </p>
+      <pre><code><span class="c">// packages/contracts/src/orchestration.ts (additive)</span>
+<span class="k">ThreadAgentStatus</span> = <span class="s">"pending" | "running" | "waiting" | "idle" | "completed" | "failed" | "stopped"</span>
+  <span class="c">// waiting  = blocked on approval/user-input, or queued (workflow)</span>
+  <span class="c">// idle     = finished a run but resumable (Codex send_message/followup; Claude paused)</span>
+  <span class="c">// completed/failed/stopped = terminal</span>
+
+<span class="k">ThreadAgentUsage</span> = {
+  totalTokens: NonNegativeInt,
+  inputTokens?, cachedInputTokens?, outputTokens?, reasoningOutputTokens?,
+  toolUses?: NonNegativeInt,
+}
+
+<span class="k">ThreadAgentSnapshot</span> = {
+  agentId: TrimmedNonEmptyString,        <span class="c">// stable identity: Claude task_id · Codex child thread id</span>
+  provider: ProviderDriverKind,          <span class="c">// id-space discriminator; prevents cross-provider collisions</span>
+  kind: <span class="s">"subagent" | "workflow" | "workflow_agent" | "shell" | "monitor" | "other"</span>,
+  name: TrimmedNonEmptyString,           <span class="c">// description · nickname · workflow label</span>
+  agentType?: TrimmedNonEmptyString,     <span class="c">// subagent_type · agent_role</span>
+  model?: TrimmedNonEmptyString,
+  status: ThreadAgentStatus,
+  currentActivity?: TrimmedNonEmptyString,
+  lastToolName?: TrimmedNonEmptyString,
+  usage?: ThreadAgentUsage,              <span class="c">// cumulative across activations</span>
+  firstStartedAt: IsoDateTime,
+  lastActivityAt: IsoDateTime,
+  endedAt?: IsoDateTime,                 <span class="c">// cleared on re-activation</span>
+  activationCount: NonNegativeInt,       <span class="c">// Codex follow-ups · workflow retry attempts</span>
+  spawnTurnId?: TurnId,                  <span class="c">// turn that created it</span>
+  lastTurnId?: TurnId,                   <span class="c">// latest turn that touched it (UI groups by this)</span>
+  parentAgentId?: TrimmedNonEmptyString,
+  phaseIndex?: NonNegativeInt,           <span class="c">// workflow phase membership (index is authoritative;</span>
+  phaseTitle?: TrimmedNonEmptyString,    <span class="c">//   title is display — titles can repeat across phases)</span>
+  <span class="c">// kind === "workflow" only:</span>
+  phases?: Array&lt;{ index: NonNegativeInt, title: TrimmedNonEmptyString }&gt;, <span class="c">// ordered phase list</span>
+  scriptPath?: TrimmedNonEmptyString,    <span class="c">// persisted workflow script (WorkflowOutput.scriptPath)</span>
+  runId?: TrimmedNonEmptyString,         <span class="c">// workflow run id (resume handle)</span>
+  approvalRequestId?: ApprovalRequestId, <span class="c">// set while waiting on an approval → UI deep-link</span>
+  outputFile?: TrimmedNonEmptyString,    <span class="c">// Claude transcript path — phase-2 drill-in needs it</span>
+  resultSummary?: TrimmedNonEmptyString,
+  errorMessage?: TrimmedNonEmptyString,
+  recentActivity: Array&lt;{ at: IsoDateTime, summary: string }&gt;, <span class="c">// ring buffer, max 6</span>
+  updatedAt: IsoDateTime,                <span class="c">// staleness + "while you were away" watermark</span>
+}</code></pre>
+
+      <h3>5.2 Provider mapping</h3>
+      <div class="cols">
+        <div class="card">
+          <h3>Claude → snapshot</h3>
+          <table>
+            <tr>
+              <th>SDK message</th>
+              <th>Effect</th>
+            </tr>
+            <tr>
+              <td><code>task_started</code></td>
+              <td>
+                upsert: id, name=description, kind from task_type, agentType=subagent_type,
+                firstStartedAt=now, status=running, outputFile later
+              </td>
+            </tr>
+            <tr>
+              <td><code>task_progress</code></td>
+              <td>
+                usage, lastToolName, currentActivity=summary;
+                <code>workflow_progress[]</code> (schema-guarded):
+                <code>workflow_phase</code> entries → the workflow snapshot's ordered
+                <code>phases</code> list; <code>workflow_agent</code> entries → upsert child
+                <code>workflow_agent</code> snapshots (label, phaseIndex+phaseTitle, model, state,
+                tokens, <code>attempt</code>)
+              </td>
+            </tr>
+            <tr>
+              <td>Workflow tool_result (<code>WorkflowOutput</code>)</td>
+              <td>
+                <code>scriptPath</code> + <code>runId</code> onto the workflow snapshot (typed on
+                the tool output: "Path to the persisted workflow script for this invocation")
+              </td>
+            </tr>
+            <tr>
+              <td><code>task_updated</code></td>
+              <td>status patch (killed→stopped, paused→idle), endedAt=end_time, errorMessage</td>
+            </tr>
+            <tr>
+              <td><code>task_notification</code></td>
+              <td>terminal status, resultSummary, final usage, outputFile</td>
+            </tr>
+            <tr>
+              <td><code>tool_progress</code> (has task_id)</td>
+              <td>lastToolName + recentActivity entry</td>
+            </tr>
+            <tr>
+              <td><code>can_use_tool</code> / approval (has agent_id)</td>
+              <td>status=waiting + approvalRequestId; cleared on resolution</td>
+            </tr>
+          </table>
+          <p class="small">
+            Adapter fixes: stop dropping
+            <code>subagent_type/tool_use_id/workflow_name/output_file</code>; handle
+            <code>task_updated</code> (today: warning path). Roster reconciliation via the typed
+            <code>background_tasks</code> control request (not the undeclared stream event).
+            <code>agentProgressSummaries</code> is a per-instance setting, default off — fallback
+            <code>currentActivity</code> is <code>last_tool_name</code>. <em>Not</em> enabling
+            <code>forwardSubagentText</code> in v1.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Codex v2 → snapshot <span class="small">(corrected)</span></h3>
+          <table>
+            <tr>
+              <th>Notification</th>
+              <th>Effect</th>
+            </tr>
+            <tr>
+              <td>child <code>thread/started</code> (source = subAgent.threadSpawn)</td>
+              <td>
+                upsert identity: id=thread id, name=nickname, agentType=agentRole, parentAgentId,
+                depth/path, firstStartedAt
+              </td>
+            </tr>
+            <tr>
+              <td><code>subAgentActivity</code> item (parent stream)</td>
+              <td>
+                started → running; interacted → running + activationCount++; interrupted → stopped
+              </td>
+            </tr>
+            <tr>
+              <td>child <code>turn/started</code></td>
+              <td>status=running (clear endedAt/resultSummary on re-activation)</td>
+            </tr>
+            <tr>
+              <td>child <code>turn/completed</code></td>
+              <td>
+                status=<strong>idle</strong> (resumable — <em>not</em> terminal), resultSummary=last
+                message
+              </td>
+            </tr>
+            <tr>
+              <td>child <code>thread/status/changed</code></td>
+              <td>active flags waitingOnApproval/UserInput → waiting; closed → stopped</td>
+            </tr>
+            <tr>
+              <td>child <code>thread/tokenUsage/updated</code></td>
+              <td>usage (full breakdown)</td>
+            </tr>
+            <tr>
+              <td>child <code>item/started|completed</code></td>
+              <td>currentActivity + recentActivity (reuse item titles)</td>
+            </tr>
+            <tr>
+              <td>child <code>thread/settings/updated</code></td>
+              <td>model (v2 parent items don't carry it)</td>
+            </tr>
+          </table>
+          <p class="small">
+            <code>collabAgentToolCall</code> is <em>not</em> used for tracking (v2 emits it only for
+            <code>wait</code>, with empty receivers) — render it as a parent activity only. Runtime
+            change: <code>CodexSessionRuntime</code> learns children from
+            <code>thread/started.source</code> + <code>subAgentActivity</code>, routes their
+            notifications to the agent tracker, and filters them out of the parent timeline.
+            <strong>Entry gate: a live v2 wire probe</strong> to establish what child chatter
+            reaches T3 today (§8).
+          </p>
+        </div>
+      </div>
+
+      <h3>
+        5.3 Transport: one activity kind, zero new machinery <span class="tag new">rev 3</span>
+      </h3>
+      <p>
+        <strong>The dumb store already exists — use it.</strong>
+        <code>OrchestrationThreadActivity</code> has a free-form <code>kind</code> and an open
+        <code>payload: Schema.Unknown</code>, is persisted/capped/replayed, and streams over
+        <code>subscribeThread</code> today. And T3 already ships latest-wins state through it:
+        <code>context-window.updated</code> activities carry a full usage snapshot and the client
+        just takes the newest one (<code>deriveLatestContextWindowSnapshot</code>). Agents work
+        identically:
+      </p>
+      <pre><code><span class="c">// Ingestion keeps the per-thread agent map in memory (it must merge events anyway).
+// On a MATERIAL change — status transition · name/model/phase discovery ·
+// currentActivity change · usage crossing a 25k step · terminal fields —
+// it appends ONE activity via the EXISTING thread.activity.append command:</span>
+{ kind: <span class="s">"agent.snapshot"</span>,
+  tone: <span class="s">"info"</span>,
+  summary: <span class="s">"2 agents running"</span>,               <span class="c">// human-readable on purpose (see compat)</span>
+  payload: { agents: ThreadAgentSnapshot[] } } <span class="c">// full roster, latest-wins</span>
+
+<span class="c">// Client: scan thread.activities for the newest agent.snapshot → that IS the panel state.
+// Same derivation pattern as the context-window meter. Typed decode of the payload
+// happens client-side against the contracts schema; a failed decode = ignore the row.</span></code></pre>
+      <p>What this deletes relative to the rev-2 design — <em>with no loss of insight</em>:</p>
+      <table>
+        <tr>
+          <th>Rev 2 (bespoke transport)</th>
+          <th>Rev 3 (activity channel)</th>
+        </tr>
+        <tr>
+          <td>
+            New <code>thread.agent.upsert</code> command + <code>thread.agent-upserted</code> event
+            in the closed union
+          </td>
+          <td>Reuses <code>thread.activity.append</code> — no new command or event types</td>
+        </tr>
+        <tr>
+          <td>
+            Subscriber opt-in gating + <code>acceptAgentEvents</code> + old/new contract tests
+            (closed-union decode risk)
+          </td>
+          <td>
+            Not needed: <code>kind</code> is an open string, <code>payload</code> is
+            <code>Unknown</code> — old clients decode fine and render a rare benign "2 agents
+            running" info row (arguably a feature)
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <code>projection_thread_agents</code> table + migration + snapshot-assembly changes +
+            shell-refetch exclusion
+          </td>
+          <td>
+            Not needed: rows land in the existing activities projection; the 500-row cap is the
+            retention policy
+          </td>
+        </tr>
+        <tr>
+          <td><code>ServerConfig.threadAgents</code> capability flag</td>
+          <td>
+            Not needed: presence of an <code>agent.snapshot</code> activity is self-describing
+          </td>
+        </tr>
+        <tr>
+          <td>Reducer hydration from the new projection</td>
+          <td>
+            Same trick ingestion already uses for task titles: on first event for a thread, read the
+            latest <code>agent.snapshot</code> from the loaded thread detail (<code
+              >findTaskTitleInActivities</code
+            >
+            precedent)
+          </td>
+        </tr>
+      </table>
+      <ul>
+        <li>
+          <strong>Volume:</strong> full-roster payload (≤ ~10 agents, a few KB) × material
+          transitions only ≈ tens of rows per agent run — same order as the
+          <code>task.progress</code> rows Claude already writes today. 1s ticks and elapsed time
+          stay client-derived, never persisted.
+        </li>
+        <li>
+          <strong
+            >Codex-synthesized <code>task.*</code> events still bypass
+            <code>runtimeEventToActivities</code></strong
+          >
+          (the marker survives from rev 2) — they feed the reducer only, so slice 2 adds no timeline
+          spam. New clients add one skip line for <code>agent.snapshot</code> in
+          <code>deriveWorkLogEntries</code> (precedent: <code>context-window.updated</code> is
+          skipped the same way).
+        </li>
+        <li>
+          <strong>Known trade-offs, accepted:</strong> (a) the payload is untyped on the wire — the
+          schema lives in contracts and the client decodes tolerantly; (b) latest-wins inside a
+          500-cap window means a thread with 500+ later activities loses its old roster — at that
+          distance the agents are ancient history, and the timeline's <code>task.*</code> rows
+          remain; (c) full-roster-per-write is O(agents) redundant — at ≤10 agents this is noise,
+          and it's what makes latest-wins (and therefore everything else) simple.
+        </li>
+        <li>
+          <strong>Escape hatch:</strong> if per-agent typed wire events or bigger fleets ever
+          matter, the rev-2 design (dedicated event + projection + subscriber gating, preserved in
+          git history of this doc) is the graduation path. Don't build it until the counter metric
+          (§8) says so.
+        </li>
+      </ul>
+
+      <h3>5.3b What happens to child-thread events — dropped today, distilled tomorrow</h3>
+      <p>
+        <strong>Today, T3 durably stores none of it.</strong> Precisely: Codex v1 child-thread
+        notifications are suppressed at the session runtime (their item events are re-attributed to
+        the parent turn; thread/turn/usage events dropped); Codex v2 child chatter is unaudited (the
+        suppression doesn't fire — probe gate in §8); Claude subagent traffic is reduced to the
+        <code>task.*</code> activity rows and its <code>parent_tool_use_id</code> stream deltas are
+        filtered out. The only place raw child events land is the rotating NDJSON observability logs
+        — not queryable, not replayed.
+      </p>
+      <p><strong>This plan changes that to "distilled, not mirrored":</strong></p>
+      <ul>
+        <li>
+          <strong>Durably stored (new):</strong> the per-agent snapshot — identity, lifecycle, usage
+          rollups, <code>recentActivity</code> (last 6 summaries), result summary, script/output
+          pointers — as <code>agent.snapshot</code> activity rows in the existing activities
+          projection + event store. This is what survives restarts and reconnects.
+        </li>
+        <li>
+          <strong>Still not stored:</strong> full child transcripts (every tool call, message delta,
+          reasoning block). Deliberately — mirroring child streams into the orchestration store
+          would multiply event volume by fleet size (§3's replay-cost facts). The providers already
+          persist them (Codex rollout files readable via <code>thread/read</code>; Claude
+          <code>agent-&lt;id&gt;.jsonl</code> / <code>output_file</code>), so the phase-2 drill-in
+          RPC reads them <em>on demand</em> from provider storage instead of duplicating them.
+        </li>
+        <li>
+          <strong>Caveat that falls out:</strong> transcript drill-in is only as durable as provider
+          storage — e.g. an ephemeral Codex thread or a cleaned <code>/tmp</code> output file means
+          the snapshot survives but the deep transcript doesn't. Acceptable: the snapshot is the
+          record; the transcript is an inspection tool.
+        </li>
+      </ul>
+
+      <h3>5.4 Recovery &amp; staleness <span class="tag new">new (review-driven)</span></h3>
+      <ul>
+        <li>
+          <strong>Reducer bootstrap:</strong> on the first event for a thread, hydrate the in-memory
+          agent map from the latest persisted <code>agent.snapshot</code> activity (same pattern
+          ingestion already uses to recover task titles from activities), so a mid-run server
+          restart doesn't orphan records when the next <code>task_progress</code> arrives without
+          its <code>task_started</code>.
+        </li>
+        <li>
+          <strong>Orphan sweep:</strong> provider sessions are child processes of the T3 server — on
+          <code>session.exited</code> (or a new <code>session.started</code> for the thread), all
+          non-terminal agents for that thread transition to <code>stopped</code> with
+          <code>endedAt=now</code> and an "orphaned on session exit" errorMessage. Reconciliation on
+          resume: Claude via the <code>background_tasks</code> control request; Codex via tracked
+          child threads.
+        </li>
+        <li>
+          <strong>Client staleness:</strong> <code>updatedAt</code> + the client's sync watermark
+          distinguish "running" from "stale while disconnected"; the UI's transport states
+          (loading/synchronizing/live/reconnecting) come from the existing subscription status
+          machinery, not the snapshot.
+        </li>
+        <li>
+          <strong>History:</strong> pre-feature threads cannot be backfilled — dropped fields only
+          exist in ephemeral NDJSON logs. Documented as a non-goal.
+        </li>
+      </ul>
+
+      <h3>5.5 Drill-in</h3>
+      <ul>
+        <li>
+          <strong>Phase 1 (ships with the panel):</strong> <code>recentActivity</code> ring buffer +
+          <code>resultSummary</code> + prompt preview. Workflow cards get a "View script"
+          affordance: <code>scriptPath</code> opens in the right panel's existing
+          <code>file:</code> surface (read-only file preview — zero new viewer code; the path is
+          outside the workspace root, so the file surface needs to accept absolute session paths or
+          the server proxies the read).
+        </li>
+        <li>
+          <strong>Phase 2 (full transcript):</strong> one read RPC
+          <code>orchestration.getAgentTranscript {threadId, agentId}</code>. Codex:
+          <code>thread/read</code> on the child thread. Claude: tail <code>outputFile</code> /
+          <code>agent-&lt;id&gt;.jsonl</code> server-side (the snapshot's
+          <code>outputFile</code> field exists for exactly this), rendered with the existing
+          work-log row components. Avoids turning on <code>forwardSubagentText</code> globally.
+        </li>
+      </ul>
+
+      <h2 id="server">6 · Server changes (all additive)</h2>
+      <p class="small">
+        Rev 3: no new command, event type, projection table, migration, subscription input, or
+        capability flag. The entire delta is contracts (types only), two adapters, and one reducer
+        inside ingestion.
+      </p>
+      <table>
+        <tr>
+          <th>#</th>
+          <th>Where</th>
+          <th>Change</th>
+          <th>Size</th>
+        </tr>
+        <tr>
+          <td class="num">1</td>
+          <td><code>packages/contracts</code></td>
+          <td>
+            <code>ThreadAgentSnapshot</code> + status/usage schemas and the
+            <code>agent.snapshot</code> payload schema (used for client-side decode — no
+            wire-protocol change); extend <code>TaskStarted/Progress/Completed</code> payloads
+            (optional
+            <code
+              >name/agentType/model/toolUseId/parentTaskId/workflowName/phaseIndex/phaseTitle/phases/attempt/scriptPath/runId/outputFile</code
+            >
+            + typed usage + timeline-bypass marker)
+          </td>
+          <td>S</td>
+        </tr>
+        <tr>
+          <td class="num">2</td>
+          <td><code>ClaudeAdapter</code></td>
+          <td>
+            Carry the dropped fields; handle <code>task_updated</code>; approval → agent attribution
+            via <code>agent_id</code>; <code>workflow_progress</code> schema-guarded parse into
+            child <code>task.*</code> events; <code>background_tasks</code> reconciliation;
+            <code>agentProgressSummaries</code> per-instance option (default off)
+          </td>
+          <td>M</td>
+        </tr>
+        <tr>
+          <td class="num">3</td>
+          <td><code>CodexSessionRuntime</code> / <code>CodexAdapter</code></td>
+          <td>
+            <em>Gated on live v2 probe.</em> Track children from
+            <code>thread/started.source.subAgent</code> + <code>subAgentActivity</code>; route child
+            notifications to synthesized timeline-bypassing <code>task.*</code> events per §5.2;
+            keep child chatter out of the parent timeline (new filtering — the existing suppression
+            doesn't fire for v2)
+          </td>
+          <td>M–L</td>
+        </tr>
+        <tr>
+          <td class="num">4</td>
+          <td><code>ProviderRuntimeIngestion</code></td>
+          <td>
+            Agent reducer (in-memory, hydrated from the latest persisted
+            <code>agent.snapshot</code>) → material-transition <code>agent.snapshot</code> activity
+            appends through the existing command; orphan sweep on session exit; dispatch-rate
+            counter metric
+          </td>
+          <td>M</td>
+        </tr>
+      </table>
+      <p class="small">
+        Non-goals v1: cost USD attribution, ACP (Cursor/Grok) support (no wire signal exists),
+        cross-thread agent trees, controlling agents (stop/steer — Codex exposes interruption only
+        as a model tool today), history backfill. OpenCode: falls out automatically if its adapter
+        ever emits <code>task.*</code>.
+      </p>
+
+      <h2 id="client">7 · Client changes</h2>
+      <ul>
+        <li>
+          <strong>Derivation in <code>client-runtime</code></strong> (shared with mobile):
+          <code>deriveLatestAgentSnapshot(activities)</code> — newest
+          <code>agent.snapshot</code> row, tolerant payload decode (mirrors
+          <code>deriveLatestContextWindowSnapshot</code>) — plus
+          <code>deriveAgentPanelState(agents, syncStatus)</code> — group by workflow, split
+          running/settled (by <code>lastTurnId</code>), compute totals, staleness from
+          <code>updatedAt</code> + subscription state.
+        </li>
+        <li>
+          <strong>Web:</strong> add <code>"agents"</code> to
+          <code>RIGHT_PANEL_KINDS</code> (singleton surface, storage v7→8); tab + "+" add-menu entry
+          in <code>RightPanelTabs</code> (surface always addable from the menu; the tab auto-appears
+          once the thread has agents); an <code>AgentsPanel</code> branch in <code>ChatView</code>'s
+          surface switch; a compact live strip near the "Working…" row; one skip line for
+          <code>agent.snapshot</code> in <code>deriveWorkLogEntries</code>. Reuse:
+          <code>Badge</code>, <code>animate-status-pulse</code>, <code>WorkingTimer</code>,
+          <code>SimpleWorkEntryRow</code>.
+        </li>
+        <li>
+          <strong>Mobile:</strong> inspector-pane tenant on tablet, sheet on phone — later slice,
+          shares the derivation helpers.
+        </li>
+        <li>
+          Visual design + feature-to-field milestones: see the
+          <a href="./subagent-observability-ui.html">companion UI plan</a>.
+        </li>
+      </ul>
+
+      <h2 id="phasing">8 · Phasing, risks, open questions</h2>
+      <h3>Phasing</h3>
+      <ol>
+        <li>
+          <strong>Slice 1 — contracts + Claude:</strong> #1, #2, #4, #5 → panel shows Claude
+          subagents + workflows end-to-end.
+        </li>
+        <li>
+          <strong>Slice 2 — Codex:</strong> <em>entry gate: live v2 wire probe</em> (spawn agents on
+          gpt-5.6-sol through T3's app-server wrapper, capture exactly which child notifications
+          arrive and what leaks into the timeline today). Then #3 → same panel lights up for Codex
+          with zero client work.
+        </li>
+        <li><strong>Slice 3 — drill-in transcripts + mobile.</strong></li>
+      </ol>
+      <h3>Risks</h3>
+      <ul>
+        <li>
+          <code>workflow_progress</code> is undeclared in the SDK types — schema-guarded parsing;
+          file upstream for typing. The <code>background_tasks_changed</code> stream event is
+          probe-only evidence — never a dependency (typed control request is the roster source).
+        </li>
+        <li>
+          Codex child-thread routing touches turn-attribution logic — needs tests that parent
+          transcript behavior is unchanged for both v1 and v2 models.
+        </li>
+        <li>
+          Event volume: material-transition persistence bounds it, but slice 1 ships with a counter
+          metric on agent-upsert dispatch rate so we see reality before slice 2 multiplies it.
+        </li>
+        <li>
+          Compat: one test that an old client's activity handling renders (or benignly ignores) an
+          <code>agent.snapshot</code> row — the open-string channel makes this low-risk, but verify
+          rather than assume.
+        </li>
+      </ul>
+      <h3>Open questions</h3>
+      <ul>
+        <li>Settled-agent grouping: collapse by turn (current lean) or by workflow run?</li>
+        <li>
+          Auto-open the panel on first agent spawn? (Lean: badge on the tab + the inline strip, no
+          auto-open.)
+        </li>
+        <li>
+          <code>agentProgressSummaries</code>: per-instance setting shipped off — do we want a UI
+          toggle in thread settings, or instance config only?
+        </li>
+      </ul>
+    </main>
+  </body>
+</html>
