@@ -1774,7 +1774,7 @@ const makeWsRpcLayer = (
                 input.providerInstanceId,
                 input.driver,
               );
-              return yield* Effect.promise(() =>
+              const found = yield* Effect.promise(() =>
                 discoverAgentSessions({
                   driver,
                   ...(home !== undefined ? { home } : {}),
@@ -1782,6 +1782,16 @@ const makeWsRpcLayer = (
                   ...(input.limit !== undefined ? { limit: input.limit } : {}),
                 }),
               );
+              // What the picker offers depends entirely on these four inputs, and
+              // an empty list is indistinguishable from a broken one without them.
+              yield* Effect.logInfo("codexSessions.list resolved", {
+                driver,
+                home,
+                cwd: input.cwd,
+                instance: input.providerInstanceId,
+                count: found.length,
+              });
+              return found;
             }).pipe(
               Effect.map((sessions) => ({
                 sessions: sessions.map((session) => ({
