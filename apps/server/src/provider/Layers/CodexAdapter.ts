@@ -561,12 +561,18 @@ function mapCollabAgentActivity(
       );
       const status = payload?.status;
       if (!status) return [];
-      if (status.type === "active" && status.activeFlags.length > 0) {
+      if (status.type === "active") {
+        // Flags (waitingOnApproval/waitingOnUserInput) mean blocked; active
+        // with no flags means the wait resolved and the agent is running again.
         return [
           {
             ...base,
             type: "task.updated",
-            payload: { taskId: base.payload.taskId, status: "waiting", timelineBypass: true },
+            payload: {
+              taskId: base.payload.taskId,
+              status: status.activeFlags.length > 0 ? "waiting" : "running",
+              timelineBypass: true,
+            },
           },
         ];
       }
