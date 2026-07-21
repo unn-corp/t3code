@@ -65,7 +65,10 @@ import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/uns
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
-import { discoverCodexSessions } from "./provider/codexSessionDiscovery.ts";
+import * as NodeOS from "node:os";
+
+import { discoverAgentSessions } from "./provider/agentSessionDiscovery.ts";
+import { expandHomePath } from "./pathExpansion.ts";
 import * as ProviderSessionRuntimeRepo from "./persistence/ProviderSessionRuntime.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -187,6 +190,21 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
       };
     default:
       return unexpectedCompatibilityError(error);
+  }
+}
+
+/** Default on-disk home for a driver when the instance has no override. */
+function defaultHomeForDriver(driver: string): string | undefined {
+  switch (driver) {
+    case "codex":
+      return `${NodeOS.homedir()}/.codex`;
+    case "claudeAgent":
+    case "claude":
+      return `${NodeOS.homedir()}/.claude`;
+    case "grok":
+      return `${NodeOS.homedir()}/.grok`;
+    default:
+      return undefined;
   }
 }
 
@@ -1708,12 +1726,34 @@ const makeWsRpcLayer = (
             WS_METHODS.codexSessionsList,
             // Discovery degrades to fewer entries rather than failing, so there is
             // no filesystem error to map here.
-            Effect.promise(() =>
-              discoverCodexSessions({
-                ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
-                ...(input.limit !== undefined ? { limit: input.limit } : {}),
-              }),
-            ).pipe(
+            Effect.gen(function* () {
+              // Resolve the driver and home from the SELECTED provider instance,
+              // so /resume lists the sessions of the account actually in use.
+              const settings = yield* serverSettings.getSettings.pipe(
+                Effect.orElseSucceed(() => undefined),
+              );
+              const instance =
+                input.providerInstanceId !== undefined && settings !== undefined
+                  ? settings.providerInstances[
+                      input.providerInstanceId as keyof typeof settings.providerInstances
+                    ]
+                  : undefined;
+              const driver = instance?.driver ?? "codex";
+              const driverConfig = instance?.config as { homePath?: string } | undefined;
+              const configuredHome = driverConfig?.homePath?.trim();
+              const home =
+                configuredHome !== undefined && configuredHome.length > 0
+                  ? expandHomePath(configuredHome)
+                  : defaultHomeForDriver(driver);
+              return yield* Effect.promise(() =>
+                discoverAgentSessions({
+                  driver,
+                  ...(home !== undefined ? { home } : {}),
+                  ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+                  ...(input.limit !== undefined ? { limit: input.limit } : {}),
+                }),
+              );
+            }).pipe(
               Effect.map((sessions) => ({
                 sessions: sessions.map((session) => ({
                   sessionId: session.sessionId,
@@ -1743,15 +1783,20 @@ const makeWsRpcLayer = (
               yield* providerSessionRuntimeRepository
                 .upsert({
                   threadId,
-                  providerName: base?.providerName ?? "codex",
+                  providerName: base?.providerName ?? input.driver ?? "codex",
                   // adapterKey is non-null in the schema; "codex" is the driver key
                   // used when this thread has no prior runtime row.
-                  adapterKey: base?.adapterKey ?? "codex",
+                  adapterKey: base?.adapterKey ?? input.driver ?? "codex",
                   runtimeMode: base?.runtimeMode ?? "full-access",
                   // Stopped so the next turn starts a fresh session that resumes.
                   status: "stopped",
                   lastSeenAt: DateTime.formatIso(now),
-                  resumeCursor: { threadId: input.sessionId },
+                  // Cursor shape is per driver: codex reads threadId, the Claude
+                  // adapter reads resume/sessionId.
+                  resumeCursor:
+                    (input.driver ?? "codex") === "codex"
+                      ? { threadId: input.sessionId }
+                      : { resume: input.sessionId, sessionId: input.sessionId },
                   runtimePayload: base?.runtimePayload ?? null,
                   providerInstanceId: base?.providerInstanceId ?? null,
                 })

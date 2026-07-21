@@ -2912,6 +2912,7 @@ function ChatViewContent(props: ChatViewProps) {
       setDraftThreadContext,
     ],
   );
+  const activeProviderDriver = activeProviderStatus?.driver;
   const runListCodexSessions = useAtomCommand(codexSessions.list, {
     reportFailure: false,
   });
@@ -2920,18 +2921,29 @@ function ChatViewContent(props: ChatViewProps) {
   const listCodexSessions = useCallback(async () => {
     const result = await runListCodexSessions({
       environmentId,
-      input: { limit: 20 },
+      input: {
+        // Scope to the provider instance in use, so /resume lists that driver's
+        // sessions from that account's home.
+        ...(activeProviderInstanceId !== null
+          ? { providerInstanceId: activeProviderInstanceId }
+          : {}),
+        limit: 20,
+      },
     });
     return result._tag === "Success" ? result.value.sessions : [];
-  }, [runListCodexSessions, environmentId]);
+  }, [runListCodexSessions, environmentId, activeProviderInstanceId]);
   const resumeCodexSession = useCallback(
     (sessionId: string) => {
       void runResumeCodexSession({
         environmentId,
-        input: { threadId, sessionId },
+        input: {
+          threadId,
+          sessionId,
+          ...(activeProviderDriver !== undefined ? { driver: activeProviderDriver } : {}),
+        },
       });
     },
-    [runResumeCodexSession, environmentId, threadId],
+    [runResumeCodexSession, environmentId, threadId, activeProviderDriver],
   );
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");

@@ -19,6 +19,12 @@ export const DiscoveredCodexSession = Schema.Struct({
 });
 
 export const CodexSessionsListInput = Schema.Struct({
+  /**
+   * Provider instance whose sessions to list. Determines both the driver
+   * (codex / claudeAgent / grok) and the home directory, so "the Claude account
+   * currently selected" resolves to that instance's config dir.
+   */
+  providerInstanceId: Schema.optionalKey(Schema.String),
   /** Restrict to sessions started in this directory. */
   cwd: Schema.optionalKey(Schema.String),
   limit: Schema.optionalKey(Schema.Number),
@@ -37,6 +43,8 @@ export const CodexSessionsListResult = Schema.Struct({
  */
 export const CodexSessionsResumeInput = Schema.Struct({
   threadId: Schema.String,
+  /** Driver the session belongs to; selects the resume-cursor shape. */
+  driver: Schema.optionalKey(Schema.String),
   /** Codex thread id, from `codexSessions.list`. */
   sessionId: Schema.String,
 });
