@@ -9,6 +9,7 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -200,6 +201,45 @@ export function resolveOffset(config: {
 
   const offset = ((Hash.string(seed) >>> 0) % MAX_HASH_OFFSET) + 1;
   return Effect.succeed({ offset, source: `hashed T3CODE_DEV_INSTANCE=${seed}` });
+}
+
+/**
+ * Copy the installed app's settings into the dev state dir before starting.
+ *
+ * Dev deliberately runs against `<baseDir>/dev` rather than `<baseDir>/userdata`
+ * (see `deriveServerPaths`), so it starts with no `settings.json` and therefore
+ * none of the configured provider instances: the Claude accounts, Grok, and their
+ * `homePath` overrides all live in that file. The practical effect is that dev
+ * cannot see the AI coding agents the installed app uses.
+ *
+ * Only `settings.json` is copied. `environment-id` and `secrets/` are per-instance
+ * identity (signing keys, cloud-link key pair) and must stay distinct, and
+ * `state.sqlite` is the thread database, not configuration.
+ *
+ * This overwrites the dev copy on every start, so dev always matches the installed
+ * app; settings changed inside dev do not survive a restart.
+ */
+function syncDevSettingsFromUserdata(
+  baseDir: string,
+): Effect.Effect<void, never, Path.Path | FileSystem.FileSystem> {
+  return Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const source = path.join(baseDir, "userdata", "settings.json");
+    const devDir = path.join(baseDir, "dev");
+    const target = path.join(devDir, "settings.json");
+
+    if (!(yield* fs.exists(source))) return;
+    yield* fs.makeDirectory(devDir, { recursive: true });
+    yield* fs.copyFile(source, target);
+    yield* Effect.logInfo(`[dev-runner] synced settings.json from userdata -> dev (${target})`);
+  }).pipe(
+    // Never block a dev start over this: without it dev simply falls back to
+    // default provider homes, which is how it behaved before.
+    Effect.catchCause((cause) =>
+      Effect.logWarning("[dev-runner] could not sync settings.json from userdata", { cause }),
+    ),
+  );
 }
 
 function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, never, Path.Path> {
@@ -532,6 +572,10 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     if (input.dryRun) {
       return;
     }
+
+    // Dev keeps its own state dir, so mirror the installed app's provider
+    // configuration into it before the server reads it.
+    yield* syncDevSettingsFromUserdata(baseDir);
 
     const spawnCommand = yield* resolveSpawnCommand(
       "vp",
