@@ -55,4 +55,8 @@ export const CodexSessionsResumeInput = Schema.Struct({
 
 export const CodexSessionsResumeResult = Schema.Struct({
   bound: Schema.Boolean,
+  /** Messages replayed into the thread. Zero means the rebind worked but no history loaded. */
+  importedMessageCount: Schema.optionalKey(Schema.Number),
+  /** Older turns beyond the import cap. */
+  omittedTurnCount: Schema.optionalKey(Schema.Number),
 });

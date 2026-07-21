@@ -2979,10 +2979,22 @@ function ChatViewContent(props: ChatViewProps) {
         // transcript into the view. Without a toast the picker closes onto an empty
         // thread and the whole action reads as a no-op.
         if (result._tag === "Success") {
+          // Say whether history actually loaded. Reporting success while the
+          // thread stays empty is how this looked broken rather than partial.
+          const value = result.value as
+            | { importedMessageCount?: number; omittedTurnCount?: number }
+            | undefined;
+          const imported = value?.importedMessageCount ?? 0;
+          const omitted = value?.omittedTurnCount ?? 0;
           toastManager.add({
             type: "success",
-            title: "Resumed conversation",
-            description: `Your next message continues session ${sessionId.slice(0, 8)}.`,
+            title: imported > 0 ? "Resumed conversation" : "Resumed, no history found",
+            description:
+              imported > 0
+                ? `Loaded ${imported} message${imported === 1 ? "" : "s"}${
+                    omitted > 0 ? `, ${omitted} older turns not shown` : ""
+                  }.`
+                : `Your next message continues session ${sessionId.slice(0, 8)}.`,
           });
         } else {
           toastManager.add({

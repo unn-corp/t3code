@@ -1839,6 +1839,19 @@ const makeWsRpcLayer = (
                       readAgentTranscript({ driver, path: session.rolloutPath }),
                     );
 
+              // A transcript that yields nothing is a real outcome, not a
+              // non-event: the rebind still worked, but the thread will open
+              // empty and the reason must be visible rather than silent.
+              if (transcript.turns.length === 0) {
+                yield* Effect.logInfo("codexSessions.resume imported no history", {
+                  threadId: input.threadId,
+                  sessionId: input.sessionId,
+                  driver,
+                  reason: session === undefined ? "session-not-found" : "no-turns-parsed",
+                });
+              }
+
+              let imported = 0;
               if (transcript.turns.length > 0) {
                 const nowIso = DateTime.formatIso(now);
                 yield* orchestrationEngine
@@ -1857,6 +1870,13 @@ const makeWsRpcLayer = (
                     omittedTurnCount: transcript.omittedTurnCount,
                     createdAt: nowIso,
                   })
+                  .pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        imported = transcript.turns.length;
+                      }),
+                    ),
+                  )
                   // A failed import must not undo the rebind: the thread still
                   // resumes correctly, it just opens without its history.
                   .pipe(
@@ -1872,7 +1892,11 @@ const makeWsRpcLayer = (
                     ),
                   );
               }
-              return { bound: true };
+              return {
+                bound: true,
+                importedMessageCount: imported,
+                omittedTurnCount: transcript.omittedTurnCount,
+              };
             }),
             { "rpc.aggregate": "workspace" },
           ),
