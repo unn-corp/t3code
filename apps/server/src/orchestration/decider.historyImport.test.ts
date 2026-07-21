@@ -2,9 +2,11 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -70,11 +72,12 @@ const seedReadModel = Effect.gen(function* () {
 
 const importCommand = (
   commandId: string,
+  sourceSessionId = SESSION,
 ): Extract<OrchestrationCommand, { type: "thread.history.import" }> => ({
   type: "thread.history.import",
   commandId: CommandId.make(commandId),
   threadId: THREAD,
-  sourceSessionId: SESSION,
+  sourceSessionId,
   turns: [
     { role: "user", text: "Fix the login bug", createdAt: "2026-01-01T01:00:00.000Z" },
     { role: "assistant", text: "Fixed it", createdAt: "2026-01-01T01:00:05.000Z" },
@@ -82,6 +85,35 @@ const importCommand = (
   omittedTurnCount: 7,
   createdAt: NOW,
 });
+
+/** A read model whose thread already holds imported history from `sessionId`. */
+const seedWithPriorImport = (sessionId: string) =>
+  Effect.gen(function* () {
+    let model = yield* seedReadModel;
+    model = yield* projectEvent(model, {
+      sequence: 100,
+      eventId: EventId.make(`evt-prior-import-${sessionId}`),
+      aggregateKind: "thread",
+      aggregateId: THREAD,
+      type: "thread.message-sent",
+      occurredAt: NOW,
+      commandId: CommandId.make("cmd-prior-import"),
+      causationEventId: null,
+      correlationId: CommandId.make("cmd-prior-import"),
+      metadata: {},
+      payload: {
+        threadId: THREAD,
+        messageId: MessageId.make(`import:${sessionId}:0`),
+        role: "user",
+        text: "the earlier conversation",
+        turnId: TurnId.make(`import:${sessionId}`),
+        streaming: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    });
+    return model;
+  });
 
 it.layer(NodeServices.layer)("thread.history.import", (it) => {
   it.effect("replays each turn as a message in order", () =>
@@ -104,6 +136,42 @@ it.layer(NodeServices.layer)("thread.history.import", (it) => {
       // Transcript times are preserved, so history sorts before anything said here.
       expect(payloads[0]?.["createdAt"]).toBe("2026-01-01T01:00:00.000Z");
       expect(payloads.every((payload) => payload["streaming"] === false)).toBe(true);
+    }),
+  );
+
+  // The reported bug: a second /resume appended a new conversation under the old
+  // one. The import must first clear the prior imported history.
+  it.effect("clears prior imported history before replaying a new session", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedWithPriorImport("older-session");
+      const decided = yield* decideOrchestrationCommand({
+        command: importCommand("cmd-second", "newer-session"),
+        readModel,
+      });
+      const events = Array.isArray(decided) ? decided : [decided];
+
+      expect(events[0]?.type).toBe("thread.imported-history-cleared");
+      expect(events.slice(1).map((event) => event.type)).toEqual([
+        "thread.message-sent",
+        "thread.message-sent",
+      ]);
+      // New session's ids, not the old one's.
+      const messageIds = events
+        .slice(1)
+        .map((event) => (event.payload as Record<string, unknown>)["messageId"]);
+      expect(messageIds).toEqual(["import:newer-session:0", "import:newer-session:1"]);
+    }),
+  );
+
+  it.effect("does not clear when the thread has no prior imported history", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModel;
+      const decided = yield* decideOrchestrationCommand({
+        command: importCommand("cmd-first"),
+        readModel,
+      });
+      const events = Array.isArray(decided) ? decided : [decided];
+      expect(events.some((event) => event.type === "thread.imported-history-cleared")).toBe(false);
     }),
   );
 

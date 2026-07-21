@@ -84,6 +84,13 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly deleteByThreadId: (
     input: DeleteProjectionThreadMessagesInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
+  /**
+   * Delete only messages imported from a CLI session (turn id begins `import:`),
+   * leaving messages from real turns intact.
+   */
+  readonly deleteImportedByThreadId: (
+    input: DeleteProjectionThreadMessagesInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
 /**

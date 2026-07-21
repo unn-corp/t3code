@@ -254,6 +254,15 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       `,
   });
 
+  const deleteImportedProjectionTurnsByThread = SqlSchema.void({
+    Request: DeleteProjectionTurnsByThreadInput,
+    execute: ({ threadId }) =>
+      sql`
+        DELETE FROM projection_turns
+        WHERE thread_id = ${threadId} AND turn_id LIKE 'import:%'
+      `,
+  });
+
   const upsertByTurnId: ProjectionTurnRepositoryShape["upsertByTurnId"] = (row) =>
     upsertProjectionTurnById(row).pipe(
       Effect.mapError(
@@ -337,6 +346,15 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionTurnRepository.deleteByThreadId:query")),
     );
 
+  const deleteImportedByThreadId: ProjectionTurnRepositoryShape["deleteImportedByThreadId"] = (
+    input,
+  ) =>
+    deleteImportedProjectionTurnsByThread(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionTurnRepository.deleteImportedByThreadId:query"),
+      ),
+    );
+
   return {
     upsertByTurnId,
     replacePendingTurnStart,
@@ -346,6 +364,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
     getByTurnId,
     clearCheckpointTurnConflict,
     deleteByThreadId,
+    deleteImportedByThreadId,
   } satisfies ProjectionTurnRepositoryShape;
 });
 

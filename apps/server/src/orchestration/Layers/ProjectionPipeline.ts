@@ -882,6 +882,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.imported-history-cleared": {
+          yield* projectionThreadMessageRepository.deleteImportedByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+        }
+
         case "thread.reverted": {
           const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
             threadId: event.payload.threadId,
@@ -1188,6 +1195,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
 
           yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+        }
+
+        case "thread.imported-history-cleared": {
+          yield* projectionTurnRepository.deleteImportedByThreadId({
             threadId: event.payload.threadId,
           });
           return;

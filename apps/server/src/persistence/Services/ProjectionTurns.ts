@@ -162,6 +162,13 @@ export interface ProjectionTurnRepositoryShape {
   readonly deleteByThreadId: (
     input: DeleteProjectionTurnsByThreadInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
+  /**
+   * Delete only the synthetic turns created by a CLI history import (turn id
+   * begins `import:`), leaving real turns intact.
+   */
+  readonly deleteImportedByThreadId: (
+    input: DeleteProjectionTurnsByThreadInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
 export class ProjectionTurnRepository extends Context.Service<

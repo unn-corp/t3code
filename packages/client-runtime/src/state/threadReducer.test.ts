@@ -755,4 +755,46 @@ describe("applyThreadDetailEvent", () => {
       expect(result.kind).toBe("unchanged");
     });
   });
+
+  describe("thread.imported-history-cleared", () => {
+    const importedThread: OrchestrationThread = {
+      ...baseThread,
+      messages: [
+        {
+          id: MessageId.make("import:session-a:0"),
+          role: "user",
+          text: "the earlier conversation",
+          turnId: TurnId.make("import:session-a"),
+          streaming: false,
+          createdAt: "2026-04-01T01:00:00.000Z",
+          updatedAt: "2026-04-01T01:00:00.000Z",
+        },
+        {
+          id: MessageId.make("real-message"),
+          role: "user",
+          text: "a real turn the user ran here",
+          turnId: TurnId.make("11111111-2222-3333-4444-555555555555"),
+          streaming: false,
+          createdAt: "2026-04-01T02:00:00.000Z",
+          updatedAt: "2026-04-01T02:00:00.000Z",
+        },
+      ],
+    };
+
+    it("drops imported messages and keeps real turns", () => {
+      const result = applyThreadDetailEvent(importedThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: "2026-04-01T03:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.imported-history-cleared",
+        payload: { threadId: ThreadId.make("thread-1"), createdAt: "2026-04-01T03:00:00.000Z" },
+      } as any);
+
+      expect(result.kind).toBe("updated");
+      if (result.kind !== "updated") return;
+      expect(result.thread.messages.map((message) => message.id)).toEqual(["real-message"]);
+    });
+  });
 });

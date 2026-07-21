@@ -876,11 +876,33 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.history.import": {
-      yield* requireThread({
+      const importThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+
+      const importedEvents: Array<PlannedOrchestrationEvent> = [];
+
+      // Replace, don't append. Resuming a second conversation into a thread that
+      // already holds imported history must show the new conversation, so drop the
+      // prior import first. Scoped to imported messages (turn id begins `import:`),
+      // so any real turns the user ran in the thread survive.
+      const hasPriorImport = importThread.messages.some(
+        (message) => message.turnId !== null && message.turnId.startsWith("import:"),
+      );
+      if (hasPriorImport) {
+        importedEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.imported-history-cleared",
+          payload: { threadId: command.threadId, createdAt: command.createdAt },
+        });
+      }
 
       // One synthetic turn owns the whole import. Beyond grouping the messages,
       // a non-null turnId is what keeps CheckpointReactor out of this: it treats
@@ -888,7 +910,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // git baseline, which would otherwise fire for every imported message.
       const importTurnId = TurnId.make(`import:${command.sourceSessionId}`);
 
-      const importedEvents: Array<PlannedOrchestrationEvent> = [];
       for (const [index, turn] of command.turns.entries()) {
         importedEvents.push({
           ...(yield* withEventBase({
