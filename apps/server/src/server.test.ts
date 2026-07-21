@@ -80,6 +80,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProviderSessionRuntimeRepo from "./persistence/ProviderSessionRuntime.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
@@ -1237,7 +1238,19 @@ const getWsServerUrl = (
     );
   });
 
-it.layer(NodeServices.layer)("server router seam", (it) => {
+// The websocket route reads/writes provider session runtimes (the `/resume`
+// cursor), so the router seam needs that repository in context. It is backed by
+// in-memory SQLite here: these tests exercise routing, not persistence.
+//
+// `Layer.fresh` is load-bearing. Without it this suite-level SqlitePersistenceMemory
+// is memoized and reused by the per-test `makeAuthTestLayer()` builds, so every test
+// shares one database and auth-session assertions see rows leaked from earlier tests.
+const routerSeamLayer = Layer.mergeAll(
+  NodeServices.layer,
+  ProviderSessionRuntimeRepo.layer.pipe(Layer.provide(Layer.fresh(SqlitePersistenceMemory))),
+);
+
+it.layer(routerSeamLayer)("server router seam", (it) => {
   it.effect("serves static index content for GET / when staticDir is configured", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

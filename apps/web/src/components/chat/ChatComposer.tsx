@@ -1075,7 +1075,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
     }
     return [];
-  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries.entries]);
+  }, [
+    codexSessionOptions,
+    composerTrigger,
+    selectedProvider,
+    selectedProviderStatus,
+    workspaceEntries.entries,
+  ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1661,15 +1667,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           return;
         }
         if (item.command === "resume") {
-          // Swap the menu over to sessions found on disk. Clear the "/resume"
-          // text first so the composer stays usable if nothing is found.
-          const cleared = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
-            focusEditorAfterReplace: false,
-          });
-          if (cleared) {
-            setComposerHighlightedItemId(null);
-          }
+          // Deliberately do NOT clear the "/resume" text here. The menu is only
+          // open while a composer trigger exists (composerMenuOpen =
+          // Boolean(composerTrigger)), so clearing it closes the menu and the
+          // session list never gets a chance to render. Keep the trigger alive
+          // and swap the menu's contents to the sessions we find.
+          setComposerHighlightedItemId(null);
           void (async () => {
             setCodexSessionOptions((await listCodexSessions?.()) ?? []);
           })();
@@ -1688,6 +1691,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         resumeCodexSession?.(item.sessionId);
         setCodexSessionOptions([]);
         setComposerHighlightedItemId(null);
+        // Now that a session is chosen, drop the "/resume" text; this also
+        // clears the trigger and closes the menu.
+        applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
         return;
       }
       if (item.type === "provider-slash-command") {

@@ -2913,9 +2913,7 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
   const activeProviderDriver = activeProviderStatus?.driver;
-  const runListCodexSessions = useAtomCommand(codexSessions.list, {
-    reportFailure: false,
-  });
+  const runListCodexSessions = useAtomCommand(codexSessions.list, "list codex sessions");
   const runResumeCodexSession = useAtomCommand(codexSessions.resume, "resume codex session");
   /** /resume: the Codex sessions on disk that this thread could continue. */
   const listCodexSessions = useCallback(async () => {
@@ -2934,14 +2932,32 @@ function ChatViewContent(props: ChatViewProps) {
   }, [runListCodexSessions, environmentId, activeProviderInstanceId]);
   const resumeCodexSession = useCallback(
     (sessionId: string) => {
-      void runResumeCodexSession({
-        environmentId,
-        input: {
-          threadId,
-          sessionId,
-          ...(activeProviderDriver !== undefined ? { driver: activeProviderDriver } : {}),
-        },
-      });
+      void (async () => {
+        const result = await runResumeCodexSession({
+          environmentId,
+          input: {
+            threadId,
+            sessionId,
+            ...(activeProviderDriver !== undefined ? { driver: activeProviderDriver } : {}),
+          },
+        });
+        // Rebinding only moves this thread's resume cursor; it does not replay the
+        // transcript into the view. Without a toast the picker closes onto an empty
+        // thread and the whole action reads as a no-op.
+        if (result._tag === "Success") {
+          toastManager.add({
+            type: "success",
+            title: "Resumed conversation",
+            description: `Your next message continues session ${sessionId.slice(0, 8)}.`,
+          });
+        } else {
+          toastManager.add({
+            type: "error",
+            title: "Could not resume conversation",
+            description: `Session ${sessionId.slice(0, 8)} could not be attached to this thread.`,
+          });
+        }
+      })();
     },
     [runResumeCodexSession, environmentId, threadId, activeProviderDriver],
   );

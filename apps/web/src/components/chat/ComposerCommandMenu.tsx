@@ -4,7 +4,7 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { BotIcon } from "lucide-react";
+import { BotIcon, HistoryIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -255,12 +255,31 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           <SkillGlyph className="size-3.5" />
         </span>
       ) : null}
-      <span className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="shrink-0">{props.item.label}</span>
-        <span className="min-w-0 flex-1 truncate text-muted-foreground/70 text-xs">
-          {props.item.description}
+      {props.item.type === "codex-session" ? (
+        <HistoryIcon className="size-4 shrink-0 text-muted-foreground/80" />
+      ) : null}
+      {/*
+        Every other item type has a short, fixed label (`/model`, a basename) and a
+        long description, so the label is pinned and the description truncates. A
+        session row inverts that: the label is the conversation preview and the
+        description is short metadata, so pinning the label overflowed the row and
+        pushed the metadata out of view entirely.
+      */}
+      {props.item.type === "codex-session" ? (
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate">{props.item.label}</span>
+          <span className="shrink-0 text-muted-foreground/70 text-xs">
+            {props.item.description}
+          </span>
         </span>
-      </span>
+      ) : (
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="shrink-0">{props.item.label}</span>
+          <span className="min-w-0 flex-1 truncate text-muted-foreground/70 text-xs">
+            {props.item.description}
+          </span>
+        </span>
+      )}
       {skillSourceLabel ? (
         <span className="shrink-0 pl-2 text-muted-foreground/70 text-xs">{skillSourceLabel}</span>
       ) : null}
