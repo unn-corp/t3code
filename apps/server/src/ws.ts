@@ -65,6 +65,7 @@ import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/uns
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import { discoverCodexSessions } from "./provider/codexSessionDiscovery.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -318,6 +319,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
+  [WS_METHODS.codexSessionsList, AuthOrchestrationReadScope],
   [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
@@ -1694,6 +1696,30 @@ const makeWsRpcLayer = (
                     cause,
                   }),
               ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.codexSessionsList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.codexSessionsList,
+            // Discovery degrades to fewer entries rather than failing, so there is
+            // no filesystem error to map here.
+            Effect.promise(() =>
+              discoverCodexSessions({
+                ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+                ...(input.limit !== undefined ? { limit: input.limit } : {}),
+              }),
+            ).pipe(
+              Effect.map((sessions) => ({
+                sessions: sessions.map((session) => ({
+                  sessionId: session.sessionId,
+                  ...(session.cwd !== undefined ? { cwd: session.cwd } : {}),
+                  ...(session.originator !== undefined ? { originator: session.originator } : {}),
+                  ...(session.cliVersion !== undefined ? { cliVersion: session.cliVersion } : {}),
+                  ...(session.startedAt !== undefined ? { startedAt: session.startedAt } : {}),
+                  ...(session.preview !== undefined ? { preview: session.preview } : {}),
+                })),
+              })),
             ),
             { "rpc.aggregate": "workspace" },
           ),
