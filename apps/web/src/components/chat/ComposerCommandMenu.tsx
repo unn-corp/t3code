@@ -46,6 +46,14 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
+      /** An existing Codex session on disk, offered by /resume. */
+      type: "codex-session";
+      sessionId: string;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "skill";
       provider: ProviderDriverKind;
       skill: ServerProviderSkill;

@@ -548,6 +548,17 @@ export interface ChatComposerProps {
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  /** List Codex sessions on disk that this thread could resume (/resume). */
+  listCodexSessions?: () => Promise<
+    ReadonlyArray<{
+      readonly sessionId: string;
+      readonly originator?: string;
+      readonly startedAt?: string;
+      readonly preview?: string;
+    }>
+  >;
+  /** Rebind this thread to a chosen Codex session. */
+  resumeCodexSession?: (sessionId: string) => void;
   togglePlanSidebar: () => void;
 
   focusComposer: () => void;
@@ -624,6 +635,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     toggleInteractionMode,
     handleRuntimeModeChange,
     handleInteractionModeChange,
+    listCodexSessions,
+    resumeCodexSession,
     togglePlanSidebar,
     focusComposer,
     scheduleComposerFocus,
@@ -904,6 +917,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  // Codex sessions fetched by /resume. Non-empty means the command menu is
+  // showing them instead of the usual slash commands.
+  const [codexSessionOptions, setCodexSessionOptions] = useState<
+    ReadonlyArray<{
+      readonly sessionId: string;
+      readonly originator?: string;
+      readonly startedAt?: string;
+      readonly preview?: string;
+    }>
+  >([]);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile =
@@ -973,6 +996,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
       }));
     }
+    if (codexSessionOptions.length > 0) {
+      // /resume produced sessions: offer those instead of the slash commands.
+      return codexSessionOptions.map((session) => ({
+        id: `codex-session:${session.sessionId}`,
+        type: "codex-session" as const,
+        sessionId: session.sessionId,
+        label: session.preview ?? session.sessionId.slice(0, 8),
+        description: [
+          session.originator === "t3code_desktop" ? "from this app" : "from the terminal",
+          session.startedAt?.slice(0, 16).replace("T", " "),
+        ]
+          .filter((part): part is string => Boolean(part))
+          .join(" · "),
+      }));
+    }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
         {
@@ -988,6 +1026,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           command: "plan",
           label: "/plan",
           description: "Switch this thread into plan mode",
+        },
+        {
+          id: "slash:resume",
+          type: "slash-command",
+          command: "resume",
+          label: "/resume",
+          description: "Continue a Codex conversation started in the terminal",
         },
         {
           id: "slash:default",
@@ -1615,6 +1660,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
+        if (item.command === "resume") {
+          // Swap the menu over to sessions found on disk. Clear the "/resume"
+          // text first so the composer stays usable if nothing is found.
+          const cleared = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+            focusEditorAfterReplace: false,
+          });
+          if (cleared) {
+            setComposerHighlightedItemId(null);
+          }
+          void (async () => {
+            setCodexSessionOptions((await listCodexSessions?.()) ?? []);
+          })();
+          return;
+        }
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -1622,6 +1682,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (applied) {
           setComposerHighlightedItemId(null);
         }
+        return;
+      }
+      if (item.type === "codex-session") {
+        resumeCodexSession?.(item.sessionId);
+        setCodexSessionOptions([]);
+        setComposerHighlightedItemId(null);
         return;
       }
       if (item.type === "provider-slash-command") {
@@ -1661,7 +1727,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
     },
-    [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
+    [
+      applyPromptReplacement,
+      handleInteractionModeChange,
+      listCodexSessions,
+      resumeCodexSession,
+      resolveActiveComposerTrigger,
+    ],
   );
 
   const onComposerMenuItemHighlighted = useCallback(

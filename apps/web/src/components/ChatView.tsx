@@ -253,6 +253,7 @@ import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
+import { codexSessions } from "../state/codexSessions";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
 import { ServerUpdateAction } from "./ServerUpdateAction";
@@ -2910,6 +2911,27 @@ function ChatViewContent(props: ChatViewProps) {
       setComposerDraftInteractionMode,
       setDraftThreadContext,
     ],
+  );
+  const runListCodexSessions = useAtomCommand(codexSessions.list, {
+    reportFailure: false,
+  });
+  const runResumeCodexSession = useAtomCommand(codexSessions.resume, "resume codex session");
+  /** /resume: the Codex sessions on disk that this thread could continue. */
+  const listCodexSessions = useCallback(async () => {
+    const result = await runListCodexSessions({
+      environmentId,
+      input: { limit: 20 },
+    });
+    return result._tag === "Success" ? result.value.sessions : [];
+  }, [runListCodexSessions, environmentId]);
+  const resumeCodexSession = useCallback(
+    (sessionId: string) => {
+      void runResumeCodexSession({
+        environmentId,
+        input: { threadId, sessionId },
+      });
+    },
+    [runResumeCodexSession, environmentId, threadId],
   );
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
@@ -5643,6 +5665,8 @@ function ChatViewContent(props: ChatViewProps) {
                         toggleInteractionMode={toggleInteractionMode}
                         handleRuntimeModeChange={handleRuntimeModeChange}
                         handleInteractionModeChange={handleInteractionModeChange}
+                        listCodexSessions={listCodexSessions}
+                        resumeCodexSession={resumeCodexSession}
                         togglePlanSidebar={togglePlanSidebar}
                         focusComposer={focusComposer}
                         scheduleComposerFocus={scheduleComposerFocus}
