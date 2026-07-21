@@ -29,6 +29,7 @@ import {
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
+  ProviderInstanceId,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
   type OrchestrationThreadStreamItem,
@@ -1822,10 +1823,15 @@ const makeWsRpcLayer = (
               yield* providerSessionRuntimeRepository
                 .upsert({
                   threadId,
-                  providerName: base?.providerName ?? input.driver ?? "codex",
+                  // The driver of the session being resumed wins over whatever this
+                  // thread ran before. Preferring the existing row left a thread that
+                  // had once run codex bound to codex after resuming a Claude
+                  // conversation, so the UI followed the stale provider and the next
+                  // /resume listed the wrong driver's sessions.
+                  providerName: input.driver ?? base?.providerName ?? "codex",
                   // adapterKey is non-null in the schema; "codex" is the driver key
                   // used when this thread has no prior runtime row.
-                  adapterKey: base?.adapterKey ?? input.driver ?? "codex",
+                  adapterKey: input.driver ?? base?.adapterKey ?? "codex",
                   runtimeMode: base?.runtimeMode ?? "full-access",
                   // Stopped so the next turn starts a fresh session that resumes.
                   status: "stopped",
@@ -1837,7 +1843,13 @@ const makeWsRpcLayer = (
                       ? { threadId: input.sessionId }
                       : { resume: input.sessionId, sessionId: input.sessionId },
                   runtimePayload: base?.runtimePayload ?? null,
-                  providerInstanceId: base?.providerInstanceId ?? null,
+                  // Likewise the account: the session belongs to the selected
+                  // instance's home, so binding to the previous one would resume
+                  // against the wrong account.
+                  providerInstanceId:
+                    input.providerInstanceId !== undefined
+                      ? ProviderInstanceId.make(input.providerInstanceId)
+                      : (base?.providerInstanceId ?? null),
                 })
                 .pipe(Effect.orElseSucceed(() => undefined));
 
