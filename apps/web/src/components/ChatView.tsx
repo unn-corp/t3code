@@ -2925,11 +2925,18 @@ function ChatViewContent(props: ChatViewProps) {
         ...(activeProviderInstanceId !== null
           ? { providerInstanceId: activeProviderInstanceId }
           : {}),
+        // Scope to the directory this thread actually runs in. Every driver keys
+        // its sessions by working directory (Claude by slugified project dir,
+        // Grok by url-encoded cwd, Codex by a header field), and resuming one
+        // belonging to a different directory fails at launch: `claude --resume`
+        // looks the id up under the *current* cwd and reports a stream failure.
+        // Without this the picker offered sessions from every project on disk.
+        ...(activeWorkspaceRoot !== undefined ? { cwd: activeWorkspaceRoot } : {}),
         limit: 20,
       },
     });
     return result._tag === "Success" ? result.value.sessions : [];
-  }, [runListCodexSessions, environmentId, activeProviderInstanceId]);
+  }, [runListCodexSessions, environmentId, activeProviderInstanceId, activeWorkspaceRoot]);
   const resumeCodexSession = useCallback(
     (sessionId: string) => {
       void (async () => {
