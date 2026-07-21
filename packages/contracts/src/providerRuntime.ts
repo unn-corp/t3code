@@ -530,8 +530,19 @@ export type TaskProgressPayload = typeof TaskProgressPayload.Type;
  */
 const TaskUpdatedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
+  // "idle" = finished a run but resumable (Codex agents between activations);
+  // "waiting" = blocked on approval/user input.
   status: Schema.optional(
-    Schema.Literals(["pending", "running", "completed", "failed", "killed", "paused"]),
+    Schema.Literals([
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "killed",
+      "paused",
+      "idle",
+      "waiting",
+    ]),
   ),
   endTime: Schema.optional(IsoDateTime),
   isBackgrounded: Schema.optional(Schema.Boolean),
