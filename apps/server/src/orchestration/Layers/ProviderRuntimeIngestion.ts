@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -9,6 +10,12 @@ import {
   CheckpointRef,
   isToolLifecycleItemType,
   ThreadId,
+  THREAD_AGENTS_ACTIVITY_KIND,
+  THREAD_AGENT_RECENT_ACTIVITY_LIMIT,
+  THREAD_AGENT_TERMINAL_STATUSES,
+  type ThreadAgentSnapshot,
+  type ThreadAgentStatus,
+  type ThreadAgentUsage,
   type ThreadTokenUsageSnapshot,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -41,6 +48,198 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
+const AGENT_SETTLED_RETENTION_LIMIT = 50;
+const AGENT_USAGE_MATERIAL_STEP = 25_000;
+
+function taskUsage(value: unknown): ThreadAgentUsage | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const usage = value as Record<string, unknown>;
+  if (typeof usage.totalTokens !== "number" || usage.totalTokens < 0) return undefined;
+  return {
+    totalTokens: usage.totalTokens,
+    ...(typeof usage.inputTokens === "number" ? { inputTokens: usage.inputTokens } : {}),
+    ...(typeof usage.cachedInputTokens === "number"
+      ? { cachedInputTokens: usage.cachedInputTokens }
+      : {}),
+    ...(typeof usage.outputTokens === "number" ? { outputTokens: usage.outputTokens } : {}),
+    ...(typeof usage.reasoningOutputTokens === "number"
+      ? { reasoningOutputTokens: usage.reasoningOutputTokens }
+      : {}),
+    ...(typeof usage.toolUses === "number" ? { toolUses: usage.toolUses } : {}),
+  };
+}
+
+function taskStatus(event: ProviderRuntimeEvent): ThreadAgentStatus | undefined {
+  if (event.type === "task.started") return "running";
+  if (event.type === "task.completed") return event.payload.status;
+  if (event.type !== "task.updated" || !event.payload.status) return undefined;
+  return event.payload.status === "killed"
+    ? "stopped"
+    : event.payload.status === "paused"
+      ? "idle"
+      : event.payload.status;
+}
+
+function taskKind(taskType: string | undefined, parentTaskId: string | undefined) {
+  if (taskType === "local_agent") return "subagent" as const;
+  if (taskType === "local_workflow") return "workflow" as const;
+  if (taskType === "workflow_agent" || parentTaskId) return "workflow_agent" as const;
+  if (taskType === "local_bash" || taskType === "shell") return "shell" as const;
+  if (taskType === "monitor") return "monitor" as const;
+  return "other" as const;
+}
+
+function isTaskAgentEvent(
+  event: ProviderRuntimeEvent,
+): event is Extract<
+  ProviderRuntimeEvent,
+  { type: "task.started" | "task.progress" | "task.updated" | "task.completed" }
+> {
+  return (
+    event.type === "task.started" ||
+    event.type === "task.progress" ||
+    event.type === "task.updated" ||
+    event.type === "task.completed"
+  );
+}
+
+function workflowPhasesEqual(
+  left: ThreadAgentSnapshot["phases"],
+  right: ThreadAgentSnapshot["phases"],
+): boolean {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.length === right.length &&
+      left.every(
+        (phase, index) =>
+          phase.index === right[index]?.index && phase.title === right[index]?.title,
+      ))
+  );
+}
+
+export function foldTaskAgentEvent(
+  agents: Map<string, ThreadAgentSnapshot>,
+  event: Extract<
+    ProviderRuntimeEvent,
+    { type: "task.started" | "task.progress" | "task.updated" | "task.completed" }
+  >,
+): boolean {
+  const payload = event.payload;
+  const previous = agents.get(payload.taskId);
+  const status = taskStatus(event) ?? previous?.status ?? "running";
+  const description = "description" in payload ? payload.description : undefined;
+  const summary = "summary" in payload ? payload.summary : undefined;
+  const nextUsage = "usage" in payload ? taskUsage(payload.usage) : undefined;
+  const lastToolName = "lastToolName" in payload ? payload.lastToolName : undefined;
+  const currentActivity = summary ?? lastToolName ?? previous?.currentActivity;
+  const activityChanged =
+    (summary !== undefined && summary !== previous?.currentActivity) ||
+    (lastToolName !== undefined && lastToolName !== previous?.lastToolName);
+  const recentActivity = activityChanged
+    ? [
+        ...(previous?.recentActivity ?? []),
+        { at: event.createdAt, summary: summary ?? lastToolName ?? "Activity updated" },
+      ].slice(-THREAD_AGENT_RECENT_ACTIVITY_LIMIT)
+    : (previous?.recentActivity ?? []);
+  const wasSettled =
+    previous !== undefined &&
+    (previous.status === "idle" || THREAD_AGENT_TERMINAL_STATUSES.has(previous.status));
+  const reactivated = wasSettled && status === "running";
+  const explicitEndTime = event.type === "task.updated" ? event.payload.endTime : undefined;
+  const terminal = THREAD_AGENT_TERMINAL_STATUSES.has(status);
+  const next: ThreadAgentSnapshot = {
+    agentId: payload.taskId,
+    provider: event.provider,
+    kind:
+      previous?.kind ??
+      taskKind("taskType" in payload ? payload.taskType : undefined, payload.parentTaskId),
+    name: payload.name ?? description ?? payload.workflowName ?? previous?.name ?? payload.taskId,
+    ...((payload.agentType ?? previous?.agentType)
+      ? { agentType: payload.agentType ?? previous?.agentType }
+      : {}),
+    ...((payload.model ?? previous?.model) ? { model: payload.model ?? previous?.model } : {}),
+    status,
+    ...(currentActivity ? { currentActivity } : {}),
+    ...((lastToolName ?? previous?.lastToolName)
+      ? { lastToolName: lastToolName ?? previous?.lastToolName }
+      : {}),
+    ...((nextUsage ?? previous?.usage) ? { usage: nextUsage ?? previous?.usage } : {}),
+    firstStartedAt: previous?.firstStartedAt ?? event.createdAt,
+    lastActivityAt: event.createdAt,
+    ...(!reactivated && (explicitEndTime ?? (terminal ? event.createdAt : previous?.endedAt))
+      ? { endedAt: explicitEndTime ?? (terminal ? event.createdAt : previous?.endedAt) }
+      : {}),
+    activationCount: previous ? previous.activationCount + (reactivated ? 1 : 0) : 1,
+    ...((event.turnId ?? previous?.lastTurnId)
+      ? { lastTurnId: TurnId.make(String(event.turnId ?? previous?.lastTurnId)) }
+      : {}),
+    ...((payload.parentTaskId ?? previous?.parentAgentId)
+      ? { parentAgentId: payload.parentTaskId ?? previous?.parentAgentId }
+      : {}),
+    ...(payload.phaseIndex !== undefined || previous?.phaseIndex !== undefined
+      ? { phaseIndex: payload.phaseIndex ?? previous?.phaseIndex }
+      : {}),
+    ...((payload.phaseTitle ?? previous?.phaseTitle)
+      ? { phaseTitle: payload.phaseTitle ?? previous?.phaseTitle }
+      : {}),
+    ...((payload.phases ?? previous?.phases) ? { phases: payload.phases ?? previous?.phases } : {}),
+    ...((payload.scriptPath ?? previous?.scriptPath)
+      ? { scriptPath: payload.scriptPath ?? previous?.scriptPath }
+      : {}),
+    ...((payload.runId ?? previous?.runId) ? { runId: payload.runId ?? previous?.runId } : {}),
+    ...((payload.outputFile ?? previous?.outputFile)
+      ? { outputFile: payload.outputFile ?? previous?.outputFile }
+      : {}),
+    ...(event.type === "task.completed" && event.payload.summary
+      ? { resultSummary: event.payload.summary }
+      : previous?.resultSummary
+        ? { resultSummary: previous.resultSummary }
+        : {}),
+    ...(event.type === "task.updated" && event.payload.errorMessage
+      ? { errorMessage: event.payload.errorMessage }
+      : previous?.errorMessage
+        ? { errorMessage: previous.errorMessage }
+        : {}),
+    recentActivity,
+    updatedAt: event.createdAt,
+  };
+  agents.set(payload.taskId, next);
+  if (!previous) return true;
+  const usageStepChanged =
+    Math.floor((previous.usage?.totalTokens ?? 0) / AGENT_USAGE_MATERIAL_STEP) !==
+    Math.floor((next.usage?.totalTokens ?? 0) / AGENT_USAGE_MATERIAL_STEP);
+  return (
+    previous.status !== next.status ||
+    previous.name !== next.name ||
+    previous.model !== next.model ||
+    previous.phaseIndex !== next.phaseIndex ||
+    previous.phaseTitle !== next.phaseTitle ||
+    !workflowPhasesEqual(previous.phases, next.phases) ||
+    previous.currentActivity !== next.currentActivity ||
+    activityChanged ||
+    usageStepChanged ||
+    previous.endedAt !== next.endedAt ||
+    previous.resultSummary !== next.resultSummary ||
+    previous.errorMessage !== next.errorMessage ||
+    previous.scriptPath !== next.scriptPath ||
+    previous.runId !== next.runId ||
+    previous.outputFile !== next.outputFile
+  );
+}
+
+export function pruneSettledAgents(agents: Map<string, ThreadAgentSnapshot>): void {
+  const settled = Array.from(agents.values())
+    .filter((agent) => agent.status === "idle" || THREAD_AGENT_TERMINAL_STATUSES.has(agent.status))
+    .sort((left, right) => left.lastActivityAt.localeCompare(right.lastActivityAt));
+  for (const agent of settled.slice(
+    0,
+    Math.max(0, settled.length - AGENT_SETTLED_RETENTION_LIMIT),
+  )) {
+    agents.delete(agent.agentId);
+  }
+}
 
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
@@ -310,6 +509,12 @@ export function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
   taskTitle?: string,
 ): ReadonlyArray<OrchestrationThreadActivity> {
+  if (
+    (isTaskAgentEvent(event) && event.payload.timelineBypass === true) ||
+    event.type === "task.updated"
+  ) {
+    return [];
+  }
   const maybeSequence = (() => {
     const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
     return eventWithSequence.sessionSequence !== undefined
@@ -693,6 +898,9 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const agentsByThread = new Map<ThreadId, Map<string, ThreadAgentSnapshot>>();
+  const hydratedAgentThreads = new Set<ThreadId>();
+  let agentSnapshotDispatchCount = 0;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
@@ -1304,6 +1512,85 @@ const make = Effect.gen(function* () {
           loadedThreadDetail = (yield* resolveThreadDetail(thread.id)) ?? null;
           return loadedThreadDetail;
         });
+
+      if (!hydratedAgentThreads.has(thread.id)) {
+        const detail = yield* getLoadedThreadDetail();
+        const latestSnapshot = detail?.activities.findLast(
+          (activity) => activity.kind === THREAD_AGENTS_ACTIVITY_KIND,
+        );
+        const payload =
+          latestSnapshot?.payload !== null && typeof latestSnapshot?.payload === "object"
+            ? (latestSnapshot.payload as { agents?: unknown })
+            : undefined;
+        const agents = new Map<string, ThreadAgentSnapshot>();
+        if (Array.isArray(payload?.agents)) {
+          for (const candidate of payload.agents) {
+            if (
+              candidate !== null &&
+              typeof candidate === "object" &&
+              typeof (candidate as { agentId?: unknown }).agentId === "string"
+            ) {
+              const agent = candidate as ThreadAgentSnapshot;
+              agents.set(agent.agentId, agent);
+            }
+          }
+        }
+        agentsByThread.set(thread.id, agents);
+        hydratedAgentThreads.add(thread.id);
+      }
+
+      const threadAgents = agentsByThread.get(thread.id) ?? new Map<string, ThreadAgentSnapshot>();
+      agentsByThread.set(thread.id, threadAgents);
+      let agentRosterMaterial = false;
+      if (isTaskAgentEvent(event)) {
+        agentRosterMaterial = foldTaskAgentEvent(threadAgents, event);
+      } else if (event.type === "session.exited") {
+        for (const [agentId, agent] of threadAgents) {
+          if (THREAD_AGENT_TERMINAL_STATUSES.has(agent.status)) continue;
+          threadAgents.set(agentId, {
+            ...agent,
+            status: "stopped",
+            endedAt: event.createdAt,
+            lastActivityAt: event.createdAt,
+            errorMessage: "orphaned on session exit",
+            updatedAt: event.createdAt,
+          });
+          agentRosterMaterial = true;
+        }
+      }
+      if (agentRosterMaterial) {
+        pruneSettledAgents(threadAgents);
+        const roster = Array.from(threadAgents.values());
+        const running = roster.filter((agent) => agent.status === "running").length;
+        const settled = roster.filter(
+          (agent) => agent.status === "idle" || THREAD_AGENT_TERMINAL_STATUSES.has(agent.status),
+        ).length;
+        const count = running > 0 ? running : settled;
+        const summary = `${count} ${count === 1 ? "agent" : "agents"} ${running > 0 ? "running" : "settled"}`;
+        const snapshotUuid = yield* crypto.randomUUIDv4;
+        const activity: OrchestrationThreadActivity = {
+          id: EventId.make(`${event.eventId}:agent-snapshot:${snapshotUuid}`),
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: THREAD_AGENTS_ACTIVITY_KIND,
+          summary,
+          payload: { agents: roster },
+          turnId: toTurnId(event.turnId) ?? null,
+        };
+        yield* orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: yield* providerCommandId(event, "agent-snapshot-append"),
+          threadId: thread.id,
+          activity,
+          createdAt: activity.createdAt,
+        });
+        agentSnapshotDispatchCount += 1;
+        yield* Effect.logDebug("provider agent snapshot appended", {
+          threadId: thread.id,
+          agentCount: roster.length,
+          dispatchCount: agentSnapshotDispatchCount,
+        });
+      }
 
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
