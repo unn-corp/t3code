@@ -108,9 +108,9 @@ function AgentCard({ agent }: { agent: ThreadAgentSnapshot }) {
     >
       <div className="flex items-center gap-2">
         <AgentStatusDot status={agent.status} />
-        <span className="truncate text-[12.5px] font-semibold">{agent.name}</span>
+        <span className="min-w-0 truncate text-[12.5px] font-semibold">{agent.name}</span>
         {agent.agentType ? (
-          <Badge variant="secondary" size="sm" className="shrink-0">
+          <Badge variant="secondary" size="sm" className="min-w-0 max-w-28 shrink-1 truncate">
             {agent.agentType}
           </Badge>
         ) : null}
