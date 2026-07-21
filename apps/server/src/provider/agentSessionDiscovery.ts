@@ -30,7 +30,7 @@ export type DiscoveredAgentSession = DiscoveredCodexSession;
 const PREVIEW_MAX_LENGTH = 120;
 
 /** Injected context replayed as a user turn; never a useful preview. */
-function isInjectedContext(text: string): boolean {
+export function isInjectedContext(text: string): boolean {
   return (
     /^\s*</.test(text) || /^\s*#+\s*AGENTS\.md/i.test(text) || /^\s*<INSTRUCTIONS>/i.test(text)
   );
