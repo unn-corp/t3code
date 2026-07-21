@@ -439,6 +439,13 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   return "ready";
 }
 
+/** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
+    poison the whole ordering, so it sinks to the epoch instead. */
+export function parseTimestampMs(isoDate: string): number {
+  const parsed = Date.parse(isoDate);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 // v2 sort: static creation order, newest thread on top. Activity NEVER
 // reorders the list — a row holds its position from open until settled, so
 // the screen only moves at lifecycle transitions. Status (including pending
@@ -448,7 +455,8 @@ export function sortThreadsForSidebarV2<
 >(threads: readonly T[]): T[] {
   return [...threads].toSorted(
     (left, right) =>
-      Date.parse(right.createdAt) - Date.parse(left.createdAt) || left.id.localeCompare(right.id),
+      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
+      left.id.localeCompare(right.id),
   );
 }
 

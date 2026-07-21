@@ -70,6 +70,7 @@ import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
   isTrailingDoubleClick,
+  parseTimestampMs,
   resolveAdjacentThreadId,
   resolveSidebarV2Status,
   sortThreadsForSidebarV2,
@@ -226,7 +227,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const isUnread =
     thread.latestTurn?.completedAt != null &&
     (lastVisitedAt == null ||
-      Date.parse(thread.latestTurn.completedAt) > Date.parse(lastVisitedAt));
+      parseTimestampMs(thread.latestTurn.completedAt) > parseTimestampMs(lastVisitedAt));
 
   const isRemote =
     props.currentEnvironmentId !== null && thread.environmentId !== props.currentEnvironmentId;
@@ -791,8 +792,8 @@ export default function SidebarV2() {
       activeThreads: sortThreadsForSidebarV2(active),
       settledThreads: settled.toSorted(
         (left, right) =>
-          Date.parse(right.latestUserMessageAt ?? right.updatedAt) -
-          Date.parse(left.latestUserMessageAt ?? left.updatedAt),
+          parseTimestampMs(right.latestUserMessageAt ?? right.updatedAt) -
+          parseTimestampMs(left.latestUserMessageAt ?? left.updatedAt),
       ),
     };
   }, [allThreads, autoSettleAfterDays, changeRequestStateByKey, nowMinute, scopedProject]);
@@ -850,6 +851,10 @@ export default function SidebarV2() {
   // event and defeat row memoization during streaming.
   const threadByKeyRef = useRef(threadByKey);
   threadByKeyRef.current = threadByKey;
+  // handleNewThread is inherently unstable (depends on the projects list);
+  // a ref keeps it out of attemptSettle's dependency array.
+  const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
+  handleNewThreadRef.current = newThreadContext.handleNewThread;
   const settledThreadKeys = useMemo(
     () =>
       new Set(
@@ -951,7 +956,7 @@ export default function SidebarV2() {
   );
 
   const attemptSettle = useCallback(
-    (threadRef: ScopedThreadRef) => {
+    (threadRef: ScopedThreadRef, opts: { coSettlingKeys?: ReadonlySet<string> } = {}) => {
       void (async () => {
         // Hold the shell before dispatching: the live stream drops the
         // thread on archive, and the settled tail must not flicker while
@@ -967,9 +972,10 @@ export default function SidebarV2() {
           );
         }
         // Settling the thread you're looking at moves you forward: the next
-        // remaining card (never a settled row), or the new-thread screen
-        // when this was the last active one. Snapshot the target before the
-        // settle mutates the partition. Background settles never navigate.
+        // remaining card (never a settled row, never one settling in the
+        // same batch), or the new-thread screen when this was the last
+        // active one. Snapshot the target before the settle mutates the
+        // partition. Background settles never navigate.
         let navigateAfterSettle: (() => void) | null = null;
         if (routeThreadKey === threadKey) {
           const orderedKeys = orderedThreadKeysRef.current;
@@ -981,27 +987,39 @@ export default function SidebarV2() {
               : ([
                   ...orderedKeys.slice(currentIndex + 1),
                   ...orderedKeys.slice(0, currentIndex),
-                ].find((key) => !settledKeys.has(key)) ?? null);
+                ].find((key) => !settledKeys.has(key) && !opts.coSettlingKeys?.has(key)) ?? null);
           const nextThread = nextCardKey ? threadByKeyRef.current.get(nextCardKey) : null;
           navigateAfterSettle = nextThread
             ? () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id))
-            : () => void router.navigate({ to: "/" });
+            : // Settling the last active card matches archive: a fresh draft
+              // in the same project, not the bare no-thread screen.
+              shell
+              ? () =>
+                  void handleNewThreadRef.current(
+                    scopeProjectRef(shell.environmentId, shell.projectId),
+                  )
+              : () => void router.navigate({ to: "/" });
         }
         const result = await settleThread(threadRef);
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        if (result._tag === "Failure") {
+          // The archive did not happen (failed or interrupted): drop the
+          // optimistic hold — no archived snapshot will ever cover it — and
+          // never navigate away from a thread that is still active.
           setSettledHolds((current) => {
             const next = new Map(current);
             next.delete(threadKey);
             return next;
           });
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to settle thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to settle thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
           return;
         }
         // Settle = archive: the shell stream drops the thread, so pull the
@@ -1061,10 +1079,13 @@ export default function SidebarV2() {
       );
       if (clicked._tag === "Failure") return;
       if (clicked.value === "settle") {
+        // Post-settle navigation must skip threads settling in this same
+        // batch — they are all leaving the card block together.
+        const coSettlingKeys = new Set(threadKeys);
         for (const threadKey of threadKeys) {
           const thread = threadByKeyRef.current.get(threadKey);
           if (!thread) continue;
-          attemptSettle(scopeThreadRef(thread.environmentId, thread.id));
+          attemptSettle(scopeThreadRef(thread.environmentId, thread.id), { coSettlingKeys });
         }
         clearSelection();
         return;

@@ -330,6 +330,13 @@ export function HomeScreen(props: HomeScreenProps) {
   const handleSettleThread = useCallback(
     (thread: EnvironmentThreadShell) => {
       const threadKey = scopedThreadKey(thread.environmentId, thread.id);
+      // An existing hold means a settle for this thread is already in flight
+      // (or done and awaiting its snapshot). Re-triggering would fail the
+      // executor's in-flight check and the rollback below would strip the
+      // first settle's hold, flickering the row out of the settled tail.
+      if (settledHolds.has(threadKey)) {
+        return;
+      }
       setSettledHolds((current) =>
         new Map(current).set(threadKey, {
           ...thread,
@@ -349,7 +356,7 @@ export function HomeScreen(props: HomeScreenProps) {
         }
       })();
     },
-    [props.onSettleThread],
+    [props.onSettleThread, settledHolds],
   );
   // Delete and un-settle both invalidate any hold for the thread.
   const dropSettledHold = useCallback((thread: EnvironmentThreadShell) => {

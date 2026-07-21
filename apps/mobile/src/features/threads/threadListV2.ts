@@ -27,6 +27,13 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
+/** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
+    poison the whole ordering, so it sinks to the epoch instead. */
+function parseTimestampMs(isoDate: string): number {
+  const parsed = Date.parse(isoDate);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 /**
  * v2 sort: static creation order, newest thread on top. Activity NEVER
  * reorders the list — a row holds its position from open until settled, so
@@ -40,7 +47,8 @@ export function sortThreadsForListV2<T extends { readonly id: string; readonly c
   // change-by-copy array methods.
   return [...threads].sort(
     (left, right) =>
-      Date.parse(right.createdAt) - Date.parse(left.createdAt) || left.id.localeCompare(right.id),
+      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
+      left.id.localeCompare(right.id),
   );
 }
 
@@ -99,8 +107,8 @@ export function buildThreadListV2Items(input: {
   const orderedActive = sortThreadsForListV2(active);
   const orderedSettled = [...settled].sort(
     (left, right) =>
-      Date.parse(right.latestUserMessageAt ?? right.updatedAt) -
-      Date.parse(left.latestUserMessageAt ?? left.updatedAt),
+      parseTimestampMs(right.latestUserMessageAt ?? right.updatedAt) -
+      parseTimestampMs(left.latestUserMessageAt ?? left.updatedAt),
   );
   const settledLimit = input.settledLimit ?? Number.POSITIVE_INFINITY;
   const visibleSettled =

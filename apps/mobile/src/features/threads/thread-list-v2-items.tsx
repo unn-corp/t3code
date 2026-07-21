@@ -314,7 +314,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </PressableScaleCard>
     ) : (
       <Pressable
-        accessibilityHint="Opens the thread. Swipe left to un-settle."
+        accessibilityHint={`Opens the thread. Swipe left to ${canUnsettle ? "un-settle" : "settle"}.`}
         accessibilityLabel={thread.title}
         accessibilityRole="button"
         className="bg-screen"

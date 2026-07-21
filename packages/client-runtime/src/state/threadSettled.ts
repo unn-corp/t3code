@@ -57,6 +57,10 @@ export function effectiveSettled(
   const lastActivityAt = threadLastActivityAt(shell);
   if (lastActivityAt === null) return false;
 
+  // threadLastActivityAt only returns candidates whose Date.parse beat
+  // -Infinity, so this parse is a real number; a malformed `now` yields NaN,
+  // the comparison is false, and the thread stays active (never a surprise
+  // auto-settle on bad input).
   return (
     Date.parse(lastActivityAt) < Date.parse(options.now) - options.autoSettleAfterDays * DAY_MS
   );
