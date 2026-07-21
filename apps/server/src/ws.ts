@@ -66,6 +66,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import { discoverCodexSessions } from "./provider/codexSessionDiscovery.ts";
+import * as ProviderSessionRuntimeRepo from "./persistence/ProviderSessionRuntime.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -320,6 +321,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
   [WS_METHODS.codexSessionsList, AuthOrchestrationReadScope],
+  [WS_METHODS.codexSessionsResume, AuthOrchestrationOperateScope],
   [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
@@ -428,6 +430,8 @@ const makeWsRpcLayer = (
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const providerSessionRuntimeRepository =
+        yield* ProviderSessionRuntimeRepo.ProviderSessionRuntimeRepository;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const repositoryIdentityResolver =
@@ -1721,6 +1725,39 @@ const makeWsRpcLayer = (
                 })),
               })),
             ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.codexSessionsResume]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.codexSessionsResume,
+            Effect.gen(function* () {
+              const threadId = ThreadId.make(input.threadId);
+              const existing = yield* providerSessionRuntimeRepository
+                .getByThreadId({ threadId })
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+              const base = Option.getOrUndefined(existing);
+              const now = yield* DateTime.now;
+              // Persisting the cursor IS the rebind: ProviderSessionDirectory turns
+              // this row into a binding, and recoverSessionForThread hands its
+              // resumeCursor to the adapter, which issues thread/resume.
+              yield* providerSessionRuntimeRepository
+                .upsert({
+                  threadId,
+                  providerName: base?.providerName ?? "codex",
+                  // adapterKey is non-null in the schema; "codex" is the driver key
+                  // used when this thread has no prior runtime row.
+                  adapterKey: base?.adapterKey ?? "codex",
+                  runtimeMode: base?.runtimeMode ?? "full-access",
+                  // Stopped so the next turn starts a fresh session that resumes.
+                  status: "stopped",
+                  lastSeenAt: DateTime.formatIso(now),
+                  resumeCursor: { threadId: input.sessionId },
+                  runtimePayload: base?.runtimePayload ?? null,
+                  providerInstanceId: base?.providerInstanceId ?? null,
+                })
+                .pipe(Effect.orElseSucceed(() => undefined));
+              return { bound: true };
+            }),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>

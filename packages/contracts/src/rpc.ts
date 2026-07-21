@@ -13,7 +13,12 @@ import {
   FilesystemBrowseResult,
   FilesystemBrowseError,
 } from "./filesystem.ts";
-import { CodexSessionsListInput, CodexSessionsListResult } from "./codexSessions.ts";
+import {
+  CodexSessionsListInput,
+  CodexSessionsListResult,
+  CodexSessionsResumeInput,
+  CodexSessionsResumeResult,
+} from "./codexSessions.ts";
 import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import {
   GitActionProgressEvent,
@@ -166,6 +171,7 @@ export const WS_METHODS = {
 
   // Codex session discovery (resuming conversations started outside the app)
   codexSessionsList: "codexSessions.list",
+  codexSessionsResume: "codexSessions.resume",
   assetsCreateUrl: "assets.createUrl",
 
   // VCS methods
@@ -413,6 +419,12 @@ export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
 export const WsCodexSessionsListRpc = Rpc.make(WS_METHODS.codexSessionsList, {
   payload: CodexSessionsListInput,
   success: CodexSessionsListResult,
+  error: Schema.Union([EnvironmentAuthorizationError]),
+});
+
+export const WsCodexSessionsResumeRpc = Rpc.make(WS_METHODS.codexSessionsResume, {
+  payload: CodexSessionsResumeInput,
+  success: CodexSessionsResumeResult,
   error: Schema.Union([EnvironmentAuthorizationError]),
 });
 
@@ -735,6 +747,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsCodexSessionsListRpc,
+  WsCodexSessionsResumeRpc,
   WsAssetsCreateUrlRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,

@@ -27,3 +27,20 @@ export const CodexSessionsListInput = Schema.Struct({
 export const CodexSessionsListResult = Schema.Struct({
   sessions: Schema.Array(DiscoveredCodexSession),
 });
+
+/**
+ * Rebind a thread to a Codex session that already exists on disk.
+ *
+ * The server stores the id as the thread's resume cursor. The next provider
+ * start routes through the same `thread/resume` path the app already uses for
+ * its own sessions, so a conversation begun in the terminal continues here.
+ */
+export const CodexSessionsResumeInput = Schema.Struct({
+  threadId: Schema.String,
+  /** Codex thread id, from `codexSessions.list`. */
+  sessionId: Schema.String,
+});
+
+export const CodexSessionsResumeResult = Schema.Struct({
+  bound: Schema.Boolean,
+});
