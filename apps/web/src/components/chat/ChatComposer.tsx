@@ -927,6 +927,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       readonly preview?: string;
     }>
   >([]);
+  /** A /resume listing completed and found nothing, so the menu can say why. */
+  const [resumeListedEmpty, setResumeListedEmpty] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile =
@@ -1151,10 +1153,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
     }
+    // A /resume listing that came back empty is a real answer, not a failed
+    // search: sessions are scoped to this provider and this directory, and e.g.
+    // Grok may simply have never run here. Saying "No matching command" made
+    // correct behaviour look broken.
+    if (resumeListedEmpty) {
+      const provider = getProviderDisplayName(providerStatuses, selectedProvider);
+      return `No ${provider} conversations found for this project.`;
+    }
     return composerTriggerKind === "path"
       ? "No matching files or folders."
       : "No matching command.";
-  }, [composerTriggerKind]);
+  }, [composerTriggerKind, resumeListedEmpty, providerStatuses, selectedProvider]);
 
   // ------------------------------------------------------------------
   // Provider traits UI
@@ -1673,8 +1683,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           // session list never gets a chance to render. Keep the trigger alive
           // and swap the menu's contents to the sessions we find.
           setComposerHighlightedItemId(null);
+          setResumeListedEmpty(false);
           void (async () => {
-            setCodexSessionOptions((await listCodexSessions?.()) ?? []);
+            const sessions = (await listCodexSessions?.()) ?? [];
+            setCodexSessionOptions(sessions);
+            setResumeListedEmpty(sessions.length === 0);
           })();
           return;
         }
@@ -1693,6 +1706,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         // indistinguishable in the sidebar.
         resumeCodexSession?.(item.sessionId, item.label);
         setCodexSessionOptions([]);
+        setResumeListedEmpty(false);
         setComposerHighlightedItemId(null);
         // Now that a session is chosen, drop the "/resume" text; this also
         // clears the trigger and closes the menu.

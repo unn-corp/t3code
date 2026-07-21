@@ -419,6 +419,13 @@ function formatOutgoingPrompt(params: {
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
+/**
+ * How many conversations `/resume` offers. Matches the server's import cap
+ * (`DEFAULT_MAX_TURNS` in `agentTranscript.ts`) so the picker never lists a session
+ * the import would refuse to replay in full.
+ */
+const RESUME_SESSION_LIMIT = 50;
+
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -2913,6 +2920,19 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
   const activeProviderDriver = activeProviderStatus?.driver;
+  /**
+   * Provider the `/resume` picker reads from: the one the composer is showing.
+   *
+   * Deliberately not `activeProviderDriver`, which resolves through
+   * `activeThread?.session?.providerInstanceId` and therefore follows whatever the
+   * thread is *bound* to. Once a resume bound a session, the next /resume listed
+   * that driver instead of the selected one, so a thread would offer 16 Claude
+   * conversations and then 4 Codex ones moments later. Sessions are per driver and
+   * per account, so listing and resuming must both follow the selection.
+   */
+  const resumeProviderDriver = selectedProvider;
+  const resumeProviderInstanceId =
+    selectedProviderInstanceId ?? defaultInstanceIdForDriver(selectedProvider);
   const runListCodexSessions = useAtomCommand(codexSessions.list, "list codex sessions");
   const runResumeCodexSession = useAtomCommand(codexSessions.resume, "resume codex session");
   /** /resume: the Codex sessions on disk that this thread could continue. */
@@ -2920,15 +2940,10 @@ function ChatViewContent(props: ChatViewProps) {
     const result = await runListCodexSessions({
       environmentId,
       input: {
-        // Scope to the provider instance in use, so /resume lists that driver's
-        // sessions from that account's home.
-        ...(activeProviderInstanceId !== null
-          ? { providerInstanceId: activeProviderInstanceId }
-          : {}),
-        // The selected driver, so listing and resuming agree. Not every provider
-        // has a providerInstances entry, and without this the server fell back to
-        // codex and listed its sessions while Claude was selected.
-        ...(activeProviderDriver !== undefined ? { driver: activeProviderDriver } : {}),
+        // Selected account and driver, so the picker shows only that provider's
+        // conversations: Codex selected lists Codex, Claude lists Claude.
+        providerInstanceId: resumeProviderInstanceId,
+        driver: resumeProviderDriver,
         // Scope to the directory this thread actually runs in. Every driver keys
         // its sessions by working directory (Claude by slugified project dir,
         // Grok by url-encoded cwd, Codex by a header field), and resuming one
@@ -2936,15 +2951,17 @@ function ChatViewContent(props: ChatViewProps) {
         // looks the id up under the *current* cwd and reports a stream failure.
         // Without this the picker offered sessions from every project on disk.
         ...(activeWorkspaceRoot !== undefined ? { cwd: activeWorkspaceRoot } : {}),
-        limit: 20,
+        // Matches the server's import cap, so the picker never offers more than a
+        // resume can replay.
+        limit: RESUME_SESSION_LIMIT,
       },
     });
     return result._tag === "Success" ? result.value.sessions : [];
   }, [
     runListCodexSessions,
     environmentId,
-    activeProviderInstanceId,
-    activeProviderDriver,
+    resumeProviderInstanceId,
+    resumeProviderDriver,
     activeWorkspaceRoot,
   ]);
   const resumeCodexSession = useCallback(
@@ -2983,12 +3000,10 @@ function ChatViewContent(props: ChatViewProps) {
           input: {
             threadId,
             sessionId,
-            ...(activeProviderDriver !== undefined ? { driver: activeProviderDriver } : {}),
-            // Same instance and directory the picker listed from, so the server
-            // looks for the transcript where the session actually lives.
-            ...(activeProviderInstanceId !== null
-              ? { providerInstanceId: activeProviderInstanceId }
-              : {}),
+            // Exactly what the picker listed from, so the server looks for the
+            // transcript where the session actually lives.
+            driver: resumeProviderDriver,
+            providerInstanceId: resumeProviderInstanceId,
             ...(activeWorkspaceRoot !== undefined ? { cwd: activeWorkspaceRoot } : {}),
           },
         });
@@ -3026,8 +3041,8 @@ function ChatViewContent(props: ChatViewProps) {
       runResumeCodexSession,
       environmentId,
       threadId,
-      activeProviderDriver,
-      activeProviderInstanceId,
+      resumeProviderDriver,
+      resumeProviderInstanceId,
       activeWorkspaceRoot,
       createThread,
       isLocalDraftThread,

@@ -86,7 +86,7 @@ function SkillGlyph(props: { className?: string }) {
   );
 }
 
-function groupCommandItems(
+export function groupCommandItems(
   items: ComposerCommandItem[],
   triggerKind: ComposerTriggerKind | null,
   groupSlashCommandSections: boolean,
@@ -100,8 +100,16 @@ function groupCommandItems(
 
   const builtInItems = items.filter((item) => item.type === "slash-command");
   const providerItems = items.filter((item) => item.type === "provider-slash-command");
+  // Sessions get their own group rather than being left out. This branch used to
+  // keep only the two command types, so reaching /resume from the bare "/" menu
+  // (where grouping is on, because the query is empty) loaded the conversations
+  // and then rendered none of them.
+  const sessionItems = items.filter((item) => item.type === "codex-session");
 
   const groups: ComposerCommandGroup[] = [];
+  if (sessionItems.length > 0) {
+    groups.push({ id: "sessions", label: "Conversations", items: sessionItems });
+  }
   if (builtInItems.length > 0) {
     groups.push({ id: "built-in", label: "Built-in", items: builtInItems });
   }

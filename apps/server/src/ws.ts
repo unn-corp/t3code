@@ -500,6 +500,15 @@ const makeWsRpcLayer = (
         // sessions while the user had Claude selected. Resume then looked under
         // Claude's home for a codex id and found nothing.
         const driver = selectedDriver ?? instance?.driver ?? "codex";
+        if (selectedDriver === undefined && instance?.driver === undefined) {
+          // The client always sends a driver now, so defaulting here means the
+          // picker is about to list a provider nobody selected. That is the exact
+          // shape of the bug this fallback used to hide.
+          yield* Effect.logWarning("session source fell back to the default driver", {
+            providerInstanceId,
+            driver,
+          });
+        }
         // Only honour the instance's home when it belongs to the driver being
         // used, or a Claude account's config dir would be searched for another
         // driver's sessions.
