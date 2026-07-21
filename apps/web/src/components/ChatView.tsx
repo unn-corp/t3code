@@ -2976,6 +2976,11 @@ function ChatViewContent(props: ChatViewProps) {
           // is "New thread", and keeping it left every resumed thread looking
           // identical in the sidebar, so older ones could not be told apart.
           const resumedTitle = preview?.replace(/\s+/g, " ").trim();
+          // Pin the thread to the model the composer is showing, exactly as the
+          // send path does. A draft's own `modelSelection` is the project default,
+          // so creating the thread from it switched the user to Codex even though
+          // they had Claude selected and had just picked a Claude conversation.
+          const composerSelection = composerRef.current?.getSendContext();
           await createThread({
             environmentId,
             input: {
@@ -2985,7 +2990,8 @@ function ChatViewContent(props: ChatViewProps) {
                 resumedTitle !== undefined && resumedTitle.length > 0
                   ? resumedTitle.slice(0, 80)
                   : activeThread.title,
-              modelSelection: activeThread.modelSelection,
+              modelSelection:
+                composerSelection?.selectedModelSelection ?? activeThread.modelSelection,
               runtimeMode,
               interactionMode,
               branch: activeThread.branch,
