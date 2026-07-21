@@ -482,6 +482,7 @@ const makeWsRpcLayer = (
        */
       const resolveSessionSource = Effect.fn("resolveSessionSource")(function* (
         providerInstanceId: string | undefined,
+        selectedDriver?: string | undefined,
       ) {
         const settings = yield* serverSettings.getSettings.pipe(
           Effect.orElseSucceed(() => undefined),
@@ -492,8 +493,19 @@ const makeWsRpcLayer = (
                 providerInstanceId as keyof typeof settings.providerInstances
               ]
             : undefined;
-        const driver = instance?.driver ?? "codex";
-        const driverConfig = instance?.config as { homePath?: string } | undefined;
+        // The selected driver wins. Not every selectable provider has a
+        // `providerInstances` entry (codex has none here), so relying on the
+        // instance alone silently fell back to codex and listed that driver's
+        // sessions while the user had Claude selected. Resume then looked under
+        // Claude's home for a codex id and found nothing.
+        const driver = selectedDriver ?? instance?.driver ?? "codex";
+        // Only honour the instance's home when it belongs to the driver being
+        // used, or a Claude account's config dir would be searched for another
+        // driver's sessions.
+        const driverConfig =
+          instance?.driver === driver
+            ? (instance.config as { homePath?: string } | undefined)
+            : undefined;
         const configuredHome = driverConfig?.homePath?.trim();
         const home =
           configuredHome !== undefined && configuredHome.length > 0
@@ -1758,7 +1770,10 @@ const makeWsRpcLayer = (
             Effect.gen(function* () {
               // Resolve the driver and home from the SELECTED provider instance,
               // so /resume lists the sessions of the account actually in use.
-              const { driver, home } = yield* resolveSessionSource(input.providerInstanceId);
+              const { driver, home } = yield* resolveSessionSource(
+                input.providerInstanceId,
+                input.driver,
+              );
               return yield* Effect.promise(() =>
                 discoverAgentSessions({
                   driver,
@@ -1819,10 +1834,12 @@ const makeWsRpcLayer = (
               // Rebinding alone leaves the thread blank: the cursor gives the next
               // turn its context, but nothing renders what was already said. Replay
               // the transcript so the conversation is visible.
-              const { driver: resolvedDriver, home } = yield* resolveSessionSource(
+              // Resolved exactly as the listing was, so resume looks for the
+              // session where the picker found it.
+              const { driver, home } = yield* resolveSessionSource(
                 input.providerInstanceId,
+                input.driver,
               );
-              const driver = input.driver ?? resolvedDriver;
               const discovered = yield* Effect.promise(() =>
                 discoverAgentSessions({
                   driver,

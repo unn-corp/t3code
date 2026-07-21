@@ -25,6 +25,13 @@ export const CodexSessionsListInput = Schema.Struct({
    * currently selected" resolves to that instance's config dir.
    */
   providerInstanceId: Schema.optionalKey(Schema.String),
+  /**
+   * Driver actually selected in the composer. Authoritative over the instance's,
+   * because not every selectable provider has an entry in `providerInstances`:
+   * without this the server falls back to codex and lists the wrong driver's
+   * sessions, which resume then cannot find.
+   */
+  driver: Schema.optionalKey(Schema.String),
   /** Restrict to sessions started in this directory. */
   cwd: Schema.optionalKey(Schema.String),
   limit: Schema.optionalKey(Schema.Number),

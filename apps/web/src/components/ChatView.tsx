@@ -2925,6 +2925,10 @@ function ChatViewContent(props: ChatViewProps) {
         ...(activeProviderInstanceId !== null
           ? { providerInstanceId: activeProviderInstanceId }
           : {}),
+        // The selected driver, so listing and resuming agree. Not every provider
+        // has a providerInstances entry, and without this the server fell back to
+        // codex and listed its sessions while Claude was selected.
+        ...(activeProviderDriver !== undefined ? { driver: activeProviderDriver } : {}),
         // Scope to the directory this thread actually runs in. Every driver keys
         // its sessions by working directory (Claude by slugified project dir,
         // Grok by url-encoded cwd, Codex by a header field), and resuming one
@@ -2936,7 +2940,13 @@ function ChatViewContent(props: ChatViewProps) {
       },
     });
     return result._tag === "Success" ? result.value.sessions : [];
-  }, [runListCodexSessions, environmentId, activeProviderInstanceId, activeWorkspaceRoot]);
+  }, [
+    runListCodexSessions,
+    environmentId,
+    activeProviderInstanceId,
+    activeProviderDriver,
+    activeWorkspaceRoot,
+  ]);
   const resumeCodexSession = useCallback(
     (sessionId: string) => {
       void (async () => {
