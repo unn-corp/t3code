@@ -68,6 +68,7 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NodeOS from "node:os";
 
 import { discoverAgentSessions } from "./provider/agentSessionDiscovery.ts";
+import { readAgentTranscript } from "./provider/agentTranscript.ts";
 import { expandHomePath } from "./pathExpansion.ts";
 import * as ProviderSessionRuntimeRepo from "./persistence/ProviderSessionRuntime.ts";
 import * as ServerConfig from "./config.ts";
@@ -472,6 +473,34 @@ const makeWsRpcLayer = (
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
+      /**
+       * Driver and on-disk home for a provider instance, for `/resume`.
+       *
+       * Sessions live under the home of the *selected* account, so listing and
+       * resuming must both resolve it the same way or they disagree about which
+       * account's conversations exist.
+       */
+      const resolveSessionSource = Effect.fn("resolveSessionSource")(function* (
+        providerInstanceId: string | undefined,
+      ) {
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        const instance =
+          providerInstanceId !== undefined && settings !== undefined
+            ? settings.providerInstances[
+                providerInstanceId as keyof typeof settings.providerInstances
+              ]
+            : undefined;
+        const driver = instance?.driver ?? "codex";
+        const driverConfig = instance?.config as { homePath?: string } | undefined;
+        const configuredHome = driverConfig?.homePath?.trim();
+        const home =
+          configuredHome !== undefined && configuredHome.length > 0
+            ? expandHomePath(configuredHome)
+            : defaultHomeForDriver(driver);
+        return { driver, home };
+      });
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1729,22 +1758,7 @@ const makeWsRpcLayer = (
             Effect.gen(function* () {
               // Resolve the driver and home from the SELECTED provider instance,
               // so /resume lists the sessions of the account actually in use.
-              const settings = yield* serverSettings.getSettings.pipe(
-                Effect.orElseSucceed(() => undefined),
-              );
-              const instance =
-                input.providerInstanceId !== undefined && settings !== undefined
-                  ? settings.providerInstances[
-                      input.providerInstanceId as keyof typeof settings.providerInstances
-                    ]
-                  : undefined;
-              const driver = instance?.driver ?? "codex";
-              const driverConfig = instance?.config as { homePath?: string } | undefined;
-              const configuredHome = driverConfig?.homePath?.trim();
-              const home =
-                configuredHome !== undefined && configuredHome.length > 0
-                  ? expandHomePath(configuredHome)
-                  : defaultHomeForDriver(driver);
+              const { driver, home } = yield* resolveSessionSource(input.providerInstanceId);
               return yield* Effect.promise(() =>
                 discoverAgentSessions({
                   driver,
@@ -1801,6 +1815,56 @@ const makeWsRpcLayer = (
                   providerInstanceId: base?.providerInstanceId ?? null,
                 })
                 .pipe(Effect.orElseSucceed(() => undefined));
+
+              // Rebinding alone leaves the thread blank: the cursor gives the next
+              // turn its context, but nothing renders what was already said. Replay
+              // the transcript so the conversation is visible.
+              const { driver: resolvedDriver, home } = yield* resolveSessionSource(
+                input.providerInstanceId,
+              );
+              const driver = input.driver ?? resolvedDriver;
+              const discovered = yield* Effect.promise(() =>
+                discoverAgentSessions({
+                  driver,
+                  ...(home !== undefined ? { home } : {}),
+                  ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+                  limit: 200,
+                }),
+              );
+              const session = discovered.find((entry) => entry.sessionId === input.sessionId);
+              const transcript =
+                session === undefined
+                  ? { turns: [], omittedTurnCount: 0 }
+                  : yield* Effect.promise(() =>
+                      readAgentTranscript({ driver, path: session.rolloutPath }),
+                    );
+
+              if (transcript.turns.length > 0) {
+                const nowIso = DateTime.formatIso(now);
+                yield* orchestrationEngine
+                  .dispatch({
+                    type: "thread.history.import",
+                    commandId: CommandId.make(`resume-import:${input.threadId}:${input.sessionId}`),
+                    threadId,
+                    sourceSessionId: input.sessionId,
+                    turns: transcript.turns.map((turn) => ({
+                      role: turn.role,
+                      text: turn.text,
+                      // Grok records no timestamps; fall back to now so ordering
+                      // still holds and the schema stays satisfied.
+                      createdAt: turn.timestamp ?? nowIso,
+                    })),
+                    omittedTurnCount: transcript.omittedTurnCount,
+                    createdAt: nowIso,
+                  })
+                  // A failed import must not undo the rebind: the thread still
+                  // resumes correctly, it just opens without its history.
+                  .pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("codexSessions.resume history import failed", { cause }),
+                    ),
+                  );
+              }
               return { bound: true };
             }),
             { "rpc.aggregate": "workspace" },

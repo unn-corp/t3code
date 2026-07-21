@@ -2946,6 +2946,12 @@ function ChatViewContent(props: ChatViewProps) {
             threadId,
             sessionId,
             ...(activeProviderDriver !== undefined ? { driver: activeProviderDriver } : {}),
+            // Same instance and directory the picker listed from, so the server
+            // looks for the transcript where the session actually lives.
+            ...(activeProviderInstanceId !== null
+              ? { providerInstanceId: activeProviderInstanceId }
+              : {}),
+            ...(activeWorkspaceRoot !== undefined ? { cwd: activeWorkspaceRoot } : {}),
           },
         });
         // Rebinding only moves this thread's resume cursor; it does not replay the
@@ -2966,7 +2972,14 @@ function ChatViewContent(props: ChatViewProps) {
         }
       })();
     },
-    [runResumeCodexSession, environmentId, threadId, activeProviderDriver],
+    [
+      runResumeCodexSession,
+      environmentId,
+      threadId,
+      activeProviderDriver,
+      activeProviderInstanceId,
+      activeWorkspaceRoot,
+    ],
   );
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");

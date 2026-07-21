@@ -47,6 +47,10 @@ export const CodexSessionsResumeInput = Schema.Struct({
   driver: Schema.optionalKey(Schema.String),
   /** Codex thread id, from `codexSessions.list`. */
   sessionId: Schema.String,
+  /** Instance whose home holds the session, so its transcript can be found. */
+  providerInstanceId: Schema.optionalKey(Schema.String),
+  /** Directory the session belongs to; part of its path for Claude and Grok. */
+  cwd: Schema.optionalKey(Schema.String),
 });
 
 export const CodexSessionsResumeResult = Schema.Struct({

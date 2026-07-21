@@ -826,10 +826,40 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+/** One replayed turn from a conversation that happened outside this app. */
+export const ImportedHistoryTurn = Schema.Struct({
+  role: Schema.Literals(["user", "assistant"]),
+  text: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+/**
+ * Replay a CLI conversation into a thread, for `/resume`.
+ *
+ * Internal on purpose: this writes messages that no one typed here, so it is
+ * server-issued after reading the session file, never dispatchable by a client.
+ *
+ * Deliberately not `thread.turn.start`, which is how a real user message is
+ * recorded: that also emits `thread.turn-start-requested` and would launch a
+ * provider turn for every imported message.
+ */
+const ThreadHistoryImportCommand = Schema.Struct({
+  type: Schema.Literal("thread.history.import"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  /** Session the turns came from; message ids derive from it, so re-import is idempotent. */
+  sourceSessionId: TrimmedNonEmptyString,
+  turns: Schema.Array(ImportedHistoryTurn),
+  /** Turns dropped by the import cap, so the thread can say so rather than imply completeness. */
+  omittedTurnCount: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadHistoryImportCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
