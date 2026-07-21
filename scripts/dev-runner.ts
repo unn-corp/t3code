@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -238,6 +239,124 @@ function syncDevSettingsFromUserdata(
     // default provider homes, which is how it behaved before.
     Effect.catchCause((cause) =>
       Effect.logWarning("[dev-runner] could not sync settings.json from userdata", { cause }),
+    ),
+  );
+}
+
+/**
+ * Copy the installed app's project list into the dev database.
+ *
+ * Projects are not configuration: they live in `state.sqlite` as
+ * `project.created` / `project.meta-updated` events, which is why syncing
+ * settings alone still left dev with one project against the installed app's
+ * eleven. Copying the whole database instead would drag prod's threads over and
+ * destroy whatever exists in dev, so only the project events are replayed.
+ *
+ * Idempotent by construction: `orchestration_events.event_id` is UNIQUE, so
+ * re-running inserts nothing. Sequence numbers are left to AUTOINCREMENT, so the
+ * copied events land after dev's existing ones and the projections pick them up
+ * on the next boot. Dev's own threads are untouched.
+ */
+function syncDevProjectsFromUserdata(
+  baseDir: string,
+): Effect.Effect<void, never, Path.Path | FileSystem.FileSystem> {
+  return Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const sourceDb = path.join(baseDir, "userdata", "state.sqlite");
+    const targetDb = path.join(baseDir, "dev", "state.sqlite");
+    if (!(yield* fs.exists(sourceDb)) || !(yield* fs.exists(targetDb))) return;
+
+    const copied = yield* Effect.promise(async () => {
+      // Dynamic import: this file runs as ESM, where `require` is not defined.
+      const { DatabaseSync } = await import("node:sqlite");
+      const source = new DatabaseSync(sourceDb, { readOnly: true });
+      const target = new DatabaseSync(targetDb);
+      try {
+        // Skip projects whose workspace already exists in dev. Dev creates its own
+        // rows for the same checkout, and copying prod's would list the project
+        // twice with only one of them owning the threads.
+        const existingRoots = new Set(
+          (
+            target
+              .prepare(`SELECT workspace_root FROM projection_projects WHERE deleted_at IS NULL`)
+              .all() as Array<{ workspace_root?: string }>
+          )
+            .map((row) => row.workspace_root)
+            .filter((root): root is string => typeof root === "string"),
+        );
+        const skippedStreams = new Set(
+          (
+            source
+              .prepare(
+                `SELECT stream_id, payload_json FROM orchestration_events
+                 WHERE aggregate_kind = 'project' AND event_type = 'project.created'`,
+              )
+              .all() as Array<{ stream_id: string; payload_json: string }>
+          )
+            .filter((row) => {
+              try {
+                return existingRoots.has(
+                  (JSON.parse(row.payload_json) as { workspaceRoot?: string }).workspaceRoot ?? "",
+                );
+              } catch {
+                return false;
+              }
+            })
+            .map((row) => row.stream_id),
+        );
+
+        const rows = (
+          source
+            .prepare(
+              `SELECT event_id, aggregate_kind, stream_id, stream_version, event_type,
+                      occurred_at, command_id, causation_event_id, correlation_id,
+                      actor_kind, payload_json, metadata_json
+               FROM orchestration_events WHERE aggregate_kind = 'project' ORDER BY sequence`,
+            )
+            .all() as Array<Record<string, string | number | null>>
+        ).filter((row) => !skippedStreams.has(row["stream_id"] as string));
+        const insert = target.prepare(
+          `INSERT OR IGNORE INTO orchestration_events
+             (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+              command_id, causation_event_id, correlation_id, actor_kind, payload_json, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        let added = 0;
+        for (const row of rows) {
+          const result = insert.run(
+            row["event_id"] as string,
+            row["aggregate_kind"] as string,
+            row["stream_id"] as string,
+            row["stream_version"] as number,
+            row["event_type"] as string,
+            row["occurred_at"] as string,
+            row["command_id"] as string | null,
+            row["causation_event_id"] as string | null,
+            row["correlation_id"] as string | null,
+            row["actor_kind"] as string,
+            row["payload_json"] as string,
+            row["metadata_json"] as string,
+          );
+          added += Number(result.changes);
+        }
+        return added;
+      } finally {
+        source.close();
+        target.close();
+      }
+    });
+
+    if (copied > 0) {
+      yield* Effect.logInfo(
+        `[dev-runner] copied ${String(copied)} project event(s) userdata -> dev`,
+      );
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("[dev-runner] could not sync projects from userdata", {
+        reason: Cause.pretty(cause),
+      }),
     ),
   );
 }
@@ -576,6 +695,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     // Dev keeps its own state dir, so mirror the installed app's provider
     // configuration into it before the server reads it.
     yield* syncDevSettingsFromUserdata(baseDir);
+    yield* syncDevProjectsFromUserdata(baseDir);
 
     const spawnCommand = yield* resolveSpawnCommand(
       "vp",
