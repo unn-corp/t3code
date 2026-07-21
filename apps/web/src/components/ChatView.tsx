@@ -41,12 +41,13 @@ import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/proje
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomValue, RegistryContext } from "@effect/atom-react";
 import {
   lazy,
   memo,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -193,7 +194,7 @@ import {
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
 import { resolveResumeSessionSource } from "../resumeSessionSource";
-import { threadEnvironment } from "../state/threads";
+import { environmentThreads, threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -2932,6 +2933,7 @@ function ChatViewContent(props: ChatViewProps) {
    */
   const { driver: resumeProviderDriver, providerInstanceId: resumeProviderInstanceId } =
     resolveResumeSessionSource({ selectedProvider, selectedProviderInstanceId });
+  const atomRegistry = useContext(RegistryContext);
   const runListCodexSessions = useAtomCommand(codexSessions.list, "list codex sessions");
   const runResumeCodexSession = useAtomCommand(codexSessions.resume, "resume codex session");
   /** /resume: the Codex sessions on disk that this thread could continue. */
@@ -3023,6 +3025,14 @@ function ChatViewContent(props: ChatViewProps) {
             | undefined;
           const imported = value?.importedMessageCount ?? 0;
           const omitted = value?.omittedTurnCount ?? 0;
+          // Re-read the thread once history has been written. The subscription
+          // only fetches a snapshot when it has no data yet, and by the time the
+          // import finishes this thread already holds the empty snapshot taken
+          // moments earlier, so the imported messages would not appear until the
+          // app was reloaded.
+          if (imported > 0) {
+            atomRegistry.refresh(environmentThreads.stateAtom(environmentId, threadId));
+          }
           toastManager.add({
             type: "success",
             title: imported > 0 ? "Resumed conversation" : "Resumed, no history found",
@@ -3049,6 +3059,7 @@ function ChatViewContent(props: ChatViewProps) {
       resumeProviderDriver,
       resumeProviderInstanceId,
       activeWorkspaceRoot,
+      atomRegistry,
       createThread,
       isLocalDraftThread,
       activeProject,
