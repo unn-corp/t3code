@@ -1861,7 +1861,14 @@ const makeWsRpcLayer = (
                   // resumes correctly, it just opens without its history.
                   .pipe(
                     Effect.catchCause((cause) =>
-                      Effect.logWarning("codexSessions.resume history import failed", { cause }),
+                      Effect.logWarning("codexSessions.resume history import failed", {
+                        threadId: input.threadId,
+                        sessionId: input.sessionId,
+                        turnCount: transcript.turns.length,
+                        // Rendered, not the Cause object: the structured logger
+                        // prints that as [Object] and the reason is lost.
+                        reason: Cause.pretty(cause),
+                      }),
                     ),
                   );
               }

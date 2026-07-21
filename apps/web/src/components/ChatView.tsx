@@ -2940,6 +2940,27 @@ function ChatViewContent(props: ChatViewProps) {
   const resumeCodexSession = useCallback(
     (sessionId: string) => {
       void (async () => {
+        // A draft thread exists only on this client until its first turn, which
+        // is what normally carries `bootstrap.createThread`. The server cannot
+        // replay history into a thread it has never seen, so materialise it
+        // first. Picking a conversation to resume is a commitment, the same way
+        // sending a message is.
+        if (isLocalDraftThread && activeProject && activeThread) {
+          await createThread({
+            environmentId,
+            input: {
+              threadId,
+              projectId: activeProject.id,
+              title: activeThread.title,
+              modelSelection: activeThread.modelSelection,
+              runtimeMode,
+              interactionMode,
+              branch: activeThread.branch,
+              worktreePath: activeThread.worktreePath,
+              createdAt: activeThread.createdAt,
+            },
+          });
+        }
         const result = await runResumeCodexSession({
           environmentId,
           input: {
@@ -2979,6 +3000,12 @@ function ChatViewContent(props: ChatViewProps) {
       activeProviderDriver,
       activeProviderInstanceId,
       activeWorkspaceRoot,
+      createThread,
+      isLocalDraftThread,
+      activeProject,
+      activeThread,
+      runtimeMode,
+      interactionMode,
     ],
   );
   const toggleInteractionMode = useCallback(() => {
