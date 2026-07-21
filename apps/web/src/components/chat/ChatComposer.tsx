@@ -558,7 +558,7 @@ export interface ChatComposerProps {
     }>
   >;
   /** Rebind this thread to a chosen Codex session. */
-  resumeCodexSession?: (sessionId: string) => void;
+  resumeCodexSession?: (sessionId: string, preview?: string) => void;
   togglePlanSidebar: () => void;
 
   focusComposer: () => void;
@@ -1688,7 +1688,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "codex-session") {
-        resumeCodexSession?.(item.sessionId);
+        // Pass the preview so the thread can be named after the conversation
+        // instead of staying "New thread", which made every resumed thread
+        // indistinguishable in the sidebar.
+        resumeCodexSession?.(item.sessionId, item.label);
         setCodexSessionOptions([]);
         setComposerHighlightedItemId(null);
         // Now that a session is chosen, drop the "/resume" text; this also

@@ -2948,7 +2948,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeWorkspaceRoot,
   ]);
   const resumeCodexSession = useCallback(
-    (sessionId: string) => {
+    (sessionId: string, preview?: string) => {
       void (async () => {
         // A draft thread exists only on this client until its first turn, which
         // is what normally carries `bootstrap.createThread`. The server cannot
@@ -2956,12 +2956,19 @@ function ChatViewContent(props: ChatViewProps) {
         // first. Picking a conversation to resume is a commitment, the same way
         // sending a message is.
         if (isLocalDraftThread && activeProject && activeThread) {
+          // Name the thread after the conversation being resumed. A draft's title
+          // is "New thread", and keeping it left every resumed thread looking
+          // identical in the sidebar, so older ones could not be told apart.
+          const resumedTitle = preview?.replace(/\s+/g, " ").trim();
           await createThread({
             environmentId,
             input: {
               threadId,
               projectId: activeProject.id,
-              title: activeThread.title,
+              title:
+                resumedTitle !== undefined && resumedTitle.length > 0
+                  ? resumedTitle.slice(0, 80)
+                  : activeThread.title,
               modelSelection: activeThread.modelSelection,
               runtimeMode,
               interactionMode,
