@@ -303,6 +303,96 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
         ]);
       }),
     );
+
+    // A resumed conversation must count as activity at resume time in the sidebar
+    // recency sort. Imported user messages keep the real transcript time in
+    // createdAt (for display) but carry the resume time in updatedAt, and the
+    // thread summary reads updatedAt for them, so the project follows the
+    // configured sort rather than dropping back to the old conversation's slot.
+    it.effect("sorts a resumed thread by resume time, not the transcript time", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-01-01T00:00:00.000Z";
+        const transcriptTime = "2025-06-01T12:00:00.000Z"; // old, when the CLI turn happened
+        const resumeTime = "2026-03-01T09:00:00.000Z"; // now, when it was resumed
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("evt-resume-proj"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.make("project-resume"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-resume-proj"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-resume-proj"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make("project-resume"),
+            title: "Resume Project",
+            workspaceRoot: "/tmp/project-resume",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-resume-thread"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-resume"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-resume-thread"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-resume-thread"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-resume"),
+            projectId: ProjectId.make("project-resume"),
+            title: "Resumed",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-resume-msg"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-resume"),
+          occurredAt: resumeTime,
+          commandId: CommandId.make("cmd-resume-msg"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-resume-msg"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-resume"),
+            messageId: MessageId.make("import:session-x:0"),
+            role: "user",
+            text: "an old terminal question",
+            turnId: TurnId.make("import:session-x"),
+            streaming: false,
+            createdAt: transcriptTime,
+            updatedAt: resumeTime,
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{ readonly latestUserMessageAt: string | null }>`
+          SELECT latest_user_message_at AS "latestUserMessageAt"
+          FROM projection_threads
+          WHERE thread_id = 'thread-resume'
+        `;
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0]?.latestUserMessageAt, resumeTime);
+      }),
+    );
   },
 );
 

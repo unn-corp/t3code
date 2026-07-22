@@ -929,8 +929,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             text: turn.text,
             turnId: importTurnId,
             streaming: false,
+            // createdAt is the real transcript time, so the message shows when it
+            // was actually sent. updatedAt is the resume time: the sidebar's
+            // recency sort reads it for imported turns, so resuming counts as
+            // activity now and follows the configured sort (top under updated_at,
+            // untouched under created_at / manual) instead of dragging the project
+            // back to the old conversation's slot.
             createdAt: turn.createdAt,
-            updatedAt: turn.createdAt,
+            updatedAt: command.createdAt,
           },
         });
       }

@@ -133,8 +133,11 @@ it.layer(NodeServices.layer)("thread.history.import", (it) => {
       const payloads = events.map((event) => event.payload as Record<string, unknown>);
       expect(payloads.map((payload) => payload["role"])).toEqual(["user", "assistant"]);
       expect(payloads.map((payload) => payload["text"])).toEqual(["Fix the login bug", "Fixed it"]);
-      // Transcript times are preserved, so history sorts before anything said here.
+      // createdAt is the real transcript time (for display); updatedAt is the
+      // resume time, so the recency sort treats the resume as fresh activity
+      // instead of dragging the project back to the old conversation's slot.
       expect(payloads[0]?.["createdAt"]).toBe("2026-01-01T01:00:00.000Z");
+      expect(payloads.every((payload) => payload["updatedAt"] === NOW)).toBe(true);
       expect(payloads.every((payload) => payload["streaming"] === false)).toBe(true);
     }),
   );
