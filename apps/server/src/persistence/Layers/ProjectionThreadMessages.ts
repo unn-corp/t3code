@@ -146,6 +146,15 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       `,
   });
 
+  const deleteImportedProjectionThreadMessageRows = SqlSchema.void({
+    Request: DeleteProjectionThreadMessagesInput,
+    execute: ({ threadId }) =>
+      sql`
+        DELETE FROM projection_thread_messages
+        WHERE thread_id = ${threadId} AND turn_id LIKE 'import:%'
+      `,
+  });
+
   const upsert: ProjectionThreadMessageRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadMessageRow(row).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionThreadMessageRepository.upsert:query")),
@@ -174,11 +183,20 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       ),
     );
 
+  const deleteImportedByThreadId: ProjectionThreadMessageRepositoryShape["deleteImportedByThreadId"] =
+    (input) =>
+      deleteImportedProjectionThreadMessageRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ProjectionThreadMessageRepository.deleteImportedByThreadId:query"),
+        ),
+      );
+
   return {
     upsert,
     getByMessageId,
     listByThreadId,
     deleteByThreadId,
+    deleteImportedByThreadId,
   } satisfies ProjectionThreadMessageRepositoryShape;
 });
 

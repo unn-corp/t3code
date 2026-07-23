@@ -298,6 +298,21 @@ export function applyThreadDetailEvent(
       };
     }
 
+    case "thread.imported-history-cleared":
+      // Resuming a second conversation replaces the imported history rather than
+      // appending it. Drop only imported messages (turn id begins `import:`) so a
+      // real turn's messages survive; the new import's message-sent events follow.
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages: thread.messages.filter(
+            (message) => !(message.turnId !== null && message.turnId.startsWith("import:")),
+          ),
+          updatedAt: event.occurredAt,
+        },
+      };
+
     // ── Session ─────────────────────────────────────────────────────
     case "thread.session-set": {
       // Leaving the "running" session status is the turn-end signal: settle a

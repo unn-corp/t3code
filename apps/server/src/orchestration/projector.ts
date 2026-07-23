@@ -19,6 +19,7 @@ import {
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
+  ThreadImportedHistoryClearedPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
@@ -468,6 +469,33 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.imported-history-cleared":
+      return decodeForEvent(
+        ThreadImportedHistoryClearedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          // Drop only imported messages; a real turn's messages carry a UUID
+          // turn id and stay.
+          const messages = thread.messages.filter(
+            (message) => !(message.turnId !== null && message.turnId.startsWith("import:")),
+          );
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {

@@ -1,8 +1,10 @@
 import {
   EventId,
+  MessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  TurnId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -871,6 +873,74 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.history.import": {
+      const importThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+
+      const importedEvents: Array<PlannedOrchestrationEvent> = [];
+
+      // Replace, don't append. Resuming a second conversation into a thread that
+      // already holds imported history must show the new conversation, so drop the
+      // prior import first. Scoped to imported messages (turn id begins `import:`),
+      // so any real turns the user ran in the thread survive.
+      const hasPriorImport = importThread.messages.some(
+        (message) => message.turnId !== null && message.turnId.startsWith("import:"),
+      );
+      if (hasPriorImport) {
+        importedEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.imported-history-cleared",
+          payload: { threadId: command.threadId, createdAt: command.createdAt },
+        });
+      }
+
+      // One synthetic turn owns the whole import. Beyond grouping the messages,
+      // a non-null turnId is what keeps CheckpointReactor out of this: it treats
+      // a user message with a null turnId as the start of a real turn and cuts a
+      // git baseline, which would otherwise fire for every imported message.
+      const importTurnId = TurnId.make(`import:${command.sourceSessionId}`);
+
+      for (const [index, turn] of command.turns.entries()) {
+        importedEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            // Derived from the source session, so importing the same session
+            // twice rewrites the same messages rather than duplicating the
+            // thread: the projector upserts on message id.
+            messageId: MessageId.make(`import:${command.sourceSessionId}:${index}`),
+            role: turn.role,
+            text: turn.text,
+            turnId: importTurnId,
+            streaming: false,
+            // createdAt is the real transcript time, so the message shows when it
+            // was actually sent. updatedAt is the resume time: the sidebar's
+            // recency sort reads it for imported turns, so resuming counts as
+            // activity now and follows the configured sort (top under updated_at,
+            // untouched under created_at / manual) instead of dragging the project
+            // back to the old conversation's slot.
+            createdAt: turn.createdAt,
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      return importedEvents;
     }
 
     case "thread.message.assistant.complete": {

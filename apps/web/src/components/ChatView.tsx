@@ -41,12 +41,13 @@ import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/proje
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomValue, RegistryContext } from "@effect/atom-react";
 import {
   lazy,
   memo,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -192,7 +193,8 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment } from "../state/threads";
+import { resolveResumeSessionSource } from "../resumeSessionSource";
+import { environmentThreads, threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -253,6 +255,7 @@ import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
+import { codexSessions } from "../state/codexSessions";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
 import { ServerUpdateAction } from "./ServerUpdateAction";
@@ -418,6 +421,13 @@ function formatOutgoingPrompt(params: {
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
+/**
+ * How many conversations `/resume` offers. Matches the server's import cap
+ * (`DEFAULT_MAX_TURNS` in `agentTranscript.ts`) so the picker never lists a session
+ * the import would refuse to replay in full.
+ */
+const RESUME_SESSION_LIMIT = 50;
+
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -2909,6 +2919,153 @@ function ChatViewContent(props: ChatViewProps) {
       composerDraftTarget,
       setComposerDraftInteractionMode,
       setDraftThreadContext,
+    ],
+  );
+  /**
+   * Provider the `/resume` picker reads from: the one the composer is showing.
+   *
+   * Deliberately not `activeProviderStatus`, which resolves through
+   * `activeThread?.session?.providerInstanceId` and therefore follows whatever the
+   * thread is *bound* to. Once a resume bound a session, the next /resume listed
+   * that driver instead of the selected one, so a thread would offer 16 Claude
+   * conversations and then 4 Codex ones moments later. Sessions are per driver and
+   * per account, so listing and resuming must both follow the selection.
+   */
+  const { driver: resumeProviderDriver, providerInstanceId: resumeProviderInstanceId } =
+    resolveResumeSessionSource({ selectedProvider, selectedProviderInstanceId });
+  const atomRegistry = useContext(RegistryContext);
+  const runListCodexSessions = useAtomCommand(codexSessions.list, "list codex sessions");
+  const runResumeCodexSession = useAtomCommand(codexSessions.resume, "resume codex session");
+  /** /resume: the Codex sessions on disk that this thread could continue. */
+  const listCodexSessions = useCallback(async () => {
+    const result = await runListCodexSessions({
+      environmentId,
+      input: {
+        // Selected account and driver, so the picker shows only that provider's
+        // conversations: Codex selected lists Codex, Claude lists Claude.
+        providerInstanceId: resumeProviderInstanceId,
+        driver: resumeProviderDriver,
+        // Scope to the directory this thread actually runs in. Every driver keys
+        // its sessions by working directory (Claude by slugified project dir,
+        // Grok by url-encoded cwd, Codex by a header field), and resuming one
+        // belonging to a different directory fails at launch: `claude --resume`
+        // looks the id up under the *current* cwd and reports a stream failure.
+        // Without this the picker offered sessions from every project on disk.
+        ...(activeWorkspaceRoot !== undefined ? { cwd: activeWorkspaceRoot } : {}),
+        // Matches the server's import cap, so the picker never offers more than a
+        // resume can replay.
+        limit: RESUME_SESSION_LIMIT,
+      },
+    });
+    return result._tag === "Success" ? result.value.sessions : [];
+  }, [
+    runListCodexSessions,
+    environmentId,
+    resumeProviderInstanceId,
+    resumeProviderDriver,
+    activeWorkspaceRoot,
+  ]);
+  const resumeCodexSession = useCallback(
+    (sessionId: string, preview?: string) => {
+      void (async () => {
+        // A draft thread exists only on this client until its first turn, which
+        // is what normally carries `bootstrap.createThread`. The server cannot
+        // replay history into a thread it has never seen, so materialise it
+        // first. Picking a conversation to resume is a commitment, the same way
+        // sending a message is.
+        if (isLocalDraftThread && activeProject && activeThread) {
+          // Name the thread after the conversation being resumed. A draft's title
+          // is "New thread", and keeping it left every resumed thread looking
+          // identical in the sidebar, so older ones could not be told apart.
+          const resumedTitle = preview?.replace(/\s+/g, " ").trim();
+          // Pin the thread to the model the composer is showing, exactly as the
+          // send path does. A draft's own `modelSelection` is the project default,
+          // so creating the thread from it switched the user to Codex even though
+          // they had Claude selected and had just picked a Claude conversation.
+          const composerSelection = composerRef.current?.getSendContext();
+          await createThread({
+            environmentId,
+            input: {
+              threadId,
+              projectId: activeProject.id,
+              title:
+                resumedTitle !== undefined && resumedTitle.length > 0
+                  ? resumedTitle.slice(0, 80)
+                  : activeThread.title,
+              modelSelection:
+                composerSelection?.selectedModelSelection ?? activeThread.modelSelection,
+              runtimeMode,
+              interactionMode,
+              branch: activeThread.branch,
+              worktreePath: activeThread.worktreePath,
+              createdAt: activeThread.createdAt,
+            },
+          });
+        }
+        const result = await runResumeCodexSession({
+          environmentId,
+          input: {
+            threadId,
+            sessionId,
+            // Exactly what the picker listed from, so the server looks for the
+            // transcript where the session actually lives.
+            driver: resumeProviderDriver,
+            providerInstanceId: resumeProviderInstanceId,
+            ...(activeWorkspaceRoot !== undefined ? { cwd: activeWorkspaceRoot } : {}),
+          },
+        });
+        // Rebinding only moves this thread's resume cursor; it does not replay the
+        // transcript into the view. Without a toast the picker closes onto an empty
+        // thread and the whole action reads as a no-op.
+        if (result._tag === "Success") {
+          // Say whether history actually loaded. Reporting success while the
+          // thread stays empty is how this looked broken rather than partial.
+          const value = result.value as
+            | { importedMessageCount?: number; omittedTurnCount?: number }
+            | undefined;
+          const imported = value?.importedMessageCount ?? 0;
+          const omitted = value?.omittedTurnCount ?? 0;
+          // Re-read the thread once history has been written. The subscription
+          // only fetches a snapshot when it has no data yet, and by the time the
+          // import finishes this thread already holds the empty snapshot taken
+          // moments earlier, so the imported messages would not appear until the
+          // app was reloaded.
+          if (imported > 0) {
+            atomRegistry.refresh(environmentThreads.stateAtom(environmentId, threadId));
+          }
+          toastManager.add({
+            type: "success",
+            title: imported > 0 ? "Resumed conversation" : "Resumed, no history found",
+            description:
+              imported > 0
+                ? `Loaded ${imported} message${imported === 1 ? "" : "s"}${
+                    omitted > 0 ? `, ${omitted} older turns not shown` : ""
+                  }.`
+                : `Your next message continues session ${sessionId.slice(0, 8)}.`,
+          });
+        } else {
+          toastManager.add({
+            type: "error",
+            title: "Could not resume conversation",
+            description: `Session ${sessionId.slice(0, 8)} could not be attached to this thread.`,
+          });
+        }
+      })();
+    },
+    [
+      runResumeCodexSession,
+      environmentId,
+      threadId,
+      resumeProviderDriver,
+      resumeProviderInstanceId,
+      activeWorkspaceRoot,
+      atomRegistry,
+      createThread,
+      isLocalDraftThread,
+      activeProject,
+      activeThread,
+      runtimeMode,
+      interactionMode,
     ],
   );
   const toggleInteractionMode = useCallback(() => {
@@ -5643,6 +5800,8 @@ function ChatViewContent(props: ChatViewProps) {
                         toggleInteractionMode={toggleInteractionMode}
                         handleRuntimeModeChange={handleRuntimeModeChange}
                         handleInteractionModeChange={handleInteractionModeChange}
+                        listCodexSessions={listCodexSessions}
+                        resumeCodexSession={resumeCodexSession}
                         togglePlanSidebar={togglePlanSidebar}
                         focusComposer={focusComposer}
                         scheduleComposerFocus={scheduleComposerFocus}

@@ -333,6 +333,11 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
 );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
+  // codexSessions.resume writes a thread's resume cursor straight to its runtime
+  // row, so the websocket route needs this repository in context. Its SQL
+  // dependency is supplied explicitly here rather than by the core chain, which
+  // would make the layer graph circular.
+  Layer.provideMerge(ProviderSessionRuntime.layer.pipe(Layer.provide(PersistenceLayerLive))),
   // Misc.
   Layer.provideMerge(ProcessDiagnostics.layer),
   Layer.provideMerge(ProcessResourceMonitor.layer),

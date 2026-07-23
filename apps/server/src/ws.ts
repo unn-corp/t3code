@@ -29,6 +29,7 @@ import {
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
+  ProviderInstanceId,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
   type OrchestrationThreadStreamItem,
@@ -65,6 +66,12 @@ import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/uns
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as NodeOS from "node:os";
+
+import { discoverAgentSessions } from "./provider/agentSessionDiscovery.ts";
+import { readAgentTranscript } from "./provider/agentTranscript.ts";
+import { expandHomePath } from "./pathExpansion.ts";
+import * as ProviderSessionRuntimeRepo from "./persistence/ProviderSessionRuntime.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -188,6 +195,21 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
   }
 }
 
+/** Default on-disk home for a driver when the instance has no override. */
+function defaultHomeForDriver(driver: string): string | undefined {
+  switch (driver) {
+    case "codex":
+      return `${NodeOS.homedir()}/.codex`;
+    case "claudeAgent":
+    case "claude":
+      return `${NodeOS.homedir()}/.claude`;
+    case "grok":
+      return `${NodeOS.homedir()}/.grok`;
+    default:
+      return undefined;
+  }
+}
+
 function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntriesBrowseError): {
   readonly failure: FilesystemBrowseFailure;
   readonly parentPath?: string;
@@ -259,6 +281,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   {
     type:
       | "thread.message-sent"
+      | "thread.imported-history-cleared"
       | "thread.proposed-plan-upserted"
       | "thread.activity-appended"
       | "thread.turn-diff-completed"
@@ -268,6 +291,9 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 > {
   return (
     event.type === "thread.message-sent" ||
+    // Streamed so an open thread drops the prior imported history live, before the
+    // replacement import's messages arrive.
+    event.type === "thread.imported-history-cleared" ||
     event.type === "thread.proposed-plan-upserted" ||
     event.type === "thread.activity-appended" ||
     event.type === "thread.turn-diff-completed" ||
@@ -318,6 +344,8 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
+  [WS_METHODS.codexSessionsList, AuthOrchestrationReadScope],
+  [WS_METHODS.codexSessionsResume, AuthOrchestrationOperateScope],
   [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
@@ -426,6 +454,8 @@ const makeWsRpcLayer = (
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const providerSessionRuntimeRepository =
+        yield* ProviderSessionRuntimeRepo.ProviderSessionRuntimeRepository;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const repositoryIdentityResolver =
@@ -448,6 +478,55 @@ const makeWsRpcLayer = (
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
+      /**
+       * Driver and on-disk home for a provider instance, for `/resume`.
+       *
+       * Sessions live under the home of the *selected* account, so listing and
+       * resuming must both resolve it the same way or they disagree about which
+       * account's conversations exist.
+       */
+      const resolveSessionSource = Effect.fn("resolveSessionSource")(function* (
+        providerInstanceId: string | undefined,
+        selectedDriver?: string | undefined,
+      ) {
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        const instance =
+          providerInstanceId !== undefined && settings !== undefined
+            ? settings.providerInstances[
+                providerInstanceId as keyof typeof settings.providerInstances
+              ]
+            : undefined;
+        // The selected driver wins. Not every selectable provider has a
+        // `providerInstances` entry (codex has none here), so relying on the
+        // instance alone silently fell back to codex and listed that driver's
+        // sessions while the user had Claude selected. Resume then looked under
+        // Claude's home for a codex id and found nothing.
+        const driver = selectedDriver ?? instance?.driver ?? "codex";
+        if (selectedDriver === undefined && instance?.driver === undefined) {
+          // The client always sends a driver now, so defaulting here means the
+          // picker is about to list a provider nobody selected. That is the exact
+          // shape of the bug this fallback used to hide.
+          yield* Effect.logWarning("session source fell back to the default driver", {
+            providerInstanceId,
+            driver,
+          });
+        }
+        // Only honour the instance's home when it belongs to the driver being
+        // used, or a Claude account's config dir would be searched for another
+        // driver's sessions.
+        const driverConfig =
+          instance?.driver === driver
+            ? (instance.config as { homePath?: string } | undefined)
+            : undefined;
+        const configuredHome = driverConfig?.homePath?.trim();
+        const home =
+          configuredHome !== undefined && configuredHome.length > 0
+            ? expandHomePath(configuredHome)
+            : defaultHomeForDriver(driver);
+        return { driver, home };
+      });
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1695,6 +1774,182 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.codexSessionsList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.codexSessionsList,
+            // Discovery degrades to fewer entries rather than failing, so there is
+            // no filesystem error to map here.
+            Effect.gen(function* () {
+              // Resolve the driver and home from the SELECTED provider instance,
+              // so /resume lists the sessions of the account actually in use.
+              const { driver, home } = yield* resolveSessionSource(
+                input.providerInstanceId,
+                input.driver,
+              );
+              const found = yield* Effect.promise(() =>
+                discoverAgentSessions({
+                  driver,
+                  ...(home !== undefined ? { home } : {}),
+                  ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+                  ...(input.limit !== undefined ? { limit: input.limit } : {}),
+                }),
+              );
+              // What the picker offers depends entirely on these four inputs, and
+              // an empty list is indistinguishable from a broken one without them.
+              yield* Effect.logInfo("codexSessions.list resolved", {
+                driver,
+                home,
+                cwd: input.cwd,
+                instance: input.providerInstanceId,
+                count: found.length,
+              });
+              return found;
+            }).pipe(
+              Effect.map((sessions) => ({
+                sessions: sessions.map((session) => ({
+                  sessionId: session.sessionId,
+                  ...(session.cwd !== undefined ? { cwd: session.cwd } : {}),
+                  ...(session.originator !== undefined ? { originator: session.originator } : {}),
+                  ...(session.cliVersion !== undefined ? { cliVersion: session.cliVersion } : {}),
+                  ...(session.startedAt !== undefined ? { startedAt: session.startedAt } : {}),
+                  ...(session.preview !== undefined ? { preview: session.preview } : {}),
+                })),
+              })),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.codexSessionsResume]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.codexSessionsResume,
+            Effect.gen(function* () {
+              const threadId = ThreadId.make(input.threadId);
+              const existing = yield* providerSessionRuntimeRepository
+                .getByThreadId({ threadId })
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+              const base = Option.getOrUndefined(existing);
+              const now = yield* DateTime.now;
+              // Persisting the cursor IS the rebind: ProviderSessionDirectory turns
+              // this row into a binding, and recoverSessionForThread hands its
+              // resumeCursor to the adapter, which issues thread/resume.
+              yield* providerSessionRuntimeRepository
+                .upsert({
+                  threadId,
+                  // The driver of the session being resumed wins over whatever this
+                  // thread ran before. Preferring the existing row left a thread that
+                  // had once run codex bound to codex after resuming a Claude
+                  // conversation, so the UI followed the stale provider and the next
+                  // /resume listed the wrong driver's sessions.
+                  providerName: input.driver ?? base?.providerName ?? "codex",
+                  // adapterKey is non-null in the schema; "codex" is the driver key
+                  // used when this thread has no prior runtime row.
+                  adapterKey: input.driver ?? base?.adapterKey ?? "codex",
+                  runtimeMode: base?.runtimeMode ?? "full-access",
+                  // Stopped so the next turn starts a fresh session that resumes.
+                  status: "stopped",
+                  lastSeenAt: DateTime.formatIso(now),
+                  // Cursor shape is per driver: codex reads threadId, the Claude
+                  // adapter reads resume/sessionId.
+                  resumeCursor:
+                    (input.driver ?? "codex") === "codex"
+                      ? { threadId: input.sessionId }
+                      : { resume: input.sessionId, sessionId: input.sessionId },
+                  runtimePayload: base?.runtimePayload ?? null,
+                  // Likewise the account: the session belongs to the selected
+                  // instance's home, so binding to the previous one would resume
+                  // against the wrong account.
+                  providerInstanceId:
+                    input.providerInstanceId !== undefined
+                      ? ProviderInstanceId.make(input.providerInstanceId)
+                      : (base?.providerInstanceId ?? null),
+                })
+                .pipe(Effect.orElseSucceed(() => undefined));
+
+              // Rebinding alone leaves the thread blank: the cursor gives the next
+              // turn its context, but nothing renders what was already said. Replay
+              // the transcript so the conversation is visible.
+              // Resolved exactly as the listing was, so resume looks for the
+              // session where the picker found it.
+              const { driver, home } = yield* resolveSessionSource(
+                input.providerInstanceId,
+                input.driver,
+              );
+              const discovered = yield* Effect.promise(() =>
+                discoverAgentSessions({
+                  driver,
+                  ...(home !== undefined ? { home } : {}),
+                  ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+                  limit: 200,
+                }),
+              );
+              const session = discovered.find((entry) => entry.sessionId === input.sessionId);
+              const transcript =
+                session === undefined
+                  ? { turns: [], omittedTurnCount: 0 }
+                  : yield* Effect.promise(() =>
+                      readAgentTranscript({ driver, path: session.rolloutPath }),
+                    );
+
+              // A transcript that yields nothing is a real outcome, not a
+              // non-event: the rebind still worked, but the thread will open
+              // empty and the reason must be visible rather than silent.
+              if (transcript.turns.length === 0) {
+                yield* Effect.logInfo("codexSessions.resume imported no history", {
+                  threadId: input.threadId,
+                  sessionId: input.sessionId,
+                  driver,
+                  reason: session === undefined ? "session-not-found" : "no-turns-parsed",
+                });
+              }
+
+              let imported = 0;
+              if (transcript.turns.length > 0) {
+                const nowIso = DateTime.formatIso(now);
+                yield* orchestrationEngine
+                  .dispatch({
+                    type: "thread.history.import",
+                    commandId: CommandId.make(`resume-import:${input.threadId}:${input.sessionId}`),
+                    threadId,
+                    sourceSessionId: input.sessionId,
+                    turns: transcript.turns.map((turn) => ({
+                      role: turn.role,
+                      text: turn.text,
+                      // Grok records no timestamps; fall back to now so ordering
+                      // still holds and the schema stays satisfied.
+                      createdAt: turn.timestamp ?? nowIso,
+                    })),
+                    omittedTurnCount: transcript.omittedTurnCount,
+                    createdAt: nowIso,
+                  })
+                  .pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        imported = transcript.turns.length;
+                      }),
+                    ),
+                  )
+                  // A failed import must not undo the rebind: the thread still
+                  // resumes correctly, it just opens without its history.
+                  .pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("codexSessions.resume history import failed", {
+                        threadId: input.threadId,
+                        sessionId: input.sessionId,
+                        turnCount: transcript.turns.length,
+                        // Rendered, not the Cause object: the structured logger
+                        // prints that as [Object] and the reason is lost.
+                        reason: Cause.pretty(cause),
+                      }),
+                    ),
+                  );
+              }
+              return {
+                bound: true,
+                importedMessageCount: imported,
+                omittedTurnCount: transcript.omittedTurnCount,
+              };
+            }),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>

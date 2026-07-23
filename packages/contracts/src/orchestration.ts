@@ -826,10 +826,40 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+/** One replayed turn from a conversation that happened outside this app. */
+export const ImportedHistoryTurn = Schema.Struct({
+  role: Schema.Literals(["user", "assistant"]),
+  text: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+/**
+ * Replay a CLI conversation into a thread, for `/resume`.
+ *
+ * Internal on purpose: this writes messages that no one typed here, so it is
+ * server-issued after reading the session file, never dispatchable by a client.
+ *
+ * Deliberately not `thread.turn.start`, which is how a real user message is
+ * recorded: that also emits `thread.turn-start-requested` and would launch a
+ * provider turn for every imported message.
+ */
+const ThreadHistoryImportCommand = Schema.Struct({
+  type: Schema.Literal("thread.history.import"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  /** Session the turns came from; message ids derive from it, so re-import is idempotent. */
+  sourceSessionId: TrimmedNonEmptyString,
+  turns: Schema.Array(ImportedHistoryTurn),
+  /** Turns dropped by the import cap, so the thread can say so rather than imply completeness. */
+  omittedTurnCount: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadHistoryImportCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -857,6 +887,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
+  "thread.imported-history-cleared",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
@@ -977,6 +1008,19 @@ export const ThreadMessageSentPayload = Schema.Struct({
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+});
+
+/**
+ * Drops the imported CLI history from a thread before a fresh import replaces it.
+ *
+ * Resuming a second conversation into the same thread must show that conversation,
+ * not append it under the previous one. Imported messages and their synthetic turn
+ * are tagged with a turn id beginning `import:`, so clearing is scoped to them and
+ * leaves any real turns the user ran in the thread untouched.
+ */
+export const ThreadImportedHistoryClearedPayload = Schema.Struct({
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
 });
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
@@ -1140,6 +1184,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.imported-history-cleared"),
+    payload: ThreadImportedHistoryClearedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

@@ -548,6 +548,17 @@ export interface ChatComposerProps {
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  /** List Codex sessions on disk that this thread could resume (/resume). */
+  listCodexSessions?: () => Promise<
+    ReadonlyArray<{
+      readonly sessionId: string;
+      readonly originator?: string;
+      readonly startedAt?: string;
+      readonly preview?: string;
+    }>
+  >;
+  /** Rebind this thread to a chosen Codex session. */
+  resumeCodexSession?: (sessionId: string, preview?: string) => void;
   togglePlanSidebar: () => void;
 
   focusComposer: () => void;
@@ -624,6 +635,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     toggleInteractionMode,
     handleRuntimeModeChange,
     handleInteractionModeChange,
+    listCodexSessions,
+    resumeCodexSession,
     togglePlanSidebar,
     focusComposer,
     scheduleComposerFocus,
@@ -904,6 +917,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  // Codex sessions fetched by /resume. Non-empty means the command menu is
+  // showing them instead of the usual slash commands.
+  const [codexSessionOptions, setCodexSessionOptions] = useState<
+    ReadonlyArray<{
+      readonly sessionId: string;
+      readonly originator?: string;
+      readonly startedAt?: string;
+      readonly preview?: string;
+    }>
+  >([]);
+  /** A /resume listing completed and found nothing, so the menu can say why. */
+  const [resumeListedEmpty, setResumeListedEmpty] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile =
@@ -973,6 +998,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
       }));
     }
+    if (codexSessionOptions.length > 0) {
+      // /resume produced sessions: offer those instead of the slash commands.
+      return codexSessionOptions.map((session) => ({
+        id: `codex-session:${session.sessionId}`,
+        type: "codex-session" as const,
+        sessionId: session.sessionId,
+        label: session.preview ?? session.sessionId.slice(0, 8),
+        description: [
+          session.originator === "t3code_desktop" ? "from this app" : "from the terminal",
+          session.startedAt?.slice(0, 16).replace("T", " "),
+        ]
+          .filter((part): part is string => Boolean(part))
+          .join(" · "),
+      }));
+    }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
         {
@@ -988,6 +1028,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           command: "plan",
           label: "/plan",
           description: "Switch this thread into plan mode",
+        },
+        {
+          id: "slash:resume",
+          type: "slash-command",
+          command: "resume",
+          label: "/resume",
+          description: "Continue a Codex conversation started in the terminal",
         },
         {
           id: "slash:default",
@@ -1030,7 +1077,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
     }
     return [];
-  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries.entries]);
+  }, [
+    codexSessionOptions,
+    composerTrigger,
+    selectedProvider,
+    selectedProviderStatus,
+    workspaceEntries.entries,
+  ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1100,10 +1153,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
     }
+    // A /resume listing that came back empty is a real answer, not a failed
+    // search: sessions are scoped to this provider and this directory, and e.g.
+    // Grok may simply have never run here. Saying "No matching command" made
+    // correct behaviour look broken.
+    if (resumeListedEmpty) {
+      const provider = getProviderDisplayName(providerStatuses, selectedProvider);
+      return `No ${provider} conversations found for this project.`;
+    }
     return composerTriggerKind === "path"
       ? "No matching files or folders."
       : "No matching command.";
-  }, [composerTriggerKind]);
+  }, [composerTriggerKind, resumeListedEmpty, providerStatuses, selectedProvider]);
 
   // ------------------------------------------------------------------
   // Provider traits UI
@@ -1236,6 +1297,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     composerImagesRef.current = composerImages;
   }, [composerImages, composerImagesRef]);
+
+  // Drop the loaded conversations once the menu closes. They used to survive, so
+  // the next "/" or "/resume" reopened straight onto the previous list and Enter
+  // picked a conversation instead of running the command, resuming something the
+  // user never chose. Each /resume should list afresh.
+  useEffect(() => {
+    if (composerMenuOpen) return;
+    setCodexSessionOptions((existing) => (existing.length === 0 ? existing : []));
+    setResumeListedEmpty(false);
+  }, [composerMenuOpen]);
 
   useEffect(() => {
     composerTerminalContextsRef.current = composerTerminalContexts;
@@ -1615,6 +1686,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
+        if (item.command === "resume") {
+          // Deliberately do NOT clear the "/resume" text here. The menu is only
+          // open while a composer trigger exists (composerMenuOpen =
+          // Boolean(composerTrigger)), so clearing it closes the menu and the
+          // session list never gets a chance to render. Keep the trigger alive
+          // and swap the menu's contents to the sessions we find.
+          setComposerHighlightedItemId(null);
+          setResumeListedEmpty(false);
+          void (async () => {
+            const sessions = (await listCodexSessions?.()) ?? [];
+            setCodexSessionOptions(sessions);
+            setResumeListedEmpty(sessions.length === 0);
+          })();
+          return;
+        }
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -1622,6 +1708,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (applied) {
           setComposerHighlightedItemId(null);
         }
+        return;
+      }
+      if (item.type === "codex-session") {
+        // Pass the preview so the thread can be named after the conversation
+        // instead of staying "New thread", which made every resumed thread
+        // indistinguishable in the sidebar.
+        resumeCodexSession?.(item.sessionId, item.label);
+        setCodexSessionOptions([]);
+        setResumeListedEmpty(false);
+        setComposerHighlightedItemId(null);
+        // Now that a session is chosen, drop the "/resume" text; this also
+        // clears the trigger and closes the menu.
+        applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
         return;
       }
       if (item.type === "provider-slash-command") {
@@ -1661,7 +1762,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
     },
-    [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
+    [
+      applyPromptReplacement,
+      handleInteractionModeChange,
+      listCodexSessions,
+      resumeCodexSession,
+      resolveActiveComposerTrigger,
+    ],
   );
 
   const onComposerMenuItemHighlighted = useCallback(
