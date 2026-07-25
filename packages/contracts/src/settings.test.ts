@@ -17,6 +17,13 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
 describe("ClientSettings word wrap", () => {
+  it("keeps notifications opt-in for existing installations", () => {
+    expect(decodeClientSettings({}).agentNotifications).toMatchObject({
+      enabled: false,
+      notifyOnPlanReady: true,
+    });
+  });
+
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);
   });

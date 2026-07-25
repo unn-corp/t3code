@@ -46,6 +46,7 @@ import * as DesktopShutdown from "./app/DesktopShutdown.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
+import * as DesktopNotifications from "./notifications/DesktopNotifications.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
@@ -122,7 +123,7 @@ const electronLayer = Layer.mergeAll(
   DesktopIpc.layer(Electron.ipcMain),
 );
 
-const desktopFoundationLayer = Layer.mergeAll(
+const desktopFoundationBaseLayer = Layer.mergeAll(
   DesktopState.layer,
   DesktopShutdown.layer,
   DesktopAppSettings.layer,
@@ -131,6 +132,12 @@ const desktopFoundationLayer = Layer.mergeAll(
   DesktopAssets.layer,
   DesktopObservability.layer,
 ).pipe(Layer.provideMerge(desktopEnvironmentLayer));
+
+// Desktop notifications read persisted client settings, so build them after
+// the foundation services rather than in the parallel merge above.
+const desktopFoundationLayer = DesktopNotifications.layer.pipe(
+  Layer.provideMerge(desktopFoundationBaseLayer),
+);
 
 const desktopSshLayer = desktopSshEnvironmentLayer.pipe(
   Layer.provideMerge(DesktopSshPasswordPrompts.layer()),

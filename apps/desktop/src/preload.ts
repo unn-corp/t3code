@@ -47,6 +47,19 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
+  showAgentNotification: (event) =>
+    ipcRenderer.invoke(IpcChannels.SHOW_AGENT_NOTIFICATION_CHANNEL, event),
+  onAgentNotificationNavigate: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, deepLink: unknown) => {
+      if (typeof deepLink === "string") {
+        listener(deepLink);
+      }
+    };
+    ipcRenderer.on(IpcChannels.AGENT_NOTIFICATION_NAVIGATE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.AGENT_NOTIFICATION_NAVIGATE_CHANNEL, wrappedListener);
+    };
+  },
   getConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.GET_CONNECTION_CATALOG_CHANNEL),
   setConnectionCatalog: (catalog) =>
     ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),

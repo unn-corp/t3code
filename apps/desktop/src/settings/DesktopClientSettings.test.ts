@@ -13,6 +13,15 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopClientSettings from "./DesktopClientSettings.ts";
 
 const clientSettings: ClientSettings = {
+  agentNotifications: {
+    enabled: true,
+    notifyOnCompletion: true,
+    notifyOnPlanReady: true,
+    notifyOnInput: true,
+    notifyOnFailure: true,
+    playSound: true,
+    showProjectAndThreadNames: true,
+  },
   autoOpenPlanSidebar: false,
   confirmThreadArchive: true,
   confirmThreadDelete: false,

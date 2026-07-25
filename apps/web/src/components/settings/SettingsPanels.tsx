@@ -1,10 +1,11 @@
 import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
+  type AgentNotificationEvent,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -37,7 +38,12 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdateClientSettings,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -88,6 +94,13 @@ import {
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { playAgentNotificationSound } from "../../agentNotifications/sound";
+import {
+  getBrowserNotificationStatus,
+  requestBrowserNotificationPermission,
+  showBrowserNotificationPreview,
+  type BrowserNotificationStatus,
+} from "../../agentNotifications/browserNotifications";
 
 const THEME_OPTIONS = [
   {
@@ -126,6 +139,221 @@ function withoutProviderInstanceFavorites(
   instanceId: ProviderInstanceId,
 ) {
   return favorites.filter((favorite) => favorite.provider !== instanceId);
+}
+
+function PwaNotificationSettings() {
+  const notificationPreferences = useClientSettings((value) => value.agentNotifications);
+  const updateClientSettings = useUpdateClientSettings();
+  const [status, setStatus] = useState<BrowserNotificationStatus>(() =>
+    getBrowserNotificationStatus(),
+  );
+
+  const refreshStatus = useCallback(() => {
+    setStatus(getBrowserNotificationStatus());
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("focus", refreshStatus);
+    document.addEventListener("visibilitychange", refreshStatus);
+    return () => {
+      window.removeEventListener("focus", refreshStatus);
+      document.removeEventListener("visibilitychange", refreshStatus);
+    };
+  }, [refreshStatus]);
+
+  const updatePreferences = useCallback(
+    (patch: Partial<typeof notificationPreferences>) => {
+      updateClientSettings({
+        agentNotifications: { ...notificationPreferences, ...patch },
+      });
+    },
+    [notificationPreferences, updateClientSettings],
+  );
+
+  const enableNotifications = useCallback(async () => {
+    const nextStatus = await requestBrowserNotificationPermission();
+    setStatus(nextStatus);
+    if (nextStatus === "ready") {
+      updatePreferences({ enabled: true });
+      return;
+    }
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Notifications need browser permission",
+        description:
+          nextStatus === "permission-blocked"
+            ? "Allow notifications in your browser or system settings, then return here."
+            : "Notifications are not supported by this browser or device.",
+      }),
+    );
+  }, [updatePreferences]);
+
+  const previewNotification = useCallback(() => {
+    void showBrowserNotificationPreview()
+      .then((nextStatus) => {
+        setStatus(nextStatus);
+        if (nextStatus === "ready") {
+          toastManager.add(
+            stackedThreadToast({
+              type: "success",
+              title: "Preview notification sent",
+              description: "Check this device's notification center if no banner appears.",
+            }),
+          );
+          return;
+        }
+        throw new Error("Browser notifications are not ready.");
+      })
+      .catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not send preview notification",
+            description:
+              error instanceof Error ? error.message : "Try enabling notifications again.",
+          }),
+        );
+      });
+  }, []);
+
+  const statusDescription: Record<BrowserNotificationStatus, string> = {
+    unsupported: "Notifications are not supported by this browser or device.",
+    "permission-needed": "Allow notifications to enable alerts on this browser or PWA.",
+    "permission-blocked": "Notifications are blocked by your browser or system settings.",
+    ready: notificationPreferences.enabled
+      ? "Notifications are on for this browser or PWA."
+      : "Notifications are available on this browser or PWA.",
+  };
+  const canManagePreferences = status === "ready" && notificationPreferences.enabled;
+
+  return (
+    <SettingsSection title="Notifications">
+      <SettingsRow
+        title="Notifications on this device"
+        description={statusDescription[status]}
+        control={
+          <Switch
+            checked={notificationPreferences.enabled}
+            disabled={status === "unsupported"}
+            onCheckedChange={(checked) => {
+              if (checked) {
+                void enableNotifications();
+              } else {
+                updatePreferences({ enabled: false });
+              }
+            }}
+            aria-label="Enable notifications on this device"
+          />
+        }
+      />
+
+      {canManagePreferences ? (
+        <>
+          <SettingsRow
+            title="Preview notification"
+            description="Sends a local browser notification. It does not contact T3 Connect."
+            control={
+              <Button size="xs" variant="outline" onClick={previewNotification}>
+                Send preview
+              </Button>
+            }
+          />
+          <SettingsRow
+            title="Remote test"
+            description="Remote PWA delivery will be available after this browser is connected through T3 Connect."
+            control={
+              <Button size="xs" variant="outline" disabled>
+                Connect required
+              </Button>
+            }
+          />
+          <SettingsRow
+            title="Agent finished"
+            description="Notify when agent work completes."
+            control={
+              <Switch
+                checked={notificationPreferences.notifyOnCompletion}
+                onCheckedChange={(checked) =>
+                  updatePreferences({ notifyOnCompletion: Boolean(checked) })
+                }
+                aria-label="Notify when an agent finishes"
+              />
+            }
+          />
+          <SettingsRow
+            title="Plan ready"
+            description="Notify when an agent proposes a plan for review."
+            control={
+              <Switch
+                checked={notificationPreferences.notifyOnPlanReady}
+                onCheckedChange={(checked) =>
+                  updatePreferences({ notifyOnPlanReady: Boolean(checked) })
+                }
+                aria-label="Notify when a plan is ready"
+              />
+            }
+          />
+          <SettingsRow
+            title="Input needed"
+            description="Notify when an agent needs approval or a response."
+            control={
+              <Switch
+                checked={notificationPreferences.notifyOnInput}
+                onCheckedChange={(checked) =>
+                  updatePreferences({ notifyOnInput: Boolean(checked) })
+                }
+                aria-label="Notify when agent input is needed"
+              />
+            }
+          />
+          <SettingsRow
+            title="Agent failed"
+            description="Notify when an agent run ends with an error."
+            control={
+              <Switch
+                checked={notificationPreferences.notifyOnFailure}
+                onCheckedChange={(checked) =>
+                  updatePreferences({ notifyOnFailure: Boolean(checked) })
+                }
+                aria-label="Notify when an agent fails"
+              />
+            }
+          />
+          <SettingsRow
+            title="Show project and thread names"
+            description="Turn this off to hide work names in notifications and on your lock screen."
+            control={
+              <Switch
+                checked={notificationPreferences.showProjectAndThreadNames}
+                onCheckedChange={(checked) =>
+                  updatePreferences({ showProjectAndThreadNames: Boolean(checked) })
+                }
+                aria-label="Show project and thread names in notifications"
+              />
+            }
+          />
+          <SettingsRow
+            title="Disable notifications"
+            description="Turns off notifications for this browser or PWA installation."
+            control={
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => updatePreferences({ enabled: false })}
+              >
+                Disable
+              </Button>
+            }
+          />
+        </>
+      ) : null}
+      <p className="px-4 pb-2 text-xs text-muted-foreground">
+        These settings apply only to this browser or PWA installation, not to your desktop app or
+        other devices.
+      </p>
+    </SettingsSection>
+  );
 }
 
 const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
@@ -490,6 +718,46 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const notificationPreferences = useClientSettings((value) => value.agentNotifications);
+  const updateClientSettings = useUpdateClientSettings();
+  const sendNotificationTest = useCallback(() => {
+    const bridge = window.desktopBridge;
+    if (!bridge || typeof bridge.showAgentNotification !== "function") return;
+
+    const event: AgentNotificationEvent = {
+      eventId: `desktop-notification-test:${Date.now()}` as AgentNotificationEvent["eventId"],
+      environmentId: "desktop-notification-test" as AgentNotificationEvent["environmentId"],
+      threadId: "desktop-notification-test" as AgentNotificationEvent["threadId"],
+      kind: "agent_completed",
+      occurredAt: new Date().toISOString(),
+      deepLink:
+        "/threads/desktop-notification-test/desktop-notification-test" as AgentNotificationEvent["deepLink"],
+      threadTitle: "T3 Code notification test",
+    };
+
+    void bridge.showAgentNotification(event).then((outcome) => {
+      if (outcome === "attempted") {
+        if (notificationPreferences.playSound) {
+          playAgentNotificationSound("agent_completed");
+        }
+        toastManager.add(
+          stackedThreadToast({
+            type: "success",
+            title: "Test notification sent",
+            description: "Check your system notification center if no banner appears.",
+          }),
+        );
+      } else {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not send test notification",
+            description: `Notification result: ${outcome}.`,
+          }),
+        );
+      }
+    });
+  }, [notificationPreferences.playSound]);
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const diagnosticsDescription = formatDiagnosticsDescription({
@@ -961,6 +1229,152 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      {isElectron ? (
+        <SettingsSection title="Agent notifications">
+          <SettingsRow
+            title="Desktop notifications"
+            description="Notify when an agent finishes, has a plan ready, needs input, or fails. Notifications are suppressed while T3 Code is focused."
+            control={
+              <Switch
+                checked={notificationPreferences.enabled}
+                onCheckedChange={(checked) =>
+                  updateClientSettings({
+                    agentNotifications: {
+                      ...notificationPreferences,
+                      enabled: Boolean(checked),
+                    },
+                  })
+                }
+                aria-label="Enable desktop agent notifications"
+              />
+            }
+          />
+          {notificationPreferences.enabled ? (
+            <>
+              <SettingsRow
+                title="Test notification"
+                description="Sends a native desktop notification now."
+                control={
+                  <Button size="xs" variant="outline" onClick={sendNotificationTest}>
+                    Send test notification
+                  </Button>
+                }
+              />
+              <SettingsRow
+                title="Play notification sounds"
+                description="Use the bundled CC0 sound set while T3 Code is running."
+                control={
+                  <Switch
+                    checked={notificationPreferences.playSound}
+                    onCheckedChange={(checked) =>
+                      updateClientSettings({
+                        agentNotifications: {
+                          ...notificationPreferences,
+                          playSound: Boolean(checked),
+                        },
+                      })
+                    }
+                    aria-label="Play agent notification sounds"
+                  />
+                }
+              />
+              <SettingsRow
+                title="Agent finished"
+                description="Notify when agent work completes."
+                control={
+                  <Switch
+                    checked={notificationPreferences.notifyOnCompletion}
+                    onCheckedChange={(checked) =>
+                      updateClientSettings({
+                        agentNotifications: {
+                          ...notificationPreferences,
+                          notifyOnCompletion: Boolean(checked),
+                        },
+                      })
+                    }
+                    aria-label="Notify when an agent finishes"
+                  />
+                }
+              />
+              <SettingsRow
+                title="Plan ready"
+                description="Notify when an agent proposes a plan for review."
+                control={
+                  <Switch
+                    checked={notificationPreferences.notifyOnPlanReady}
+                    onCheckedChange={(checked) =>
+                      updateClientSettings({
+                        agentNotifications: {
+                          ...notificationPreferences,
+                          notifyOnPlanReady: Boolean(checked),
+                        },
+                      })
+                    }
+                    aria-label="Notify when a plan is ready"
+                  />
+                }
+              />
+              <SettingsRow
+                title="Input needed"
+                description="Notify when an agent needs approval or a response."
+                control={
+                  <Switch
+                    checked={notificationPreferences.notifyOnInput}
+                    onCheckedChange={(checked) =>
+                      updateClientSettings({
+                        agentNotifications: {
+                          ...notificationPreferences,
+                          notifyOnInput: Boolean(checked),
+                        },
+                      })
+                    }
+                    aria-label="Notify when agent input is needed"
+                  />
+                }
+              />
+              <SettingsRow
+                title="Agent failed"
+                description="Notify when an agent run ends with an error."
+                control={
+                  <Switch
+                    checked={notificationPreferences.notifyOnFailure}
+                    onCheckedChange={(checked) =>
+                      updateClientSettings({
+                        agentNotifications: {
+                          ...notificationPreferences,
+                          notifyOnFailure: Boolean(checked),
+                        },
+                      })
+                    }
+                    aria-label="Notify when an agent fails"
+                  />
+                }
+              />
+              <SettingsRow
+                title="Show project and thread names"
+                description="Turn this off to keep notification content generic on your desktop."
+                control={
+                  <Switch
+                    checked={notificationPreferences.showProjectAndThreadNames}
+                    onCheckedChange={(checked) =>
+                      updateClientSettings({
+                        agentNotifications: {
+                          ...notificationPreferences,
+                          showProjectAndThreadNames: Boolean(checked),
+                        },
+                      })
+                    }
+                    aria-label="Show project and thread names in notifications"
+                  />
+                }
+              />
+            </>
+          ) : null}
+        </SettingsSection>
+      ) : (
+        <PwaNotificationSettings />
+      )}
 
       <SettingsSection title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (

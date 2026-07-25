@@ -1,5 +1,5 @@
 import { UserButton, useAuth } from "@clerk/react";
-import { LogInIcon, SmartphoneIcon } from "lucide-react";
+import { LogInIcon, SettingsIcon, SmartphoneIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
@@ -39,6 +39,9 @@ function ConfiguredT3ConnectSidebarAvatar() {
       >
         <MobileClientsUserProfilePage />
       </UserButton.UserProfilePage>
+      <UserButton.MenuItems>
+        <UserButton.Link href="/settings/general" label="Settings" labelIcon={<SettingsIcon />} />
+      </UserButton.MenuItems>
     </UserButton>
   );
 }
