@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 
 import { useProjects, useThreadShells } from "../state/entities";
 import { getClientSettings } from "../hooks/useSettings";
+import type { AppRouter } from "../router";
 import { playAgentNotificationSound } from "./sound";
 
 type ThreadSnapshot = {
@@ -42,10 +43,19 @@ function eventKindForTransition(
  * Remote delivery will consume the same event contract from the server's
  * durable outbox; this coordinator remains intentionally local to Electron.
  */
-export function DesktopAgentNotificationCoordinator() {
+export function DesktopAgentNotificationCoordinator({ router }: { readonly router: AppRouter }) {
   const projects = useProjects();
   const threads = useThreadShells();
   const snapshots = useRef(new Map<string, ThreadSnapshot>());
+
+  useEffect(() => {
+    const subscribe = window.desktopBridge?.onAgentNotificationNavigate;
+    if (typeof subscribe !== "function") return;
+    return subscribe((deepLink) => {
+      // The main process sends only the contract's relative thread route.
+      void router.navigate({ to: deepLink as never });
+    });
+  }, [router]);
 
   useEffect(() => {
     const bridge = window.desktopBridge;
