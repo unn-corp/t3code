@@ -1,5 +1,6 @@
 export * from "./codexSessions.ts";
 export * from "./baseSchemas.ts";
+export * from "./background.ts";
 export * from "./auth.ts";
 export * from "./environment.ts";
 export * from "./environmentHttp.ts";
@@ -28,4 +29,5 @@ export * from "./agentNotifications.ts";
 export * from "./review.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
+export * from "./resourceTelemetry.ts";
 export * from "./rpc.ts";

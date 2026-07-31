@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFs from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -154,13 +154,13 @@ describe("readAgentTranscript", () => {
     run: (path: string) => Promise<void>,
     name = "transcript.jsonl",
   ): Promise<void> => {
-    const dir = await NodeFs.mkdtemp(NodePath.join(NodeOS.tmpdir(), "transcript-"));
+    const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "transcript-"));
     try {
       const path = NodePath.join(dir, name);
-      await NodeFs.writeFile(path, contents);
+      await NodeFSP.writeFile(path, contents);
       await run(path);
     } finally {
-      await NodeFs.rm(dir, { recursive: true, force: true });
+      await NodeFSP.rm(dir, { recursive: true, force: true });
     }
   };
 

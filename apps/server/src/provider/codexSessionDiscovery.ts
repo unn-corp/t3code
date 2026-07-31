@@ -13,7 +13,7 @@
  * deliberately split into pure parsers plus one filesystem walk, so the parsing is
  * testable without fixtures on disk.
  */
-import * as NodeFs from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -178,7 +178,7 @@ async function collectRolloutPaths(sessionsRoot: string): Promise<string[]> {
   const found: string[] = [];
   const walk = async (dir: string): Promise<void> => {
     // Unreadable or missing directories simply contribute nothing.
-    const entries = await NodeFs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    const entries = await NodeFSP.readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       const full = NodePath.join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -201,7 +201,7 @@ async function collectRolloutPaths(sessionsRoot: string): Promise<string[]> {
  * conversation, and everything needed for a picker entry is in the first lines.
  */
 async function readRolloutHead(path: string, maxLines: number): Promise<string[]> {
-  const handle = await NodeFs.open(path, "r");
+  const handle = await NodeFSP.open(path, "r");
   try {
     // Injected AGENTS.md/context blocks can be tens of KB on their own, so a small
     // window would stop before the first real human message.

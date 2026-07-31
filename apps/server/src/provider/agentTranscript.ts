@@ -17,7 +17,7 @@
  * injected context). Everything here is about keeping the human/assistant text
  * and dropping the rest. Shapes below were taken from real session files.
  */
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
 
@@ -234,9 +234,9 @@ export async function readAgentTranscript(
   if (parse === undefined || maxTurns <= 0) return { turns: [], omittedTurnCount: 0 };
 
   const path = transcriptPathFor(options.driver, options.path);
-  let stream: NodeFs.ReadStream;
+  let stream: NodeFS.ReadStream;
   try {
-    stream = NodeFs.createReadStream(path, { encoding: "utf8" });
+    stream = NodeFS.createReadStream(path, { encoding: "utf8" });
   } catch {
     return { turns: [], omittedTurnCount: 0 };
   }

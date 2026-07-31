@@ -13,7 +13,7 @@
  * Codex discovery lives in `codexSessionDiscovery.ts`; this module adds the
  * other drivers and the dispatch that picks one.
  */
-import * as NodeFs from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as DateTime from "effect/DateTime";
@@ -49,7 +49,7 @@ function readString(value: unknown): string | undefined {
 
 /** Read up to `maxBytes` from the head of a file, dropping a partial last line. */
 async function readHeadLines(path: string, maxBytes = 256 * 1024): Promise<string[]> {
-  const handle = await NodeFs.open(path, "r");
+  const handle = await NodeFSP.open(path, "r");
   try {
     const buffer = Buffer.alloc(maxBytes);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
@@ -115,17 +115,17 @@ export async function discoverClaudeSessions(options: {
 
   const projectDirs = options.cwd
     ? [NodePath.join(projectsRoot, claudeProjectDirName(options.cwd))]
-    : (await NodeFs.readdir(projectsRoot, { withFileTypes: true }).catch(() => []))
+    : (await NodeFSP.readdir(projectsRoot, { withFileTypes: true }).catch(() => []))
         .filter((entry) => entry.isDirectory())
         .map((entry) => NodePath.join(projectsRoot, entry.name));
 
   const candidates: Array<{ path: string; mtimeMs: number }> = [];
   for (const dir of projectDirs) {
-    const entries = await NodeFs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    const entries = await NodeFSP.readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
       const full = NodePath.join(dir, entry.name);
-      const stat = await NodeFs.stat(full).catch(() => undefined);
+      const stat = await NodeFSP.stat(full).catch(() => undefined);
       candidates.push({ path: full, mtimeMs: stat?.mtimeMs ?? 0 });
     }
   }
@@ -208,17 +208,17 @@ export async function discoverGrokSessions(options: {
 
   const groupDirs = options.cwd
     ? [NodePath.join(sessionsRoot, grokEncodeCwd(options.cwd))]
-    : (await NodeFs.readdir(sessionsRoot, { withFileTypes: true }).catch(() => []))
+    : (await NodeFSP.readdir(sessionsRoot, { withFileTypes: true }).catch(() => []))
         .filter((entry) => entry.isDirectory())
         .map((entry) => NodePath.join(sessionsRoot, entry.name));
 
   const candidates: Array<{ dir: string; sessionId: string; mtimeMs: number }> = [];
   for (const group of groupDirs) {
-    const entries = await NodeFs.readdir(group, { withFileTypes: true }).catch(() => []);
+    const entries = await NodeFSP.readdir(group, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const dir = NodePath.join(group, entry.name);
-      const stat = await NodeFs.stat(dir).catch(() => undefined);
+      const stat = await NodeFSP.stat(dir).catch(() => undefined);
       candidates.push({ dir, sessionId: entry.name, mtimeMs: stat?.mtimeMs ?? 0 });
     }
   }

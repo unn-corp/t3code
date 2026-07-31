@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFs from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -132,21 +132,21 @@ describe("discoverCodexSessions", () => {
     build: (sessionsDir: string) => Promise<void>,
     run: (codexHome: string) => Promise<void>,
   ): Promise<void> => {
-    const codexHome = await NodeFs.mkdtemp(NodePath.join(NodeOS.tmpdir(), "codex-discovery-"));
+    const codexHome = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "codex-discovery-"));
     try {
       const sessionsDir = NodePath.join(codexHome, "sessions", "2026", "07", "21");
-      await NodeFs.mkdir(sessionsDir, { recursive: true });
+      await NodeFSP.mkdir(sessionsDir, { recursive: true });
       await build(sessionsDir);
       await run(codexHome);
     } finally {
-      await NodeFs.rm(codexHome, { recursive: true, force: true });
+      await NodeFSP.rm(codexHome, { recursive: true, force: true });
     }
   };
 
   it("finds a rollout and reports its resumable id and preview", async () => {
     await withTempCodexHome(
       async (dir) => {
-        await NodeFs.writeFile(
+        await NodeFSP.writeFile(
           NodePath.join(dir, `rollout-2026-07-21T01-00-56-${SESSION_ID}.jsonl`),
           [sessionMetaLine(), userMessageLine("Test")].join("\n"),
         );
@@ -164,11 +164,11 @@ describe("discoverCodexSessions", () => {
   it("filters by cwd so a picker only offers this project's sessions", async () => {
     await withTempCodexHome(
       async (dir) => {
-        await NodeFs.writeFile(
+        await NodeFSP.writeFile(
           NodePath.join(dir, `rollout-2026-07-21T01-00-00-${SESSION_ID}.jsonl`),
           sessionMetaLine({ cwd: "/home/dev/proj" }),
         );
-        await NodeFs.writeFile(
+        await NodeFSP.writeFile(
           NodePath.join(dir, "rollout-2026-07-21T02-00-00-other.jsonl"),
           sessionMetaLine({ id: "other-id", cwd: "/home/dev/elsewhere" }),
         );
@@ -184,8 +184,11 @@ describe("discoverCodexSessions", () => {
   it("skips unparsable rollouts instead of failing the whole listing", async () => {
     await withTempCodexHome(
       async (dir) => {
-        await NodeFs.writeFile(NodePath.join(dir, "rollout-2026-07-21T03-00-00-bad.jsonl"), "{bad");
-        await NodeFs.writeFile(
+        await NodeFSP.writeFile(
+          NodePath.join(dir, "rollout-2026-07-21T03-00-00-bad.jsonl"),
+          "{bad",
+        );
+        await NodeFSP.writeFile(
           NodePath.join(dir, `rollout-2026-07-21T01-00-00-${SESSION_ID}.jsonl`),
           sessionMetaLine(),
         );
@@ -205,7 +208,7 @@ describe("discoverCodexSessions", () => {
     await withTempCodexHome(
       async (dir) => {
         for (let index = 0; index < 5; index += 1) {
-          await NodeFs.writeFile(
+          await NodeFSP.writeFile(
             NodePath.join(dir, `rollout-2026-07-21T0${index}-00-00-id${index}.jsonl`),
             sessionMetaLine({ id: `id${index}` }),
           );

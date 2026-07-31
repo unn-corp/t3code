@@ -27,6 +27,7 @@ const clientSettings: ClientSettings = {
   confirmThreadDelete: false,
   dismissedProviderUpdateNotificationKeys: [],
   diffIgnoreWhitespace: true,
+  environmentIdentificationMode: "artwork",
   favorites: [],
   glassOpacity: 80,
   providerModelPreferences: {},
@@ -39,6 +40,7 @@ const clientSettings: ClientSettings = {
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
   sidebarV2Enabled: false,
+  sidebarV2ConfiguredByUser: false,
   timestampFormat: "24-hour",
   wordWrap: true,
 };
