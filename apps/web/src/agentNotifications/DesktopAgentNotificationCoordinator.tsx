@@ -108,8 +108,9 @@ export function DesktopAgentNotificationCoordinator({ router }: { readonly route
       void bridge
         .showAgentNotification(event)
         .then((outcome) => {
-          if (outcome === "attempted" && getClientSettings().agentNotifications.playSound) {
-            playAgentNotificationSound(kind);
+          const preferences = getClientSettings().agentNotifications;
+          if (outcome === "attempted" && preferences.playSound) {
+            playAgentNotificationSound(kind, preferences.sounds);
           }
         })
         .catch(() => {});

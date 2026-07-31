@@ -2,7 +2,13 @@
 
 ## Agent notification sounds
 
-The four notification sounds in `apps/web/public/sounds/` are selected from
+`apps/web/public/sounds/` holds two sets. The generated set (`chime-soft`,
+`marimba`, `ping`, `bloom`, `pluck`, `knock`, `descend`, `alert`) is an original
+work of this project, synthesised by `pnpm sounds:generate` from the specs in
+`scripts/lib/notification-sounds.ts`, and carries no third-party terms.
+
+The remaining four sounds, offered in the picker as the `Original …` options,
+are selected from
 the **UI Sound Effects (Button Clicks, User Feedback, Notifications)** pack by
 Robin Lamb, available at:
 

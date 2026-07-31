@@ -2,8 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  AGENT_NOTIFICATION_SOUND_IDS,
   AgentNotificationEvent,
+  AgentNotificationPreferences,
+  AgentNotificationSoundId,
   DEFAULT_AGENT_NOTIFICATION_PREFERENCES,
+  DEFAULT_AGENT_NOTIFICATION_SOUNDS,
   isAgentNotificationEnabled,
 } from "./agentNotifications.ts";
 
@@ -43,5 +47,47 @@ describe("AgentNotificationEvent", () => {
         "plan_ready",
       ),
     ).toBe(false);
+  });
+});
+
+describe("agent notification sounds", () => {
+  const decodePreferences = Schema.decodeUnknownSync(AgentNotificationPreferences);
+
+  it("offers every sound id exactly once in the picker", () => {
+    expect([...AGENT_NOTIFICATION_SOUND_IDS].sort()).toEqual(
+      [...AgentNotificationSoundId.literals].sort(),
+    );
+  });
+
+  it("lists None last so it does not lead the picker", () => {
+    expect(AGENT_NOTIFICATION_SOUND_IDS.at(-1)).toBe("none");
+  });
+
+  it("defaults completion to the short generated chime, not the original sample", () => {
+    expect(DEFAULT_AGENT_NOTIFICATION_SOUNDS.agent_completed).toBe("chime-soft");
+  });
+
+  it("backfills sounds for settings saved before the picker existed", () => {
+    const { sounds, ...withoutSounds } = DEFAULT_AGENT_NOTIFICATION_PREFERENCES;
+    expect(sounds).toEqual(DEFAULT_AGENT_NOTIFICATION_SOUNDS);
+    expect(decodePreferences(withoutSounds).sounds).toEqual(DEFAULT_AGENT_NOTIFICATION_SOUNDS);
+  });
+
+  it("round-trips a per-kind override", () => {
+    const decoded = decodePreferences({
+      ...DEFAULT_AGENT_NOTIFICATION_PREFERENCES,
+      sounds: { ...DEFAULT_AGENT_NOTIFICATION_SOUNDS, agent_failed: "none" },
+    });
+    expect(decoded.sounds.agent_failed).toBe("none");
+    expect(decoded.sounds.plan_ready).toBe(DEFAULT_AGENT_NOTIFICATION_SOUNDS.plan_ready);
+  });
+
+  it("rejects an unknown sound id", () => {
+    expect(() =>
+      decodePreferences({
+        ...DEFAULT_AGENT_NOTIFICATION_PREFERENCES,
+        sounds: { ...DEFAULT_AGENT_NOTIFICATION_SOUNDS, agent_completed: "airhorn" },
+      }),
+    ).toThrow();
   });
 });

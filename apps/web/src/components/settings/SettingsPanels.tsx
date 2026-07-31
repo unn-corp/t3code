@@ -3,6 +3,7 @@ import {
   ArchiveX,
   InfoIcon,
   LoaderIcon,
+  PlayIcon,
   PlusIcon,
   RefreshCwIcon,
   SettingsIcon,
@@ -17,6 +18,10 @@ import {
   type BackgroundActivitySettings,
   type DesktopUpdateChannel,
   type AgentNotificationEvent,
+  type AgentNotificationKind,
+  type AgentNotificationSoundId,
+  type AgentNotificationSounds,
+  AGENT_NOTIFICATION_SOUND_IDS,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -144,7 +149,11 @@ import {
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { playAgentNotificationSound } from "../../agentNotifications/sound";
+import {
+  agentNotificationSoundLabel,
+  playAgentNotificationSound,
+  playAgentNotificationSoundId,
+} from "../../agentNotifications/sound";
 import {
   getBrowserNotificationStatus,
   requestBrowserNotificationPermission,
@@ -1341,6 +1350,65 @@ export function AppearanceSettingsPanel() {
   );
 }
 
+const AGENT_NOTIFICATION_SOUND_ROWS: readonly {
+  readonly kind: AgentNotificationKind;
+  readonly title: string;
+}[] = [
+  { kind: "agent_completed", title: "Agent finished sound" },
+  { kind: "plan_ready", title: "Plan ready sound" },
+  { kind: "input_required", title: "Needs input sound" },
+  { kind: "agent_failed", title: "Agent failed sound" },
+];
+
+function AgentNotificationSoundRow({
+  kind,
+  title,
+  sounds,
+  onChange,
+}: {
+  readonly kind: AgentNotificationKind;
+  readonly title: string;
+  readonly sounds: AgentNotificationSounds;
+  readonly onChange: (kind: AgentNotificationKind, soundId: AgentNotificationSoundId) => void;
+}) {
+  const selected = sounds[kind];
+  return (
+    <SettingsRow
+      title={title}
+      description="Pick the sound this notification plays, or turn it off with None."
+      control={
+        <div className="flex w-full items-center gap-2 sm:w-56">
+          <Select
+            value={selected}
+            onValueChange={(value) => onChange(kind, value as AgentNotificationSoundId)}
+          >
+            <SelectTrigger className="w-full" aria-label={title}>
+              <SelectValue>{agentNotificationSoundLabel(selected)}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {AGENT_NOTIFICATION_SOUND_IDS.map((soundId) => (
+                <SelectItem hideIndicator key={soundId} value={soundId}>
+                  {agentNotificationSoundLabel(soundId)}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+          <Button
+            size="xs"
+            variant="outline"
+            className="shrink-0"
+            disabled={selected === "none"}
+            onClick={() => playAgentNotificationSoundId(selected)}
+            aria-label={`Preview ${title}`}
+          >
+            <PlayIcon className="size-3.5" />
+          </Button>
+        </div>
+      }
+    />
+  );
+}
+
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -1364,7 +1432,7 @@ export function GeneralSettingsPanel() {
     void bridge.showAgentNotification(event).then((outcome) => {
       if (outcome === "attempted") {
         if (notificationPreferences.playSound) {
-          playAgentNotificationSound("agent_completed");
+          playAgentNotificationSound("agent_completed", notificationPreferences.sounds);
         }
         toastManager.add(
           stackedThreadToast({
@@ -1383,7 +1451,21 @@ export function GeneralSettingsPanel() {
         );
       }
     });
-  }, [notificationPreferences.playSound]);
+  }, [notificationPreferences.playSound, notificationPreferences.sounds]);
+  const setNotificationSound = useCallback(
+    (kind: AgentNotificationKind, soundId: AgentNotificationSoundId) => {
+      updateClientSettings({
+        agentNotifications: {
+          ...notificationPreferences,
+          sounds: { ...notificationPreferences.sounds, [kind]: soundId },
+        },
+      });
+      // Play the new choice immediately: picking a sound you cannot hear is
+      // guesswork, and this is the only place it is auditioned in context.
+      playAgentNotificationSoundId(soundId);
+    },
+    [notificationPreferences, updateClientSettings],
+  );
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
@@ -1967,7 +2049,7 @@ export function GeneralSettingsPanel() {
               />
               <SettingsRow
                 title="Play notification sounds"
-                description="Use the bundled CC0 sound set while T3 Code is running."
+                description="Play a sound alongside the system notification while T3 Code is running."
                 control={
                   <Switch
                     checked={notificationPreferences.playSound}
@@ -1983,6 +2065,17 @@ export function GeneralSettingsPanel() {
                   />
                 }
               />
+              {notificationPreferences.playSound
+                ? AGENT_NOTIFICATION_SOUND_ROWS.map((row) => (
+                    <AgentNotificationSoundRow
+                      key={row.kind}
+                      kind={row.kind}
+                      title={row.title}
+                      sounds={notificationPreferences.sounds}
+                      onChange={setNotificationSound}
+                    />
+                  ))
+                : null}
               <SettingsRow
                 title="Agent finished"
                 description="Notify when agent work completes."
