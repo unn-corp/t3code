@@ -113,6 +113,12 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
+import {
+  ConversationReferenceCopyWorker,
+  type ConversationReferenceCopyRequest,
+  requestConversationReferenceCopy,
+  useConversationReferenceCopyRequests,
+} from "./ConversationReferenceCopyWorker";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import {
@@ -2118,6 +2124,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             : []),
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          { id: "copy-conversation", label: "Copy conversation" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true, icon: "trash" },
@@ -2156,6 +2163,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "mark-unread") {
         markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        return;
+      }
+      if (clicked === "copy-conversation") {
+        requestConversationReferenceCopy({
+          threadRef,
+          title: thread.title,
+          // The root resolves this against its live environment catalog so
+          // this row stays independent of sidebar grouping state.
+          environmentLabel: "",
+        });
         return;
       }
       if (clicked === "copy-path") {
@@ -3046,6 +3063,19 @@ export default function Sidebar() {
       ),
     [environments],
   );
+  const [conversationCopyRequest, setConversationCopyRequest] =
+    useState<ConversationReferenceCopyRequest | null>(null);
+  const receiveConversationCopyRequest = useCallback(
+    (request: ConversationReferenceCopyRequest) => {
+      setConversationCopyRequest({
+        ...request,
+        environmentLabel:
+          environmentLabelById.get(request.threadRef.environmentId) ?? "Unknown environment",
+      });
+    },
+    [environmentLabelById],
+  );
+  useConversationReferenceCopyRequests(receiveConversationCopyRequest);
   const desktopLocalEnvironmentIds = useMemo(
     () =>
       new Set(
@@ -3585,6 +3615,34 @@ export default function Sidebar() {
 
   return (
     <>
+      {conversationCopyRequest && (
+        <ConversationReferenceCopyWorker
+          request={conversationCopyRequest}
+          onCopied={(result) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: result === "structured" ? "success" : "warning",
+                title: result === "structured" ? "Conversation copied" : "Transcript copied",
+                description:
+                  result === "structured"
+                    ? "Paste it into another composer to add a conversation reference."
+                    : "This clipboard does not support conversation-reference chips; paste the transcript as text.",
+              }),
+            );
+          }}
+          onFailure={(error) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to copy conversation",
+                description:
+                  error instanceof Error ? error.message : "Could not load the conversation.",
+              }),
+            );
+          }}
+          onDone={() => setConversationCopyRequest(null)}
+        />
+      )}
       {prewarmedSidebarThreadRefs.map((threadRef) => (
         <SidebarThreadDetailPrewarmer key={scopedThreadKey(threadRef)} threadRef={threadRef} />
       ))}

@@ -198,6 +198,11 @@ import {
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
+import {
+  CONVERSATION_REFERENCE_CLIPBOARD_MIME,
+  decodeConversationReference,
+  type ConversationReference,
+} from "../../conversationReference";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import {
@@ -495,6 +500,7 @@ export interface ChatComposerHandle {
     elementContexts: ElementContextDraft[];
     previewAnnotations: PreviewAnnotationPayload[];
     reviewComments: ReviewCommentContext[];
+    conversationContexts: ConversationReference[];
     selectedPromptEffort: string | null;
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
@@ -720,6 +726,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerElementContexts = composerDraft.elementContexts;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
+  const composerConversationContexts = composerDraft.conversationContexts;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -743,6 +750,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const removeComposerDraftReviewComment = useComposerDraftStore(
     (store) => store.removeReviewComment,
+  );
+  const addComposerDraftConversationContext = useComposerDraftStore(
+    (store) => store.addConversationContext,
+  );
+  const removeComposerDraftConversationContext = useComposerDraftStore(
+    (store) => store.removeConversationContext,
   );
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
@@ -2496,12 +2509,49 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Callbacks: paste / drag
   // ------------------------------------------------------------------
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
+    if (event.defaultPrevented) return;
+    const reference = decodeConversationReference(
+      event.clipboardData.getData(CONVERSATION_REFERENCE_CLIPBOARD_MIME),
+    );
+    if (reference) {
+      event.preventDefault();
+      addConversationReferenceToDraft(reference);
+      return;
+    }
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) return;
     const imageFiles = files.filter((file) => file.type.startsWith("image/"));
     if (imageFiles.length === 0) return;
     event.preventDefault();
     void addComposerImages(imageFiles);
+  };
+
+  const onStructuredComposerPaste = (clipboardData: DataTransfer): boolean => {
+    const reference = decodeConversationReference(
+      clipboardData.getData(CONVERSATION_REFERENCE_CLIPBOARD_MIME),
+    );
+    if (!reference) return false;
+    addConversationReferenceToDraft(reference);
+    return true;
+  };
+
+  const addConversationReferenceToDraft = (reference: ConversationReference) => {
+    addComposerDraftConversationContext(composerDraftTarget, reference);
+    if (reference.images.length === 0) return;
+    void Promise.all(
+      // Attachment admission takes the first files. Reverse the selected
+      // source images so a target composer with only a few free slots keeps
+      // the newest eligible source images.
+      [...reference.images].reverse().map(async (image) => {
+        const response = await fetch(image.dataUrl);
+        const blob = await response.blob();
+        return new File([blob], image.name, { type: image.mimeType });
+      }),
+    )
+      .then(addComposerImages)
+      .catch(() => {
+        setThreadError(activeThreadId, "Copied conversation images could not be restored.");
+      });
   };
 
   const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2732,6 +2782,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         elementContexts: composerElementContextsRef.current,
         previewAnnotations: composerPreviewAnnotations,
         reviewComments: composerReviewComments,
+        conversationContexts: composerConversationContexts,
         selectedPromptEffort,
         selectedModelOptionsForDispatch,
         selectedModelSelection,
@@ -2753,6 +2804,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerElementContextsRef,
       composerPreviewAnnotations,
       composerReviewComments,
+      composerConversationContexts,
       isConnecting,
       isComposerApprovalState,
       pendingUserInputs.length,
@@ -3025,6 +3077,40 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {!isComposerCollapsedMobile &&
               !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
+              composerConversationContexts.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {composerConversationContexts.map((context) => (
+                    <div
+                      key={context.id}
+                      className="flex max-w-full items-center gap-2 rounded-lg border border-border/80 bg-muted/45 px-2 py-1.5 text-xs"
+                    >
+                      <span className="min-w-0 truncate">
+                        Conversation: {context.title || "Untitled"} · {context.environmentLabel} ·{" "}
+                        {context.messages.length} messages
+                        {context.imageCount > 0 ? ` · ${context.imageCount} source images` : ""}
+                        {context.omittedImageCount > 0
+                          ? ` · ${context.omittedImageCount} images omitted`
+                          : ""}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="shrink-0"
+                        onClick={() =>
+                          removeComposerDraftConversationContext(composerDraftTarget, context.id)
+                        }
+                        aria-label={`Remove conversation reference ${context.title || "Untitled"}`}
+                      >
+                        <XIcon />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+            {!isComposerCollapsedMobile &&
+              !isComposerApprovalState &&
+              pendingUserInputs.length === 0 &&
               composerPreviewAnnotations.length > 0 && (
                 <ComposerPreviewAnnotationCards
                   annotations={composerPreviewAnnotations}
@@ -3166,6 +3252,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onChange={onPromptChange}
                 onCommandKeyDown={onComposerCommandKey}
                 onPaste={onComposerPaste}
+                onStructuredPaste={onStructuredComposerPaste}
                 placeholder={
                   isComposerApprovalState
                     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")

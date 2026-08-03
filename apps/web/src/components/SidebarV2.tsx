@@ -95,6 +95,10 @@ import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
+import {
+  ConversationReferenceCopyWorker,
+  type ConversationReferenceCopyRequest,
+} from "./ConversationReferenceCopyWorker";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -1282,6 +1286,8 @@ export default function SidebarV2() {
       ),
     [environments],
   );
+  const [conversationCopyRequest, setConversationCopyRequest] =
+    useState<ConversationReferenceCopyRequest | null>(null);
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
@@ -2356,6 +2362,7 @@ export default function SidebarV2() {
                   ]
                 : []),
               { id: "mark-unread", label: "Mark unread" },
+              { id: "copy-conversation", label: "Copy conversation", icon: "copy" },
               { id: "copy-path", label: "Copy path", icon: "copy" },
               ...(thread.branch ? [{ id: "copy-branch", label: "Copy branch", icon: "copy" }] : []),
               { id: "delete", label: "Delete", destructive: true, icon: "trash" },
@@ -2428,6 +2435,14 @@ export default function SidebarV2() {
           case "mark-unread":
             markThreadUnread(threadKey, thread.latestTurn?.completedAt);
             return;
+          case "copy-conversation":
+            setConversationCopyRequest({
+              threadRef,
+              title: thread.title,
+              environmentLabel:
+                environmentLabelById.get(thread.environmentId) ?? "Unknown environment",
+            });
+            return;
           case "copy-path":
             if (!threadWorkspacePath) {
               toastManager.add(
@@ -2486,6 +2501,7 @@ export default function SidebarV2() {
       copyBranchToClipboard,
       copyPathToClipboard,
       deleteThread,
+      environmentLabelById,
       handleMultiSelectContextMenu,
       markThreadUnread,
       projectCwdByKey,
@@ -2593,6 +2609,34 @@ export default function SidebarV2() {
     shortcutLabelForCommand(keybindings, "chat.new");
   return (
     <>
+      {conversationCopyRequest && (
+        <ConversationReferenceCopyWorker
+          request={conversationCopyRequest}
+          onCopied={(result) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: result === "structured" ? "success" : "warning",
+                title: result === "structured" ? "Conversation copied" : "Transcript copied",
+                description:
+                  result === "structured"
+                    ? "Paste it into another composer to add a conversation reference."
+                    : "This clipboard does not support conversation-reference chips; paste the transcript as text.",
+              }),
+            );
+          }}
+          onFailure={(error) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to copy conversation",
+                description:
+                  error instanceof Error ? error.message : "Could not load the conversation.",
+              }),
+            );
+          }}
+          onDone={() => setConversationCopyRequest(null)}
+        />
+      )}
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         className="gap-0"

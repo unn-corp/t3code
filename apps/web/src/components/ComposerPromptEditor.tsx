@@ -27,6 +27,8 @@ import {
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
+  PASTE_COMMAND,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   COMMAND_PRIORITY_LOW,
   KEY_BACKSPACE_COMMAND,
@@ -897,7 +899,32 @@ interface ComposerPromptEditorProps {
     event: KeyboardEvent,
   ) => boolean;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
+  onStructuredPaste?: (clipboardData: DataTransfer) => boolean;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
+}
+
+function ComposerStructuredPastePlugin(props: {
+  onStructuredPaste?: (clipboardData: DataTransfer) => boolean;
+}) {
+  const [editor] = useLexicalComposerContext();
+  const onStructuredPasteRef = useRef(props.onStructuredPaste);
+  onStructuredPasteRef.current = props.onStructuredPaste;
+
+  useEffect(
+    () =>
+      editor.registerCommand(
+        PASTE_COMMAND,
+        (event) => {
+          if (!(event instanceof ClipboardEvent) || event.clipboardData === null) return false;
+          if (!onStructuredPasteRef.current?.(event.clipboardData)) return false;
+          event.preventDefault();
+          return true;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+    [editor],
+  );
+  return null;
 }
 
 function ComposerCommandKeyPlugin(props: {
@@ -1537,6 +1564,7 @@ function ComposerPromptEditorInner({
   onChange,
   onCommandKeyDown,
   onPaste,
+  onStructuredPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
   const [editor] = useLexicalComposerContext();
@@ -1772,6 +1800,7 @@ function ComposerPromptEditorInner({
         />
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+        <ComposerStructuredPastePlugin {...(onStructuredPaste ? { onStructuredPaste } : {})} />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
         <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
@@ -1797,6 +1826,7 @@ export function ComposerPromptEditor({
   onChange,
   onCommandKeyDown,
   onPaste,
+  onStructuredPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
   const initialValueRef = useRef(value);
@@ -1832,9 +1862,10 @@ export function ComposerPromptEditor({
         placeholder={placeholder}
         onRemoveTerminalContext={onRemoveTerminalContext}
         onChange={onChange}
-        onPaste={onPaste}
-        editorRef={editorRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+        onPaste={onPaste}
+        {...(onStructuredPaste ? { onStructuredPaste } : {})}
+        editorRef={editorRef}
         {...(className ? { className } : {})}
       />
     </LexicalComposer>

@@ -18,6 +18,7 @@ import {
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   ProviderDriverKind,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   RuntimeMode,
   TerminalOpenInput,
 } from "@t3tools/contracts";
@@ -309,6 +310,11 @@ import {
   serverUpdateGuidance,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
+import {
+  appendConversationReferencesToPrompt,
+  trimConversationReferencesToFit,
+  type ConversationReference,
+} from "../conversationReference";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -1263,6 +1269,9 @@ function ChatViewContent(props: ChatViewProps) {
   const setComposerDraftElementContexts = useComposerDraftStore(
     (store) => store.setElementContexts,
   );
+  const setComposerDraftConversationContexts = useComposerDraftStore(
+    (store) => store.setConversationContexts,
+  );
   const setComposerDraftPreviewAnnotations = useComposerDraftStore(
     (store) => store.setPreviewAnnotations,
   );
@@ -1285,6 +1294,7 @@ function ChatViewContent(props: ChatViewProps) {
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
+  const composerConversationContextsRef = useRef<ConversationReference[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -4231,6 +4241,7 @@ function ChatViewContent(props: ChatViewProps) {
         draft.images.length > 0 ||
         draft.terminalContexts.length > 0 ||
         draft.elementContexts.length > 0 ||
+        draft.conversationContexts.length > 0 ||
         draft.previewAnnotations.length > 0 ||
         draft.reviewComments.length > 0),
     );
@@ -4734,6 +4745,7 @@ function ChatViewContent(props: ChatViewProps) {
       images: composerImages,
       terminalContexts: composerTerminalContexts,
       elementContexts: composerElementContexts,
+      conversationContexts: composerConversationContexts,
       previewAnnotations: composerPreviewAnnotations,
       reviewComments: composerReviewComments,
       selectedProvider: ctxSelectedProvider,
@@ -4756,6 +4768,7 @@ function ChatViewContent(props: ChatViewProps) {
         composerElementContexts.length +
         composerPreviewAnnotations.length +
         composerReviewComments.length,
+      conversationContextCount: composerConversationContexts.length,
     });
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
@@ -4775,6 +4788,7 @@ function ChatViewContent(props: ChatViewProps) {
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
+      composerConversationContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
@@ -4849,29 +4863,65 @@ function ChatViewContent(props: ChatViewProps) {
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerElementContextsSnapshot = [...composerElementContexts];
+    const composerConversationContextsSnapshot = [...composerConversationContexts];
+    let conversationContextsForSend = composerConversationContextsSnapshot;
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
     const messageTextWithContexts = appendElementContextsToPrompt(
       appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
     );
-    const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(
-      (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
-      messageTextWithContexts,
+    const appendNonConversationContexts = (text: string) =>
+      appendReviewCommentsToPrompt(
+        composerPreviewAnnotationsSnapshot.reduce(
+          (annotatedText, annotation) => appendPreviewAnnotationPrompt(annotatedText, annotation),
+          text,
+        ),
+        composerReviewCommentsSnapshot,
+      );
+    let messageTextForSend = appendNonConversationContexts(
+      appendConversationReferencesToPrompt(messageTextWithContexts, conversationContextsForSend),
     );
-    const messageTextForSend = appendReviewCommentsToPrompt(
-      messageTextWithPreviewAnnotations,
-      composerReviewCommentsSnapshot,
-    );
+    const messageTextWithoutConversationReferences =
+      appendNonConversationContexts(messageTextWithContexts);
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
-    const outgoingMessageText = formatOutgoingPrompt({
-      provider: ctxSelectedProvider,
-      model: ctxSelectedModel,
-      models: ctxSelectedProviderModels,
-      effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
-    });
+    const formatPromptForSend = (text: string) =>
+      formatOutgoingPrompt({
+        provider: ctxSelectedProvider,
+        model: ctxSelectedModel,
+        models: ctxSelectedProviderModels,
+        effort: ctxSelectedPromptEffort,
+        text: text || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      });
+    let outgoingMessageText = formatPromptForSend(messageTextForSend);
+    let trimmedConversationMessageCount = 0;
+    if (outgoingMessageText.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+      const remainingReferenceCharacters = Math.max(
+        0,
+        PROVIDER_SEND_TURN_MAX_INPUT_CHARS -
+          formatPromptForSend(messageTextWithoutConversationReferences).length,
+      );
+      const trimmedReferences = trimConversationReferencesToFit(
+        conversationContextsForSend,
+        remainingReferenceCharacters,
+      );
+      conversationContextsForSend = trimmedReferences.references;
+      trimmedConversationMessageCount = trimmedReferences.omittedMessageCount;
+      messageTextForSend = appendNonConversationContexts(
+        appendConversationReferencesToPrompt(messageTextWithContexts, conversationContextsForSend),
+      );
+      outgoingMessageText = formatPromptForSend(messageTextForSend);
+    }
+    if (outgoingMessageText.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      setThreadError(
+        threadIdForSend,
+        "This message is still too large after trimming conversation references. Shorten the request or remove other contexts.",
+      );
+      return;
+    }
     const turnAttachmentsPromise = Promise.all(
       composerImagesSnapshot.map(async (image) => ({
         type: "image" as const,
@@ -4927,6 +4977,15 @@ function ChatViewContent(props: ChatViewProps) {
           type: "warning",
           title: toastCopy.title,
           description: toastCopy.description,
+        }),
+      );
+    }
+    if (trimmedConversationMessageCount > 0) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Conversation reference trimmed",
+          description: `${trimmedConversationMessageCount} older source message${trimmedConversationMessageCount === 1 ? " was" : "s were"} omitted to fit the provider limit.`,
         }),
       );
     }
@@ -5055,15 +5114,15 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure !== null) {
+      const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       if (
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
         composerTerminalContextsRef.current.length === 0 &&
         composerElementContextsRef.current.length === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
-          .length ?? 0) === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
-          .length ?? 0) === 0
+        (currentDraft?.conversationContexts.length ?? 0) === 0 &&
+        (currentDraft?.previewAnnotations.length ?? 0) === 0 &&
+        (currentDraft?.reviewComments.length ?? 0) === 0
       ) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
@@ -5078,10 +5137,15 @@ function ChatViewContent(props: ChatViewProps) {
         composerImagesRef.current = retryComposerImages;
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
         composerElementContextsRef.current = composerElementContextsSnapshot;
+        composerConversationContextsRef.current = composerConversationContextsSnapshot;
         setComposerDraftPrompt(composerDraftTarget, promptForSend);
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
+        setComposerDraftConversationContexts(
+          composerDraftTarget,
+          composerConversationContextsSnapshot,
+        );
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
         setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
         composerRef.current?.resetCursorState({

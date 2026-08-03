@@ -244,6 +244,17 @@ describe("deriveComposerSendState", () => {
     expect(state.hasSendableContent).toBe(true);
   });
 
+  it("treats a conversation reference as sendable content", () => {
+    expect(
+      deriveComposerSendState({
+        prompt: "",
+        imageCount: 0,
+        terminalContexts: [],
+        conversationContextCount: 1,
+      }).hasSendableContent,
+    ).toBe(true);
+  });
+
   it("does NOT treat zero element contexts as sendable", () => {
     expect(
       deriveComposerSendState({
