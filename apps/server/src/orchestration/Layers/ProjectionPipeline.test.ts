@@ -1519,6 +1519,119 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       assert.deepEqual(settledRows, [
         { state: "completed", completedAt: "2026-01-01T00:01:00.000Z" },
       ]);
+
+      // The turn ending must not erase which turn was last: the sidebar joins
+      // latest_turn_id to read the completed turn (its "Completed" pill and
+      // settled timestamps come from there), and a session-set carrying no
+      // active turn is a turn-end signal, not a "this thread has no turns"
+      // signal.
+      const latestTurnRows = yield* sql<{
+        readonly latestTurnId: string | null;
+      }>`
+        SELECT latest_turn_id AS "latestTurnId"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(latestTurnRows, [{ latestTurnId: turnId }]);
+    }),
+  );
+
+  it.effect("keeps the last turn as latest across a starting session with no active turn", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-latest-turn-starting");
+      const turnId = TurnId.make("turn-latest-1");
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-lt1"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-lt1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-lt1"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-latest-turn"),
+          title: "Latest turn",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const appendSessionSet = (input: {
+        readonly eventId: string;
+        readonly status: "starting" | "running" | "ready";
+        readonly activeTurnId: TurnId | null;
+        readonly updatedAt: string;
+      }) =>
+        eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make(input.eventId),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: input.updatedAt,
+          commandId: CommandId.make(`cmd-${input.eventId}`),
+          causationEventId: null,
+          correlationId: CorrelationId.make(`cmd-${input.eventId}`),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: input.status,
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: input.activeTurnId,
+              lastError: null,
+              updatedAt: input.updatedAt,
+            },
+          },
+        });
+
+      yield* appendSessionSet({
+        eventId: "evt-lt2",
+        status: "running",
+        activeTurnId: turnId,
+        updatedAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* appendSessionSet({
+        eventId: "evt-lt3",
+        status: "ready",
+        activeTurnId: null,
+        updatedAt: "2026-01-01T00:01:00.000Z",
+      });
+      // Grok re-announces "starting" for the next turn before that turn has an
+      // id — this must not blank the previous turn out of the sidebar either.
+      yield* appendSessionSet({
+        eventId: "evt-lt4",
+        status: "starting",
+        activeTurnId: null,
+        updatedAt: "2026-01-01T00:02:00.000Z",
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const rows = yield* sql<{
+        readonly latestTurnId: string | null;
+      }>`
+        SELECT latest_turn_id AS "latestTurnId"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(rows, [{ latestTurnId: turnId }]);
     }),
   );
 

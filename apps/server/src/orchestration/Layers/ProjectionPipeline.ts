@@ -825,7 +825,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            latestTurnId: event.payload.session.activeTurnId,
+            // A session with no active turn means the turn ENDED, not that the
+            // thread has no latest turn: clearing latest_turn_id here unjoins
+            // the completed turn from the thread shell, so the sidebar loses
+            // its "Completed" pill, its settled timestamp, and its elapsed
+            // anchor. This matches the in-memory projector, which preserves
+            // latestTurn across a non-running session. Only a real turn id
+            // moves the pointer; thread.reverted recomputes it explicitly.
+            latestTurnId: event.payload.session.activeTurnId ?? existingRow.value.latestTurnId,
             updatedAt: event.occurredAt,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);
