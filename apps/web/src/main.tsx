@@ -26,7 +26,7 @@ const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
 
-registerPwaServiceWorker();
+void registerPwaServiceWorker();
 
 if (isElectron) {
   syncDocumentElectronPlatformClasses(navigator.platform);

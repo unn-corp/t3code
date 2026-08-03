@@ -474,6 +474,42 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+/**
+ * Discord bridge configuration.
+ *
+ * The bot token is deliberately absent: it lives in the server secret store,
+ * because this struct is written to settings.json, copied around as test data,
+ * and returned to clients. Only non-secret routing and policy lives here.
+ *
+ * `enabled` defaults to false so the bridge is a complete no-op until a user
+ * opts in.
+ */
+export const DiscordBridgeSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  guildId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Text channel that hosts one Discord thread per T3 thread. */
+  channelId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Application id of the bot, used to ignore the bridge's own messages. */
+  applicationId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Discord user ids permitted to drive threads from Discord. An empty list
+   * denies everyone — this fails closed on purpose, because an authorized
+   * author can start turns in `full-access` (permission-bypassing) sessions.
+   */
+  allowedAuthorIds: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Origin used to build deep links; a loopback URL is useless from a phone. */
+  publicOrigin: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Restrict mirroring to these projects. Empty means every project. */
+  projectAllowlist: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Mirror tool calls and activity entries, not just chat messages. */
+  mirrorActivity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type DiscordBridgeSettings = typeof DiscordBridgeSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -537,6 +573,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  discordBridge: DiscordBridgeSettings,
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -661,6 +698,18 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  discordBridge: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      guildId: Schema.optionalKey(TrimmedString),
+      channelId: Schema.optionalKey(TrimmedString),
+      applicationId: Schema.optionalKey(TrimmedString),
+      allowedAuthorIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+      publicOrigin: Schema.optionalKey(TrimmedString),
+      projectAllowlist: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+      mirrorActivity: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   providers: Schema.optionalKey(

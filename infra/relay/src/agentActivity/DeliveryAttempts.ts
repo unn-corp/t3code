@@ -13,7 +13,12 @@ import { relayDeliveryAttempts } from "../persistence/schema.ts";
 export class DeliveryAttemptRecordPersistenceError extends Schema.TaggedErrorClass<DeliveryAttemptRecordPersistenceError>()(
   "DeliveryAttemptRecordPersistenceError",
   {
-    operation: Schema.Literals(["record", "claim-source-job", "complete-source-job"]),
+    operation: Schema.Literals([
+      "record",
+      "claim-source-job",
+      "complete-source-job",
+      "release-source-job",
+    ]),
     sourceJobId: Schema.NullOr(Schema.String),
     userId: Schema.NullOr(Schema.String),
     environmentId: Schema.NullOr(Schema.String),
@@ -64,6 +69,9 @@ export class DeliveryAttempts extends Context.Service<
     readonly completeSourceJob: (
       input: DeliveryAttemptCompletionInput,
     ) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
+    readonly releaseSourceJob?: (input: {
+      readonly sourceJobId: string;
+    }) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
   }
 >()("t3code-relay/agentActivity/DeliveryAttempts") {}
 
@@ -235,6 +243,26 @@ export const make = Effect.gen(function* () {
             (cause) =>
               new DeliveryAttemptRecordPersistenceError({
                 operation: "complete-source-job",
+                sourceJobId: input.sourceJobId,
+                userId: null,
+                environmentId: null,
+                threadId: null,
+                deviceId: null,
+                kind: null,
+                cause,
+              }),
+          ),
+        );
+    }),
+    releaseSourceJob: Effect.fn("relay.delivery_attempts.release_source_job")(function* (input) {
+      yield* db
+        .delete(relayDeliveryAttempts)
+        .where(eq(relayDeliveryAttempts.sourceJobId, input.sourceJobId))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DeliveryAttemptRecordPersistenceError({
+                operation: "release-source-job",
                 sourceJobId: input.sourceJobId,
                 userId: null,
                 environmentId: null,

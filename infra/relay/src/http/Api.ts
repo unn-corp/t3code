@@ -67,10 +67,12 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
+import * as WebPushSubscriptions from "../agentActivity/WebPushSubscriptions.ts";
+import * as WebPushDeliveryQueue from "../agentActivity/WebPushDeliveryQueue.ts";
 import { withSpanAttributes } from "../observability.ts";
 import * as RelayDb from "../db.ts";
 
-const relayCorsAllowedMethods = ["GET", "POST", "DELETE", "OPTIONS"] as const;
+const relayCorsAllowedMethods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"] as const;
 const relayCorsAllowedHeaders = [
   "authorization",
   "b3",
@@ -532,6 +534,8 @@ export const clientApi = HttpApiBuilder.group(
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
     const devices = yield* Devices.Devices;
+    const webPushSubscriptions = yield* WebPushSubscriptions.WebPushSubscriptions;
+    const webPushDeliveryQueue = yield* WebPushDeliveryQueue.WebPushDeliveryQueue;
     return handlers
       .handle(
         "listEnvironments",
@@ -546,6 +550,62 @@ export const clientApi = HttpApiBuilder.group(
         Effect.fn("relay.api.client.listDevices")(function* () {
           const { userId } = yield* RelayClientPrincipal;
           return { devices: yield* devices.listForUser({ userId }) };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "getWebPushConfig",
+        Effect.fn("relay.api.client.getWebPushConfig")(function* () {
+          if (!config.webPush) return yield* relayInternalErrorResponse("upstream_unavailable");
+          const { publicKey } = config.webPush;
+          return { applicationServerKey: publicKey };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "registerWebPushSubscription",
+        Effect.fn("relay.api.client.registerWebPushSubscription")(function* (args) {
+          const { userId } = yield* RelayClientPrincipal;
+          return yield* webPushSubscriptions
+            .register({ userId, payload: args.payload })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "unregisterWebPushSubscription",
+        Effect.fn("relay.api.client.unregisterWebPushSubscription")(function* (args) {
+          const { userId } = yield* RelayClientPrincipal;
+          return {
+            ok: yield* webPushSubscriptions
+              .remove({
+                userId,
+                subscriptionId: args.params.subscriptionId,
+              })
+              .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error"))),
+          };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "testWebPushSubscription",
+        Effect.fn("relay.api.client.testWebPushSubscription")(function* (args) {
+          const { userId } = yield* RelayClientPrincipal;
+          const subscription = yield* webPushSubscriptions
+            .get({
+              userId,
+              subscriptionId: args.params.subscriptionId,
+            })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+          if (subscription === null) return { ok: false };
+          yield* webPushDeliveryQueue
+            .enqueue({
+              userId,
+              subscriptionId: subscription.id,
+              eventId: `web-push-test:${subscription.id}`,
+              deepLink: "/",
+              showProjectAndThreadNames: false,
+              title: "T3 Code",
+              body: "Your PWA push notifications are working.",
+            })
+            .pipe(Effect.orDie);
+          return { ok: true };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(

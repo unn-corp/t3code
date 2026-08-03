@@ -981,6 +981,37 @@ jobs:
               "${vercel_scope_args[@]}"
           fi
 
+          verify_static_asset() {
+            local path="$1"
+            local expected_content_type="$2"
+            local headers body content_type
+            headers="$(mktemp)"
+            body="$(mktemp)"
+            trap 'rm -f "$headers" "$body"' RETURN
+            curl --fail --silent --show-error --location --dump-header "$headers" --output "$body" \
+              "https://${verify_domain}$path"
+            content_type="$(tr -d '\r' < "$headers" | awk -F': ' 'tolower($1) == "content-type" { print tolower($2) }' | tail -n 1)"
+            if [[ "$content_type" != *"$expected_content_type"* ]] || grep --quiet --ignore-case '<!doctype html\|<html' "$body"; then
+              echo "Hosted PWA asset check failed for $path (content type: $content_type)." >&2
+              exit 1
+            fi
+            rm -f "$headers" "$body"
+            trap - RETURN
+          }
+
+          # Keep these checks against the alias just updated above. An SPA fallback
+          # returning index.html here would make installed-PWA push impossible.
+          verify_domain="$channel_domain"
+          verify_static_asset "/service-worker.js" "javascript"
+          verify_static_asset "/sw.js" "javascript"
+          verify_static_asset "/manifest.webmanifest" "manifest"
+          verify_static_asset "/sounds/agent-completed.ogg" "audio/ogg"
+
+          if [[ "$channel_name" == "latest" && -n "$router_domain" ]]; then
+            verify_domain="$router_domain"
+            verify_static_asset "/service-worker.js" "javascript"
+          fi
+
   finalize:
     name: Finalize release
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}

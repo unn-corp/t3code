@@ -1,4 +1,4 @@
-import { matchers, routes, type Transform, type VercelConfig } from "@vercel/config/v1";
+import { matchers, type Transform, type VercelConfig } from "@vercel/config/v1";
 
 const ROUTER_HOST = "app.t3.codes";
 const HOSTED_WEB_CHANNEL_COOKIE = "t3code_web_channel";
@@ -23,7 +23,16 @@ function channelCookie(channel: "latest" | "nightly"): string {
   ].join("; ");
 }
 
-export const config: VercelConfig = {
+// `@vercel/config` intentionally models only the modern route shape, while
+// Vercel's runtime still supports this phase marker. The filesystem phase is
+// essential here: the hosted app is an SPA, but its worker, manifest, sounds,
+// and icons must be served as their real static files before the SPA fallback.
+type FilesystemRoute = { readonly handle: "filesystem" };
+type VercelConfigWithFilesystemRoute = Omit<VercelConfig, "routes"> & {
+  readonly routes: ReadonlyArray<NonNullable<VercelConfig["routes"]>[number] | FilesystemRoute>;
+};
+
+export const config = {
   buildCommand:
     'vp run --filter @t3tools/web build && node ../../scripts/apply-web-brand-assets.ts --channel "${VITE_HOSTED_APP_CHANNEL:-latest}"',
   git: {
@@ -61,6 +70,7 @@ export const config: VercelConfig = {
       has: [matchers.host(ROUTER_HOST)],
       dest: `${LATEST_ORIGIN}/$1`,
     },
+    { handle: "filesystem" },
+    { src: "/(.*)", dest: "/index.html" },
   ],
-  rewrites: [routes.rewrite("/(.*)", "/index.html")],
-};
+} satisfies VercelConfigWithFilesystemRoute;

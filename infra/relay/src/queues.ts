@@ -5,3 +5,9 @@ export const RelayApnsDeliveryDeadLetterQueue = Cloudflare.Queues.Queue(
 );
 
 export const RelayApnsDeliveryQueue = Cloudflare.Queues.Queue("RelayApnsDeliveryQueue");
+
+export const RelayWebPushDeliveryDeadLetterQueue = Cloudflare.Queues.Queue(
+  "RelayWebPushDeliveryDeadLetterQueue",
+);
+
+export const RelayWebPushDeliveryQueue = Cloudflare.Queues.Queue("RelayWebPushDeliveryQueue");

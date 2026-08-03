@@ -22,6 +22,8 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
+import * as WebPushDeliveryQueue from "./WebPushDeliveryQueue.ts";
+import * as WebPushSubscriptions from "./WebPushSubscriptions.ts";
 
 export type AgentActivityPublishError =
   | AgentActivityRows.AgentActivityRowUpsertPersistenceError
@@ -52,6 +54,12 @@ export const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const apnsDeliveries = yield* ApnsDeliveries.ApnsDeliveries;
+  const webPushSubscriptions = yield* Effect.serviceOption(
+    WebPushSubscriptions.WebPushSubscriptions,
+  );
+  const webPushDeliveryQueue = yield* Effect.serviceOption(
+    WebPushDeliveryQueue.WebPushDeliveryQueue,
+  );
 
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
@@ -98,7 +106,34 @@ export const make = Effect.gen(function* () {
         ),
       { concurrency: 4 },
     );
-    return deliveriesByTarget.flat();
+    const webPushNotifications =
+      input.deliveryUser.notificationsEnabled && Option.isSome(webPushSubscriptions)
+        ? yield* webPushSubscriptions.value
+            .transition({
+              userId: input.deliveryUser.userId,
+              state: input.state,
+            })
+            .pipe(Effect.orDie)
+        : [];
+    const webPushResults = Option.isSome(webPushDeliveryQueue)
+      ? yield* Effect.forEach(
+          webPushNotifications,
+          (notification) =>
+            webPushDeliveryQueue.value
+              .enqueue({
+                userId: input.deliveryUser.userId,
+                subscriptionId: notification.subscription.id,
+                eventId: notification.eventId,
+                deepLink: notification.deepLink,
+                showProjectAndThreadNames: notification.showProjectAndThreadNames,
+                title: notification.title,
+                body: notification.body,
+              })
+              .pipe(Effect.orDie),
+          { concurrency: 4 },
+        )
+      : [];
+    return [...deliveriesByTarget.flat(), ...webPushResults];
   });
 
   return AgentActivityPublisher.of({

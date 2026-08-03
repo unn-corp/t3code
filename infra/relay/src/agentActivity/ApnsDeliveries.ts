@@ -538,7 +538,7 @@ function deliveryAttemptOutcome(result: Apns.ApnsDeliveryResult) {
 const recoverApnsDeliveryTransportError = (
   input: {
     readonly deviceId: string;
-    readonly kind: RelayDeliveryKind;
+    readonly kind: Exclude<RelayDeliveryKind, "web_push_notification">;
     readonly sourceJobId: string | null;
   },
   cause: Apns.ApnsError,
@@ -596,7 +596,7 @@ function credentialsForTarget(
 
 function expectedCurrentToken(input: {
   readonly target: LiveActivities.TargetRow;
-  readonly kind: RelayDeliveryKind;
+  readonly kind: Exclude<RelayDeliveryKind, "web_push_notification">;
 }): string | null {
   switch (input.kind) {
     case "live_activity_start":
@@ -807,7 +807,7 @@ export const make = Effect.gen(function* () {
 
   const isCurrentSignedJobToken = Effect.fnUntraced(function* (input: {
     readonly target: LiveActivityDeliveryTarget;
-    readonly kind: RelayDeliveryKind;
+    readonly kind: Exclude<RelayDeliveryKind, "web_push_notification">;
     readonly token: string;
   }) {
     return yield* liveActivities.listTargets({ userId: input.target.user_id }).pipe(

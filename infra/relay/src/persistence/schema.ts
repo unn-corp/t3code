@@ -2,6 +2,7 @@ import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
   RelayAgentAwarenessPreferences,
+  RelayWebPushPreferences,
 } from "@t3tools/contracts/relay";
 import {
   boolean,
@@ -56,6 +57,42 @@ export const relayLiveActivities = pgTable(
   (table) => [
     primaryKey({ columns: [table.userId, table.deviceId] }),
     uniqueIndex("idx_relay_live_activities_activity_push_token").on(table.activityPushToken),
+  ],
+);
+
+/** One standards-based Push API subscription for a browser or installed PWA. */
+export const relayWebPushSubscriptions = pgTable(
+  "relay_web_push_subscriptions",
+  {
+    id: varchar("id", { length: 64 }).primaryKey(),
+    userId: varchar("user_id", { length: 255 }).notNull(),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    preferencesJson: jsonb("preferences_json").notNull().$type<RelayWebPushPreferences>(),
+    createdAt: varchar("created_at", { length: 64 }).notNull(),
+    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_relay_web_push_subscriptions_endpoint").on(table.endpoint),
+    index("idx_relay_web_push_subscriptions_user").on(table.userId),
+  ],
+);
+
+/** Durable per-subscription transition baseline prevents replaying old work as new alerts. */
+export const relayWebPushSubscriptionStates = pgTable(
+  "relay_web_push_subscription_states",
+  {
+    subscriptionId: varchar("subscription_id", { length: 64 }).notNull(),
+    environmentId: varchar("environment_id", { length: 191 }).notNull(),
+    threadId: varchar("thread_id", { length: 191 }).notNull(),
+    phase: varchar("phase", { length: 64 }).notNull(),
+    hasActionableProposedPlan: boolean("has_actionable_proposed_plan").notNull().default(false),
+    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.subscriptionId, table.environmentId, table.threadId] }),
+    index("idx_relay_web_push_subscription_states_subscription").on(table.subscriptionId),
   ],
 );
 

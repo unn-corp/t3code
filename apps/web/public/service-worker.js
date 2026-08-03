@@ -12,6 +12,7 @@ self.addEventListener("push", (event) => {
   }
   if (!payload || typeof payload !== "object" || typeof payload.deepLink !== "string") return;
   if (
+    payload.deepLink !== "/" &&
     !/^\/threads\/(?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+\/(?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+$/.test(
       payload.deepLink,
     )
@@ -19,8 +20,14 @@ self.addEventListener("push", (event) => {
     return;
 
   const generic = payload.showProjectAndThreadNames !== true;
-  const title = generic ? "T3 Code" : "T3 Code notification";
-  const body = generic ? "Agent activity needs your attention." : "Open T3 Code to continue.";
+  const title =
+    generic || typeof payload.title !== "string" || payload.title.length === 0
+      ? "T3 Code"
+      : payload.title;
+  const body =
+    generic || typeof payload.body !== "string" || payload.body.length === 0
+      ? "Agent activity needs your attention."
+      : payload.body;
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
@@ -35,9 +42,10 @@ self.addEventListener("notificationclick", (event) => {
   const deepLink = event.notification.data?.deepLink;
   if (
     typeof deepLink !== "string" ||
-    !/^\/threads\/(?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+\/(?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+$/.test(
-      deepLink,
-    )
+    (deepLink !== "/" &&
+      !/^\/threads\/(?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+\/(?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+$/.test(
+        deepLink,
+      ))
   )
     return;
   event.waitUntil(

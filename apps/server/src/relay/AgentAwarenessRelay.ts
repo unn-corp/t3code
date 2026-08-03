@@ -254,15 +254,20 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
       reason: "project-not-found",
     };
   }
+  const awareness = projectThreadAwareness({
+    environmentId: input.environmentId,
+    project: input.project.value,
+    thread: input.thread.value,
+  });
   return {
     projectId: input.thread.value.projectId,
-    state: sanitizeRelayAgentActivityState(
-      projectThreadAwareness({
-        environmentId: input.environmentId,
-        project: input.project.value,
-        thread: input.thread.value,
-      }),
-    ),
+    state:
+      awareness === null
+        ? null
+        : sanitizeRelayAgentActivityState({
+            ...awareness,
+            hasActionableProposedPlan: input.thread.value.hasActionableProposedPlan,
+          }),
     reason: "snapshot",
   };
 }

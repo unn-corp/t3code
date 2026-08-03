@@ -23,6 +23,12 @@ export class RelayConfiguration extends Context.Service<
     readonly clerkPublishableKey: string;
     readonly clerkJwtAudience: string;
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
+    readonly webPushDeliveryJobSigningSecret?: Redacted.Redacted<string>;
+    readonly webPush?: {
+      readonly subject: string;
+      readonly publicKey: string;
+      readonly privateKey: Redacted.Redacted<string>;
+    };
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;
     readonly managedEndpointBaseDomain: string | undefined;

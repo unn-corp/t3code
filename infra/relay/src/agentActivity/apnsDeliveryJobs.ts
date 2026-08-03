@@ -3,7 +3,6 @@ import * as NodeCrypto from "node:crypto";
 import {
   RelayAgentActivityAggregateState,
   RelayAgentAwarenessPhase,
-  type RelayDeliveryKind,
 } from "@t3tools/contracts/relay";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as DateTime from "effect/DateTime";
@@ -244,7 +243,7 @@ export type ApnsDeliveryJobVerificationError = typeof ApnsDeliveryJobVerificatio
 export const isApnsDeliveryJobVerificationError = Schema.is(ApnsDeliveryJobVerificationError);
 
 export function makeApnsDeliveryJobPayload(input: {
-  readonly kind: RelayDeliveryKind;
+  readonly kind: ApnsDeliveryJobPayload["kind"];
   readonly userId: string;
   readonly deviceId: string;
   readonly token: string;

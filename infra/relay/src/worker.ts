@@ -44,7 +44,12 @@ import * as EnvironmentLinks from "./environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./environments/ManagedEndpointAllocations.ts";
 import * as LiveActivities from "./agentActivity/LiveActivities.ts";
 import * as RelayDb from "./db.ts";
-import { RelayApnsDeliveryDeadLetterQueue, RelayApnsDeliveryQueue } from "./queues.ts";
+import {
+  RelayApnsDeliveryDeadLetterQueue,
+  RelayApnsDeliveryQueue,
+  RelayWebPushDeliveryDeadLetterQueue,
+  RelayWebPushDeliveryQueue,
+} from "./queues.ts";
 import * as RelayConfiguration from "./Config.ts";
 import * as AgentActivityPublisher from "./agentActivity/AgentActivityPublisher.ts";
 import * as ApnsClient from "./agentActivity/ApnsClient.ts";
@@ -57,6 +62,9 @@ import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublish
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
+import * as WebPushSubscriptions from "./agentActivity/WebPushSubscriptions.ts";
+import * as WebPushDeliveries from "./agentActivity/WebPushDeliveries.ts";
+import * as WebPushDeliveryQueue from "./agentActivity/WebPushDeliveryQueue.ts";
 
 const webcryptoLayer = Layer.succeed(
   Crypto.Crypto,
@@ -90,6 +98,9 @@ const CloudMintKeyPair = Alchemy.KeyPair("CloudMintKeyPair");
 const ApnsDeliveryJobSigningSecret = Alchemy.makeRandom("ApnsDeliveryJobSigningSecret", {
   bytes: 32,
 });
+const WebPushDeliveryJobSigningSecret = Alchemy.makeRandom("WebPushDeliveryJobSigningSecret", {
+  bytes: 32,
+});
 
 export class Api extends Cloudflare.Worker<Api, {}>()("Api") {}
 
@@ -112,10 +123,13 @@ export const ApiLive = Api.make(
     const { relayPublicOrigin, stage } = yield* RelayDeploymentConfig;
     const apnsDeliveryQueue = yield* RelayApnsDeliveryQueue;
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
+    const webPushDeliveryQueue = yield* RelayWebPushDeliveryQueue;
+    const webPushDeliveryDeadLetterQueue = yield* RelayWebPushDeliveryDeadLetterQueue;
     const cloudMintKeyPair = yield* CloudMintKeyPair;
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
+    const randomWebPushDeliveryJobSigningSecret = yield* WebPushDeliveryJobSigningSecret;
     const observability = yield* RelayObservability;
 
     //
@@ -129,8 +143,13 @@ export const ApiLive = Api.make(
     const apnsKeyId = yield* Config.string("APNS_KEY_ID");
     const apnsBundleId = yield* Config.string("APNS_BUNDLE_ID");
     const apnsPrivateKey = yield* Config.redacted("APNS_PRIVATE_KEY");
+    const webPushVapidSubject = yield* Config.string("WEB_PUSH_VAPID_SUBJECT");
+    const webPushVapidPublicKey = yield* Config.string("WEB_PUSH_VAPID_PUBLIC_KEY");
+    const webPushVapidPrivateKey = yield* Config.redacted("WEB_PUSH_VAPID_PRIVATE_KEY");
     const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
     const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
+    const webPushDeliveryJobSigningSecret = yield* randomWebPushDeliveryJobSigningSecret;
+    const webPushDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(webPushDeliveryQueue);
 
     const axiomDatasetName = yield* observability.traces.name;
     const axiomIngestToken = yield* observability.workerIngestToken.token;
@@ -167,6 +186,12 @@ export const ApiLive = Api.make(
           privateKey: apnsPrivateKey,
         },
         apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
+        webPushDeliveryJobSigningSecret: yield* webPushDeliveryJobSigningSecret,
+        webPush: {
+          subject: webPushVapidSubject,
+          publicKey: webPushVapidPublicKey,
+          privateKey: webPushVapidPrivateKey,
+        },
         clerkSecretKey,
         clerkPublishableKey,
         clerkJwtAudience,
@@ -187,6 +212,18 @@ export const ApiLive = Api.make(
 
     const runtimeLayer = Layer.empty.pipe(
       Layer.provideMerge(MobileRegistrations.layer),
+      Layer.provideMerge(
+        Layer.merge(
+          WebPushSubscriptions.layer,
+          WebPushDeliveries.layer.pipe(Layer.provide(WebPushSubscriptions.layer)),
+        ),
+      ),
+      Layer.provideMerge(
+        WebPushDeliveryQueue.layerCloudflareQueues(
+          webPushDeliveryQueueSender,
+          alchemyRuntimeContext,
+        ),
+      ),
       Layer.provideMerge(AgentActivityPublisher.layer),
       Layer.provideMerge(EnvironmentConnector.layer),
       Layer.provideMerge(EnvironmentLinker.layer),
@@ -204,9 +241,8 @@ export const ApiLive = Api.make(
       Layer.provideMerge(
         ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender, alchemyRuntimeContext),
       ),
-      Layer.provideMerge(AgentActivityRows.layer),
-      Layer.provideMerge(Devices.layer),
-      Layer.provideMerge(EnvironmentCredentials.layer),
+      Layer.provideMerge(Layer.merge(AgentActivityRows.layer, Devices.layer)),
+      Layer.provideMerge(Layer.merge(EnvironmentCredentials.layer, LiveActivities.layer)),
       Layer.provideMerge(
         Layer.mergeAll(
           EnvironmentLinks.layer,
@@ -214,7 +250,6 @@ export const ApiLive = Api.make(
           ManagedTunnelLimits.layer,
         ),
       ),
-      Layer.provideMerge(LiveActivities.layer),
       Layer.provideMerge(DeliveryAttempts.layer),
       Layer.provideMerge(RelayTokens.layer),
       Layer.provideMerge(
@@ -249,6 +284,28 @@ export const ApiLive = Api.make(
             ApnsDeliveries.ApnsDeliveries.pipe(
               Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
               Effect.withSpan("relay.apn_delivery_queue.process_message"),
+            ),
+          ),
+          Effect.provide(runtimeLayer),
+        ),
+    );
+
+    yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
+      webPushDeliveryQueue,
+      {
+        batchSize: 10,
+        maxRetries: 5,
+        maxWaitTime: "5 seconds",
+        retryDelay: "30 seconds",
+        deadLetterQueue: webPushDeliveryDeadLetterQueue.queueName as unknown as string,
+      },
+      (stream) =>
+        stream.pipe(
+          Stream.withSpan("relay.web_push_delivery_queue.process_batch"),
+          Stream.runForEach((message) =>
+            WebPushDeliveries.WebPushDeliveries.pipe(
+              Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
+              Effect.withSpan("relay.web_push_delivery_queue.process_message"),
             ),
           ),
           Effect.provide(runtimeLayer),

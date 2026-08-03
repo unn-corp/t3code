@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
@@ -34,6 +35,47 @@ export const RelayAgentAwarenessPreferences = Schema.Struct({
   notifyOnFailure: Schema.Boolean,
 });
 export type RelayAgentAwarenessPreferences = typeof RelayAgentAwarenessPreferences.Type;
+
+/** Preferences persisted with one installed browser/PWA subscription. */
+export const RelayWebPushPreferences = Schema.Struct({
+  enabled: Schema.Boolean,
+  notifyOnCompletion: Schema.Boolean,
+  notifyOnPlanReady: Schema.Boolean,
+  notifyOnInput: Schema.Boolean,
+  notifyOnFailure: Schema.Boolean,
+  showProjectAndThreadNames: Schema.Boolean,
+});
+export type RelayWebPushPreferences = typeof RelayWebPushPreferences.Type;
+
+export const RelayWebPushSubscriptionKeys = Schema.Struct({
+  p256dh: TrimmedNonEmptyString,
+  auth: TrimmedNonEmptyString,
+});
+export type RelayWebPushSubscriptionKeys = typeof RelayWebPushSubscriptionKeys.Type;
+
+export const RelayWebPushSubscriptionRegistrationRequest = Schema.Struct({
+  endpoint: TrimmedNonEmptyString.check(Schema.isPattern(/^https:\/\//u)),
+  keys: RelayWebPushSubscriptionKeys,
+  preferences: RelayWebPushPreferences,
+});
+export type RelayWebPushSubscriptionRegistrationRequest =
+  typeof RelayWebPushSubscriptionRegistrationRequest.Type;
+
+export const RelayWebPushSubscriptionRegistrationResponse = Schema.Struct({
+  subscriptionId: TrimmedNonEmptyString,
+});
+export type RelayWebPushSubscriptionRegistrationResponse =
+  typeof RelayWebPushSubscriptionRegistrationResponse.Type;
+
+export const RelayWebPushConfigResponse = Schema.Struct({
+  applicationServerKey: TrimmedNonEmptyString,
+});
+export type RelayWebPushConfigResponse = typeof RelayWebPushConfigResponse.Type;
+
+export const RelayWebPushSubscriptionParams = Schema.Struct({
+  subscriptionId: TrimmedNonEmptyString,
+});
+export type RelayWebPushSubscriptionParams = typeof RelayWebPushSubscriptionParams.Type;
 
 export const RelayApnsEnvironment = Schema.Literals(["sandbox", "production"]);
 export type RelayApnsEnvironment = typeof RelayApnsEnvironment.Type;
@@ -103,6 +145,7 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  hasActionableProposedPlan: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 
@@ -834,6 +877,7 @@ export const RelayDeliveryKind = Schema.Literals([
   "live_activity_update",
   "live_activity_end",
   "push_notification",
+  "web_push_notification",
 ]);
 export type RelayDeliveryKind = typeof RelayDeliveryKind.Type;
 
@@ -845,6 +889,8 @@ export const RelayDeliveryResult = Schema.Struct({
   apnsStatus: Schema.NullOr(Schema.Number),
   apnsReason: Schema.NullOr(Schema.String),
   apnsId: Schema.NullOr(Schema.String),
+  webPushStatus: Schema.optional(Schema.NullOr(Schema.Number)),
+  webPushReason: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type RelayDeliveryResult = typeof RelayDeliveryResult.Type;
 
@@ -936,6 +982,49 @@ export const RelayUnregisterDeviceEndpoint = HttpApiEndpoint.delete(
   },
 ).annotate(OpenApi.Summary, "Unregister a mobile device");
 
+export const RelayWebPushConfigEndpoint = HttpApiEndpoint.get(
+  "getWebPushConfig",
+  "/v1/client/web-push/config",
+  {
+    headers: RelayBearerRequestHeaders,
+    success: RelayWebPushConfigResponse,
+    error: RelayAuthAndInternalErrors,
+  },
+).annotate(OpenApi.Summary, "Read the Web Push application server key");
+
+export const RelayRegisterWebPushSubscriptionEndpoint = HttpApiEndpoint.put(
+  "registerWebPushSubscription",
+  "/v1/client/web-push/subscriptions",
+  {
+    headers: RelayBearerRequestHeaders,
+    payload: RelayWebPushSubscriptionRegistrationRequest,
+    success: RelayWebPushSubscriptionRegistrationResponse,
+    error: RelayAuthAndInternalErrors,
+  },
+).annotate(OpenApi.Summary, "Register or update an installed browser/PWA subscription");
+
+export const RelayUnregisterWebPushSubscriptionEndpoint = HttpApiEndpoint.delete(
+  "unregisterWebPushSubscription",
+  "/v1/client/web-push/subscriptions/:subscriptionId",
+  {
+    headers: RelayBearerRequestHeaders,
+    params: RelayWebPushSubscriptionParams,
+    success: RelayOkResponse,
+    error: RelayAuthAndInternalErrors,
+  },
+).annotate(OpenApi.Summary, "Unregister an installed browser/PWA subscription");
+
+export const RelayTestWebPushSubscriptionEndpoint = HttpApiEndpoint.post(
+  "testWebPushSubscription",
+  "/v1/client/web-push/subscriptions/:subscriptionId/test",
+  {
+    headers: RelayBearerRequestHeaders,
+    params: RelayWebPushSubscriptionParams,
+    success: RelayOkResponse,
+    error: RelayAuthAndInternalErrors,
+  },
+).annotate(OpenApi.Summary, "Queue a test notification for an installed browser/PWA subscription");
+
 export const RelayMobileGroup = HttpApiGroup.make("mobile")
   .add(
     RelayRegisterDeviceEndpoint,
@@ -953,6 +1042,10 @@ export const RelayClientGroup = HttpApiGroup.make("client")
       success: RelayListEnvironmentsResponse,
       error: RelayAuthAndInternalErrors,
     }).annotate(OpenApi.Summary, "List linked environments"),
+    RelayWebPushConfigEndpoint,
+    RelayRegisterWebPushSubscriptionEndpoint,
+    RelayUnregisterWebPushSubscriptionEndpoint,
+    RelayTestWebPushSubscriptionEndpoint,
     HttpApiEndpoint.get("listDevices", "/v1/client/devices", {
       headers: RelayBearerRequestHeaders,
       success: RelayListDevicesResponse,
