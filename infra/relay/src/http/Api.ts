@@ -1047,6 +1047,134 @@ export const serverApi = HttpApiBuilder.group(
   }),
 );
 
+export const pwaApi = HttpApiBuilder.group(
+  RelayApi,
+  "pwa",
+  Effect.fnUntraced(function* (handlers) {
+    const config = yield* RelayConfiguration.RelayConfiguration;
+    const subscriptions = yield* WebPushSubscriptions.WebPushSubscriptions;
+    const queue = yield* WebPushDeliveryQueue.WebPushDeliveryQueue;
+    const publishSignatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
+    return handlers
+      .handle(
+        "getPwaWebPushConfig",
+        Effect.fn("relay.api.pwa.get_web_push_config")(function* () {
+          if (!config.webPush) return yield* relayInternalErrorResponse("upstream_unavailable");
+          return { applicationServerKey: config.webPush.publicKey };
+        }),
+      )
+      .handle(
+        "publishPwaAgentActivity",
+        Effect.fn("relay.api.pwa.publish_agent_activity")(
+          function* (args) {
+            const { params, payload } = args;
+            yield* publishSignatures.verify({
+              environmentId: params.environmentId,
+              environmentPublicKey: payload.environmentPublicKey,
+              threadId: params.threadId,
+              request: { state: payload.state, proof: payload.proof },
+            });
+            // This anonymous route is deliberately separate from the account
+            // relay projection. It advances only per-installation baselines and
+            // does not retain thread activity when nobody installed this PWA.
+            const notifications = yield* subscriptions
+              .transitionEnvironment({ environmentId: params.environmentId, state: payload.state })
+              .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+            const deliveries = yield* Effect.forEach(
+              notifications,
+              (notification) =>
+                queue
+                  .enqueue({
+                    userId: notification.subscription.userId,
+                    subscriptionId: notification.subscription.id,
+                    eventId: notification.eventId,
+                    deepLink: notification.deepLink,
+                    showProjectAndThreadNames: notification.showProjectAndThreadNames,
+                    title: notification.title,
+                    body: notification.body,
+                  })
+                  .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error"))),
+              { concurrency: 4 },
+            );
+            return { ok: true, deliveries };
+          },
+          mapErrorTags({
+            EnvironmentPublishPublicKeyMissing: (_error, traceId) =>
+              new RelayAgentActivityPublishProofInvalidError({
+                code: "agent_activity_publish_proof_invalid",
+                reason: "invalid_signature_or_payload",
+                traceId,
+              }),
+            EnvironmentPublishSignatureExpired: (_error, traceId) =>
+              new RelayAgentActivityPublishProofExpiredError({
+                code: "agent_activity_publish_proof_expired",
+                traceId,
+              }),
+            EnvironmentPublishSignatureInvalid: (_error, traceId) =>
+              new RelayAgentActivityPublishProofInvalidError({
+                code: "agent_activity_publish_proof_invalid",
+                reason: "invalid_signature_or_payload",
+                traceId,
+              }),
+            DpopProofReplayPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+          }),
+        ),
+      )
+      .handle(
+        "registerPwaWebPushSubscription",
+        Effect.fn("relay.api.pwa.register_web_push_subscription")(function* (args) {
+          return yield* subscriptions
+            .registerPwa({ payload: args.payload })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+        }),
+      )
+      .handle(
+        "removePwaWebPushSubscription",
+        Effect.fn("relay.api.pwa.remove_web_push_subscription")(function* (args) {
+          return {
+            ok: yield* subscriptions
+              .removePwa({
+                subscriptionId: args.params.subscriptionId,
+                installationId: args.payload.installation.installationId,
+                installationSecret: args.payload.installation.installationSecret,
+              })
+              .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error"))),
+          };
+        }),
+      )
+      .handle(
+        "testPwaWebPushSubscription",
+        Effect.fn("relay.api.pwa.test_web_push_subscription")(function* (args) {
+          const subscription = yield* subscriptions
+            .getPwa({
+              subscriptionId: args.params.subscriptionId,
+              installationId: args.payload.installation.installationId,
+              installationSecret: args.payload.installation.installationSecret,
+            })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+          if (!subscription) return { ok: false };
+          yield* queue
+            .enqueue({
+              userId: subscription.userId,
+              subscriptionId: subscription.id,
+              eventId: `pwa-web-push-test:${subscription.id}`,
+              deepLink: "/",
+              showProjectAndThreadNames: false,
+              title: "T3 Code",
+              body: "Your PWA push notifications are working.",
+            })
+            .pipe(Effect.orDie);
+          return { ok: true };
+        }),
+      );
+  }),
+);
+
 class ClerkTokenVerificationFailed extends Schema.TaggedErrorClass<ClerkTokenVerificationFailed>()(
   "ClerkTokenVerificationFailed",
   {

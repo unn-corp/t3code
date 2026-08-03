@@ -205,7 +205,33 @@ export const make = Effect.gen(function* () {
           }),
         { concurrency: 4 },
       );
-      const deliveries = deliveriesByUser.flat();
+      // Anonymous installed PWAs are scoped directly to an environment, not
+      // to a T3 Connect user. Their delivery must therefore happen outside
+      // the linked-user fan-out above.
+      const pwaNotifications = Option.isSome(webPushSubscriptions)
+        ? yield* webPushSubscriptions.value
+            .transitionEnvironment({ environmentId: input.environmentId, state: input.state })
+            .pipe(Effect.orDie)
+        : [];
+      const pwaDeliveries = Option.isSome(webPushDeliveryQueue)
+        ? yield* Effect.forEach(
+            pwaNotifications,
+            (notification) =>
+              webPushDeliveryQueue.value
+                .enqueue({
+                  userId: notification.subscription.userId,
+                  subscriptionId: notification.subscription.id,
+                  eventId: notification.eventId,
+                  deepLink: notification.deepLink,
+                  showProjectAndThreadNames: notification.showProjectAndThreadNames,
+                  title: notification.title,
+                  body: notification.body,
+                })
+                .pipe(Effect.orDie),
+            { concurrency: 4 },
+          )
+        : [];
+      const deliveries = [...deliveriesByUser.flat(), ...pwaDeliveries];
       return {
         ok: true,
         deliveries: deliveries.filter(

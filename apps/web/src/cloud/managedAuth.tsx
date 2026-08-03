@@ -13,7 +13,6 @@ import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAtomCommand } from "../state/use-atom-command";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
-import { unsubscribeBrowserPush } from "../agentNotifications/browserNotifications";
 
 let relayTokenProvider: (() => Promise<string | null>) | null = null;
 
@@ -58,40 +57,13 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     const nextAccount = isSignedIn && userId ? userId : null;
     observedAccountRef.current = nextAccount;
 
-    const queueAccountCleanup = (readPreviousClerkToken = relayTokenProvider) => {
-      // This is deliberately local and does not depend on the old Clerk token:
-      // on a shared device it prevents a previous account receiving pushes even
-      // if remote deletion cannot complete during sign-out.
-      const webPushSubscriptionId =
-        typeof window === "undefined"
-          ? null
-          : window.localStorage.getItem("t3code.webPushSubscriptionId");
-      void unsubscribeBrowserPush().catch(() => undefined);
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem("t3code.webPushSubscriptionId");
-      }
+    const queueAccountCleanup = () => {
+      // PWA Web Push is installation-scoped. Cloud account cleanup must never
+      // unsubscribe it or erase its local installation credential.
       const previousTransition = accountTransitionRef.current ?? Promise.resolve();
       accountTransitionRef.current = previousTransition.then(async () => {
-        const deleteRemoteWebPushSubscription = async () => {
-          if (!webPushSubscriptionId || !readPreviousClerkToken) return;
-          const clerkToken = await readPreviousClerkToken();
-          if (!clerkToken) return;
-          await runtime.runPromiseExit(
-            ManagedRelay.ManagedRelayClient.pipe(
-              Effect.flatMap((client) =>
-                client.unregisterWebPushSubscription
-                  ? client.unregisterWebPushSubscription({
-                      clerkToken,
-                      subscriptionId: webPushSubscriptionId,
-                    })
-                  : Effect.void,
-              ),
-            ),
-          );
-        };
-        const [environmentResult, _webPushResult, tokenResult] = await Promise.all([
+        const [environmentResult, tokenResult] = await Promise.all([
           removeRelayEnvironments(),
-          deleteRemoteWebPushSubscription(),
           settleAsyncResult(() =>
             runtime.runPromiseExit(
               ManagedRelay.ManagedRelayClient.pipe(
@@ -108,10 +80,9 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     };
 
     if (!isSignedIn || !userId) {
-      const previousReadClerkToken = relayTokenProvider;
       deactivateManagedRelayAuthentication();
       if (previousAccount !== null) {
-        void queueAccountCleanup(previousReadClerkToken);
+        void queueAccountCleanup();
       }
     } else {
       const tokenProvider = () => getToken(resolveRelayClerkTokenOptions());
@@ -130,9 +101,8 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
         })();
       };
       if (previousAccount !== undefined && previousAccount !== null && previousAccount !== userId) {
-        const previousReadClerkToken = relayTokenProvider;
         deactivateManagedRelayAuthentication();
-        activateAfterTransition(queueAccountCleanup(previousReadClerkToken));
+        activateAfterTransition(queueAccountCleanup());
       } else {
         activateAfterTransition(accountTransitionRef.current ?? Promise.resolve());
       }

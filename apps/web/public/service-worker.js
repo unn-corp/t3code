@@ -1,6 +1,7 @@
 /* global self, clients */
 
-// Push registration is added by the authenticated notification settings flow.
+// Push registration is tied to a local installed-PWA credential, never a T3
+// Connect account. This worker intentionally has no account/session data.
 // This worker intentionally does not cache API or thread data: auth/session
 // state must always be fetched from the current environment.
 self.addEventListener("push", (event) => {

@@ -66,6 +66,11 @@ export const relayWebPushSubscriptions = pgTable(
   {
     id: varchar("id", { length: 64 }).primaryKey(),
     userId: varchar("user_id", { length: 255 }).notNull(),
+    // Anonymous PWA ownership is deliberately separate from a T3 Connect
+    // account. Only a one-way hash of the opaque bearer credential is stored.
+    environmentId: varchar("environment_id", { length: 191 }),
+    installationId: varchar("installation_id", { length: 128 }),
+    installationSecretHash: text("installation_secret_hash"),
     endpoint: text("endpoint").notNull(),
     p256dh: text("p256dh").notNull(),
     auth: text("auth").notNull(),
@@ -76,6 +81,8 @@ export const relayWebPushSubscriptions = pgTable(
   (table) => [
     uniqueIndex("idx_relay_web_push_subscriptions_endpoint").on(table.endpoint),
     index("idx_relay_web_push_subscriptions_user").on(table.userId),
+    index("idx_relay_web_push_subscriptions_environment").on(table.environmentId),
+    uniqueIndex("idx_relay_web_push_subscriptions_installation").on(table.installationId),
   ],
 );
 

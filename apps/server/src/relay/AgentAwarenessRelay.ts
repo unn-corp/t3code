@@ -35,11 +35,11 @@ import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
-  PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
+import { relayUrlConfig } from "../cloud/publicConfig.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
@@ -320,22 +320,31 @@ export const make = Effect.gen(function* () {
       readSecretString(RELAY_ISSUER_SECRET),
       readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
     ]);
-    return url && environmentCredential
-      ? { url, issuer: issuer ?? url, environmentCredential }
-      : null;
+    if (url && environmentCredential) {
+      return { url, issuer: issuer ?? url, environmentCredential };
+    }
+    // Installed PWAs are not T3 Connect clients. A packaged server already
+    // has the public relay origin embedded; it signs each publication with
+    // its own environment key instead of using an account credential.
+    return yield* relayUrlConfig.pipe(
+      Effect.map((publicRelayUrl) => ({
+        url: publicRelayUrl,
+        issuer: publicRelayUrl,
+        environmentCredential: null,
+      })),
+      Effect.orElseSucceed(() => null),
+    );
   });
-
-  const readPublishAgentActivityEnabled = readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET).pipe(
-    Effect.map(isAgentActivityPublishingEnabled),
-  );
 
   const makeRelayClient = (relayConfig: {
     readonly url: string;
-    readonly environmentCredential: string;
+    readonly environmentCredential: string | null;
   }) =>
     HttpApiClient.make(RelayApi, {
       baseUrl: relayConfig.url,
-      transformClient: relayEnvironmentClient(relayConfig.environmentCredential),
+      ...(relayConfig.environmentCredential
+        ? { transformClient: relayEnvironmentClient(relayConfig.environmentCredential) }
+        : {}),
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
   // Deadlines for publishes that need confirmation (tombstones and
@@ -347,18 +356,9 @@ export const make = Effect.gen(function* () {
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
 
   const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
-    const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
-      Effect.orElseSucceed(() => false),
-    );
-    if (!publishAgentActivity) {
-      yield* Effect.logDebug("agent activity publish skipped; publication disabled", {
-        threadId,
-      });
-      return;
-    }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
     if (!relayConfig) {
-      yield* Effect.logDebug("agent activity publish skipped; relay link credentials unavailable", {
+      yield* Effect.logDebug("agent activity publish skipped; relay configuration unavailable", {
         threadId,
       });
       return;
@@ -390,16 +390,19 @@ export const make = Effect.gen(function* () {
           reason: input.reason,
         });
 
-        const response = yield* relayClient.server.publishAgentActivity({
-          params: {
-            environmentId,
-            threadId,
-          },
-          payload: {
-            state: input.state,
-            proof,
-          },
-        });
+        const response = relayConfig.environmentCredential
+          ? yield* relayClient.server.publishAgentActivity({
+              params: { environmentId, threadId },
+              payload: { state: input.state, proof },
+            })
+          : yield* relayClient.pwa.publishPwaAgentActivity({
+              params: { environmentId, threadId },
+              payload: {
+                environmentPublicKey: cloudLinkKeyPair.publicKey,
+                state: input.state,
+                proof,
+              },
+            });
 
         yield* Effect.logInfo("agent activity publish completed", {
           environmentId,
@@ -517,16 +520,9 @@ export const make = Effect.gen(function* () {
     );
 
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
-    const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
-      Effect.orElseSucceed(() => false),
-    );
-    if (!publishAgentActivity) {
-      yield* Effect.logDebug("agent activity snapshot skipped; publication disabled");
-      return false;
-    }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
     if (!relayConfig) {
-      yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
+      yield* Effect.logDebug("agent activity snapshot skipped; relay configuration unavailable");
       return false;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
@@ -582,22 +578,21 @@ export const make = Effect.gen(function* () {
 
   const start: AgentAwarenessRelay["Service"]["start"] = Effect.fn("AgentAwarenessRelay.start")(
     function* () {
-      const [relayConfig, publishEnabled] = yield* Effect.all([
-        readRelayConfig.pipe(Effect.orElseSucceed(() => null)),
-        readPublishAgentActivityEnabled.pipe(Effect.orElseSucceed(() => false)),
-      ]);
+      const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
       const startupState = resolveAgentActivityPublishingStartupState({
         relayConfigured: relayConfig !== null,
-        publishEnabled,
+        // PWA delivery is installation-scoped and independent of the old
+        // account-level T3 Connect publishing preference.
+        publishEnabled: true,
       });
       switch (startupState) {
         case "waiting-for-link":
           yield* Effect.logInfo(
-            "agent activity publishing standby; waiting for T3 Connect link reconciliation",
+            "agent activity publishing standby; waiting for relay configuration",
           );
           break;
         case "disabled":
-          yield* Effect.logInfo("agent activity publishing disabled by T3 Connect configuration");
+          yield* Effect.logInfo("agent activity publishing disabled by configuration");
           break;
         case "enabled":
           yield* Effect.logInfo("agent activity publishing enabled", {

@@ -61,6 +61,26 @@ export const RelayWebPushSubscriptionRegistrationRequest = Schema.Struct({
 export type RelayWebPushSubscriptionRegistrationRequest =
   typeof RelayWebPushSubscriptionRegistrationRequest.Type;
 
+/**
+ * A random credential held by one browser installation. It deliberately has
+ * no relation to a Clerk account or T3 Connect identity.
+ */
+export const RelayPwaInstallationCredentials = Schema.Struct({
+  installationId: TrimmedNonEmptyString,
+  installationSecret: TrimmedNonEmptyString,
+});
+export type RelayPwaInstallationCredentials = typeof RelayPwaInstallationCredentials.Type;
+
+export const RelayPwaWebPushSubscriptionRegistrationRequest = Schema.Struct({
+  endpoint: TrimmedNonEmptyString.check(Schema.isPattern(/^https:\/\//u)),
+  keys: RelayWebPushSubscriptionKeys,
+  preferences: RelayWebPushPreferences,
+  environmentId: EnvironmentId,
+  installation: RelayPwaInstallationCredentials,
+});
+export type RelayPwaWebPushSubscriptionRegistrationRequest =
+  typeof RelayPwaWebPushSubscriptionRegistrationRequest.Type;
+
 export const RelayWebPushSubscriptionRegistrationResponse = Schema.Struct({
   subscriptionId: TrimmedNonEmptyString,
 });
@@ -1163,6 +1183,88 @@ export const RelayServerGroup = HttpApiGroup.make("server")
   .annotate(OpenApi.Description, "Environment-authenticated activity publication.")
   .middleware(RelayEnvironmentAuth);
 
+/**
+ * Browser PWA push is intentionally independent of the T3 Connect client
+ * group. A per-installation secret authorizes mutations; no account token is
+ * involved.
+ */
+export const RelayPwaWebPushConfigEndpoint = HttpApiEndpoint.get(
+  "getPwaWebPushConfig",
+  "/v1/pwa/web-push/config",
+  {
+    success: RelayWebPushConfigResponse,
+    error: [RelayInternalError],
+  },
+).annotate(OpenApi.Summary, "Read the PWA Web Push application server key");
+
+export const RelayPwaAgentActivityPublishRequest = Schema.Struct({
+  environmentPublicKey: TrimmedNonEmptyString,
+  state: Schema.NullOr(RelayAgentActivityState),
+  proof: TrimmedNonEmptyString,
+});
+export type RelayPwaAgentActivityPublishRequest = typeof RelayPwaAgentActivityPublishRequest.Type;
+
+export const RelayPublishPwaAgentActivityEndpoint = HttpApiEndpoint.post(
+  "publishPwaAgentActivity",
+  "/v1/pwa/environments/:environmentId/threads/:threadId/agent-activity",
+  {
+    params: Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId }),
+    payload: RelayPwaAgentActivityPublishRequest,
+    success: RelayPublishResponse,
+    error: [
+      RelayAgentActivityPublishProofExpiredError,
+      RelayAgentActivityPublishProofInvalidError,
+      RelayInternalError,
+    ],
+  },
+).annotate(OpenApi.Summary, "Publish signed activity for anonymous installed PWAs");
+
+export const RelayRegisterPwaWebPushSubscriptionEndpoint = HttpApiEndpoint.put(
+  "registerPwaWebPushSubscription",
+  "/v1/pwa/web-push/subscriptions",
+  {
+    payload: RelayPwaWebPushSubscriptionRegistrationRequest,
+    success: RelayWebPushSubscriptionRegistrationResponse,
+    error: [RelayInternalError],
+  },
+).annotate(OpenApi.Summary, "Register an anonymous installed-PWA subscription");
+
+const RelayPwaWebPushSubscriptionMutation = Schema.Struct({
+  installation: RelayPwaInstallationCredentials,
+});
+
+export const RelayRemovePwaWebPushSubscriptionEndpoint = HttpApiEndpoint.post(
+  "removePwaWebPushSubscription",
+  "/v1/pwa/web-push/subscriptions/:subscriptionId/remove",
+  {
+    params: RelayWebPushSubscriptionParams,
+    payload: RelayPwaWebPushSubscriptionMutation,
+    success: RelayOkResponse,
+    error: [RelayInternalError],
+  },
+).annotate(OpenApi.Summary, "Remove an anonymous installed-PWA subscription");
+
+export const RelayTestPwaWebPushSubscriptionEndpoint = HttpApiEndpoint.post(
+  "testPwaWebPushSubscription",
+  "/v1/pwa/web-push/subscriptions/:subscriptionId/test",
+  {
+    params: RelayWebPushSubscriptionParams,
+    payload: RelayPwaWebPushSubscriptionMutation,
+    success: RelayOkResponse,
+    error: [RelayInternalError],
+  },
+).annotate(OpenApi.Summary, "Queue a test for an anonymous installed-PWA subscription");
+
+export const RelayPwaGroup = HttpApiGroup.make("pwa")
+  .add(
+    RelayPwaWebPushConfigEndpoint,
+    RelayPublishPwaAgentActivityEndpoint,
+    RelayRegisterPwaWebPushSubscriptionEndpoint,
+    RelayRemovePwaWebPushSubscriptionEndpoint,
+    RelayTestPwaWebPushSubscriptionEndpoint,
+  )
+  .annotate(OpenApi.Description, "Anonymous, installation-scoped PWA Web Push.");
+
 export const RelayApi = HttpApi.make("RelayApi")
   .add(
     RelayHealthGroup,
@@ -1172,6 +1274,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayTokenGroup,
     RelayDpopClientGroup,
     RelayServerGroup,
+    RelayPwaGroup,
   )
   .annotate(OpenApi.Title, "T3 Code Relay API")
   .annotate(OpenApi.Version, "1.0.0")

@@ -54,7 +54,6 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import * as Effect from "effect/Effect";
-import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import {
   canCheckForUpdate,
@@ -165,8 +164,12 @@ import {
   unsubscribeBrowserPush,
   type BrowserNotificationStatus,
 } from "../../agentNotifications/browserNotifications";
-import { readManagedRelayClerkToken } from "../../cloud/managedAuth";
-import { runtime } from "../../lib/runtime";
+import {
+  getPwaPushConfig,
+  registerPwaPushSubscription,
+  removePwaPushSubscription,
+  testPwaPushSubscription,
+} from "../../agentNotifications/pwaPushRelay";
 
 const THEME_OPTIONS = [
   {
@@ -336,6 +339,7 @@ function withoutProviderInstanceFavorites(
 }
 
 function PwaNotificationSettings() {
+  const primaryEnvironment = usePrimaryEnvironment();
   const notificationPreferences = useClientSettings((value) => value.agentNotifications);
   const updateClientSettings = useUpdateClientSettings();
   const [status, setStatus] = useState<BrowserNotificationStatus>(() =>
@@ -367,17 +371,8 @@ function PwaNotificationSettings() {
     let cancelled = false;
     void (async () => {
       try {
-        const clerkToken = await readManagedRelayClerkToken();
-        if (!clerkToken) return;
-        const result = await runtime.runPromise(
-          ManagedRelay.ManagedRelayClient.pipe(
-            Effect.flatMap((relay) => {
-              if (!relay.getWebPushConfig) return Effect.die("Web Push is unavailable.");
-              return relay.getWebPushConfig({ clerkToken });
-            }),
-          ),
-        );
-        if (!cancelled) setVapidPublicKey(result.applicationServerKey);
+        const applicationServerKey = await getPwaPushConfig();
+        if (!cancelled) setVapidPublicKey(applicationServerKey);
       } catch {
         // The relay may not be configured for a local-only installation yet.
       } finally {
@@ -400,33 +395,16 @@ function PwaNotificationSettings() {
 
   const persistRemoteSubscription = useCallback(
     async (subscription: PushSubscription, preferences: typeof notificationPreferences) => {
-      const serialized = subscription.toJSON();
-      const p256dh = serialized.keys?.p256dh;
-      const auth = serialized.keys?.auth;
-      if (!p256dh || !auth)
-        throw new Error("This browser returned an invalid Web Push subscription.");
-      const clerkToken = await readManagedRelayClerkToken();
-      if (!clerkToken)
-        throw new Error("Sign in to T3 Connect before enabling remote notifications.");
-      const response = await runtime.runPromise(
-        ManagedRelay.ManagedRelayClient.pipe(
-          Effect.flatMap((relay) => {
-            if (!relay.registerWebPushSubscription) return Effect.die("Web Push is unavailable.");
-            return relay.registerWebPushSubscription({
-              clerkToken,
-              payload: {
-                endpoint: subscription.endpoint,
-                keys: { p256dh, auth },
-                preferences,
-              },
-            });
-          }),
-        ),
-      );
-      subscriptionIdRef.current = response.subscriptionId;
-      window.localStorage.setItem("t3code.webPushSubscriptionId", response.subscriptionId);
+      if (!primaryEnvironment) throw new Error("Connect this PWA to a T3 Code server first.");
+      const subscriptionId = await registerPwaPushSubscription({
+        environmentId: primaryEnvironment.environmentId,
+        subscription,
+        preferences,
+      });
+      subscriptionIdRef.current = subscriptionId;
+      window.localStorage.setItem("t3code.webPushSubscriptionId", subscriptionId);
     },
-    [],
+    [primaryEnvironment],
   );
 
   const enableNotifications = useCallback(async () => {
@@ -437,7 +415,7 @@ function PwaNotificationSettings() {
           title: "Remote notifications are unavailable",
           description: isConfigLoading
             ? "The relay configuration is still loading. Try again in a moment."
-            : "Sign in to T3 Connect and ensure this relay is configured for Web Push.",
+            : "This PWA could not reach its Web Push service. Check this device's T3 Code connection and try again.",
         }),
       );
       return;
@@ -506,23 +484,9 @@ function PwaNotificationSettings() {
     window.localStorage.removeItem("t3code.webPushSubscriptionId");
     updatePreferences({ enabled: false });
     if (subscriptionId) {
-      void (async () => {
-        try {
-          const clerkToken = await readManagedRelayClerkToken();
-          if (!clerkToken) return;
-          await runtime.runPromise(
-            ManagedRelay.ManagedRelayClient.pipe(
-              Effect.flatMap((relay) =>
-                relay.unregisterWebPushSubscription
-                  ? relay.unregisterWebPushSubscription({ clerkToken, subscriptionId })
-                  : Effect.void,
-              ),
-            ),
-          );
-        } catch {
-          // Local unsubscription already prevents delivery for this installation.
-        }
-      })();
+      void removePwaPushSubscription(subscriptionId).catch(() => {
+        // Local unsubscription already prevents delivery for this installation.
+      });
     }
   }, [updatePreferences]);
 
@@ -531,17 +495,7 @@ function PwaNotificationSettings() {
     if (!subscriptionId) return;
     void (async () => {
       try {
-        const clerkToken = await readManagedRelayClerkToken();
-        if (!clerkToken) throw new Error("Sign in to T3 Connect to send a remote test.");
-        await runtime.runPromise(
-          ManagedRelay.ManagedRelayClient.pipe(
-            Effect.flatMap((relay) =>
-              relay.testWebPushSubscription
-                ? relay.testWebPushSubscription({ clerkToken, subscriptionId })
-                : Effect.die("Web Push is unavailable."),
-            ),
-          ),
-        );
+        await testPwaPushSubscription(subscriptionId);
         toastManager.add(stackedThreadToast({ type: "success", title: "Remote test queued" }));
       } catch (error) {
         toastManager.add(
@@ -619,7 +573,7 @@ function PwaNotificationSettings() {
         <>
           <SettingsRow
             title="Preview notification"
-            description="Sends a local browser notification. It does not contact T3 Connect."
+            description="Sends a local browser notification on this installation."
             control={
               <Button size="xs" variant="outline" onClick={previewNotification}>
                 Send preview
@@ -628,7 +582,7 @@ function PwaNotificationSettings() {
           />
           <SettingsRow
             title="Remote test"
-            description="Queues a remote Web Push notification through T3 Connect."
+            description="Queues a remote notification for this anonymous PWA installation."
             control={
               <Button
                 size="xs"
