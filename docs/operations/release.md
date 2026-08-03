@@ -78,6 +78,8 @@ Required `production` environment variables:
 - `APNS_TEAM_ID`
 - `APNS_KEY_ID`
 - `APNS_BUNDLE_ID`
+- `WEB_PUSH_VAPID_SUBJECT`
+- `WEB_PUSH_VAPID_PUBLIC_KEY`
 
 Optional `production` environment variables:
 
@@ -87,6 +89,7 @@ Required `production` environment secrets:
 
 - `CLERK_SECRET_KEY`
 - `APNS_PRIVATE_KEY`
+- `WEB_PUSH_VAPID_PRIVATE_KEY`
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
 are not bound into the relay Worker. The production deployment uses an Axiom personal access token,

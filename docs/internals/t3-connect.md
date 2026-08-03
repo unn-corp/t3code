@@ -2,6 +2,10 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
+The installed-PWA notification flow is intentionally independent of this
+account system. See [PWA Web Push](./pwa-web-push.md) for the anonymous
+per-installation path and the separate authenticated relay path.
+
 T3 Connect uses one Clerk application for web, desktop, and mobile authentication. The relay verifies
 two kinds of bearer credential: template JWTs generated from the `t3-relay` template with the shared
 `t3-code-relay` audience, and Clerk OAuth tokens issued to the CLI. `verifyRelayClientBearerToken` in
