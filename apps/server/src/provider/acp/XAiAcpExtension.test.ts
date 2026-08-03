@@ -299,6 +299,32 @@ describe("XAiAcpExtension", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("resolves a hung prompt from an xAI completion carrying an unknown promptId", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePromptCompletionRuntime({
+        T3_ACP_EMIT_UNCORRELATED_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
+      });
+      yield* runtime.start();
+
+      // The completion is the only turn-end signal Grok sends once the
+      // session/prompt RPC hangs. Dropping it because its id does not
+      // correlate leaves the turn running forever, so an id we do not
+      // recognise has to settle the session's outstanding prompt the same
+      // way a missing id already does.
+      const promptResult = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+
+      expect(promptResult).toMatchObject({
+        stopReason: "end_turn",
+        _meta: {
+          sessionId: "mock-session-1",
+          promptId: "mock-agent-owned-prompt-1",
+        },
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("ignores stale xAI completion from an already settled prompt", () =>
     Effect.gen(function* () {
       const runtime = yield* makePromptCompletionRuntime({

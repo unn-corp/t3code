@@ -35,6 +35,8 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
   process.env.T3_ACP_EMIT_STALE_XAI_PROMPT_COMPLETE_BEFORE_SECOND_HANG === "1";
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
+const emitUncorrelatedXAiPromptCompleteThenHang =
+  process.env.T3_ACP_EMIT_UNCORRELATED_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
@@ -519,6 +521,19 @@ const program = Effect.gen(function* () {
       }
 
       if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
+        return yield* Effect.never;
+      }
+
+      // Grok reports the turn end under an id of its own rather than echoing
+      // the promptId we injected into `_meta`, then never answers the RPC.
+      if (emitUncorrelatedXAiPromptCompleteThenHang) {
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: `mock-agent-owned-prompt-${promptCount}`,
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+
         return yield* Effect.never;
       }
 

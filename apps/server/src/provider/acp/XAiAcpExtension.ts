@@ -342,13 +342,26 @@ const resolveXAiPromptCompletionFallback = ({
         return Effect.void;
       }
       return Ref.modify(pendingRef, (pending) => {
-        const index =
-          notification.promptId !== undefined
-            ? pending.findIndex(
+        const correlatedIndex =
+          notification.promptId === undefined
+            ? -1
+            : pending.findIndex(
                 (entry) =>
                   entry.sessionId === notification.sessionId &&
                   entry.promptId === notification.promptId,
-              )
+              );
+        // Once the session/prompt RPC hangs this notification is the only
+        // turn-end signal Grok sends, so an id we cannot correlate must not
+        // be dropped: Grok does not always echo the promptId we inject into
+        // `_meta`, and discarding the completion leaves the turn running
+        // forever (session pinned to "running", the prompt semaphore held, so
+        // every later prompt on the thread is swallowed too). An id we have
+        // already settled is filtered above, so what reaches here is an
+        // unrecognised id, which we treat exactly like an absent one and
+        // settle against this session's oldest outstanding prompt.
+        const index =
+          correlatedIndex >= 0
+            ? correlatedIndex
             : pending.findIndex((entry) => entry.sessionId === notification.sessionId);
         if (index < 0) {
           return [Effect.void, pending] as const;
