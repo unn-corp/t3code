@@ -55,6 +55,37 @@ export function buildDraftThreadRouteParams(draftId: DraftId): {
   return { draftId };
 }
 
+/** Route ids that render a single conversation rather than a list of them. */
+const CONVERSATION_ROUTE_IDS: ReadonlySet<string> = new Set([
+  "/_chat/$environmentId/$threadId",
+  "/_chat/draft/$draftId",
+]);
+
+/** Mirrors `HistoryAction` from `@tanstack/history`, which is not re-exported. */
+export type ThreadRouteHistoryAction = "PUSH" | "REPLACE" | "FORWARD" | "BACK" | "GO";
+
+/**
+ * On a phone the thread list lives behind the sidebar sheet, so the list is not
+ * a history entry the way it is on desktop. A back gesture from a conversation
+ * therefore walks into whichever conversation was open before, when what the
+ * gesture means is "up to the list". Blocking that back and opening the sheet
+ * instead makes the list the parent of every conversation.
+ *
+ * Back is left alone once the sheet is open, so the gesture still has a way out
+ * of the app instead of toggling the sheet forever.
+ */
+export function shouldOpenThreadListOnBack(input: {
+  isMobile: boolean;
+  isThreadListOpen: boolean;
+  routeId: string;
+  action: ThreadRouteHistoryAction;
+}): boolean {
+  if (!input.isMobile || input.isThreadListOpen || input.action !== "BACK") {
+    return false;
+  }
+  return CONVERSATION_ROUTE_IDS.has(input.routeId);
+}
+
 export function resolveThreadRouteRef(
   params: Partial<Record<"environmentId" | "threadId", string | undefined>>,
 ): ScopedThreadRef | null {

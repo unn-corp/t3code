@@ -10,7 +10,47 @@ import {
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
+  shouldOpenThreadListOnBack,
 } from "./threadRoutes";
+
+describe("shouldOpenThreadListOnBack", () => {
+  const backFromThread = {
+    isMobile: true,
+    isThreadListOpen: false,
+    routeId: "/_chat/$environmentId/$threadId",
+    action: "BACK",
+  } as const;
+
+  it("opens the thread list when going back from a conversation on mobile", () => {
+    expect(shouldOpenThreadListOnBack(backFromThread)).toBe(true);
+  });
+
+  it("opens the thread list when going back from a draft conversation", () => {
+    expect(
+      shouldOpenThreadListOnBack({ ...backFromThread, routeId: "/_chat/draft/$draftId" }),
+    ).toBe(true);
+  });
+
+  it("leaves desktop history alone", () => {
+    expect(shouldOpenThreadListOnBack({ ...backFromThread, isMobile: false })).toBe(false);
+  });
+
+  it("lets back through once the thread list is already open", () => {
+    expect(shouldOpenThreadListOnBack({ ...backFromThread, isThreadListOpen: true })).toBe(false);
+  });
+
+  it("only intercepts back, never a push, replace, forward, or go", () => {
+    for (const action of ["PUSH", "REPLACE", "FORWARD", "GO"] as const) {
+      expect(shouldOpenThreadListOnBack({ ...backFromThread, action })).toBe(false);
+    }
+  });
+
+  it("leaves routes that are not a single conversation alone", () => {
+    for (const routeId of ["/_chat/", "/settings", "/settings/providers"]) {
+      expect(shouldOpenThreadListOnBack({ ...backFromThread, routeId })).toBe(false);
+    }
+  });
+});
 
 describe("threadRoutes", () => {
   it("builds canonical thread route params from a scoped ref", () => {

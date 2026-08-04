@@ -7,12 +7,13 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useBlocker, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
 import { getLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
+import { shouldOpenThreadListOnBack } from "../threadRoutes";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useSidebarV2Enabled } from "../hooks/useSettings";
 import ThreadSidebar from "./Sidebar";
@@ -116,6 +117,35 @@ function SidebarControl() {
   );
 }
 
+/**
+ * Turns the mobile back gesture into "up to the thread list" while a
+ * conversation is open. Lives inside `SidebarProvider` because the list it
+ * reveals is the sidebar sheet.
+ */
+function MobileBackOpensThreadList() {
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
+
+  useBlocker({
+    disabled: !isMobile,
+    enableBeforeUnload: false,
+    withResolver: false,
+    shouldBlockFn: ({ current, action }) => {
+      const shouldOpen = shouldOpenThreadListOnBack({
+        isMobile,
+        isThreadListOpen: openMobile,
+        routeId: current.routeId,
+        action,
+      });
+      if (shouldOpen) {
+        setOpenMobile(true);
+      }
+      return shouldOpen;
+    },
+  });
+
+  return null;
+}
+
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const sidebarV2Enabled = useSidebarV2Enabled();
@@ -205,6 +235,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       </Sidebar>
       {children}
       <SidebarControl />
+      <MobileBackOpensThreadList />
     </SidebarProvider>
   );
 }
