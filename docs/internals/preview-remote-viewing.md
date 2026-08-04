@@ -112,9 +112,22 @@ them would route agent calls to a host that cannot serve them. The broker sorts
 candidate hosts by how many operations they support, so a connected desktop is
 preferred automatically and the headless host is the fallback.
 
+**It launches nothing until it is asked to.** Registering as a host is free; a
+browser process is not. Because the broker prefers the host supporting more
+operations, a connected desktop app answers everything and this host is never
+called, so it never launches a browser. A desktop-hosted environment therefore
+does not pay for a Chromium it will not use, and neither does a CLI server that
+nobody opens a preview on. The browser starts on the first request that needs a
+page and is reused from then on.
+
 **It never fails the server.** A machine with no browser, or a browser that will
 not start, must not stop `npx t3` from serving everything else, so the layer
 logs and stops.
+
+One consequence worth knowing: if a desktop app disconnects mid-session, the
+headless host takes over with its own browser, so the tab starts blank rather
+than inheriting the desktop's page. `broker.hostConnected` re-issues the
+screencast, so the viewer recovers on its own.
 
 ## What is still host-only
 

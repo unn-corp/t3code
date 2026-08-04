@@ -32,6 +32,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -127,51 +129,112 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
     return;
   }
 
-  const userDataDir = yield* Effect.try({
-    try: () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-preview-")),
-    catch: (cause) => cause,
-  }).pipe(Effect.orDie);
-
-  const command = ChildProcess.make(executablePath, [...chromiumLaunchArgs(userDataDir)], {
-    stdout: "pipe",
-    stderr: "pipe",
-    killSignal: "SIGTERM",
-    forceKillAfter: Duration.seconds(2),
-  });
-  const child = yield* Effect.acquireRelease(spawner.spawn(command), (handle) =>
-    handle.kill().pipe(Effect.ignore),
-  );
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      try {
-        NodeFS.rmSync(userDataDir, { recursive: true, force: true });
-      } catch {
-        // A scratch profile left behind in tmp is not worth failing shutdown.
-      }
-    }),
-  );
-
-  const endpoint = yield* awaitDevToolsEndpoint(child.stderr).pipe(
-    Effect.timeoutOption(STARTUP_TIMEOUT),
-  );
-  const resolvedEndpoint =
-    endpoint._tag === "Some" && endpoint.value._tag === "Some" ? endpoint.value.value : null;
-  if (!resolvedEndpoint) {
-    yield* Effect.logWarning(
-      `The preview browser at ${executablePath} did not report a debugger endpoint in time.`,
-    );
-    return;
-  }
-
-  const cdp = yield* CdpClient.connect(resolvedEndpoint);
-  yield* Effect.logInfo(`Headless preview browser ready: ${executablePath}`);
-
+  const parentScope = yield* Effect.scope;
   const pages = yield* Ref.make<ReadonlyMap<string, PageSession>>(new Map());
+
+  /**
+   * Launching is deferred until a request actually needs a page.
+   *
+   * Registering as a host is free, but a browser process is not, and the broker
+   * prefers whichever host supports more operations. So whenever a desktop app
+   * is connected this host is never asked to do anything and never launches
+   * anything: a desktop-hosted environment does not pay for a Chromium it will
+   * not use. The same applies to a CLI server nobody opens a preview on.
+   */
+  const launchBrowser = Effect.fn("HeadlessBrowserHost.launchBrowser")(function* () {
+    const userDataDir = yield* Effect.try({
+      try: () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-preview-")),
+      catch: (cause) => cause,
+    }).pipe(Effect.orDie);
+    yield* Scope.addFinalizer(
+      parentScope,
+      Effect.sync(() => {
+        try {
+          NodeFS.rmSync(userDataDir, { recursive: true, force: true });
+        } catch {
+          // A scratch profile left behind in tmp is not worth failing shutdown.
+        }
+      }),
+    );
+
+    const command = ChildProcess.make(executablePath, [...chromiumLaunchArgs(userDataDir)], {
+      stdout: "pipe",
+      stderr: "pipe",
+      killSignal: "SIGTERM",
+      forceKillAfter: Duration.seconds(2),
+    });
+    const child = yield* spawner.spawn(command);
+    yield* Scope.addFinalizer(parentScope, child.kill().pipe(Effect.ignore));
+
+    const endpoint = yield* awaitDevToolsEndpoint(child.stderr).pipe(
+      Effect.timeoutOption(STARTUP_TIMEOUT),
+    );
+    const resolvedEndpoint =
+      endpoint._tag === "Some" && endpoint.value._tag === "Some" ? endpoint.value.value : null;
+    if (!resolvedEndpoint) {
+      return yield* new CdpClient.CdpCommandError({
+        method: "launch",
+        detail: "the preview browser did not report a debugger endpoint in time",
+      });
+    }
+    const connected = yield* CdpClient.connect(resolvedEndpoint).pipe(
+      Effect.provideService(Scope.Scope, parentScope),
+    );
+    // One screencast listener for every page; the session id on the event says
+    // which tab produced the frame.
+    const unsubscribe = connected.on((event) => {
+      if (event.method !== "Page.screencastFrame" || event.sessionId === undefined) return;
+      const sessionId = event.sessionId;
+      const data = readString(event.params, "data");
+      const metadata = event.params["metadata"];
+      Effect.runFork(
+        Effect.gen(function* () {
+          // Acknowledge first: Chromium will not send another frame until the
+          // previous one is acknowledged, which is the backpressure we want.
+          const cdpSessionId = readNumber(event.params, "sessionId");
+          if (cdpSessionId !== undefined) {
+            yield* connected
+              .send("Page.screencastFrameAck", { sessionId: cdpSessionId }, sessionId)
+              .pipe(Effect.ignore);
+          }
+          if (!data) return;
+          const current = yield* Ref.get(pages);
+          const page = Array.from(current.values()).find(
+            (candidate) => candidate.sessionId === sessionId,
+          );
+          if (!page || !page.streaming) return;
+          page.sequence += 1;
+          yield* manager.publishFrame({
+            threadId: page.threadId,
+            tabId: page.tabId,
+            seq: page.sequence,
+            data,
+            width: readNumber(metadata, "deviceWidth") ?? page.viewport.width,
+            height: readNumber(metadata, "deviceHeight") ?? page.viewport.height,
+            pageWidth: page.viewport.width,
+            pageHeight: page.viewport.height,
+            capturedAt: new Date().toISOString(),
+          });
+        }).pipe(Effect.ignoreCause({ log: true })),
+      );
+    });
+    yield* Scope.addFinalizer(parentScope, Effect.sync(unsubscribe));
+    yield* Effect.logInfo(`Headless preview browser ready: ${executablePath}`);
+    return connected;
+  });
+
+  const browser = yield* SynchronizedRef.make<CdpClient.CdpClient | null>(null);
+  const requireBrowser = SynchronizedRef.modifyEffect(browser, (current) =>
+    current === null
+      ? launchBrowser().pipe(Effect.map((client) => [client, client] as const))
+      : Effect.succeed([current, current] as const),
+  );
 
   const attachPage = Effect.fn("HeadlessBrowserHost.attachPage")(function* (input: {
     readonly threadId: string;
     readonly tabId: string;
   }) {
+    const cdp = yield* requireBrowser;
     const created = yield* cdp.send("Target.createTarget", { url: "about:blank" });
     const targetId = readString(created, "targetId");
     if (!targetId) {
@@ -229,50 +292,11 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
     return yield* attachPage({ threadId: input.threadId, tabId: input.tabId ?? opened.tabId });
   });
 
-  // One screencast listener for every page; the session id on the event says
-  // which tab produced the frame.
-  const unsubscribe = cdp.on((event) => {
-    if (event.method !== "Page.screencastFrame" || event.sessionId === undefined) return;
-    const sessionId = event.sessionId;
-    const data = readString(event.params, "data");
-    const metadata = event.params["metadata"];
-    Effect.runFork(
-      Effect.gen(function* () {
-        // Acknowledge first: Chromium will not send another frame until the
-        // previous one is acknowledged, which is the backpressure we want.
-        const cdpSessionId = readNumber(event.params, "sessionId");
-        if (cdpSessionId !== undefined) {
-          yield* cdp
-            .send("Page.screencastFrameAck", { sessionId: cdpSessionId }, sessionId)
-            .pipe(Effect.ignore);
-        }
-        if (!data) return;
-        const current = yield* Ref.get(pages);
-        const page = Array.from(current.values()).find(
-          (candidate) => candidate.sessionId === sessionId,
-        );
-        if (!page || !page.streaming) return;
-        page.sequence += 1;
-        yield* manager.publishFrame({
-          threadId: page.threadId,
-          tabId: page.tabId,
-          seq: page.sequence,
-          data,
-          width: readNumber(metadata, "deviceWidth") ?? page.viewport.width,
-          height: readNumber(metadata, "deviceHeight") ?? page.viewport.height,
-          pageWidth: page.viewport.width,
-          pageHeight: page.viewport.height,
-          capturedAt: new Date().toISOString(),
-        });
-      }).pipe(Effect.ignoreCause({ log: true })),
-    );
-  });
-  yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-
   const dispatchInput = Effect.fn("HeadlessBrowserHost.dispatchInput")(function* (
     page: PageSession,
     event: PreviewInputEvent,
   ) {
+    const cdp = yield* requireBrowser;
     if (event._tag === "mouse") {
       yield* cdp.send(
         "Input.dispatchMouseEvent",
@@ -319,6 +343,7 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
   const handle = Effect.fn("HeadlessBrowserHost.handle")(function* (
     request: PreviewAutomationRequest,
   ) {
+    const cdp = yield* requireBrowser;
     const input = isRecord(request.input) ? request.input : {};
     switch (request.operation) {
       case "status": {
