@@ -1,6 +1,56 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import { formatPendingPrimaryActionLabel, formatSendActionLabel } from "./ComposerPrimaryActions";
+
+const idleSendLabelInput = {
+  isRunning: false,
+  isEnvironmentUnavailable: false,
+  sendDisabledReason: null,
+  isConnecting: false,
+  isPreparingWorktree: false,
+  isSendBusy: false,
+};
+
+describe("formatSendActionLabel", () => {
+  it("returns 'Send message' when the thread is idle", () => {
+    expect(formatSendActionLabel(idleSendLabelInput)).toBe("Send message");
+  });
+
+  it("returns 'Queue message' while a turn is running", () => {
+    expect(formatSendActionLabel({ ...idleSendLabelInput, isRunning: true })).toBe("Queue message");
+  });
+
+  it("prefers the disconnected environment over every other state", () => {
+    expect(
+      formatSendActionLabel({
+        ...idleSendLabelInput,
+        isRunning: true,
+        isEnvironmentUnavailable: true,
+        sendDisabledReason: "Messages loading",
+        isConnecting: true,
+        isSendBusy: true,
+      }),
+    ).toBe("Environment disconnected");
+  });
+
+  it("surfaces the send disabled reason ahead of connecting", () => {
+    expect(
+      formatSendActionLabel({
+        ...idleSendLabelInput,
+        sendDisabledReason: "Messages loading",
+        isConnecting: true,
+      }),
+    ).toBe("Messages loading");
+  });
+
+  it("reports connecting, preparing worktree, and sending in that order", () => {
+    expect(formatSendActionLabel({ ...idleSendLabelInput, isConnecting: true })).toBe("Connecting");
+    expect(formatSendActionLabel({ ...idleSendLabelInput, isPreparingWorktree: true })).toBe(
+      "Preparing worktree",
+    );
+    expect(formatSendActionLabel({ ...idleSendLabelInput, isSendBusy: true })).toBe("Sending");
+  });
+});
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {

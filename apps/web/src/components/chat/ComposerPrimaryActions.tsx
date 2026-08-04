@@ -51,9 +51,88 @@ export const formatPendingPrimaryActionLabel = (input: {
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
+/**
+ * A send while a turn is running is a steer: the provider folds the prompt into
+ * the active turn. Desktop reaches it with Enter, so the label is the only place
+ * that has to say so.
+ */
+export function formatSendActionLabel(input: {
+  isRunning: boolean;
+  isEnvironmentUnavailable: boolean;
+  sendDisabledReason: string | null;
+  isConnecting: boolean;
+  isPreparingWorktree: boolean;
+  isSendBusy: boolean;
+}): string {
+  if (input.isEnvironmentUnavailable) {
+    return "Environment disconnected";
+  }
+  if (input.sendDisabledReason) {
+    return input.sendDisabledReason;
+  }
+  if (input.isConnecting) {
+    return "Connecting";
+  }
+  if (input.isPreparingWorktree) {
+    return "Preparing worktree";
+  }
+  if (input.isSendBusy) {
+    return "Sending";
+  }
+  return input.isRunning ? "Queue message" : "Send message";
+}
+
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
   event.preventDefault();
 };
+
+function ComposerSendButton({
+  stageBackdropVariant,
+  pointerFocusProps,
+  disabled,
+  busy,
+  label,
+}: {
+  stageBackdropVariant: ReturnType<typeof useSidebarStageBackdropVariant>;
+  pointerFocusProps: { onPointerDown: PointerEventHandler<HTMLElement> } | undefined;
+  disabled: boolean;
+  busy: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="submit"
+      className={cn(
+        "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full text-primary-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
+        stageBackdropVariant
+          ? "bg-transparent enabled:shadow-black/24 enabled:hover:brightness-110"
+          : "bg-primary/90 enabled:shadow-primary/24 hover:bg-primary",
+      )}
+      {...pointerFocusProps}
+      disabled={disabled}
+      aria-label={label}
+    >
+      {stageBackdropVariant ? (
+        <span className="absolute inset-0 -z-10" aria-hidden="true">
+          <StageBackdropButtonArt variant={stageBackdropVariant} />
+        </span>
+      ) : null}
+      {busy ? (
+        <Spinner className="size-3.5" aria-hidden="true" />
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path
+            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+    </button>
+  );
+}
 
 export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
@@ -133,18 +212,39 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (isRunning) {
+    // Stop stays the primary action, but the send button has to survive a
+    // running turn: mobile has no Enter-to-send, so removing it left touch
+    // clients with no way to queue a message into the active turn.
     return (
-      <button
-        type="button"
-        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none sm:h-8 sm:w-8"
-        {...pointerFocusProps}
-        onClick={onInterrupt}
-        aria-label="Stop generation"
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-          <rect x="2" y="2" width="8" height="8" rx="1.5" />
-        </svg>
-      </button>
+      <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
+        <button
+          type="button"
+          className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none sm:h-8 sm:w-8"
+          {...pointerFocusProps}
+          onClick={onInterrupt}
+          aria-label="Stop generation"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+            <rect x="2" y="2" width="8" height="8" rx="1.5" />
+          </svg>
+        </button>
+        {hasSendableContent ? (
+          <ComposerSendButton
+            stageBackdropVariant={stageBackdropVariant}
+            pointerFocusProps={pointerFocusProps}
+            disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+            busy={isConnecting || isSendBusy}
+            label={formatSendActionLabel({
+              isRunning: true,
+              isEnvironmentUnavailable,
+              sendDisabledReason,
+              isConnecting,
+              isPreparingWorktree,
+              isSendBusy,
+            })}
+          />
+        ) : null}
+      </div>
     );
   }
 
@@ -203,15 +303,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   return (
-    <button
-      type="submit"
-      className={cn(
-        "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full text-primary-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
-        stageBackdropVariant
-          ? "bg-transparent enabled:shadow-black/24 enabled:hover:brightness-110"
-          : "bg-primary/90 enabled:shadow-primary/24 hover:bg-primary",
-      )}
-      {...pointerFocusProps}
+    <ComposerSendButton
+      stageBackdropVariant={stageBackdropVariant}
+      pointerFocusProps={pointerFocusProps}
       disabled={
         isSendBusy ||
         isSendDisabled ||
@@ -219,38 +313,15 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         isEnvironmentUnavailable ||
         !hasSendableContent
       }
-      aria-label={
-        isEnvironmentUnavailable
-          ? "Environment disconnected"
-          : sendDisabledReason
-            ? sendDisabledReason
-            : isConnecting
-              ? "Connecting"
-              : isPreparingWorktree
-                ? "Preparing worktree"
-                : isSendBusy
-                  ? "Sending"
-                  : "Send message"
-      }
-    >
-      {stageBackdropVariant ? (
-        <span className="absolute inset-0 -z-10" aria-hidden="true">
-          <StageBackdropButtonArt variant={stageBackdropVariant} />
-        </span>
-      ) : null}
-      {isConnecting || isSendBusy ? (
-        <Spinner className="size-3.5" aria-hidden="true" />
-      ) : (
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path
-            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      )}
-    </button>
+      busy={isConnecting || isSendBusy}
+      label={formatSendActionLabel({
+        isRunning: false,
+        isEnvironmentUnavailable,
+        sendDisabledReason,
+        isConnecting,
+        isPreparingWorktree,
+        isSendBusy,
+      })}
+    />
   );
 });

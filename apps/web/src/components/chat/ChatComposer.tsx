@@ -1323,8 +1323,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : null,
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
+  // A running turn does not disable the collapsed send button: sending during a
+  // turn steers it, and this row is the only send affordance a mobile client has
+  // while the composer is collapsed.
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
     isSendBusy ||
     isSendDisabled ||
     isConnecting ||
@@ -1332,7 +1334,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectSelectionRequired ||
     environmentUnavailable !== null ||
     !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
+  const collapsedComposerPrimaryActionLabel =
+    phase === "running" ? "Queue message" : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -1920,8 +1923,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isSendDisabled ||
       isConnecting ||
       noProviderAvailable ||
-      environmentUnavailable !== null ||
-      phase === "running"
+      environmentUnavailable !== null
     ) {
       return false;
     }
@@ -1939,7 +1941,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isSendBusy,
     isSendDisabled,
     noProviderAvailable,
-    phase,
     showPlanFollowUpPrompt,
   ]);
 
