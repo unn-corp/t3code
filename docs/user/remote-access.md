@@ -174,8 +174,14 @@ use it from anywhere you have T3 Code open, including the phone web app. Open th
 the remote device and the page appears as it renders on the host; tap, scroll, and type go back to
 it.
 
-This needs the desktop app running on the host machine, because that is what renders the page. If
-nothing on the host can render, the panel says so instead of sitting blank.
+If a desktop app is connected to that environment, it renders the page. If none is, the server
+renders it instead, using a Chrome or Chromium already installed on that machine. It never downloads
+one; if the machine has no browser at all, the panel says so rather than sitting blank. Point
+`T3_CHROMIUM_PATH` at a specific binary if you want to choose which one it uses.
+
+A server-rendered preview covers viewing, navigating, resizing, and interacting with the page. The
+richer agent tools (page snapshots, clicking by description, recording) still need a desktop app
+connected.
 
 A few things stay on the host machine because they only make sense there: opening DevTools, and
 revealing a saved screenshot or recording in the file manager.

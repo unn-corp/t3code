@@ -46,6 +46,7 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PreviewStreamCoordinator from "./preview/StreamCoordinator.ts";
+import * as PreviewHeadlessBrowserHost from "./preview/HeadlessBrowserHost.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
@@ -440,6 +441,9 @@ export const makeRoutesLayer = Layer.mergeAll(
   // Sits beside the MCP server because it needs the same broker: both turn an
   // outside request into work on a host-owned webview.
   PreviewStreamCoordinator.layer,
+  // Registers this server as a preview host when the machine has a Chromium and
+  // no desktop app is connected. Dormant otherwise, and never fatal.
+  PreviewHeadlessBrowserHost.layer,
 ).pipe(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),

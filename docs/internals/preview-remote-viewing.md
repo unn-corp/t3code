@@ -85,13 +85,42 @@ its capture session is keyed by consumer.
 re-reads the guest viewport whenever the captured pixel size changes, which is
 the only signal the main process gets that a renderer-side layout changed.
 
+## When there is no desktop app: the headless host
+
+A server started with `npx t3` and driven from a phone has no client that can
+render. `preview/HeadlessBrowserHost.ts` registers the **server itself** as a
+host, backed by a headless Chromium over CDP, and answers the same broker
+requests a desktop host does.
+
+**It never downloads a browser.** A ~150MB download on first preview would be a
+surprising thing for `npx t3` to do, so discovery looks for an already-installed
+Chrome, Chromium, or Edge (`preview/chromiumDiscovery.ts`), honouring
+`T3_CHROMIUM_PATH`, `CHROME_PATH`, or `PUPPETEER_EXECUTABLE_PATH` first. With no
+browser present it stays dormant and the viewer keeps its existing message.
+
+**It costs no dependency.** `preview/CdpClient.ts` speaks CDP over Node's global
+WebSocket rather than pulling in Playwright or Puppeteer, which would each bring
+a browser-download step with them. Flat sessions mean one socket multiplexes
+every page.
+
+**It advertises only what it implements.** `HEADLESS_SUPPORTED_OPERATIONS` is
+status, open, navigate, evaluate, resize, setColorScheme, streamStart,
+streamStop, and dispatchInput. The operations that depend on the desktop's
+Playwright injected runtime and element picker (snapshot, locator-based click,
+type, press, scroll, waitFor, recording) are deliberately not offered: claiming
+them would route agent calls to a host that cannot serve them. The broker sorts
+candidate hosts by how many operations they support, so a connected desktop is
+preferred automatically and the headless host is the fallback.
+
+**It never fails the server.** A machine with no browser, or a browser that will
+not start, must not stop `npx t3` from serving everything else, so the layer
+logs and stops.
+
 ## What is still host-only
 
 - **DevTools** opens on the host machine. Remote DevTools needs a served
   devtools-frontend and is out of scope.
 - **Reveal artifact** opens the host's file manager, which means nothing on a
   phone.
-- **An environment with no host at all** (bare `npx t3`, no desktop app) has
-  nothing that can render. The viewer says so rather than hanging. Closing that
-  would mean the server owning a Chromium over CDP, which is a deliberate
-  non-goal here: it is a heavy dependency for the CLI.
+- **Rich agent automation on a headless host.** See the advertised-operations
+  note above; a connected desktop app still serves those.
