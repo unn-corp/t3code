@@ -44,6 +44,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
+import type { PreviewInputEvent } from "./preview.ts";
 import * as Schema from "effect/Schema";
 import type {
   DiscoveredLocalServerList,
@@ -663,6 +664,40 @@ export const DesktopPreviewRecordingFrameSchema: Schema.Codec<DesktopPreviewReco
     receivedAt: Schema.String,
   });
 
+/**
+ * A frame headed for a viewer on another device. Carries the page's CSS size
+ * alongside the encoded pixels so the viewer can map a tap back to a page
+ * coordinate without knowing the host's scale factor.
+ */
+export interface DesktopPreviewRemoteFrame extends DesktopPreviewRecordingFrame {
+  pageWidth: number;
+  pageHeight: number;
+}
+
+export const DesktopPreviewRemoteFrameSchema: Schema.Codec<DesktopPreviewRemoteFrame> =
+  Schema.Struct({
+    tabId: DesktopPreviewTabIdSchema,
+    data: Schema.String,
+    width: Schema.Number,
+    height: Schema.Number,
+    receivedAt: Schema.String,
+    pageWidth: Schema.Number,
+    pageHeight: Schema.Number,
+  });
+
+export interface DesktopPreviewRemoteStreamBounds {
+  maxWidth: number;
+  maxHeight: number;
+  quality: number;
+}
+
+export const DesktopPreviewRemoteStreamBoundsSchema: Schema.Codec<DesktopPreviewRemoteStreamBounds> =
+  Schema.Struct({
+    maxWidth: Schema.Number,
+    maxHeight: Schema.Number,
+    quality: Schema.Number,
+  });
+
 export interface DesktopPreviewRecordingArtifact {
   id: string;
   tabId: string;
@@ -1082,6 +1117,16 @@ export interface DesktopPreviewBridge {
       data: Uint8Array,
     ) => Promise<DesktopPreviewRecordingArtifact>;
     onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;
+  };
+  /**
+   * Serving a viewer on another device. The host renders as usual and streams
+   * scaled frames out; input comes back the same way.
+   */
+  remote: {
+    startStream: (tabId: string, bounds: DesktopPreviewRemoteStreamBounds) => Promise<void>;
+    stopStream: (tabId: string) => Promise<void>;
+    dispatchInput: (tabId: string, event: PreviewInputEvent) => Promise<void>;
+    onFrame: (listener: (frame: DesktopPreviewRemoteFrame) => void) => () => void;
   };
   automation: {
     status: (tabId: string) => Promise<PreviewAutomationStatus>;

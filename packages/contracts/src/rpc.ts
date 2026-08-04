@@ -108,13 +108,17 @@ import {
 } from "./terminal.ts";
 import {
   DiscoveredLocalServerList,
+  PreviewAttachInput,
   PreviewCloseInput,
   PreviewError,
   PreviewEvent,
+  PreviewFrameStreamEvent,
+  PreviewInputInput,
   PreviewListInput,
   PreviewListResult,
   PreviewNavigateInput,
   PreviewOpenInput,
+  PreviewPublishFrameInput,
   PreviewRefreshInput,
   PreviewReportStatusInput,
   PreviewResizeInput,
@@ -225,6 +229,9 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewReportStatus: "preview.reportStatus",
+  previewAttach: "preview.attach",
+  previewPublishFrame: "preview.publishFrame",
+  previewInput: "preview.input",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -666,6 +673,29 @@ export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+/**
+ * Viewers that cannot render their own webview attach here. Errors stay on the
+ * stream as `unavailable` events rather than failing the call, so a viewer that
+ * attaches before a host connects just waits.
+ */
+export const WsPreviewAttachRpc = Rpc.make(WS_METHODS.previewAttach, {
+  payload: PreviewAttachInput,
+  success: PreviewFrameStreamEvent,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+/** Host to server. Fire and forget: a dropped frame is always recoverable. */
+export const WsPreviewPublishFrameRpc = Rpc.make(WS_METHODS.previewPublishFrame, {
+  payload: PreviewPublishFrameInput,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+});
+
+export const WsPreviewInputRpc = Rpc.make(WS_METHODS.previewInput, {
+  payload: PreviewInputInput,
+  error: Schema.Union([PreviewError, PreviewAutomationError, EnvironmentAuthorizationError]),
+});
+
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -870,6 +900,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewReportStatusRpc,
+  WsPreviewAttachRpc,
+  WsPreviewPublishFrameRpc,
+  WsPreviewInputRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,

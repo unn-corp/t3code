@@ -448,7 +448,21 @@ export function removePreviewThread(ref: ScopedThreadRef): void {
   changedPreviewThreadKeys.delete(threadKey);
 }
 
+/**
+ * Whether this client can show a preview at all.
+ *
+ * A local bridge means we render the page ourselves. Without one we can still
+ * show it, by attaching to frames a host publishes, so the panel stays
+ * reachable on web and mobile. Whether a host is actually connected is answered
+ * on the frame stream itself rather than guessed at here: the answer changes
+ * when a desktop app opens or closes, and a gate computed once would go stale.
+ */
 export function isPreviewSupportedInRuntime(): boolean {
+  return typeof window !== "undefined";
+}
+
+/** True only when this client owns the webview, which some controls require. */
+export function isPreviewRenderedLocally(): boolean {
   if (typeof window === "undefined") return false;
   return Boolean(window.desktopBridge?.preview);
 }

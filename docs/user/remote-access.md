@@ -167,6 +167,22 @@ With mise, asdf, fnm, or nodenv, make sure the tool's shim directory is installe
 
 If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
 
+## Using the Browser from Another Device
+
+The in-app browser runs on the machine that hosts your environment, but you can now watch it and
+use it from anywhere you have T3 Code open, including the phone web app. Open the browser panel on
+the remote device and the page appears as it renders on the host; tap, scroll, and type go back to
+it.
+
+This needs the desktop app running on the host machine, because that is what renders the page. If
+nothing on the host can render, the panel says so instead of sitting blank.
+
+A few things stay on the host machine because they only make sense there: opening DevTools, and
+revealing a saved screenshot or recording in the file manager.
+
+Frames are scaled down for the viewing device and only sent while the panel is open, so a phone on a
+slow connection is not paying for a desktop-sized picture it cannot show.
+
 ## Updating a Remote Server
 
 When the T3 Code web or desktop app and a remote server use different versions, a warning appears in

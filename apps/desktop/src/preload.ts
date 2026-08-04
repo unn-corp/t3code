@@ -2,6 +2,7 @@ import type {
   DesktopBridge,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
+  DesktopPreviewRemoteFrame,
   DesktopPreviewTabState,
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
@@ -217,6 +218,23 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.on(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrappedListener);
         return () =>
           ipcRenderer.removeListener(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrappedListener);
+      },
+    },
+    remote: {
+      startStream: (tabId, bounds) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_REMOTE_STREAM_START_CHANNEL, { tabId, bounds }),
+      stopStream: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_REMOTE_STREAM_STOP_CHANNEL, { tabId }),
+      dispatchInput: (tabId, event) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_REMOTE_INPUT_CHANNEL, { tabId, event }),
+      onFrame: (listener) => {
+        const wrappedListener = (_event: Electron.IpcRendererEvent, frame: unknown) => {
+          if (typeof frame !== "object" || frame === null) return;
+          listener(frame as DesktopPreviewRemoteFrame);
+        };
+        ipcRenderer.on(IpcChannels.PREVIEW_REMOTE_FRAME_CHANNEL, wrappedListener);
+        return () =>
+          ipcRenderer.removeListener(IpcChannels.PREVIEW_REMOTE_FRAME_CHANNEL, wrappedListener);
       },
     },
     automation: {

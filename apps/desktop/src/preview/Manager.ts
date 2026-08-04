@@ -13,8 +13,11 @@ import type {
   PreviewAnnotationRect,
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
+  DesktopPreviewRemoteFrame,
+  DesktopPreviewRemoteStreamBounds,
   DesktopPreviewScreenshotArtifact,
   PreviewAutomationClickInput,
+  PreviewInputEvent,
   PreviewAutomationActionEvent,
   PreviewAutomationConsoleEntry,
   PreviewAutomationEvaluateInput,
@@ -339,6 +342,7 @@ const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
 
 type Listener = (tabId: string, state: PreviewTabState) => Effect.Effect<void>;
 type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => Effect.Effect<void>;
+type RemoteFrameListener = (frame: DesktopPreviewRemoteFrame) => Effect.Effect<void>;
 
 type PreviewInputSignal =
   | { readonly kind: "pointer"; readonly x: number; readonly y: number; readonly button: number }
@@ -348,7 +352,12 @@ interface ManagedListeners {
   readonly scope: Scope.Closeable;
 }
 
-type FrameCaptureConsumer = "picture-in-picture" | "recording";
+/**
+ * "remote" is a viewer on another device (web or PWA) that cannot render this
+ * tab itself. It shares the existing capture loop rather than opening a second
+ * one, so a tab being recorded and watched remotely still captures once.
+ */
+type FrameCaptureConsumer = "picture-in-picture" | "recording" | "remote";
 
 interface FrameCaptureSession {
   readonly scope: Scope.Closeable;
@@ -468,6 +477,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const recordingFrameListenersRef = yield* Ref.make<ReadonlySet<RecordingFrameListener>>(
     new Set(),
   );
+  const remoteFrameListenersRef = yield* Ref.make<ReadonlySet<RemoteFrameListener>>(new Set());
+  const remoteStreamBoundsRef = yield* Ref.make<
+    ReadonlyMap<string, DesktopPreviewRemoteStreamBounds>
+  >(new Map());
+  // The guest's CSS viewport, refreshed when a remote stream starts and after
+  // the tab resizes. A viewer maps taps through this, so a stale value between
+  // a resize and its refresh only skews a pointer by the delta, never breaks it.
+  const remoteViewportsRef = yield* Ref.make<
+    ReadonlyMap<string, { readonly width: number; readonly height: number }>
+  >(new Map());
+  // Last captured pixel size per streaming tab. The webview is resized by the
+  // renderer's layout, which the main process never hears about, so a change
+  // here is the signal that the guest's CSS viewport moved and the cached one
+  // needs re-reading.
+  const remoteCaptureSizesRef = yield* Ref.make<
+    ReadonlyMap<string, { readonly width: number; readonly height: number }>
+  >(new Map());
   const pickSessionsRef = yield* Ref.make<ReadonlyMap<string, PickSession>>(new Map());
   const controlSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<number, BrowserControlSession>
@@ -580,7 +606,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const deliverEvent = (
-    eventKind: "state-change" | "recording-frame" | "pointer-event",
+    eventKind: "state-change" | "recording-frame" | "remote-frame" | "pointer-event",
     tabId: string,
     delivery: () => Effect.Effect<void>,
   ) =>
@@ -2103,6 +2129,61 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       receivedAt,
     };
     const deliveries: Array<Effect.Effect<void>> = [];
+    if (currentCaptureSession.consumers.has("remote")) {
+      const bounds = (yield* Ref.get(remoteStreamBoundsRef)).get(tabId);
+      const remoteListeners = yield* Ref.get(remoteFrameListenersRef);
+      if (bounds && remoteListeners.size > 0) {
+        const lastCaptureSize = (yield* Ref.get(remoteCaptureSizesRef)).get(tabId);
+        if (lastCaptureSize?.width !== size.width || lastCaptureSize.height !== size.height) {
+          yield* Ref.update(remoteCaptureSizesRef, (sizes) =>
+            replaceMap(sizes, (copy) => {
+              copy.set(tabId, { width: size.width, height: size.height });
+            }),
+          );
+          // Re-read in the background: this frame keeps the previous page size,
+          // which only skews a pointer by the resize delta for one frame.
+          yield* Effect.forkIn(refreshRemoteViewport(tabId).pipe(Effect.ignore), parentScope);
+        }
+        // Scale and re-encode for the viewer rather than reusing the recording
+        // frame: a phone should not pay for desktop-sized pixels, and this is
+        // the only payload on the socket where that cost is per-frame.
+        const scale = Math.min(1, bounds.maxWidth / size.width, bounds.maxHeight / size.height);
+        const remoteImage =
+          scale < 1
+            ? image.resize({
+                width: Math.max(1, Math.round(size.width * scale)),
+                height: Math.max(1, Math.round(size.height * scale)),
+              })
+            : image;
+        const remoteSize = yield* attempt(
+          { operation: "frameCapture.measureRemoteFrame", tabId, webContentsId: wc.id },
+          () => remoteImage.getSize(),
+        );
+        const remoteEncoded = yield* attempt(
+          { operation: "frameCapture.encodeRemoteFrame", tabId, webContentsId: wc.id },
+          () => remoteImage.toJPEG(bounds.quality).toString("base64"),
+        );
+        const viewport = (yield* Ref.get(remoteViewportsRef)).get(tabId);
+        const remoteFrame: DesktopPreviewRemoteFrame = {
+          tabId,
+          data: remoteEncoded,
+          width: remoteSize.width,
+          height: remoteSize.height,
+          receivedAt,
+          // Falling back to the captured pixel size keeps pointer mapping
+          // sane before the first viewport read lands.
+          pageWidth: viewport?.width ?? size.width,
+          pageHeight: viewport?.height ?? size.height,
+        };
+        deliveries.push(
+          Effect.forEach(
+            remoteListeners,
+            (listener) => deliverEvent("remote-frame", tabId, () => listener(remoteFrame)),
+            { discard: true },
+          ),
+        );
+      }
+    }
     if (currentCaptureSession.consumers.has("recording")) {
       const listeners = yield* Ref.get(recordingFrameListenersRef);
       deliveries.push(
@@ -2238,6 +2319,113 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           error,
         }),
       ),
+    );
+  });
+
+  const refreshRemoteViewport = Effect.fn("PreviewManager.refreshRemoteViewport")(function* (
+    tabId: string,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    const measured = yield* attemptPromise(
+      { operation: "remoteStream.measureViewport", tabId, webContentsId: wc.id },
+      () =>
+        wc.executeJavaScript(
+          "({ width: window.innerWidth, height: window.innerHeight })",
+          true,
+        ) as Promise<unknown>,
+    ).pipe(Effect.orElseSucceed(() => undefined));
+    if (
+      typeof measured !== "object" ||
+      measured === null ||
+      typeof (measured as { width?: unknown }).width !== "number" ||
+      typeof (measured as { height?: unknown }).height !== "number"
+    ) {
+      return;
+    }
+    const { width, height } = measured as { width: number; height: number };
+    if (width <= 0 || height <= 0) return;
+    yield* Ref.update(remoteViewportsRef, (viewports) =>
+      replaceMap(viewports, (copy) => {
+        copy.set(tabId, { width, height });
+      }),
+    );
+  });
+
+  const startRemoteStream = Effect.fn("PreviewManager.startRemoteStream")(function* (
+    tabId: string,
+    bounds: DesktopPreviewRemoteStreamBounds,
+  ) {
+    yield* Ref.update(remoteStreamBoundsRef, (all) =>
+      replaceMap(all, (copy) => {
+        copy.set(tabId, bounds);
+      }),
+    );
+    yield* startFrameCapture(tabId, "remote");
+    yield* refreshRemoteViewport(tabId);
+  });
+
+  const stopRemoteStream = Effect.fn("PreviewManager.stopRemoteStream")(function* (tabId: string) {
+    yield* stopFrameCapture(tabId, "remote");
+    yield* Ref.update(remoteStreamBoundsRef, (all) =>
+      replaceMap(all, (copy) => {
+        copy.delete(tabId);
+      }),
+    );
+    yield* Ref.update(remoteViewportsRef, (viewports) =>
+      replaceMap(viewports, (copy) => {
+        copy.delete(tabId);
+      }),
+    );
+    yield* Ref.update(remoteCaptureSizesRef, (sizes) =>
+      replaceMap(sizes, (copy) => {
+        copy.delete(tabId);
+      }),
+    );
+  });
+
+  /**
+   * Input from a remote viewer. Deliberately not registered through
+   * `expectAgentInput`: a person tapping their phone is human input, and the
+   * tab's controller should flip to "human" exactly as it does for a local
+   * click.
+   */
+  const dispatchRemoteInput = Effect.fn("PreviewManager.dispatchRemoteInput")(function* (
+    tabId: string,
+    event: PreviewInputEvent,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    yield* withControlSession(tabId, wc, "dispatchInput", (send) =>
+      Effect.gen(function* () {
+        if (event._tag === "mouse") {
+          yield* send("Input.dispatchMouseEvent", {
+            type: event.kind,
+            x: event.x,
+            y: event.y,
+            button: event.button,
+            clickCount: event.clickCount,
+            modifiers: event.modifiers,
+          });
+          return;
+        }
+        if (event._tag === "wheel") {
+          yield* send("Input.dispatchMouseEvent", {
+            type: "mouseWheel",
+            x: event.x,
+            y: event.y,
+            deltaX: event.deltaX,
+            deltaY: event.deltaY,
+            modifiers: event.modifiers,
+          });
+          return;
+        }
+        yield* send("Input.dispatchKeyEvent", {
+          type: event.kind,
+          key: event.key,
+          code: event.code,
+          modifiers: event.modifiers,
+          ...(event.text === undefined ? {} : { text: event.text }),
+        });
+      }),
     );
   });
 
@@ -3289,6 +3477,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       subscribe(pointerEventListenersRef, listener),
     subscribeRecordingFrames: (listener: RecordingFrameListener) =>
       subscribe(recordingFrameListenersRef, listener),
+    subscribeRemoteFrames: (listener: RemoteFrameListener) =>
+      subscribe(remoteFrameListenersRef, listener),
+    startRemoteStream,
+    stopRemoteStream,
+    dispatchRemoteInput,
+    refreshRemoteViewport,
     subscribeStateChanges: (listener: Listener) => subscribe(listenersRef, listener),
     zoomIn: (tabId: string) => applyZoom(tabId, (current) => nextZoomLevel(current, "in")),
     zoomOut: (tabId: string) => applyZoom(tabId, (current) => nextZoomLevel(current, "out")),
@@ -3639,6 +3833,20 @@ export class PreviewManager extends Context.Service<
     readonly subscribeRecordingFrames: (
       listener: RecordingFrameListener,
     ) => Effect.Effect<void, never, Scope.Scope>;
+    /** Frames for a viewer on another device. Shares the recording capture loop. */
+    readonly subscribeRemoteFrames: (
+      listener: RemoteFrameListener,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly startRemoteStream: (
+      tabId: string,
+      bounds: DesktopPreviewRemoteStreamBounds,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly stopRemoteStream: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly dispatchRemoteInput: (
+      tabId: string,
+      event: PreviewInputEvent,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly refreshRemoteViewport: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
   }
 >()("@t3tools/desktop/preview/Manager/PreviewManager") {}
 
@@ -3722,6 +3930,11 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     subscribeStateChanges: operations.subscribeStateChanges,
     subscribePointerEvents: operations.subscribePointerEvents,
     subscribeRecordingFrames: operations.subscribeRecordingFrames,
+    subscribeRemoteFrames: operations.subscribeRemoteFrames,
+    startRemoteStream: operations.startRemoteStream,
+    stopRemoteStream: operations.stopRemoteStream,
+    dispatchRemoteInput: operations.dispatchRemoteInput,
+    refreshRemoteViewport: operations.refreshRemoteViewport,
   });
 }).pipe(Effect.withSpan("PreviewManager.make"));
 

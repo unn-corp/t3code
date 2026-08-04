@@ -17,6 +17,7 @@ import {
   type PreviewAutomationError,
   type PreviewAutomationOperation,
   type PreviewAutomationHost,
+  type PreviewAutomationRequest,
   type PreviewAutomationHostFocus,
   type PreviewAutomationResponse,
   type PreviewAutomationStreamEvent,
@@ -27,6 +28,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -55,6 +57,33 @@ export class PreviewAutomationBroker extends Context.Service<
     readonly invoke: <A = unknown>(
       request: PreviewAutomationInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
+    /**
+     * Emits whenever a host finishes registering. Work that was refused for
+     * want of a host (a viewer attached before the desktop app opened) can
+     * retry here instead of stranding the viewer until it re-attaches.
+     */
+    readonly hostConnected: Stream.Stream<PreviewAutomationHost["environmentId"]>;
+    /**
+     * Send an operation to a connected host without taking a provider-session
+     * lease and without awaiting a reply. This is the path for viewer-driven
+     * work (screencast control, live input): there is no provider session to
+     * pin, and a pointer move arriving at 60Hz must not allocate a
+     * pending-request entry or pay a round trip. Resolves false when no
+     * connected host supports the operation.
+     *
+     * `environmentId` is optional because a websocket handler has none to
+     * offer: the id is a client-side label for this server, so two clients can
+     * name the same process differently. Callers that do have a scope (MCP)
+     * pass it to stay pinned to one runtime.
+     */
+    readonly dispatchToHost: (request: {
+      readonly environmentId?: PreviewAutomationHost["environmentId"];
+      readonly threadId: PreviewAutomationRequest["threadId"];
+      readonly tabId?: PreviewTabId;
+      readonly operation: PreviewAutomationOperation;
+      readonly input: unknown;
+      readonly timeoutMs?: number;
+    }) => Effect.Effect<boolean>;
   }
 >()("t3/mcp/PreviewAutomationBroker") {}
 
@@ -294,6 +323,9 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     requestSequence: 0,
     focusSequence: 0,
   });
+  // Sliding: a listener only needs to know that hosts changed, so a burst of
+  // reconnects must never block the registration that publishes it.
+  const hostConnectedPubSub = yield* PubSub.sliding<PreviewAutomationHost["environmentId"]>(16);
 
   const closeConnection = Effect.fn("PreviewAutomationBroker.closeConnection")(function* (
     queue: ClientConnection["queue"],
@@ -356,6 +388,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     if (registration.previousConnection) {
       yield* closeConnection(registration.previousConnection.queue, registration.disconnected);
     }
+    yield* PubSub.publish(hostConnectedPubSub, host.environmentId);
     return registration.registeredConnection;
   });
 
@@ -581,7 +614,56 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return result;
   });
 
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
+  const dispatchToHost: PreviewAutomationBroker["Service"]["dispatchToHost"] = Effect.fn(
+    "PreviewAutomationBroker.dispatchToHost",
+  )(function* (input) {
+    const route = yield* SynchronizedRef.modify(state, (current) => {
+      const connection = Array.from(current.clients.values())
+        .filter(
+          (host) =>
+            (input.environmentId === undefined || host.environmentId === input.environmentId) &&
+            supportsOperation(host, input.operation),
+        )
+        // Same preference order as invoke: richest host, then focused, then
+        // most recently focused.
+        .sort(
+          (left, right) =>
+            right.supportedOperations.size - left.supportedOperations.size ||
+            Number(right.focused) - Number(left.focused) ||
+            right.focusOrder - left.focusOrder,
+        )[0];
+      if (!connection) {
+        return [undefined, current] as const;
+      }
+      return [
+        { connection, requestId: `preview-viewer-${current.requestSequence}` },
+        { ...current, requestSequence: current.requestSequence + 1 },
+      ] as const;
+    });
+    if (!route) return false;
+    return yield* Queue.offer(route.connection.queue, {
+      type: "request",
+      connectionId: route.connection.connectionId,
+      request: {
+        requestId: route.requestId,
+        threadId: input.threadId,
+        ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
+        tabIdExplicit: input.tabId !== undefined,
+        operation: input.operation,
+        input: input.input,
+        timeoutMs: input.timeoutMs ?? 5_000,
+      },
+    });
+  });
+
+  return PreviewAutomationBroker.of({
+    connect,
+    focusHost,
+    respond,
+    invoke,
+    hostConnected: Stream.fromPubSub(hostConnectedPubSub),
+    dispatchToHost,
+  });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);

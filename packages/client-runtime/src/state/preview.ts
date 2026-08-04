@@ -23,6 +23,8 @@ export function createPreviewEnvironmentAtoms<R, E>(
   const lifecycleScheduler = createAtomCommandScheduler();
   const statusScheduler = createAtomCommandScheduler();
   const automationScheduler = createAtomCommandScheduler();
+  const frameScheduler = createAtomCommandScheduler();
+  const inputScheduler = createAtomCommandScheduler();
   const lifecycleConcurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
@@ -107,6 +109,40 @@ export function createPreviewEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "latest",
         key: previewAutomationHostFocusConcurrencyKey,
+      },
+    }),
+    /**
+     * Frames for a tab this client cannot render itself. Disposed with its
+     * owner like automation requests: a stream left alive would keep the host
+     * screencasting for a panel nobody is looking at.
+     */
+    frames: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:preview:frames",
+      tag: WS_METHODS.previewAttach,
+      idleTtlMs: 0,
+    }),
+    publishFrame: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:publish-frame",
+      tag: WS_METHODS.previewPublishFrame,
+      scheduler: frameScheduler,
+      concurrency: {
+        // Only the newest frame matters. Dropping an in-flight publish for a
+        // fresher one is the whole point of a screencast.
+        mode: "latest",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.tabId]),
+      },
+    }),
+    sendInput: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:input",
+      tag: WS_METHODS.previewInput,
+      scheduler: inputScheduler,
+      concurrency: {
+        // Serial, not latest: dropping a mouseup because a mousemove overtook
+        // it would leave the page holding a button down.
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.tabId]),
       },
     }),
   };

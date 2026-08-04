@@ -93,6 +93,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewClose]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewList]: AuthOrchestrationReadScope,
   [WS_METHODS.previewReportStatus]: AuthOrchestrationOperateScope,
+  [WS_METHODS.previewAttach]: AuthOrchestrationReadScope,
+  // Publishing frames and driving input both act on the page, so they sit with
+  // the operate scope rather than read.
+  [WS_METHODS.previewPublishFrame]: AuthOrchestrationOperateScope,
+  [WS_METHODS.previewInput]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,

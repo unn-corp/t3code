@@ -26,6 +26,7 @@ import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/prev
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
+import { PreviewRemoteSurface } from "./PreviewRemoteSurface";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
 import { PreviewChromeRow } from "./PreviewChromeRow";
@@ -655,11 +656,25 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
       />
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        {runtimeTabId && snapshot && !showEmptyState ? (
+        {runtimeTabId && snapshot && !showEmptyState && previewBridge ? (
           <BrowserSurfaceSlot
             key={runtimeTabId}
             tabId={runtimeTabId}
             visible={visible && !isUnreachable}
+            className="absolute inset-0 h-full w-full"
+          />
+        ) : null}
+        {/*
+         * No local bridge means no webview of our own, so the page is drawn
+         * from frames the host publishes. Mounted only while visible: the
+         * attach is what keeps the host's screencast running.
+         */}
+        {tabId && snapshot && !showEmptyState && !previewBridge && visible && !isUnreachable ? (
+          <PreviewRemoteSurface
+            key={tabId}
+            environmentId={threadRef.environmentId}
+            threadId={threadRef.threadId}
+            tabId={tabId}
             className="absolute inset-0 h-full w-full"
           />
         ) : null}

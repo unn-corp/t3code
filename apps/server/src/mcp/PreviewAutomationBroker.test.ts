@@ -1042,3 +1042,74 @@ it.effect("accepts responses only from the host that received the request", () =
     }),
   ),
 );
+
+it.effect("dispatches viewer work to a host without taking a session lease", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requests = requestsFrom(
+        yield* broker.connect(makeHost({ supportedOperations: ["dispatchInput"] })),
+      );
+      const seen: Array<RoutedRequest> = [];
+      yield* Stream.runForEach(requests, (request) =>
+        Effect.sync(() => {
+          seen.push(request);
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const dispatched = yield* broker.dispatchToHost({
+        threadId: scope.threadId,
+        tabId: PreviewTabId.make("tab-1"),
+        operation: "dispatchInput",
+        input: { tabId: "tab-1" },
+      });
+      yield* Effect.yieldNow;
+
+      expect(dispatched).toBe(true);
+      expect(seen.map((request) => request.operation)).toEqual(["dispatchInput"]);
+    }),
+  ),
+);
+
+it.effect("reports no host rather than failing when nothing supports the operation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      // A host predating remote viewing advertises only the operations it knows.
+      yield* broker.connect(makeHost({ supportedOperations: ["click"] }));
+      yield* Effect.yieldNow;
+
+      const dispatched = yield* broker.dispatchToHost({
+        threadId: scope.threadId,
+        operation: "streamStart",
+        input: {},
+      });
+
+      expect(dispatched).toBe(false);
+    }),
+  ),
+);
+
+it.effect("announces a host once it has registered so stalled work can retry", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const announced: Array<string> = [];
+      yield* Stream.runForEach(broker.hostConnected, (environmentId) =>
+        Effect.sync(() => {
+          announced.push(environmentId);
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      // Registration happens when the host's stream is consumed, not when
+      // connect is called, so the announcement has to follow the same edge.
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runDrain(events).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(announced).toEqual([scope.environmentId]);
+    }),
+  ),
+);

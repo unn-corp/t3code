@@ -1,7 +1,7 @@
 import { it } from "@effect/vitest";
 import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
 import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
-import { Effect, PubSub } from "effect";
+import { Effect, PubSub, Stream } from "effect";
 import { expect } from "vite-plus/test";
 
 import * as PreviewManager from "./Manager.ts";
@@ -382,6 +382,75 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       const bEvents = yield* PubSub.takeUpTo(bSub, DRAIN_LIMIT);
       expect(aEvents.map((e) => e.type)).toEqual(["opened", "opened"]);
       expect(bEvents.map((e) => e.type)).toEqual(["opened", "opened"]);
+    }),
+  );
+
+  it.effect("reports demand when a viewer attaches and again when it leaves", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const session = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      const demand: Array<number> = [];
+      yield* Effect.forkScoped(
+        manager.frameDemand.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              if (event.threadId === threadId) demand.push(event.viewers);
+            }),
+          ),
+        ),
+      );
+      yield* Effect.yieldNow;
+
+      const frames = yield* manager.attachFrames({ threadId, tabId: session.tabId });
+      // Taking one element opens the stream, then releases it on completion,
+      // which is exactly an attach followed by a detach.
+      const first = yield* Stream.runHead(frames);
+
+      expect(first._tag).toBe("Some");
+      yield* Effect.yieldNow;
+      expect(demand).toEqual([1, 0]);
+    }),
+  );
+
+  it.effect("drops frames when nothing is attached", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const session = yield* manager.open({ threadId, url: "http://localhost:5173" });
+
+      // No viewer, so this must be a no-op rather than an error or a buffer
+      // that grows until someone attaches.
+      yield* manager.publishFrame({
+        threadId,
+        tabId: session.tabId,
+        seq: 1,
+        data: "AAAA",
+        width: 100,
+        height: 80,
+        pageWidth: 100,
+        pageHeight: 80,
+        capturedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const snapshot = yield* manager.frameDemandSnapshot;
+      expect(snapshot.filter((entry) => entry.threadId === threadId)).toEqual([]);
+    }),
+  );
+
+  it.effect("counts each viewer of the same tab", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const session = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      const first = yield* manager.attachFrames({ threadId, tabId: session.tabId });
+      const second = yield* manager.attachFrames({ threadId, tabId: session.tabId });
+      yield* Effect.forkScoped(Stream.runDrain(first));
+      yield* Effect.forkScoped(Stream.runDrain(second));
+      yield* Effect.yieldNow;
+
+      const snapshot = yield* manager.frameDemandSnapshot;
+      expect(snapshot.find((entry) => entry.threadId === threadId)?.viewers).toBe(2);
     }),
   );
 });

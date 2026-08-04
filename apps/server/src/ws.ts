@@ -2192,6 +2192,27 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewAttach]: (input) =>
+          observeRpcStreamEffect(WS_METHODS.previewAttach, previewManager.attachFrames(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewPublishFrame]: (input) =>
+          observeRpcEffect(WS_METHODS.previewPublishFrame, previewManager.publishFrame(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewInput]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewInput,
+            previewAutomationBroker
+              .dispatchToHost({
+                threadId: input.threadId,
+                tabId: input.tabId,
+                operation: "dispatchInput",
+                input: { tabId: input.tabId, event: input.event },
+              })
+              .pipe(Effect.asVoid),
+            { "rpc.aggregate": "preview" },
+          ),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,

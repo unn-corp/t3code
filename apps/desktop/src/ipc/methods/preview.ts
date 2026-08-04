@@ -11,6 +11,9 @@ import {
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
+  DesktopPreviewRemoteStreamBoundsSchema,
+  DesktopPreviewTabIdSchema,
+  PreviewInputEvent,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetColorSchemeInputSchema,
@@ -40,6 +43,9 @@ export const installPreviewEventForwarding = Effect.fn(
   );
   yield* manager.subscribeRecordingFrames((frame) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame),
+  );
+  yield* manager.subscribeRemoteFrames((frame) =>
+    electronWindow.sendAll(IpcChannels.PREVIEW_REMOTE_FRAME_CHANNEL, frame),
   );
   yield* manager.subscribePointerEvents((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event),
@@ -168,6 +174,38 @@ export const stopRecording = tabMethod(
   "desktop.ipc.preview.stopRecording",
   (manager, tabId) => manager.stopRecording(tabId),
 );
+export const startRemoteStream = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_REMOTE_STREAM_START_CHANNEL,
+  payload: Schema.Struct({
+    tabId: DesktopPreviewTabIdSchema,
+    bounds: DesktopPreviewRemoteStreamBoundsSchema,
+  }),
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.startRemoteStream")(function* ({ tabId, bounds }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.startRemoteStream(tabId, bounds);
+  }),
+});
+
+export const stopRemoteStream = tabMethod(
+  IpcChannels.PREVIEW_REMOTE_STREAM_STOP_CHANNEL,
+  "desktop.ipc.preview.stopRemoteStream",
+  (manager, tabId) => manager.stopRemoteStream(tabId),
+);
+
+export const dispatchRemoteInput = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_REMOTE_INPUT_CHANNEL,
+  payload: Schema.Struct({
+    tabId: DesktopPreviewTabIdSchema,
+    event: PreviewInputEvent,
+  }),
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.dispatchRemoteInput")(function* ({ tabId, event }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.dispatchRemoteInput(tabId, event);
+  }),
+});
+
 export const openPictureInPicture = tabMethod(
   IpcChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL,
   "desktop.ipc.preview.openPictureInPicture",
@@ -390,4 +428,7 @@ export const methods = [
   startRecording,
   stopRecording,
   saveRecording,
+  startRemoteStream,
+  stopRemoteStream,
+  dispatchRemoteInput,
 ] as const;

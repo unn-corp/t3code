@@ -8,8 +8,10 @@ import {
   type EnvironmentId,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationOpenInput,
+  type PreviewAutomationDispatchInputInput,
   type PreviewAutomationResizeInput,
   type PreviewAutomationResizeResult,
+  type PreviewAutomationStreamStartInput,
   type PreviewAutomationSetColorSchemeInput,
   type PreviewAutomationSetColorSchemeResult,
   type PreviewAutomationHost as PreviewAutomationHostState,
@@ -47,6 +49,12 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
+import {
+  nextRemoteFrameSequence,
+  readRemoteStreamTarget,
+  registerRemoteStreamTab,
+  unregisterRemoteStreamTab,
+} from "./remoteStreamRegistry";
 import {
   PreviewAutomationOperationError,
   PreviewAutomationOverlayTimeoutError,
@@ -296,6 +304,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
     previewEnvironment.focusAutomationHost,
     "preview automation host focus",
   );
+  const publishFrame = useAtomCommand(previewEnvironment.publishFrame, {
+    reportFailure: false,
+  });
   const [automationConnectionAtom] = useState(() => Atom.make<string | null>(null));
   const automationConnectionId = useAtomValue(automationConnectionAtom);
 
@@ -621,6 +632,32 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               request.input as Parameters<typeof ready.bridge.automation.waitFor>[1],
             );
           }
+          case "streamStart": {
+            const ready = await requireReadyTab();
+            const bounds = request.input as PreviewAutomationStreamStartInput;
+            await ready.bridge.remote.startStream(ready.runtimeTabId, {
+              maxWidth: bounds.maxWidth,
+              maxHeight: bounds.maxHeight,
+              quality: bounds.quality,
+            });
+            registerRemoteStreamTab(ready.runtimeTabId, {
+              threadId: request.threadId,
+              tabId: ready.tabId,
+            });
+            return { tabId: ready.tabId, streaming: true };
+          }
+          case "streamStop": {
+            const ready = await requireReadyTab();
+            await ready.bridge.remote.stopStream(ready.runtimeTabId);
+            unregisterRemoteStreamTab(ready.runtimeTabId);
+            return { tabId: ready.tabId, streaming: false };
+          }
+          case "dispatchInput": {
+            const ready = await requireReadyTab();
+            const dispatch = request.input as PreviewAutomationDispatchInputInput;
+            await ready.bridge.remote.dispatchInput(ready.runtimeTabId, dispatch.event);
+            return { tabId: ready.tabId };
+          }
           case "recordingStart": {
             const ready = await requireReadyTab();
             const startedAt = await startBrowserRecording(
@@ -706,6 +743,32 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
     ],
   );
   useAtomValue(automationRequestConsumerAtom);
+
+  // Frames only leave this machine while a remote viewer is attached: the host
+  // starts its screencast on a streamStart request and stops on streamStop, so
+  // an idle desktop publishes nothing.
+  useEffect(() => {
+    const bridge = previewBridge;
+    if (!bridge?.remote) return;
+    return bridge.remote.onFrame((frame) => {
+      const target = readRemoteStreamTarget(frame.tabId);
+      if (!target) return;
+      void publishFrame({
+        environmentId,
+        input: {
+          threadId: target.threadId,
+          tabId: target.tabId,
+          seq: nextRemoteFrameSequence(),
+          data: frame.data,
+          width: frame.width,
+          height: frame.height,
+          pageWidth: frame.pageWidth,
+          pageHeight: frame.pageHeight,
+          capturedAt: frame.receivedAt,
+        },
+      });
+    });
+  }, [environmentId, publishFrame]);
 
   useEffect(() => {
     const report = () => {

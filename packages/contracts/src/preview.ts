@@ -1,10 +1,16 @@
 /**
  * Preview - Schemas for the in-app browser preview surface.
  *
- * The preview is desktop-only (Chromium <webview>); the server tracks per-thread
- * tab metadata so it survives client reconnects and multi-window. The desktop
- * renderer mediates: it owns the actual <webview> and reports navigation back to
- * the server via these RPCs, the server fans events to all subscribers.
+ * Rendering is host-side (Chromium <webview> in the desktop runtime); the server
+ * tracks per-thread tab metadata so it survives client reconnects and
+ * multi-window. The desktop renderer mediates: it owns the actual <webview> and
+ * reports navigation back to the server via these RPCs, the server fans events
+ * to all subscribers.
+ *
+ * Clients that cannot render a <webview> of their own (web and PWA) attach to a
+ * frame stream instead: the host publishes screencast frames through the server
+ * and those clients send raw input back the same way. See the frame and input
+ * schemas at the end of this module.
  *
  * @module Preview
  */
@@ -249,6 +255,102 @@ export const PreviewEvent = Schema.Union([
   PreviewClosedEvent,
 ]);
 export type PreviewEvent = typeof PreviewEvent.Type;
+
+/**
+ * One screencast frame captured by the host that owns the tab.
+ *
+ * `data` is base64 JPEG straight from CDP `Page.screencastFrame`, so it stays a
+ * plain JSON payload on the existing websocket. Frames are lossy and droppable
+ * by design: viewers only ever need the newest one, and `seq` lets a viewer
+ * discard a frame that overtook a newer one.
+ */
+export const PreviewFrame = Schema.Struct({
+  threadId: TrimmedNonEmptyString,
+  tabId: PreviewTabId,
+  seq: NonNegativeInt,
+  /** Base64 JPEG, no data-URL prefix. */
+  data: TrimmedNonEmptyString,
+  /** Pixel size of the encoded image. */
+  width: PositiveInt,
+  height: PositiveInt,
+  /** CSS-pixel size of the page viewport the frame was captured from. */
+  pageWidth: PositiveInt,
+  pageHeight: PositiveInt,
+  capturedAt: Schema.String,
+});
+export type PreviewFrame = typeof PreviewFrame.Type;
+
+export const PreviewPublishFrameInput = PreviewFrame;
+export type PreviewPublishFrameInput = typeof PreviewPublishFrameInput.Type;
+
+export const PreviewAttachInput = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+});
+export type PreviewAttachInput = typeof PreviewAttachInput.Type;
+
+/**
+ * `attached` arrives first so a viewer can render a placeholder before the host
+ * has produced its first frame; `unavailable` tells the viewer no host owns this
+ * tab, which is how a web-only environment reports that nothing can render.
+ */
+export const PreviewFrameStreamEvent = Schema.Union([
+  Schema.TaggedStruct("attached", {
+    threadId: TrimmedNonEmptyString,
+    tabId: PreviewTabId,
+  }),
+  Schema.TaggedStruct("frame", {
+    frame: PreviewFrame,
+  }),
+  Schema.TaggedStruct("unavailable", {
+    threadId: TrimmedNonEmptyString,
+    tabId: PreviewTabId,
+    reason: Schema.String,
+  }),
+]);
+export type PreviewFrameStreamEvent = typeof PreviewFrameStreamEvent.Type;
+
+export const PREVIEW_INPUT_MOUSE_BUTTONS = ["none", "left", "middle", "right"] as const;
+export const PreviewInputMouseButton = Schema.Literals(PREVIEW_INPUT_MOUSE_BUTTONS);
+export type PreviewInputMouseButton = typeof PreviewInputMouseButton.Type;
+
+/**
+ * Raw input from a viewer, in page CSS pixels. Deliberately a narrow subset of
+ * CDP's `Input` domain: enough to drive a page by hand, nothing that lets a
+ * client script arbitrary automation through this path.
+ */
+export const PreviewInputEvent = Schema.Union([
+  Schema.TaggedStruct("mouse", {
+    kind: Schema.Literals(["mousePressed", "mouseReleased", "mouseMoved"]),
+    x: Schema.Number,
+    y: Schema.Number,
+    button: PreviewInputMouseButton,
+    clickCount: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 })),
+    modifiers: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 15 })),
+  }),
+  Schema.TaggedStruct("wheel", {
+    x: Schema.Number,
+    y: Schema.Number,
+    deltaX: Schema.Number,
+    deltaY: Schema.Number,
+    modifiers: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 15 })),
+  }),
+  Schema.TaggedStruct("key", {
+    kind: Schema.Literals(["keyDown", "keyUp", "char"]),
+    key: Schema.String.check(Schema.isMaxLength(32)),
+    code: Schema.String.check(Schema.isMaxLength(32)),
+    text: Schema.optional(Schema.String.check(Schema.isMaxLength(8))),
+    modifiers: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 15 })),
+  }),
+]);
+export type PreviewInputEvent = typeof PreviewInputEvent.Type;
+
+export const PreviewInputInput = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  event: PreviewInputEvent,
+});
+export type PreviewInputInput = typeof PreviewInputInput.Type;
 
 /**
  * A localhost server detected by the port scanner. Used to populate the

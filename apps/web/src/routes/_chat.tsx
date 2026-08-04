@@ -19,7 +19,6 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
-import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
 function ChatRouteGlobalShortcuts() {
@@ -112,16 +111,9 @@ function ChatRouteGlobalShortcuts() {
         event.preventDefault();
         event.stopPropagation();
         if (!routeThreadRef) return;
-        if (!isPreviewSupportedInRuntime()) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "info",
-              title: "Preview is desktop-only",
-              description: "Open T3 Code in the desktop app to use the in-app preview.",
-            }),
-          );
-          return;
-        }
+        // The panel itself reports when no runtime can render the page, so the
+        // shortcut no longer refuses to open it on web.
+        if (!isPreviewSupportedInRuntime()) return;
         dispatchPreviewAction("toggle-panel");
         return;
       }

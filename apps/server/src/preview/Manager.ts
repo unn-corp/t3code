@@ -10,14 +10,17 @@
  * fail an in-progress `navigate()`).
  */
 import {
+  type PreviewAttachInput,
   type PreviewCloseInput,
   type PreviewEvent,
   type PreviewError,
+  type PreviewFrameStreamEvent,
   PreviewInvalidUrlError,
   type PreviewListInput,
   type PreviewListResult,
   type PreviewNavigateInput,
   type PreviewOpenInput,
+  type PreviewPublishFrameInput,
   type PreviewRefreshInput,
   type PreviewReportStatusInput,
   type PreviewResizeInput,
@@ -56,6 +59,25 @@ export class PreviewManager extends Context.Service<
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
     readonly events: Stream.Stream<PreviewEvent>;
     readonly subscribeEvents: Effect.Effect<PubSub.Subscription<PreviewEvent>, never, Scope.Scope>;
+    /**
+     * Frame stream for a viewer that cannot render the tab itself. Attaching
+     * counts as demand; the last detach drops it back to zero.
+     */
+    readonly attachFrames: (
+      input: PreviewAttachInput,
+    ) => Effect.Effect<Stream.Stream<PreviewFrameStreamEvent>>;
+    /** Host to server. Dropped when nothing is watching. */
+    readonly publishFrame: (input: PreviewPublishFrameInput) => Effect.Effect<void>;
+    /** Tells watchers why a tab produced no frames, without failing their stream. */
+    readonly reportFramesUnavailable: (input: {
+      readonly threadId: string;
+      readonly tabId: string;
+      readonly reason: string;
+    }) => Effect.Effect<void>;
+    /** Demand transitions, for whoever is responsible for starting a host screencast. */
+    readonly frameDemand: Stream.Stream<PreviewFrameDemand>;
+    /** Current demand, so a host that connects late can be caught up. */
+    readonly frameDemandSnapshot: Effect.Effect<ReadonlyArray<PreviewFrameDemand>>;
   }
 >()("t3/preview/Manager/PreviewManager") {}
 
@@ -64,6 +86,28 @@ interface PreviewSessionState {
   readonly tabId: string;
   readonly snapshot: PreviewSessionSnapshot;
 }
+
+/** How many viewers currently want frames for one tab. */
+export interface PreviewFrameDemand {
+  readonly threadId: PreviewAttachInput["threadId"];
+  readonly tabId: PreviewAttachInput["tabId"];
+  readonly viewers: number;
+}
+
+interface FrameChannel {
+  readonly threadId: PreviewAttachInput["threadId"];
+  readonly tabId: PreviewAttachInput["tabId"];
+  readonly pubsub: PubSub.PubSub<PreviewFrameStreamEvent>;
+  readonly viewers: number;
+}
+
+/**
+ * Frames are lossy: a viewer only ever wants the newest one, so the channel
+ * slides rather than buffering. Depth 2 absorbs a single slow tick without
+ * letting a stalled subscriber pin decoded JPEGs in memory. This is the one
+ * high-volume payload on the socket, so the drop policy is deliberate.
+ */
+const FRAME_CHANNEL_DEPTH = 2;
 
 interface ManagerState {
   /** All sessions across every thread, keyed by `${threadId}\u0000${tabId}`. */
@@ -405,6 +449,132 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     },
   );
 
+  // Frame channels live beside the session map rather than inside it: viewers
+  // come and go far more often than sessions change, and folding them into
+  // ManagerState would spin the revision counter that list/event ordering
+  // depends on.
+  const framesRef = yield* SynchronizedRef.make<ReadonlyMap<string, FrameChannel>>(new Map());
+  const frameDemandPubSub = yield* PubSub.sliding<PreviewFrameDemand>(64);
+
+  const readChannel = (threadId: string, tabId: string): Effect.Effect<FrameChannel | undefined> =>
+    SynchronizedRef.get(framesRef).pipe(
+      Effect.map((channels) => channels.get(compositeKey(threadId, tabId))),
+    );
+
+  const acquireViewer = Effect.fn("PreviewManager.acquireViewer")(function* (
+    threadId: PreviewAttachInput["threadId"],
+    tabId: PreviewAttachInput["tabId"],
+  ) {
+    const channel = yield* SynchronizedRef.modifyEffect(framesRef, (channels) =>
+      Effect.gen(function* () {
+        const key = compositeKey(threadId, tabId);
+        const existing = channels.get(key);
+        const pubsub =
+          existing?.pubsub ?? (yield* PubSub.sliding<PreviewFrameStreamEvent>(FRAME_CHANNEL_DEPTH));
+        const next: FrameChannel = {
+          threadId,
+          tabId,
+          pubsub,
+          viewers: (existing?.viewers ?? 0) + 1,
+        };
+        const updated = new Map(channels);
+        updated.set(key, next);
+        return [next, updated as ReadonlyMap<string, FrameChannel>] as const;
+      }),
+    );
+    yield* PubSub.publish(frameDemandPubSub, { threadId, tabId, viewers: channel.viewers });
+    return channel;
+  });
+
+  const releaseViewer = Effect.fn("PreviewManager.releaseViewer")(function* (
+    threadId: PreviewAttachInput["threadId"],
+    tabId: PreviewAttachInput["tabId"],
+  ) {
+    const released = yield* SynchronizedRef.modify(framesRef, (channels) => {
+      const key = compositeKey(threadId, tabId);
+      const existing = channels.get(key);
+      if (!existing) {
+        return [null, channels] as const;
+      }
+      const viewers = Math.max(0, existing.viewers - 1);
+      const updated = new Map(channels);
+      if (viewers === 0) {
+        updated.delete(key);
+      } else {
+        updated.set(key, { ...existing, viewers });
+      }
+      return [
+        { pubsub: existing.pubsub, viewers },
+        updated as ReadonlyMap<string, FrameChannel>,
+      ] as const;
+    });
+    if (!released) return;
+    yield* PubSub.publish(frameDemandPubSub, { threadId, tabId, viewers: released.viewers });
+    if (released.viewers === 0) {
+      yield* PubSub.shutdown(released.pubsub);
+    }
+  });
+
+  const attachFrames: PreviewManager["Service"]["attachFrames"] = Effect.fn(
+    "PreviewManager.attachFrames",
+  )((input) =>
+    Effect.succeed(
+      Stream.unwrap(
+        Effect.acquireRelease(acquireViewer(input.threadId, input.tabId), () =>
+          releaseViewer(input.threadId, input.tabId),
+        ).pipe(
+          Effect.map((channel) =>
+            Stream.concat(
+              Stream.succeed<PreviewFrameStreamEvent>({
+                _tag: "attached",
+                threadId: input.threadId,
+                tabId: input.tabId,
+              }),
+              Stream.fromPubSub(channel.pubsub),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  const publishFrame: PreviewManager["Service"]["publishFrame"] = Effect.fn(
+    "PreviewManager.publishFrame",
+  )(function* (input) {
+    const channel = yield* readChannel(input.threadId, input.tabId);
+    // No viewers means the host is still winding down its screencast. Dropping
+    // is correct: there is nobody to render the frame.
+    if (!channel) return;
+    yield* PubSub.publish(channel.pubsub, { _tag: "frame", frame: input });
+  });
+
+  const reportFramesUnavailable: PreviewManager["Service"]["reportFramesUnavailable"] = Effect.fn(
+    "PreviewManager.reportFramesUnavailable",
+  )(function* (input) {
+    const channel = yield* readChannel(input.threadId, input.tabId);
+    if (!channel) return;
+    yield* PubSub.publish(channel.pubsub, {
+      _tag: "unavailable",
+      threadId: input.threadId,
+      tabId: input.tabId,
+      reason: input.reason,
+    });
+  });
+
+  const frameDemandSnapshot: PreviewManager["Service"]["frameDemandSnapshot"] = SynchronizedRef.get(
+    framesRef,
+  ).pipe(
+    Effect.map((channels) =>
+      Array.from(channels.values()).map(
+        (channel): PreviewFrameDemand => ({
+          threadId: channel.threadId,
+          tabId: channel.tabId,
+          viewers: channel.viewers,
+        }),
+      ),
+    ),
+  );
+
   const list: PreviewManager["Service"]["list"] = Effect.fn("PreviewManager.list")(
     function* (input) {
       return yield* SynchronizedRef.get(stateRef).pipe(
@@ -431,6 +601,11 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     list,
     events,
     subscribeEvents: PubSub.subscribe(eventsPubSub),
+    attachFrames,
+    publishFrame,
+    reportFramesUnavailable,
+    frameDemand: Stream.fromPubSub(frameDemandPubSub),
+    frameDemandSnapshot,
   });
 }).pipe(Effect.withSpan("PreviewManager.make"));
 

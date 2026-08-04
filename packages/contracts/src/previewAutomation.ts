@@ -3,6 +3,7 @@ import { Schema } from "effect";
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
+  PreviewInputEvent,
   PreviewRenderedViewportSize,
   PreviewTabId,
   PreviewViewportPresetId,
@@ -46,6 +47,11 @@ export const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",
   "setColorScheme",
+  // Remote viewing. A host that predates these simply never advertises them,
+  // and the server reports the tab as unviewable rather than failing the call.
+  "streamStart",
+  "streamStop",
+  "dispatchInput",
 ] as const;
 
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);
@@ -284,6 +290,29 @@ export const PreviewAutomationSetColorSchemeResult = Schema.Struct({
 });
 export type PreviewAutomationSetColorSchemeResult =
   typeof PreviewAutomationSetColorSchemeResult.Type;
+
+/**
+ * Screencast bounds. The host scales frames down to fit, so a phone asks for a
+ * small box and the wire cost follows the viewer, not the page.
+ */
+export const PreviewAutomationStreamStartInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  maxWidth: Schema.Int.check(Schema.isBetween({ minimum: 160, maximum: 3840 })),
+  maxHeight: Schema.Int.check(Schema.isBetween({ minimum: 160, maximum: 2160 })),
+  quality: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+});
+export type PreviewAutomationStreamStartInput = typeof PreviewAutomationStreamStartInput.Type;
+
+export const PreviewAutomationStreamStopInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+});
+export type PreviewAutomationStreamStopInput = typeof PreviewAutomationStreamStopInput.Type;
+
+export const PreviewAutomationDispatchInputInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  event: PreviewInputEvent,
+});
+export type PreviewAutomationDispatchInputInput = typeof PreviewAutomationDispatchInputInput.Type;
 
 const Locator = TrimmedNonEmptyString.annotate({
   description:

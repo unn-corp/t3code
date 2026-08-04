@@ -32,6 +32,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [PWA Web Push](./internals/pwa-web-push.md)
+- [Remote preview viewing](./internals/preview-remote-viewing.md)
 - [CI gates](./internals/ci.md)
 
 ### Runbooks
