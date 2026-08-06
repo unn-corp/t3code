@@ -25,7 +25,14 @@ import * as Schema from "effect/Schema";
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "16rem";
-const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
+/*
+ * Capped rather than full-bleed. Measured on a 393px cover screen the sheet
+ * covered 100% of the display, which hides the thread it was opened from and
+ * removes the strip of content that makes tapping away to dismiss discoverable.
+ * The cap only binds on narrow screens; anything under about 23rem still gets
+ * effectively the whole width.
+ */
+const SIDEBAR_WIDTH_MOBILE = "min(calc(100vw - var(--spacing(3))), 22rem)";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
 
