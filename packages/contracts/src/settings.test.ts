@@ -119,6 +119,21 @@ describe("ClientSettings sidebar v2", () => {
 });
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
+  it("hydrates Hermes legacy provider settings and accepts its patch fields", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.providers.hermes).toMatchObject({
+      enabled: true,
+      binaryPath: "hermes",
+      homePath: "",
+      customModels: [],
+    });
+    expect(
+      decodeServerSettingsPatch({
+        providers: { hermes: { homePath: "~/.hermes-work", customModels: ["openrouter:hermes"] } },
+      }).providers?.hermes,
+    ).toEqual({ homePath: "~/.hermes-work", customModels: ["openrouter:hermes"] });
+  });
+
   it("defaults text generation to Luna at low reasoning effort", () => {
     expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({
       instanceId: ProviderInstanceId.make("codex"),

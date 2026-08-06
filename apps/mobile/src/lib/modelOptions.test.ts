@@ -10,6 +10,37 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("renders live Hermes models with their provider-qualified ids intact", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "hermes",
+          driver: "hermes",
+          displayName: "Hermes",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "openrouter:hermes-4",
+              name: "Hermes 4",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(buildModelOptions(config, null)).toMatchObject([
+      {
+        providerDriver: "hermes",
+        label: "Hermes 4",
+        selection: { instanceId: "hermes", model: "openrouter:hermes-4" },
+      },
+    ]);
+  });
+
   it("folds legacy models into a provider-scoped menu", () => {
     const config = {
       providers: [
