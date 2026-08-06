@@ -1961,14 +1961,31 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
+  const stageNpmrcPath = path.join(stageAppDir, ".npmrc");
+  yield* fs.writeFileString(
+    stageNpmrcPath,
+    ["registry=https://registry.npmjs.org/", "manage-package-manager-versions=false", ""].join(
+      "\n",
+    ),
+  );
   const installCommand = yield* resolveSpawnCommand("vp", [...STAGE_INSTALL_ARGS]);
+  // The staged app lives outside the repository, so it cannot inherit the project's
+  // local .npmrc. Explicitly use the public registry instead of a developer's global
+  // registry override (which may point at an expired private mirror).
+  const stageInstallEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    npm_config_registry: "https://registry.npmjs.org/",
+    npm_config_manage_package_manager_versions: "false",
+  };
   yield* runCommand(
     ChildProcess.make(installCommand.command, installCommand.args, {
       cwd: stageAppDir,
+      env: stageInstallEnv,
       shell: installCommand.shell,
     }),
     { label: "vp install --prod", verbose: options.verbose },
   );
+  yield* fs.remove(stageNpmrcPath, { force: true });
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
 
   // WSL is Windows-only, so only the Windows artifact carries the Linux backend
