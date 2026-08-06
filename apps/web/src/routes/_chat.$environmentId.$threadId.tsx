@@ -78,8 +78,11 @@ function ChatThreadRouteView() {
     return null;
   }
 
+  // dvh, not svh: svh ignores the on-screen keyboard, so the composer ends up
+  // underneath it. interactive-widget=resizes-content shrinks the viewport when
+  // the keyboard opens, and only dvh tracks that.
   return (
-    <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       {renderState === "ready" || (renderState === "loading" && serverThreadShell !== null) ? (
         <ChatView
           environmentId={threadRef.environmentId}

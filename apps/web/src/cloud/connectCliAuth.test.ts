@@ -18,6 +18,10 @@ describe("connectCliAuth", () => {
     vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
     vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "t3-relay");
     vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.com");
+    // Stubbed empty rather than left alone: a repo-root .env with real Connect
+    // values is injected into import.meta.env, so "absent" has to be asserted
+    // explicitly or this passes only on machines with no Connect config.
+    vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "");
     expect(hasConnectCliAuthConfig()).toBe(false);
 
     vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "oauthapp_123");
@@ -48,6 +52,7 @@ describe("connectCliAuth", () => {
 
   it("returns null when the CLI OAuth client id is not configured", () => {
     vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
+    vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "");
     expect(
       buildConnectCliClerkAuthorizeUrl({ state: "state-1", challenge: "challenge-1" }),
     ).toBeNull();

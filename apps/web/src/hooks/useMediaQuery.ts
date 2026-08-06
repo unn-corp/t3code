@@ -5,7 +5,9 @@ const BREAKPOINTS = {
   "3xl": 1600,
   "4xl": 2000,
   lg: 1024,
-  md: 768,
+  // Mirrors --breakpoint-md in index.css. An unfolded foldable sits between
+  // this and Tailwind's 768px default, and belongs on the desktop layout.
+  md: 672,
   sm: 640,
   xl: 1280,
 } as const;

@@ -70,8 +70,10 @@ function DraftChatThreadRouteView() {
     return null;
   }
 
+  // dvh, not svh: svh ignores the on-screen keyboard, so the composer ends up
+  // underneath it. See the same note on the server thread route.
   return (
-    <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <ChatView
         draftId={draftId}
         environmentId={draftSession.environmentId}
