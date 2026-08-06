@@ -17,16 +17,20 @@ const buttonVariants = cva(
     variants: {
       /*
        * Touch gets a larger control than a cursor does, on top of the hit area
-       * the base class already provides. The hit area alone made controls
-       * reachable while still looking desktop-scaled, which on a phone reads as
-       * cramped even where the tap lands. The sm: pair keeps a tablet from
-       * inheriting phone sizing at desktop widths.
+       * the base class already provides, because the hit area alone left
+       * controls looking desktop-scaled even where taps landed.
+       *
+       * Only the text sizes grow. Icon variants are deliberately left alone:
+       * they fill dense toolbars, and the cover screen measures 360 CSS px
+       * (1080 physical at 3.0x), where the chat header already reserves 64px
+       * for the panel toggles. Widening every icon there buys legibility on a
+       * row that has no room to pay for it.
        */
       size: {
         default: "h-9 px-[calc(--spacing(3)-1px)] pointer-coarse:h-11 sm:h-8 sm:pointer-coarse:h-9",
-        icon: "size-9 pointer-coarse:size-11 sm:size-8 sm:pointer-coarse:size-9",
-        "icon-lg": "size-10 pointer-coarse:size-12 sm:size-9 sm:pointer-coarse:size-10",
-        "icon-sm": "size-8 pointer-coarse:size-10 sm:size-7 sm:pointer-coarse:size-8",
+        icon: "size-9 sm:size-8",
+        "icon-lg": "size-10 sm:size-9",
+        "icon-sm": "size-8 sm:size-7",
         "icon-xl":
           "size-11 sm:size-10 [&_svg:not([class*='size-'])]:size-5 sm:[&_svg:not([class*='size-'])]:size-4.5",
         "icon-xs":
