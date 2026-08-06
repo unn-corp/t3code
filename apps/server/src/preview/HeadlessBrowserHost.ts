@@ -277,7 +277,41 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
       next.set(input.tabId, session);
       return next;
     });
+    yield* adoptTabUrl(session);
     return session;
+  });
+
+  /**
+   * A tab belongs to the server, not to whichever renderer happens to be
+   * showing it. Attaching therefore has to pick up the URL the tab is already
+   * on: a viewer that arrives after the tab was navigated elsewhere would
+   * otherwise get the blank page this host just created, with every status
+   * along the way reporting success. An Idle tab has no URL yet and correctly
+   * stays blank.
+   */
+  const adoptTabUrl = Effect.fn("HeadlessBrowserHost.adoptTabUrl")(function* (page: PageSession) {
+    const listed = yield* manager
+      .list({ threadId: page.threadId as never })
+      .pipe(Effect.orElseSucceed(() => null));
+    const snapshot = listed?.sessions.find((session) => session.tabId === page.tabId);
+    if (!snapshot) return;
+    const cdp = yield* requireBrowser;
+    // A device-emulated tab has to render at its own size, or the viewer is
+    // shown a desktop-width page the tab was never on.
+    const viewport = snapshot.viewport;
+    if (viewport && viewport._tag !== "fill") {
+      page.viewport = { width: viewport.width, height: viewport.height };
+      yield* cdp
+        .send(
+          "Emulation.setDeviceMetricsOverride",
+          { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false },
+          page.sessionId,
+        )
+        .pipe(Effect.ignore);
+    }
+    const navStatus = snapshot.navStatus;
+    if (navStatus._tag === "Idle") return;
+    yield* cdp.send("Page.navigate", { url: navStatus.url }, page.sessionId).pipe(Effect.ignore);
   });
 
   const requirePage = Effect.fn("HeadlessBrowserHost.requirePage")(function* (input: {
