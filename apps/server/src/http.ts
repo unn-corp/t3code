@@ -41,6 +41,11 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
+/** Revalidate every time. Cheap, and the only way a client learns of a new build. */
+const SHELL_CACHE_CONTROL = "no-cache";
+/** Vite emits content-hashed names under /assets, so a hit can never be stale. */
+const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+const isImmutableAssetPath = (requestPath: string): boolean => requestPath.startsWith("/assets/");
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compression(), {
@@ -251,6 +256,13 @@ export const staticAndDevRouteLayer = HttpRouter.add(
     const path = yield* Path.Path;
     const staticRoot = path.resolve(staticDir);
     const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
+    /**
+     * The shell names its bundles by content hash, so a client that keeps a
+     * stale shell keeps requesting bundles that no longer exist. It was served
+     * with no cache directive and no validator at all, which leaves the
+     * decision to browser heuristics: an installed PWA could sit on an old
+     * build indefinitely with no way to notice a new one.
+     */
     const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
     const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
     const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
@@ -293,6 +305,7 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       return HttpServerResponse.uint8Array(indexData, {
         status: 200,
         contentType: "text/html; charset=utf-8",
+        headers: { "Cache-Control": SHELL_CACHE_CONTROL },
       });
     }
 
@@ -305,6 +318,11 @@ export const staticAndDevRouteLayer = HttpRouter.add(
     return HttpServerResponse.uint8Array(data, {
       status: 200,
       contentType,
+      headers: {
+        "Cache-Control": isImmutableAssetPath(staticRequestPath)
+          ? IMMUTABLE_CACHE_CONTROL
+          : SHELL_CACHE_CONTROL,
+      },
     });
   }),
 );
