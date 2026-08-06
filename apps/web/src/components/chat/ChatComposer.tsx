@@ -50,6 +50,8 @@ import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag";
+import { imageFilesFromDataTransfer } from "./composerImageClipboard";
+import { formatDroppedTextFiles } from "./composerDroppedTextFiles";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -2542,9 +2544,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addConversationReferenceToDraft(reference);
       return;
     }
-    const files = Array.from(event.clipboardData.files);
-    if (files.length === 0) return;
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    const imageFiles = imageFilesFromDataTransfer(event.clipboardData);
     if (imageFiles.length === 0) return;
     event.preventDefault();
     void addComposerImages(imageFiles);
@@ -2609,7 +2609,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     const files = Array.from(event.dataTransfer.files);
-    void addComposerImages(files);
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    const textFiles = files.filter((file) => !file.type.startsWith("image/"));
+    void addComposerImages(imageFiles);
+    void formatDroppedTextFiles(textFiles).then(({ text, rejectedNames }) => {
+      if (text.length > 0) {
+        const prompt = promptRef.current;
+        applyPromptReplacement(prompt.length, prompt.length, text);
+      }
+      if (rejectedNames.length > 0) {
+        setThreadError(
+          activeThreadId,
+          `Couldn't add ${rejectedNames.join(", ")}. Drop text/code files up to 512 KB.`,
+        );
+      }
+    });
     focusComposer();
   };
 

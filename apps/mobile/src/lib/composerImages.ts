@@ -216,6 +216,14 @@ function mimeTypeFromUri(uri: string): string {
   }
 }
 
+function parseImageDataUrl(uri: string): { mimeType: string; base64: string } | null {
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i.exec(uri);
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+  return { mimeType: match[1].toLowerCase(), base64: match[2] };
+}
+
 export function isOwnedPastedImageUri(uri: string): boolean {
   try {
     const url = new URL(uri);
@@ -243,6 +251,25 @@ export async function convertPastedImagesToAttachments(input: {
     const ownedTemporaryFile = isOwnedPastedImageUri(uri);
     try {
       if (index >= Math.max(0, remainingSlots)) {
+        continue;
+      }
+      // The PWA receives browser clipboard files as data URLs. Unlike native
+      // file URIs, those must not go through expo-file-system.
+      const dataUrl = parseImageDataUrl(uri);
+      if (dataUrl) {
+        const sizeBytes = estimateBase64ByteSize(dataUrl.base64);
+        if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+          continue;
+        }
+        results.push({
+          id: uuidv4(),
+          type: "image",
+          name: `pasted-image.${dataUrl.mimeType.split("/")[1] ?? "png"}`,
+          mimeType: dataUrl.mimeType,
+          sizeBytes,
+          dataUrl: uri,
+          previewUri: uri,
+        });
         continue;
       }
       const file = new File(uri);

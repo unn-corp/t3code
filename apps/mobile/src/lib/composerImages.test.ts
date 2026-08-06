@@ -102,6 +102,21 @@ describe("native pasted image cleanup", () => {
     expect(files.get(uri)?.deleted).toBe(true);
   });
 
+  it("converts PWA clipboard data URLs without asking expo-file-system to read them", async () => {
+    const attachments = await convertPastedImagesToAttachments({
+      uris: ["data:image/webp;base64,aGVsbG8="],
+      existingCount: 0,
+    });
+
+    expect(attachments).toEqual([
+      expect.objectContaining({
+        mimeType: "image/webp",
+        dataUrl: "data:image/webp;base64,aGVsbG8=",
+        previewUri: "data:image/webp;base64,aGVsbG8=",
+      }),
+    ]);
+  });
+
   it("deletes rejected and overflow owned files without deleting user-owned files", async () => {
     const rejected =
       "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/bad.png";

@@ -1831,25 +1831,35 @@ const makeWsRpcLayer = (
                 .pipe(Effect.orElseSucceed(() => Option.none()));
               const base = Option.getOrUndefined(existing);
               const now = yield* DateTime.now;
+              const nowIso = DateTime.formatIso(now);
+              // The driver of the session being resumed wins over whatever this
+              // thread ran before. Preferring the existing row left a thread that
+              // had once run codex bound to codex after resuming a Claude
+              // conversation, so the UI followed the stale provider and the next
+              // /resume listed the wrong driver's sessions.
+              const boundProviderName = input.driver ?? base?.providerName ?? "codex";
+              // Likewise the account: the session belongs to the selected
+              // instance's home, so binding to the previous one would resume
+              // against the wrong account.
+              const boundProviderInstanceId =
+                input.providerInstanceId !== undefined
+                  ? ProviderInstanceId.make(input.providerInstanceId)
+                  : (base?.providerInstanceId ?? null);
+              const boundRuntimeMode = base?.runtimeMode ?? "full-access";
               // Persisting the cursor IS the rebind: ProviderSessionDirectory turns
               // this row into a binding, and recoverSessionForThread hands its
               // resumeCursor to the adapter, which issues thread/resume.
               yield* providerSessionRuntimeRepository
                 .upsert({
                   threadId,
-                  // The driver of the session being resumed wins over whatever this
-                  // thread ran before. Preferring the existing row left a thread that
-                  // had once run codex bound to codex after resuming a Claude
-                  // conversation, so the UI followed the stale provider and the next
-                  // /resume listed the wrong driver's sessions.
-                  providerName: input.driver ?? base?.providerName ?? "codex",
+                  providerName: boundProviderName,
                   // adapterKey is non-null in the schema; "codex" is the driver key
                   // used when this thread has no prior runtime row.
                   adapterKey: input.driver ?? base?.adapterKey ?? "codex",
-                  runtimeMode: base?.runtimeMode ?? "full-access",
+                  runtimeMode: boundRuntimeMode,
                   // Stopped so the next turn starts a fresh session that resumes.
                   status: "stopped",
-                  lastSeenAt: DateTime.formatIso(now),
+                  lastSeenAt: nowIso,
                   // Cursor shape is per driver: codex reads threadId, the Claude
                   // adapter reads resume/sessionId.
                   resumeCursor:
@@ -1857,15 +1867,53 @@ const makeWsRpcLayer = (
                       ? { threadId: input.sessionId }
                       : { resume: input.sessionId, sessionId: input.sessionId },
                   runtimePayload: base?.runtimePayload ?? null,
-                  // Likewise the account: the session belongs to the selected
-                  // instance's home, so binding to the previous one would resume
-                  // against the wrong account.
-                  providerInstanceId:
-                    input.providerInstanceId !== undefined
-                      ? ProviderInstanceId.make(input.providerInstanceId)
-                      : (base?.providerInstanceId ?? null),
+                  providerInstanceId: boundProviderInstanceId,
                 })
                 .pipe(Effect.orElseSucceed(() => undefined));
+
+              // The runtime row is the binding, but clients read `thread.session`
+              // from the projection, and only orchestration events move that. A
+              // resumed thread therefore reported no session at all, so the
+              // composer had to infer its provider from the thread's instance id
+              // and the model picker could lock onto a driver kind no instance
+              // implements ("No provider available"). Command id carries the
+              // timestamp so re-resuming the same session re-asserts the binding
+              // instead of being deduped away by its command receipt.
+              yield* orchestrationEngine
+                .dispatch({
+                  type: "thread.session.set",
+                  commandId: CommandId.make(
+                    `resume-session:${input.threadId}:${input.sessionId}:${nowIso}`,
+                  ),
+                  threadId,
+                  session: {
+                    threadId,
+                    // Matches the runtime row: nothing is running yet, the next
+                    // turn is what starts the session that resumes.
+                    status: "stopped",
+                    providerName: boundProviderName,
+                    ...(boundProviderInstanceId !== null
+                      ? { providerInstanceId: boundProviderInstanceId }
+                      : {}),
+                    runtimeMode: boundRuntimeMode,
+                    activeTurnId: null,
+                    lastError: null,
+                    updatedAt: nowIso,
+                  },
+                  createdAt: nowIso,
+                })
+                // A thread the engine has never seen (a draft the client failed to
+                // materialise) must not fail the resume: the rebind still holds and
+                // the next turn creates the session for real.
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("codexSessions.resume session projection failed", {
+                      threadId: input.threadId,
+                      sessionId: input.sessionId,
+                      reason: Cause.pretty(cause),
+                    }),
+                  ),
+                );
 
               // Rebinding alone leaves the thread blank: the cursor gives the next
               // turn its context, but nothing renders what was already said. Replay
@@ -1906,7 +1954,6 @@ const makeWsRpcLayer = (
 
               let imported = 0;
               if (transcript.turns.length > 0) {
-                const nowIso = DateTime.formatIso(now);
                 yield* orchestrationEngine
                   .dispatch({
                     type: "thread.history.import",

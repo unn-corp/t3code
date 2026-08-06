@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -18,6 +19,7 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveLockedProvider,
   dismissBranchMismatchForSession,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
@@ -344,6 +346,102 @@ describe("getStartedThreadModelChangeBlockReason", () => {
       description:
         "This provider does not allow switching models after a conversation has started.",
     });
+  });
+});
+
+describe("deriveLockedProvider", () => {
+  const providers = [
+    {
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+    },
+    {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+    },
+    {
+      instanceId: ProviderInstanceId.make("claudeAgent_work"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+    },
+  ];
+  const importedMessage = {
+    id: MessageId.make("message-imported"),
+    role: "user" as const,
+    text: "Resumed conversation",
+    turnId: null,
+    createdAt: now,
+    updatedAt: now,
+    streaming: false,
+  };
+
+  it("leaves an unstarted thread unlocked", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread(),
+        selectedProvider: "claudeAgent_work",
+        threadProvider: "claudeAgent_work",
+        providers,
+      }),
+    ).toBeNull();
+  });
+
+  it("locks to the driver kind carried by the session", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ session: readySession }),
+        selectedProvider: "claudeAgent_work",
+        threadProvider: "claudeAgent_work",
+        providers,
+      }),
+    ).toBe("codex");
+  });
+
+  // A resumed thread has imported messages but no session projection row, so
+  // the lock resolves from the thread's instance id. Locking to the instance id
+  // itself left the composer with no compatible instance ("No provider
+  // available") and no way to pick a model or account.
+  it("resolves a custom instance id to its driver kind when no session exists", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ messages: [importedMessage] }),
+        selectedProvider: "claudeAgent_work",
+        threadProvider: "claudeAgent_work",
+        providers,
+      }),
+    ).toBe("claudeAgent");
+  });
+
+  it("falls back to the composer selection when the thread carries none", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ messages: [importedMessage] }),
+        selectedProvider: "claudeAgent_work",
+        threadProvider: null,
+        providers,
+      }),
+    ).toBe("claudeAgent");
+  });
+
+  it("stays unlocked when no configured instance claims the slug", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ messages: [importedMessage] }),
+        selectedProvider: "claudeAgent_deleted",
+        threadProvider: "claudeAgent_deleted",
+        providers,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the raw driver kind before any provider snapshot has arrived", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ messages: [importedMessage] }),
+        selectedProvider: "claudeAgent",
+        threadProvider: "claudeAgent",
+        providers: [],
+      }),
+    ).toBe("claudeAgent");
   });
 });
 
