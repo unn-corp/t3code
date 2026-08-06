@@ -1066,7 +1066,7 @@ it.effect("dispatches viewer work to a host without taking a session lease", () 
       });
       yield* Effect.yieldNow;
 
-      expect(dispatched).toBe(true);
+      expect(dispatched._tag).toBe("sent");
       expect(seen.map((request) => request.operation)).toEqual(["dispatchInput"]);
     }),
   ),
@@ -1086,7 +1086,42 @@ it.effect("reports no host rather than failing when nothing supports the operati
         input: {},
       });
 
-      expect(dispatched).toBe(false);
+      expect(dispatched._tag).toBe("no-host");
+    }),
+  ),
+);
+
+it.effect("surfaces a host's refusal instead of reporting the work as sent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requests = requestsFrom(
+        yield* broker.connect(makeHost({ supportedOperations: ["streamStart"] })),
+      );
+      // A host that takes the request and then refuses it internally, which is
+      // what a rejected CDP command looks like from here.
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: false,
+          error: {
+            _tag: "PreviewAutomationTargetNotEditableError",
+            message: "Not attached to an active page",
+          },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const outcome = yield* broker.dispatchToHost({
+        threadId: scope.threadId,
+        operation: "streamStart",
+        input: {},
+        awaitResponse: true,
+      });
+
+      expect(outcome._tag).toBe("rejected");
     }),
   ),
 );
@@ -1132,7 +1167,7 @@ it.effect("sends viewer frames to a host that renders independently", () =>
       });
       yield* Effect.yieldNow;
 
-      expect(dispatched).toBe(true);
+      expect(dispatched._tag).toBe("sent");
       expect(headlessRequests.map((request) => request.operation)).toEqual(["streamStart"]);
       expect(desktopRequests).toEqual([]);
     }),

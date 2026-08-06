@@ -74,6 +74,15 @@ export class PreviewManager extends Context.Service<
       readonly tabId: string;
       readonly reason: string;
     }) => Effect.Effect<void>;
+    /**
+     * Whether any frame has reached this tab's channel. Lets a caller tell a
+     * host that is starting slowly from one that accepted the work and is
+     * never going to deliver.
+     */
+    readonly hasDeliveredFrame: (input: {
+      readonly threadId: string;
+      readonly tabId: string;
+    }) => Effect.Effect<boolean>;
     /** Demand transitions, for whoever is responsible for starting a host screencast. */
     readonly frameDemand: Stream.Stream<PreviewFrameDemand>;
     /** Current demand, so a host that connects late can be caught up. */
@@ -99,6 +108,12 @@ interface FrameChannel {
   readonly tabId: PreviewAttachInput["tabId"];
   readonly pubsub: PubSub.PubSub<PreviewFrameStreamEvent>;
   readonly viewers: number;
+  /**
+   * Whether any frame has reached this channel since a viewer arrived. A host
+   * can accept a stream and then produce nothing, which is indistinguishable
+   * from a slow start until something asks this question.
+   */
+  readonly delivered: boolean;
 }
 
 /**
@@ -476,6 +491,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           tabId,
           pubsub,
           viewers: (existing?.viewers ?? 0) + 1,
+          delivered: existing?.delivered ?? false,
         };
         const updated = new Map(channels);
         updated.set(key, next);
@@ -545,7 +561,24 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     // No viewers means the host is still winding down its screencast. Dropping
     // is correct: there is nobody to render the frame.
     if (!channel) return;
+    if (!channel.delivered) {
+      yield* SynchronizedRef.update(framesRef, (channels) => {
+        const key = compositeKey(input.threadId, input.tabId);
+        const current = channels.get(key);
+        if (!current || current.delivered) return channels;
+        const updated = new Map(channels);
+        updated.set(key, { ...current, delivered: true });
+        return updated;
+      });
+    }
     yield* PubSub.publish(channel.pubsub, { _tag: "frame", frame: input });
+  });
+
+  const hasDeliveredFrame: PreviewManager["Service"]["hasDeliveredFrame"] = Effect.fn(
+    "PreviewManager.hasDeliveredFrame",
+  )(function* (input) {
+    const channel = yield* readChannel(input.threadId, input.tabId);
+    return channel?.delivered ?? false;
   });
 
   const reportFramesUnavailable: PreviewManager["Service"]["reportFramesUnavailable"] = Effect.fn(
@@ -604,6 +637,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     attachFrames,
     publishFrame,
     reportFramesUnavailable,
+    hasDeliveredFrame,
     frameDemand: Stream.fromPubSub(frameDemandPubSub),
     frameDemandSnapshot,
   });

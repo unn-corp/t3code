@@ -25,6 +25,7 @@ import {
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -68,8 +69,13 @@ export class PreviewAutomationBroker extends Context.Service<
      * lease and without awaiting a reply. This is the path for viewer-driven
      * work (screencast control, live input): there is no provider session to
      * pin, and a pointer move arriving at 60Hz must not allocate a
-     * pending-request entry or pay a round trip. Resolves false when no
-     * connected host supports the operation.
+     * pending-request entry or pay a round trip.
+     *
+     * Pass `awaitResponse` for work whose failure a viewer would otherwise
+     * never learn about. Without it a host can accept a request, refuse it
+     * internally, and report nothing: a rejected CDP command becomes an error
+     * response, and nobody reads responses on this path. Screencast control
+     * takes the round trip; input does not.
      *
      * `environmentId` is optional because a websocket handler has none to
      * offer: the id is a client-side label for this server, so two clients can
@@ -83,7 +89,8 @@ export class PreviewAutomationBroker extends Context.Service<
       readonly operation: PreviewAutomationOperation;
       readonly input: unknown;
       readonly timeoutMs?: number;
-    }) => Effect.Effect<boolean>;
+      readonly awaitResponse?: boolean;
+    }) => Effect.Effect<PreviewViewerDispatch>;
   }
 >()("t3/mcp/PreviewAutomationBroker") {}
 
@@ -97,6 +104,17 @@ interface ClientConnection {
   readonly focusOrder: number;
   readonly queue: Queue.Queue<PreviewAutomationStreamEvent>;
 }
+
+/**
+ * What became of a viewer-driven dispatch. "sent" means it was handed to a
+ * host without waiting; only an awaited dispatch can distinguish a host that
+ * did the work from one that refused it.
+ */
+export type PreviewViewerDispatch =
+  | { readonly _tag: "no-host" }
+  | { readonly _tag: "sent" }
+  | { readonly _tag: "accepted" }
+  | { readonly _tag: "rejected"; readonly reason: string };
 
 interface PendingRequest {
   readonly queue: ClientConnection["queue"];
@@ -647,8 +665,45 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         { ...current, requestSequence: current.requestSequence + 1 },
       ] as const;
     });
-    if (!route) return false;
-    return yield* Queue.offer(route.connection.queue, {
+    if (!route) return { _tag: "no-host" } as const;
+    const timeoutMs = input.timeoutMs ?? 5_000;
+    const context: PreviewAutomationRequestErrorContext = {
+      operation: input.operation,
+      // A viewer dispatch has no provider session and no client-supplied
+      // environment label, but these feed typed error construction on the
+      // response path, so they get named placeholders rather than empty
+      // strings that a branded schema would reject.
+      environmentId: route.connection.environmentId,
+      threadId: input.threadId,
+      providerSessionId: "preview-viewer",
+      providerInstanceId:
+        "preview-viewer" as PreviewAutomationRequestErrorContext["providerInstanceId"],
+      clientId: route.connection.clientId,
+      connectionId: route.connection.connectionId,
+      requestId: route.requestId,
+      ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
+      timeoutMs,
+    };
+    const deferred = input.awaitResponse
+      ? yield* Deferred.make<unknown, PreviewAutomationError>()
+      : null;
+    if (deferred) {
+      yield* SynchronizedRef.update(state, (current) => ({
+        ...current,
+        pending: new Map(current.pending).set(route.requestId, {
+          queue: route.connection.queue,
+          deferred,
+          context,
+        }),
+      }));
+    }
+    const removePending = SynchronizedRef.update(state, (current) => {
+      if (!current.pending.has(route.requestId)) return current;
+      const pending = new Map(current.pending);
+      pending.delete(route.requestId);
+      return { ...current, pending };
+    });
+    const offered = yield* Queue.offer(route.connection.queue, {
       type: "request",
       connectionId: route.connection.connectionId,
       request: {
@@ -658,9 +713,25 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         tabIdExplicit: input.tabId !== undefined,
         operation: input.operation,
         input: input.input,
-        timeoutMs: input.timeoutMs ?? 5_000,
+        timeoutMs,
       },
     });
+    if (!offered) {
+      yield* removePending;
+      return { _tag: "no-host" } as const;
+    }
+    if (!deferred) return { _tag: "sent" } as const;
+    const settled = yield* Deferred.await(deferred).pipe(
+      Effect.map(() => ({ _tag: "accepted" }) as PreviewViewerDispatch),
+      Effect.catch((error: PreviewAutomationError) =>
+        Effect.succeed({ _tag: "rejected", reason: error.message } as PreviewViewerDispatch),
+      ),
+      Effect.timeoutOption(Duration.millis(timeoutMs)),
+      Effect.ensuring(removePending),
+    );
+    return settled._tag === "Some"
+      ? settled.value
+      : ({ _tag: "rejected", reason: "The host did not answer." } as const);
   });
 
   return PreviewAutomationBroker.of({

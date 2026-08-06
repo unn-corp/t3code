@@ -326,11 +326,45 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
           Effect.map(() => true),
           Effect.orElseSucceed(() => false),
         );
-      if (started) return;
+      if (started) {
+        yield* publishKeyframe(page, bounds.quality);
+        return;
+      }
       yield* Effect.sleep(SCREENCAST_START_RETRY_DELAY);
     }
     yield* Effect.logWarning("The preview browser never accepted a screencast for this tab.", {
       tabId: page.tabId,
+    });
+  });
+
+  /**
+   * Screencast is change-driven: a page that is already painted and static
+   * emits nothing until something moves. A viewer attaching to such a tab
+   * would sit on an empty canvas indefinitely while everything reported
+   * healthy, so the first frame is taken explicitly rather than waited for.
+   */
+  const publishKeyframe = Effect.fn("HeadlessBrowserHost.publishKeyframe")(function* (
+    page: PageSession,
+    quality: number,
+  ) {
+    const cdp = yield* requireBrowser;
+    const shot = yield* cdp
+      .send("Page.captureScreenshot", { format: "jpeg", quality }, page.sessionId)
+      .pipe(Effect.orElseSucceed(() => null));
+    const data = shot ? readString(shot, "data") : null;
+    if (!data) return;
+    page.sequence += 1;
+    const capturedAt = yield* DateTime.now;
+    yield* manager.publishFrame({
+      threadId: page.threadId as never,
+      tabId: page.tabId,
+      seq: page.sequence,
+      data,
+      width: page.viewport.width,
+      height: page.viewport.height,
+      pageWidth: page.viewport.width,
+      pageHeight: page.viewport.height,
+      capturedAt: DateTime.formatIso(capturedAt),
     });
   });
 
