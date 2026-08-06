@@ -71,9 +71,7 @@ export async function showBrowserNotificationPreview(): Promise<BrowserNotificat
 }
 
 /** Must only be called from the direct notification-enable user gesture on iOS. */
-export function subscribeBrowserPush(input: {
-  readonly applicationServerKey: string;
-}): Promise<{
+export function subscribeBrowserPush(input: { readonly applicationServerKey: string }): Promise<{
   readonly state: BrowserPushSetupState;
   readonly subscription: PushSubscription | null;
 }> {

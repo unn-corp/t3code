@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Chromium needs a real scratch profile directory on disk before any Effect service is involved.
 /**
  * A preview host for environments with no desktop app.
  *
@@ -28,6 +29,7 @@ import {
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -142,10 +144,9 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
    * not use. The same applies to a CLI server nobody opens a preview on.
    */
   const launchBrowser = Effect.fn("HeadlessBrowserHost.launchBrowser")(function* () {
-    const userDataDir = yield* Effect.try({
-      try: () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-preview-")),
-      catch: (cause) => cause,
-    }).pipe(Effect.orDie);
+    const userDataDir = yield* Effect.sync(() =>
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-preview-")),
+    );
     yield* Scope.addFinalizer(
       parentScope,
       Effect.sync(() => {
@@ -204,6 +205,7 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
           );
           if (!page || !page.streaming) return;
           page.sequence += 1;
+          const capturedAt = yield* DateTime.now;
           yield* manager.publishFrame({
             threadId: page.threadId,
             tabId: page.tabId,
@@ -213,7 +215,7 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
             height: readNumber(metadata, "deviceHeight") ?? page.viewport.height,
             pageWidth: page.viewport.width,
             pageHeight: page.viewport.height,
-            capturedAt: new Date().toISOString(),
+            capturedAt: DateTime.formatIso(capturedAt),
           });
         }).pipe(Effect.ignoreCause({ log: true })),
       );

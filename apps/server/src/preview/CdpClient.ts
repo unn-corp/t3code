@@ -171,6 +171,7 @@ export const connect = Effect.fn("CdpClient.connect")(function* (endpoint: strin
         reject: (error) => resume(Effect.fail(error)),
       });
       socket.send(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - CDP wire frame; its shape is the protocol's, not a schema's.
         JSON.stringify({
           id,
           method,

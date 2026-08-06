@@ -154,7 +154,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   return WebPushSubscriptions.of({
     registerPwa: (input) =>
-      Effect.fn("relay.web_push_subscriptions.register_pwa")(function* () {
+      Effect.gen(function* () {
         const now = DateTime.formatIso(yield* DateTime.now);
         const id = yield* crypto.randomUUIDv4;
         const installation = input.payload.installation;
@@ -224,9 +224,9 @@ export const make = Effect.gen(function* () {
         const row = rows[0];
         if (!row) return yield* Effect.die("PWA registration returned no subscription id.");
         return { subscriptionId: row.id };
-      })().pipe(mapPersistenceError),
+      }).pipe(mapPersistenceError, Effect.withSpan("relay.web_push_subscriptions.register_pwa")),
     removePwa: (input) =>
-      Effect.fn("relay.web_push_subscriptions.remove_pwa")(function* () {
+      Effect.gen(function* () {
         const installationSecretHash = yield* hashInstallationSecret(
           crypto,
           input.installationSecret,
@@ -246,7 +246,7 @@ export const make = Effect.gen(function* () {
           .delete(relayWebPushSubscriptionStates)
           .where(eq(relayWebPushSubscriptionStates.subscriptionId, input.subscriptionId));
         return true;
-      })().pipe(mapPersistenceError),
+      }).pipe(mapPersistenceError, Effect.withSpan("relay.web_push_subscriptions.remove_pwa")),
     getPwa: (input) =>
       Effect.gen(function* () {
         const installationSecretHash = yield* hashInstallationSecret(
@@ -267,7 +267,7 @@ export const make = Effect.gen(function* () {
         return rows[0] ?? null;
       }).pipe(mapPersistenceError),
     register: (input) =>
-      Effect.fn("relay.web_push_subscriptions.register")(function* () {
+      Effect.gen(function* () {
         const now = DateTime.formatIso(yield* DateTime.now);
         const id = yield* crypto.randomUUIDv4;
         const existingRows = yield* db
@@ -310,9 +310,9 @@ export const make = Effect.gen(function* () {
             .where(eq(relayWebPushSubscriptionStates.subscriptionId, row.id));
         }
         return { subscriptionId: row.id };
-      })().pipe(mapPersistenceError),
+      }).pipe(mapPersistenceError, Effect.withSpan("relay.web_push_subscriptions.register")),
     remove: (input) =>
-      Effect.fn("relay.web_push_subscriptions.remove")(function* () {
+      Effect.gen(function* () {
         const deleted = yield* db
           .delete(relayWebPushSubscriptions)
           .where(
@@ -327,9 +327,9 @@ export const make = Effect.gen(function* () {
           .delete(relayWebPushSubscriptionStates)
           .where(eq(relayWebPushSubscriptionStates.subscriptionId, input.subscriptionId));
         return true;
-      })().pipe(mapPersistenceError),
+      }).pipe(mapPersistenceError, Effect.withSpan("relay.web_push_subscriptions.remove")),
     get: (input) =>
-      Effect.fn("relay.web_push_subscriptions.get")(function* () {
+      Effect.gen(function* () {
         const rows = yield* db
           .select()
           .from(relayWebPushSubscriptions)
@@ -341,9 +341,9 @@ export const make = Effect.gen(function* () {
           )
           .limit(1);
         return rows[0] ?? null;
-      })().pipe(mapPersistenceError),
+      }).pipe(mapPersistenceError, Effect.withSpan("relay.web_push_subscriptions.get")),
     transition: (input) =>
-      Effect.fn("relay.web_push_subscriptions.transition")(function* () {
+      Effect.gen(function* () {
         const state = input.state;
         if (state === null) return [];
         const subscriptions = yield* db
@@ -417,9 +417,9 @@ export const make = Effect.gen(function* () {
           }),
         );
         return items.filter((item): item is WebPushNotification => item !== null);
-      })().pipe(mapPersistenceError),
+      }).pipe(mapPersistenceError, Effect.withSpan("relay.web_push_subscriptions.transition")),
     transitionEnvironment: (input) =>
-      Effect.fn("relay.web_push_subscriptions.transition_environment")(function* () {
+      Effect.gen(function* () {
         const state = input.state;
         if (state === null) return [];
         const subscriptions = yield* db
@@ -490,7 +490,10 @@ export const make = Effect.gen(function* () {
           }),
         );
         return items.filter((item): item is WebPushNotification => item !== null);
-      })().pipe(mapPersistenceError),
+      }).pipe(
+        mapPersistenceError,
+        Effect.withSpan("relay.web_push_subscriptions.transition_environment"),
+      ),
   });
 });
 

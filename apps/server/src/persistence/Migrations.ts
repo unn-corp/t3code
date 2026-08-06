@@ -50,6 +50,7 @@ import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
 import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
 import Migration0036 from "./Migrations/036_DiscordBridge.ts";
 import Migration0037 from "./Migrations/037_BackfillProjectionThreadsLatestTurn.ts";
+import Migration0038 from "./Migrations/038_ProjectionThreadsPinned.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -99,6 +100,7 @@ export const migrationEntries = [
   [35, "ProjectionThreadTitleRegeneration", Migration0035],
   [36, "DiscordBridge", Migration0036],
   [37, "BackfillProjectionThreadsLatestTurn", Migration0037],
+  [38, "ProjectionThreadsPinned", Migration0038],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -1077,7 +1077,7 @@ it.effect("reports no host rather than failing when nothing supports the operati
     Effect.gen(function* () {
       const broker = yield* makeBroker;
       // A host predating remote viewing advertises only the operations it knows.
-      yield* broker.connect(makeHost({ supportedOperations: ["click"] }));
+      yield* broker.connect(makeHost({ supportedOperations: ["click"] })).pipe(Effect.asVoid);
       yield* Effect.yieldNow;
 
       const dispatched = yield* broker.dispatchToHost({
