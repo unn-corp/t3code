@@ -37,6 +37,19 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
+  it("registers Hermes configuration fields for the provider settings UI", () => {
+    const hermes = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("hermes")];
+    expect(hermes).toBeDefined();
+    expect(deriveProviderSettingsFields(hermes!)).toMatchObject([
+      { key: "binaryPath", label: "Binary path" },
+      {
+        key: "homePath",
+        label: "HERMES_HOME path",
+        description: expect.stringContaining("HERMES_HOME"),
+      },
+    ]);
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

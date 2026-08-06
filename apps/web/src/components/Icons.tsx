@@ -211,6 +211,19 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+/** Hermes mark: a compact winged H, rendered as a native monochrome SVG. */
+export const HermesIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("fill-[#1D2433] dark:fill-[#E8EDF7]", className)}
+  >
+    <path d="M3 3h4v6h10V3h4v18h-4v-7H7v7H3V3Z" />
+    <path d="M8 10h8v3H8z" className="fill-current" />
+  </svg>
+);
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}

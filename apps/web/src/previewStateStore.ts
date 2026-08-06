@@ -18,6 +18,7 @@ import { Atom } from "effect/unstable/reactivity";
 
 import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants";
 import { appAtomRegistry } from "./rpc/atomRegistry";
+import { isInstalledPwa } from "./env";
 
 export interface DesktopPreviewOverlay {
   hasWebContents: boolean;
@@ -457,8 +458,20 @@ export function removePreviewThread(ref: ScopedThreadRef): void {
  * on the frame stream itself rather than guessed at here: the answer changes
  * when a desktop app opens or closes, and a gate computed once would go stale.
  */
+/**
+ * Whether this client should offer the browser surface at all.
+ *
+ * A client with no webview of its own cannot render a page; it watches JPEG
+ * frames streamed from whichever host is rendering, and sends synthetic input
+ * back. On a phone that is markedly slower than the browser already on the
+ * device, so the installed PWA does not offer it rather than offering
+ * something that disappoints. Desktop renders locally and is unaffected; a
+ * normal browser tab keeps it, since that is usually a machine on the same
+ * network rather than a phone.
+ */
 export function isPreviewSupportedInRuntime(): boolean {
-  return typeof window !== "undefined";
+  if (typeof window === "undefined") return false;
+  return !isInstalledPwa();
 }
 
 /** True only when this client owns the webview, which some controls require. */

@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  PROVIDER_OPTIONS,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   derivePendingApprovals,
@@ -22,6 +23,14 @@ import {
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
 } from "./session-logic";
+
+describe("provider options", () => {
+  it("includes Hermes in the available provider/model-picker list", () => {
+    expect(PROVIDER_OPTIONS).toContainEqual(
+      expect.objectContaining({ value: "hermes", label: "Hermes", available: true }),
+    );
+  });
+});
 
 let nextActivityId = 0;
 
