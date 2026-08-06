@@ -37,6 +37,7 @@ import {
   $getRoot,
   HISTORY_MERGE_TAG,
   DecoratorNode,
+  type LexicalEditor,
   type ElementNode,
   type LexicalNode,
   type SerializedLexicalNode,
@@ -903,6 +904,22 @@ interface ComposerPromptEditorProps {
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
 
+export function registerComposerStructuredPaste(
+  editor: LexicalEditor,
+  onStructuredPaste: (clipboardData: DataTransfer) => boolean,
+) {
+  return editor.registerCommand(
+    PASTE_COMMAND,
+    (event) => {
+      if (!(event instanceof ClipboardEvent) || event.clipboardData === null) return false;
+      if (!onStructuredPaste(event.clipboardData)) return false;
+      event.preventDefault();
+      return true;
+    },
+    COMMAND_PRIORITY_CRITICAL,
+  );
+}
+
 function ComposerStructuredPastePlugin(props: {
   onStructuredPaste?: (clipboardData: DataTransfer) => boolean;
 }) {
@@ -912,16 +929,9 @@ function ComposerStructuredPastePlugin(props: {
 
   useEffect(
     () =>
-      editor.registerCommand(
-        PASTE_COMMAND,
-        (event) => {
-          if (!(event instanceof ClipboardEvent) || event.clipboardData === null) return false;
-          if (!onStructuredPasteRef.current?.(event.clipboardData)) return false;
-          event.preventDefault();
-          return true;
-        },
-        COMMAND_PRIORITY_CRITICAL,
-      ),
+      registerComposerStructuredPaste(editor, (clipboardData) => {
+        return onStructuredPasteRef.current?.(clipboardData) ?? false;
+      }),
     [editor],
   );
   return null;

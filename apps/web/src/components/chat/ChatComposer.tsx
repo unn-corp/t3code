@@ -2554,8 +2554,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const reference = decodeConversationReference(
       clipboardData.getData(CONVERSATION_REFERENCE_CLIPBOARD_MIME),
     );
-    if (!reference) return false;
-    addConversationReferenceToDraft(reference);
+    if (reference) {
+      addConversationReferenceToDraft(reference);
+      return true;
+    }
+    const imageFiles = imageFilesFromDataTransfer(clipboardData);
+    if (imageFiles.length === 0) return false;
+    void addComposerImages(imageFiles);
     return true;
   };
 

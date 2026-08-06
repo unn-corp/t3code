@@ -10,19 +10,54 @@ import {
   PASTE_COMMAND,
 } from "lexical";
 
+import { registerComposerStructuredPaste } from "./ComposerPromptEditor";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
 
 class TestClipboardEvent extends Event {
   readonly clipboardData: DataTransfer;
 
-  constructor(text: string) {
+  constructor(text: string | DataTransfer) {
     super("paste", { cancelable: true });
-    this.clipboardData = {
-      files: [],
-      getData: (type: string) => (type === "text/plain" ? text : ""),
-    } as unknown as DataTransfer;
+    this.clipboardData =
+      typeof text === "string"
+        ? ({
+            files: [],
+            getData: (type: string) => (type === "text/plain" ? text : ""),
+          } as unknown as DataTransfer)
+        : text;
   }
 }
+
+describe("registerComposerStructuredPaste", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("handles an image before Lexical's plain-text paste fallback", () => {
+    vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
+    const editor = createEditor();
+    const image = new File(["image"], "clipboard.png", { type: "image/png" });
+    const onStructuredPaste = vi.fn((clipboardData: DataTransfer) => {
+      return Array.from(clipboardData.files).some((file) => file.type.startsWith("image/"));
+    });
+    const plainTextFallback = vi.fn(() => true);
+    registerComposerStructuredPaste(editor, onStructuredPaste);
+    editor.registerCommand(PASTE_COMMAND, plainTextFallback, COMMAND_PRIORITY_EDITOR);
+    const event = new TestClipboardEvent({
+      files: [image] as unknown as FileList,
+    } as DataTransfer);
+
+    let handled = false;
+    editor.update(() => {
+      handled = editor.dispatchCommand(PASTE_COMMAND, event as ClipboardEvent);
+    });
+
+    expect(handled).toBe(true);
+    expect(onStructuredPaste).toHaveBeenCalledWith(event.clipboardData);
+    expect(plainTextFallback).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+});
 
 describe("registerComposerInlineTokenPaste", () => {
   afterEach(() => {
