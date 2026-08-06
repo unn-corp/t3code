@@ -64,6 +64,9 @@ export const HEADLESS_SUPPORTED_OPERATIONS = [
 
 const HEADLESS_CLIENT_ID = "t3-headless-preview-host";
 const STARTUP_TIMEOUT = Duration.seconds(20);
+/** Roughly five seconds, which covers a cold navigation on a loaded machine. */
+const SCREENCAST_START_ATTEMPTS = 25;
+const SCREENCAST_START_RETRY_DELAY = Duration.millis(200);
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 } as const;
 
 interface PageSession {
@@ -294,6 +297,43 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
     return yield* attachPage({ threadId: input.threadId, tabId: input.tabId ?? opened.tabId });
   });
 
+  /**
+   * Chrome refuses `Page.startScreencast` with "Not attached to an active
+   * page" until the target owns a live render widget, which it does not for a
+   * short window after being created or navigated. The error arrives as a
+   * command rejection that this host turns into an error response rather than
+   * a failure, so a single attempt fails silently and the viewer waits
+   * forever. Retrying across that window is the whole difference between
+   * frames and a hang.
+   */
+  const startScreencast = Effect.fn("HeadlessBrowserHost.startScreencast")(function* (
+    page: PageSession,
+    bounds: {
+      readonly quality: number;
+      readonly maxWidth: number;
+      readonly maxHeight: number;
+    },
+  ) {
+    const cdp = yield* requireBrowser;
+    for (let attempt = 0; attempt < SCREENCAST_START_ATTEMPTS; attempt += 1) {
+      const started = yield* cdp
+        .send(
+          "Page.startScreencast",
+          { format: "jpeg", everyNthFrame: 1, ...bounds },
+          page.sessionId,
+        )
+        .pipe(
+          Effect.map(() => true),
+          Effect.orElseSucceed(() => false),
+        );
+      if (started) return;
+      yield* Effect.sleep(SCREENCAST_START_RETRY_DELAY);
+    }
+    yield* Effect.logWarning("The preview browser never accepted a screencast for this tab.", {
+      tabId: page.tabId,
+    });
+  });
+
   const dispatchInput = Effect.fn("HeadlessBrowserHost.dispatchInput")(function* (
     page: PageSession,
     event: PreviewInputEvent,
@@ -446,17 +486,11 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
       case "streamStart": {
         const page = yield* requirePage({ threadId: request.threadId, tabId: request.tabId });
         page.streaming = true;
-        yield* cdp.send(
-          "Page.startScreencast",
-          {
-            format: "jpeg",
-            quality: readNumber(input, "quality") ?? 60,
-            maxWidth: readNumber(input, "maxWidth") ?? 1280,
-            maxHeight: readNumber(input, "maxHeight") ?? 800,
-            everyNthFrame: 1,
-          },
-          page.sessionId,
-        );
+        yield* startScreencast(page, {
+          quality: readNumber(input, "quality") ?? 60,
+          maxWidth: readNumber(input, "maxWidth") ?? 1280,
+          maxHeight: readNumber(input, "maxHeight") ?? 800,
+        });
         return { tabId: page.tabId, streaming: true };
       }
       case "streamStop": {
