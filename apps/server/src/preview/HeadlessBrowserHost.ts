@@ -87,29 +87,72 @@ const DEFAULT_VIEWPORT = { width: 1280, height: 800 } as const;
 const PICK_ELEMENT_SCRIPT = (x: number, y: number): string => `(() => {
   const element = document.elementFromPoint(${x}, ${y});
   if (!element) return null;
+  /*
+   * Climbs until the selector matches exactly one element, rather than
+   * stopping at a fixed depth. A depth-limited chain like "div > span > button"
+   * is not anchored to anything, so querySelector would hand back the first
+   * such chain in the document and the agent would be told about an element
+   * nobody picked. Null is returned when no unique selector is found, which
+   * the payload allows and is honest.
+   */
   const selectorFor = (node) => {
-    if (node.id) return "#" + CSS.escape(node.id);
+    const unique = (candidate) => {
+      try {
+        return document.querySelectorAll(candidate).length === 1;
+      } catch {
+        return false;
+      }
+    };
     const parts = [];
     let current = node;
-    while (current && current.nodeType === 1 && parts.length < 6) {
-      let part = current.tagName.toLowerCase();
+    while (current && current.nodeType === 1) {
+      const parent = current.parentElement;
       if (current.id) {
         parts.unshift("#" + CSS.escape(current.id));
-        break;
+      } else {
+        let part = current.tagName.toLowerCase();
+        if (parent) {
+          const siblings = Array.from(parent.children).filter((c) => c.tagName === current.tagName);
+          if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
+        }
+        parts.unshift(part);
       }
-      const parent = current.parentElement;
-      if (parent) {
-        const siblings = Array.from(parent.children).filter((c) => c.tagName === current.tagName);
-        if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
-      }
-      parts.unshift(part);
-      current = current.parentElement;
+      const candidate = parts.join(" > ");
+      if (unique(candidate)) return candidate;
+      if (current.id) return null;
+      current = parent;
     }
-    return parts.join(" > ") || null;
+    return null;
   };
+  /*
+   * The author's own rules, read from the stylesheets, because that is what
+   * the payload's styles field means. Computed style would report every UA
+   * default resolved to a value, which reads like the page said things it
+   * never said. Cross-origin sheets throw on cssRules access and are skipped;
+   * the computed subset is the fallback when nothing matched.
+   */
   const authorStyles = () => {
+    const matched = [];
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      for (const rule of Array.from(rules ?? [])) {
+        if (!rule || rule.type !== 1 || typeof rule.selectorText !== "string") continue;
+        try {
+          if (element.matches(rule.selectorText)) matched.push(rule.style.cssText.trim());
+        } catch {
+          // A selector this browser cannot parse simply does not match.
+        }
+      }
+    }
+    const authored = matched.filter(Boolean).join(" ");
+    if (authored) return authored.length > 1024 ? authored.slice(0, 1024) + "…" : authored;
     const computed = window.getComputedStyle(element);
-    const interesting = ["display","position","width","height","margin","padding","color","background-color","font-size","font-family","border","flex","grid-template-columns"];
+    const interesting = ["display","position","width","height","margin","padding","color","background-color","font-size","font-family"];
     return interesting.map((name) => name + ": " + computed.getPropertyValue(name)).join("; ");
   };
   const rect = element.getBoundingClientRect();

@@ -466,14 +466,26 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     if (!pending) return;
     if (response.ok) {
       yield* Deferred.succeed(pending.deferred, response.result);
-    } else {
-      yield* Deferred.fail(
-        pending.deferred,
-        response.error
-          ? classifyResponseError(pending.context, response.error)
-          : new PreviewAutomationMalformedResponseError(pending.context),
-      );
+      return;
     }
+    /*
+     * Classification builds a typed error from the request context, and those
+     * classes validate. A context this path cannot fully populate therefore
+     * used to throw here, killing the fiber mid-respond and leaving the caller
+     * waiting on a deferred nobody would ever settle: a host's failure became
+     * a hang. Whatever happens, the waiter is told something.
+     */
+    const failure = yield* Effect.try(() =>
+      response.error
+        ? classifyResponseError(pending.context, response.error)
+        : new PreviewAutomationMalformedResponseError(pending.context),
+    ).pipe(
+      Effect.catch(() =>
+        Effect.succeed(new PreviewAutomationMalformedResponseError(pending.context)),
+      ),
+      Effect.orElseSucceed(() => new PreviewAutomationMalformedResponseError(pending.context)),
+    );
+    yield* Deferred.fail(pending.deferred, failure);
   });
 
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
