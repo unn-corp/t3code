@@ -1325,6 +1325,8 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  /** Touch input, where raising the keyboard costs half the screen. */
+  const prefersDeferredKeyboard = useMediaQuery({ pointer: "coarse" });
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
@@ -4036,13 +4038,18 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    // Focusing the composer puts a cursor where a mouse user wants to type. On
+    // a touchscreen it raises the on-screen keyboard over the conversation the
+    // user just opened to read, so opening a thread is not taken as intent to
+    // write on a device where typing is a deliberate act.
+    if (prefersDeferredKeyboard) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, prefersDeferredKeyboard, terminalUiState.terminalOpen]);
 
   useEffect(() => {
     if (!activeThread?.id) return;

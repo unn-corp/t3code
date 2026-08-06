@@ -119,6 +119,12 @@ const PICK_ELEMENT_SCRIPT = (x: number, y: number): string => `(() => {
     pageTitle: document.title || null,
     tagName: element.tagName.toLowerCase(),
     selector: selectorFor(element),
+    /*
+     * Document coordinates for the screenshot clip, which is document-relative
+     * while getBoundingClientRect is viewport-relative. Passing the viewport
+     * rect silently crops the wrong region of any scrolled page.
+     */
+    clip: { x: rect.x + window.scrollX, y: rect.y + window.scrollY, width: rect.width, height: rect.height },
     htmlPreview: html.length > 512 ? html.slice(0, 512) + "…" : html,
     styles: authorStyles(),
     rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
@@ -635,14 +641,16 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
         if (!picked) return { tabId: page.tabId, picked: null };
         // The element's own screenshot is what makes the chip recognisable, and
         // clipping here avoids shipping a whole page frame to crop remotely.
-        const rect = isRecord(picked["rect"]) ? picked["rect"] : null;
+        const clipRect = isRecord(picked["clip"]) ? picked["clip"] : null;
         const clip =
-          rect && (readNumber(rect, "width") ?? 0) > 0 && (readNumber(rect, "height") ?? 0) > 0
+          clipRect &&
+          (readNumber(clipRect, "width") ?? 0) > 0 &&
+          (readNumber(clipRect, "height") ?? 0) > 0
             ? {
-                x: readNumber(rect, "x") ?? 0,
-                y: readNumber(rect, "y") ?? 0,
-                width: readNumber(rect, "width") ?? 0,
-                height: readNumber(rect, "height") ?? 0,
+                x: readNumber(clipRect, "x") ?? 0,
+                y: readNumber(clipRect, "y") ?? 0,
+                width: readNumber(clipRect, "width") ?? 0,
+                height: readNumber(clipRect, "height") ?? 0,
                 scale: 1,
               }
             : null;
@@ -651,9 +659,26 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
               .send("Page.captureScreenshot", { format: "jpeg", quality: 70, clip }, page.sessionId)
               .pipe(Effect.orElseSucceed(() => null))
           : null;
+        const rect = isRecord(picked["rect"]) ? picked["rect"] : null;
         return {
           tabId: page.tabId,
-          picked,
+          // Rebuilt field by field rather than passed through: the script also
+          // returns the document-space clip, which is not part of the contract
+          // and would fail to decode on the way out.
+          picked: {
+            pageUrl: readString(picked, "pageUrl") ?? "",
+            pageTitle: readString(picked, "pageTitle") ?? null,
+            tagName: readString(picked, "tagName") ?? "",
+            selector: readString(picked, "selector") ?? null,
+            htmlPreview: readString(picked, "htmlPreview") ?? "",
+            styles: readString(picked, "styles") ?? "",
+            rect: {
+              x: readNumber(rect, "x") ?? 0,
+              y: readNumber(rect, "y") ?? 0,
+              width: readNumber(rect, "width") ?? 0,
+              height: readNumber(rect, "height") ?? 0,
+            },
+          },
           screenshot: shot ? readString(shot, "data") : null,
         };
       }
