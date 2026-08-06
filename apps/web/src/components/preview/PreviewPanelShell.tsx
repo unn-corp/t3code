@@ -65,7 +65,7 @@ export function PreviewPanelShell(props: {
  * Resize-aware so dragging the OS window narrower re-clamps the stored
  * width on the next render (the hook's clamp picks this up automatically).
  */
-function useViewportClampedMaxWidth(): number {
+export function useViewportWidth(): number {
   const [vw, setVw] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -84,5 +84,9 @@ function useViewportClampedMaxWidth(): number {
       if (frame !== 0) window.cancelAnimationFrame(frame);
     };
   }, []);
-  return getPreviewPanelMaxWidth(vw);
+  return vw;
+}
+
+function useViewportClampedMaxWidth(): number {
+  return getPreviewPanelMaxWidth(useViewportWidth());
 }

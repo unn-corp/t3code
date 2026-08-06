@@ -1562,7 +1562,10 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
-  const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
+  // Maximizing is useful in both presentations. Inline it collapses the chat
+  // column; as a sheet it takes the panel full-bleed, which is the difference
+  // between a usable browser and a 24rem strip on a phone.
+  const canMaximizeRightPanel = rightPanelOpen;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
@@ -5914,6 +5917,17 @@ function ChatViewContent(props: ChatViewProps) {
       onToggleRightPanel={toggleRightPanel}
     />
   );
+  // The sheet has no title bar to hang controls off, so maximize rides in the
+  // panel's own tab bar next to the toggles.
+  const sheetLayoutControls = (
+    <div className="flex shrink-0 items-center gap-1">
+      <RightPanelMaximizeControl
+        maximized={rightPanelMaximized}
+        onToggle={toggleRightPanelMaximized}
+      />
+      {panelToggleControls}
+    </div>
+  );
   const panelLayoutControls = (
     <div
       className={cn(
@@ -6016,9 +6030,14 @@ function ChatViewContent(props: ChatViewProps) {
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
-          rightPanelMaximized ? "w-0 flex-none" : "flex-1",
+          // Only the inline panel takes space from the chat column. A maximized
+          // sheet is an overlay, so collapsing the column underneath it would
+          // reflow content nobody can see and jump on restore.
+          rightPanelMaximized && !shouldUsePlanSidebarSheet ? "w-0 flex-none" : "flex-1",
         )}
-        data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        data-chat-column-maximized-away={
+          rightPanelMaximized && !shouldUsePlanSidebarSheet ? "true" : "false"
+        }
       >
         {/* Top bar */}
         <header
@@ -6426,10 +6445,14 @@ function ChatViewContent(props: ChatViewProps) {
         </RightPanelTabs>
       ) : null}
       {shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
-        <RightPanelSheet open onClose={planSidebarOpen ? closePlanSidebar : closePreviewPanel}>
+        <RightPanelSheet
+          open
+          maximized={rightPanelMaximized}
+          onClose={planSidebarOpen ? closePlanSidebar : closePreviewPanel}
+        >
           <RightPanelTabs
             mode="sheet"
-            layoutControls={panelToggleControls}
+            layoutControls={sheetLayoutControls}
             surfaces={rightPanelState.surfaces}
             activeSurfaceId={activeRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}

@@ -386,6 +386,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                   className={cn(
                     "group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+                    // A 24px tab is aimable with a cursor and not with a thumb.
+                    // The bar is already 44px tall in sheet mode, so this only
+                    // spends slack that was there.
+                    "pointer-coarse:h-9",
                     active
                       ? "bg-accent text-foreground"
                       : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
