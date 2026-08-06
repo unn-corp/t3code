@@ -77,6 +77,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
+import { clearPwaCachesAndReload } from "../../pwa";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -359,6 +360,36 @@ function withoutProviderInstanceFavorites(
   instanceId: ProviderInstanceId,
 ) {
   return favorites.filter((favorite) => favorite.provider !== instanceId);
+}
+
+/**
+ * An installed app can hold a shell that points at bundles which no longer
+ * exist, and nothing in the app would tell it so. This is the way out.
+ */
+function PwaAppUpdateSettings() {
+  const [clearing, setClearing] = useState(false);
+  if (typeof window === "undefined" || isElectron) return null;
+  return (
+    <SettingsSection title="App updates">
+      <SettingsRow
+        title="Reload the app from the server"
+        description="Discards this device's cached app files and fetches the current build. Pairing, environments and settings are untouched."
+        control={
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={clearing}
+            onClick={() => {
+              setClearing(true);
+              void clearPwaCachesAndReload();
+            }}
+          >
+            {clearing ? "Reloading…" : "Reload from server"}
+          </Button>
+        }
+      />
+    </SettingsSection>
+  );
 }
 
 function PwaNotificationSettings() {
@@ -2791,7 +2822,10 @@ export function GeneralSettingsPanel() {
           ) : null}
         </SettingsSection>
       ) : (
-        <PwaNotificationSettings />
+        <>
+          <PwaNotificationSettings />
+          <PwaAppUpdateSettings />
+        </>
       )}
 
       <SettingsSection title="About">

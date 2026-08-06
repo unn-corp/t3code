@@ -62,3 +62,37 @@ export function registerPwaServiceWorker(): Promise<PwaServiceWorkerState> {
     }));
   return registrationPromise;
 }
+
+/**
+ * Discards everything cached for this installation and reloads from the server.
+ *
+ * An installed PWA can hold a shell that names bundles by content hash, so a
+ * stale shell keeps asking for files that no longer exist and the app pins
+ * itself to an old build. The server now sends no-cache for the shell, which
+ * prevents that going forward, but a client already holding a stale copy has
+ * no way to notice on its own. This is that way out, and it is deliberately
+ * blunt: unregister the workers, drop every cache, reload.
+ *
+ * Pairing and settings live in localStorage and IndexedDB, which are left
+ * alone, so this does not sign the device out or lose its environments.
+ */
+export async function clearPwaCachesAndReload(): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    const registrations = (await navigator.serviceWorker?.getRegistrations()) ?? [];
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+  } catch {
+    // A browser that refuses the registration list still benefits from the
+    // cache drop and the reload below.
+  }
+  try {
+    const keys = (await window.caches?.keys()) ?? [];
+    await Promise.all(keys.map((key) => window.caches.delete(key)));
+  } catch {
+    // Same: a failure here must not stop the reload, which is what actually
+    // re-fetches the shell.
+  }
+  // Replace rather than reload: a reload can be served from the back/forward
+  // cache, which is the thing being escaped.
+  window.location.replace(window.location.origin);
+}
