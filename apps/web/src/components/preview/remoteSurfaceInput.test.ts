@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { toKeyEvent, toModifiers, toMouseButton, toPagePoint } from "./remoteSurfaceInput";
+import {
+  advanceTouchGesture,
+  beginTouchGesture,
+  isTapGesture,
+  toKeyEvent,
+  toModifiers,
+  toMouseButton,
+  toPagePoint,
+} from "./remoteSurfaceInput";
 
 const geometry = {
   elementWidth: 400,
@@ -107,5 +115,34 @@ describe("toKeyEvent", () => {
 
   it("keeps multi-byte characters as one printable unit", () => {
     expect(toKeyEvent({ kind: "keyDown", key: "😀", code: "", modifiers: 0 }).text).toBe("😀");
+  });
+});
+
+describe("touch gestures", () => {
+  const scale = { x: 2, y: 2 } as const;
+
+  it("treats a stationary press as a tap rather than a scroll", () => {
+    const start = beginTouchGesture(1, 100, 100);
+    const advanced = advanceTouchGesture(start, 103, 102, scale);
+    expect(advanced.scroll).toBeNull();
+    expect(isTapGesture(advanced.gesture)).toBe(true);
+  });
+
+  it("scrolls once the finger travels past the threshold", () => {
+    const start = beginTouchGesture(1, 100, 100);
+    const advanced = advanceTouchGesture(start, 100, 80, scale);
+    // Dragging the page upward scrolls down, and the delta is in page pixels.
+    expect(advanced.scroll).toEqual({ x: 0, y: 40 });
+    expect(isTapGesture(advanced.gesture)).toBe(false);
+  });
+
+  it("keeps scrolling after the finger returns near where it started", () => {
+    const start = beginTouchGesture(1, 100, 100);
+    const scrolled = advanceTouchGesture(start, 100, 60, scale);
+    const returned = advanceTouchGesture(scrolled.gesture, 100, 99, scale);
+    // A gesture that became a scroll must never turn back into a click, or
+    // releasing after a long drag would fire one wherever the finger landed.
+    expect(isTapGesture(returned.gesture)).toBe(false);
+    expect(returned.scroll).not.toBeNull();
   });
 });

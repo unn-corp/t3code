@@ -9,11 +9,15 @@ import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
+  advanceTouchGesture,
+  beginTouchGesture,
+  isTapGesture,
   toKeyEvent,
   toModifiers,
   toMouseButton,
   toPagePoint,
   type RemoteSurfaceGeometry,
+  type TouchGesture,
 } from "./remoteSurfaceInput";
 
 /**
@@ -39,6 +43,8 @@ export function PreviewRemoteSurface(props: {
     pageHeight: 0,
   });
   const lastSequenceRef = useRef(-1);
+  const touchRef = useRef<TouchGesture | null>(null);
+  const keyboardRef = useRef<HTMLTextAreaElement | null>(null);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [hasFrame, setHasFrame] = useState(false);
 
@@ -135,9 +141,95 @@ export function PreviewRemoteSurface(props: {
     });
   }, []);
 
+  /** Canvas-pixel to page-pixel ratio, for turning a drag into a scroll. */
+  const pageScale = useCallback(() => {
+    const { elementWidth, elementHeight, pageWidth, pageHeight } = geometryRef.current;
+    if (elementWidth <= 0 || elementHeight <= 0) return null;
+    return { x: pageWidth / elementWidth, y: pageHeight / elementHeight };
+  }, []);
+
+  const tapAt = useCallback(
+    (point: { readonly x: number; readonly y: number }, modifiers: number) => {
+      for (const kind of ["mousePressed", "mouseReleased"] as const) {
+        dispatch({
+          _tag: "mouse",
+          kind,
+          x: point.x,
+          y: point.y,
+          button: "left",
+          clickCount: 1,
+          modifiers,
+        });
+      }
+    },
+    [dispatch],
+  );
+
+  /**
+   * Touch is handled apart from mouse and pen. A finger has no hover and no
+   * buttons, and the page it is driving only understands a mouse, so a drag
+   * has to become a scroll and a stationary press has to become a click. The
+   * host never sees the difference.
+   */
+  const handleTouchDown = useCallback((reactEvent: React.PointerEvent<HTMLCanvasElement>) => {
+    touchRef.current = beginTouchGesture(
+      reactEvent.pointerId,
+      reactEvent.clientX,
+      reactEvent.clientY,
+    );
+    reactEvent.currentTarget.setPointerCapture(reactEvent.pointerId);
+  }, []);
+
+  const handleTouchMove = useCallback(
+    (reactEvent: React.PointerEvent<HTMLCanvasElement>) => {
+      const gesture = touchRef.current;
+      const scale = pageScale();
+      if (!gesture || gesture.pointerId !== reactEvent.pointerId || !scale) return;
+      const advanced = advanceTouchGesture(gesture, reactEvent.clientX, reactEvent.clientY, scale);
+      touchRef.current = advanced.gesture;
+      if (!advanced.scroll) return;
+      const point = pointFor(reactEvent.clientX, reactEvent.clientY);
+      if (!point) return;
+      dispatch({
+        _tag: "wheel",
+        x: point.x,
+        y: point.y,
+        deltaX: advanced.scroll.x,
+        deltaY: advanced.scroll.y,
+        modifiers: toModifiers(reactEvent),
+      });
+    },
+    [dispatch, pageScale, pointFor],
+  );
+
+  const handleTouchUp = useCallback(
+    (reactEvent: React.PointerEvent<HTMLCanvasElement>) => {
+      const gesture = touchRef.current;
+      touchRef.current = null;
+      if (reactEvent.currentTarget.hasPointerCapture(reactEvent.pointerId)) {
+        reactEvent.currentTarget.releasePointerCapture(reactEvent.pointerId);
+      }
+      if (!gesture || gesture.pointerId !== reactEvent.pointerId) return;
+      if (!isTapGesture(gesture)) return;
+      const point = pointFor(reactEvent.clientX, reactEvent.clientY);
+      if (!point) return;
+      tapAt(point, toModifiers(reactEvent));
+      // A canvas cannot raise the on-screen keyboard, so a tap hands focus to
+      // a hidden field. Whatever the page focused now receives what is typed.
+      keyboardRef.current?.focus();
+    },
+    [pointFor, tapAt],
+  );
+
   const handlePointer = useCallback(
     (kind: "mousePressed" | "mouseReleased" | "mouseMoved") =>
       (reactEvent: React.PointerEvent<HTMLCanvasElement>) => {
+        if (reactEvent.pointerType === "touch") {
+          if (kind === "mousePressed") handleTouchDown(reactEvent);
+          else if (kind === "mouseMoved") handleTouchMove(reactEvent);
+          else handleTouchUp(reactEvent);
+          return;
+        }
         const point = pointFor(reactEvent.clientX, reactEvent.clientY);
         if (!point) return;
         if (kind === "mousePressed") {
@@ -161,7 +253,7 @@ export function PreviewRemoteSurface(props: {
           modifiers: toModifiers(reactEvent),
         });
       },
-    [dispatch, pointFor],
+    [dispatch, handleTouchDown, handleTouchMove, handleTouchUp, pointFor],
   );
 
   const handleWheel = useCallback(
@@ -197,6 +289,49 @@ export function PreviewRemoteSurface(props: {
     [dispatch],
   );
 
+  /**
+   * Text typed into the hidden field is replayed as character input. A phone
+   * keyboard reports most keys only through composition and input events, so
+   * keydown alone would drop everything a soft keyboard produces.
+   */
+  const handleKeyboardInput = useCallback(
+    (reactEvent: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const typed = reactEvent.target.value;
+      reactEvent.target.value = "";
+      for (const character of typed) {
+        dispatch({
+          _tag: "key",
+          kind: "char",
+          key: character,
+          code: "",
+          text: character,
+          modifiers: 0,
+        });
+      }
+    },
+    [dispatch],
+  );
+
+  const handleKeyboardKeyDown = useCallback(
+    (reactEvent: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // Printable keys arrive through onChange as characters; these do not,
+      // and a page cannot be used without them.
+      if (reactEvent.key.length === 1 && !reactEvent.metaKey && !reactEvent.ctrlKey) return;
+      reactEvent.preventDefault();
+      for (const kind of ["keyDown", "keyUp"] as const) {
+        dispatch(
+          toKeyEvent({
+            kind,
+            key: reactEvent.key,
+            code: reactEvent.code,
+            modifiers: toModifiers(reactEvent),
+          }),
+        );
+      }
+    },
+    [dispatch],
+  );
+
   return (
     <div className={props.className}>
       <canvas
@@ -206,10 +341,28 @@ export function PreviewRemoteSurface(props: {
         aria-label="Remote browser preview"
         onPointerDown={handlePointer("mousePressed")}
         onPointerUp={handlePointer("mouseReleased")}
+        onPointerCancel={handlePointer("mouseReleased")}
         onPointerMove={handlePointer("mouseMoved")}
         onWheel={handleWheel}
         onKeyDown={handleKey("keyDown")}
         onKeyUp={handleKey("keyUp")}
+      />
+      {/*
+       * Off-screen rather than hidden: a field the browser considers invisible
+       * will not summon the on-screen keyboard, which is the only reason this
+       * exists. Autocorrect and capitalisation are off so the page receives
+       * exactly what was typed.
+       */}
+      <textarea
+        ref={keyboardRef}
+        aria-label="Send keystrokes to the remote page"
+        className="pointer-events-none fixed -left-[9999px] top-0 size-px resize-none opacity-0"
+        autoCapitalize="off"
+        autoCorrect="off"
+        autoComplete="off"
+        spellCheck={false}
+        onChange={handleKeyboardInput}
+        onKeyDown={handleKeyboardKeyDown}
       />
       {!hasFrame ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">

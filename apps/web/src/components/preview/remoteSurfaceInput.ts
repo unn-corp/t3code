@@ -30,6 +30,64 @@ export interface RemoteSurfacePoint {
   readonly y: number;
 }
 
+/**
+ * How far a finger may travel and still count as a tap. Below this a touch is
+ * a click; above it the gesture becomes a scroll and never produces one.
+ */
+export const TOUCH_SCROLL_THRESHOLD_PX = 8;
+
+export interface TouchGesture {
+  readonly pointerId: number;
+  readonly startX: number;
+  readonly startY: number;
+  readonly lastX: number;
+  readonly lastY: number;
+  /** Latched once the finger has moved far enough to mean scrolling. */
+  readonly scrolling: boolean;
+}
+
+export interface TouchGestureAdvance {
+  readonly gesture: TouchGesture;
+  /**
+   * Page-space scroll deltas, already inverted: dragging the page down means
+   * scrolling up, the way a touchscreen behaves everywhere else.
+   */
+  readonly scroll: RemoteSurfacePoint | null;
+}
+
+export function beginTouchGesture(pointerId: number, x: number, y: number): TouchGesture {
+  return { pointerId, startX: x, startY: y, lastX: x, lastY: y, scrolling: false };
+}
+
+/**
+ * A finger drag has to become a scroll rather than a mouse drag, or a phone
+ * cannot move a page at all: the canvas suppresses native panning so the host
+ * can receive the gesture, and the host has no notion of touch.
+ */
+export function advanceTouchGesture(
+  gesture: TouchGesture,
+  x: number,
+  y: number,
+  scale: { readonly x: number; readonly y: number },
+): TouchGestureAdvance {
+  const travelled = Math.hypot(x - gesture.startX, y - gesture.startY);
+  const scrolling = gesture.scrolling || travelled > TOUCH_SCROLL_THRESHOLD_PX;
+  const next: TouchGesture = { ...gesture, lastX: x, lastY: y, scrolling };
+  if (!scrolling) return { gesture: next, scroll: null };
+  return {
+    gesture: next,
+    scroll: {
+      x: (gesture.lastX - x) * scale.x,
+      y: (gesture.lastY - y) * scale.y,
+    },
+  };
+}
+
+/** A gesture that never crossed the threshold is a tap, and taps click. */
+export function isTapGesture(gesture: TouchGesture): boolean {
+  return !gesture.scrolling;
+}
+
 const clamp = (value: number, max: number): number => Math.min(Math.max(value, 0), max);
 
 /**

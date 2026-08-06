@@ -2179,9 +2179,32 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "preview",
           }),
         [WS_METHODS.previewResize]: (input) =>
-          observeRpcEffect(WS_METHODS.previewResize, previewManager.resize(input), {
-            "rpc.aggregate": "preview",
-          }),
+          observeRpcEffect(
+            WS_METHODS.previewResize,
+            previewManager.resize(input).pipe(
+              // Resizing recorded only the tab's setting, so a device size
+              // chosen by a viewer changed the record and nothing else: the
+              // renderer kept painting at whatever size it started with. A
+              // renderer drawing for someone else has to be told.
+              Effect.tap(() =>
+                input.viewport._tag === "fill"
+                  ? Effect.void
+                  : previewAutomationBroker
+                      .dispatchToHost({
+                        threadId: input.threadId,
+                        tabId: input.tabId,
+                        operation: "resize",
+                        input: {
+                          tabId: input.tabId,
+                          width: input.viewport.width,
+                          height: input.viewport.height,
+                        },
+                      })
+                      .pipe(Effect.asVoid),
+              ),
+            ),
+            { "rpc.aggregate": "preview" },
+          ),
         [WS_METHODS.previewRefresh]: (input) =>
           observeRpcEffect(WS_METHODS.previewRefresh, previewManager.refresh(input), {
             "rpc.aggregate": "preview",
