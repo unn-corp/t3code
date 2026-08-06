@@ -29,6 +29,7 @@ import { previewBridge } from "./previewBridge";
 import { PreviewRemoteSurface } from "./PreviewRemoteSurface";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
+import { PreviewDeviceMenu } from "./PreviewDeviceMenu";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
@@ -652,7 +653,16 @@ export function PreviewView({
           isUnreachable ? "Page didn't load — pick unavailable until the page renders" : undefined
         }
         trailingActions={
-          previewBridge ? (
+          !previewBridge ? (
+            // A viewer with no webview of its own still needs device
+            // emulation; the desktop's toolbar is drawn around its webview and
+            // never reaches here.
+            <PreviewDeviceMenu
+              viewport={viewport}
+              disabled={!tabId || isUnreachable}
+              onChange={(next) => void handleViewportChange(next)}
+            />
+          ) : previewBridge ? (
             <PreviewMoreMenu
               tabId={runtimeTabId}
               hasWebContents={desktopOverlay?.hasWebContents ?? false}
