@@ -71,6 +71,8 @@ const STARTUP_TIMEOUT = Duration.seconds(20);
 /** Roughly five seconds, which covers a cold navigation on a loaded machine. */
 const SCREENCAST_START_ATTEMPTS = 25;
 const SCREENCAST_START_RETRY_DELAY = Duration.millis(200);
+/** Long enough for a typical dev-server page to settle after navigating. */
+const NAVIGATION_SETTLE_DELAY = Duration.seconds(2);
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 } as const;
 
 /**
@@ -417,6 +419,9 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
     const navStatus = snapshot.navStatus;
     if (navStatus._tag === "Idle") return;
     yield* cdp.send("Page.navigate", { url: navStatus.url }, page.sessionId).pipe(Effect.ignore);
+    yield* Effect.forkScoped(
+      Effect.sleep(NAVIGATION_SETTLE_DELAY).pipe(Effect.andThen(reportPageStatus(page, false))),
+    );
   });
 
   const requirePage = Effect.fn("HeadlessBrowserHost.requirePage")(function* (input: {
@@ -505,6 +510,53 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
       pageHeight: page.viewport.height,
       capturedAt: DateTime.formatIso(capturedAt),
     });
+  });
+
+  /**
+   * Tells the server where the page actually got to.
+   *
+   * Only the desktop reported navigation status, because it was the only host
+   * that could render. A tab served from here therefore stayed Loading for
+   * ever: the spinner never cleared, and the loading overlay sat over the
+   * surface swallowing taps, so the preview looked both stuck and dead.
+   */
+  const reportPageStatus = Effect.fn("HeadlessBrowserHost.reportPageStatus")(function* (
+    page: PageSession,
+    loading: boolean,
+  ) {
+    const cdp = yield* requireBrowser;
+    const evaluated = yield* cdp
+      .send(
+        "Runtime.evaluate",
+        {
+          expression: "({ url: location.href, title: document.title })",
+          returnByValue: true,
+        },
+        page.sessionId,
+      )
+      .pipe(Effect.orElseSucceed(() => null));
+    const value = evaluated && isRecord(evaluated["result"]) ? evaluated["result"]["value"] : null;
+    const url = readString(value, "url");
+    if (!url || url === "about:blank") return;
+    yield* manager
+      .reportStatus({
+        threadId: page.threadId as never,
+        tabId: page.tabId as never,
+        navStatus: loading
+          ? {
+              _tag: "Loading",
+              url: url as never,
+              title: (readString(value, "title") ?? "") as never,
+            }
+          : {
+              _tag: "Success",
+              url: url as never,
+              title: (readString(value, "title") ?? "") as never,
+            },
+        canGoBack: false,
+        canGoForward: false,
+      })
+      .pipe(Effect.ignore);
   });
 
   const dispatchInput = Effect.fn("HeadlessBrowserHost.dispatchInput")(function* (
@@ -619,6 +671,12 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
           });
         }
         yield* cdp.send("Page.navigate", { url }, page.sessionId);
+        yield* reportPageStatus(page, true);
+        // The load event settles it; this is the fallback for a page that
+        // never fires one, so the viewer is not left on a spinner.
+        yield* Effect.forkScoped(
+          Effect.sleep(NAVIGATION_SETTLE_DELAY).pipe(Effect.andThen(reportPageStatus(page, false))),
+        );
         return { tabId: page.tabId };
       }
       case "evaluate": {
