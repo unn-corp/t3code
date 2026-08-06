@@ -489,6 +489,9 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
     clientId: HEADLESS_CLIENT_ID,
     environmentId: "server-headless" as never,
     supportedOperations: [...HEADLESS_SUPPORTED_OPERATIONS],
+    // This host drives its own Chromium, so it can serve a viewer on another
+    // device whether or not a desktop app is connected or looking at the tab.
+    rendersIndependently: true,
   });
 
   let connectionId: string | null = null;

@@ -1091,6 +1091,54 @@ it.effect("reports no host rather than failing when nothing supports the operati
   ),
 );
 
+it.effect("sends viewer frames to a host that renders independently", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      // The desktop supports more operations but only composites the tab it is
+      // displaying, so for a viewer elsewhere it would accept streamStart and
+      // then send nothing. The leaner host drives its own browser.
+      const desktopRequests: Array<RoutedRequest> = [];
+      const headlessRequests: Array<RoutedRequest> = [];
+      const desktop = requestsFrom(
+        yield* broker.connect(
+          makeHost({
+            clientId: "client-desktop",
+            supportedOperations: ["streamStart", "streamStop", "dispatchInput", "click", "status"],
+          }),
+        ),
+      );
+      const headless = requestsFrom(
+        yield* broker.connect(
+          makeHost({
+            clientId: "client-headless",
+            supportedOperations: ["streamStart", "streamStop"],
+            rendersIndependently: true,
+          }),
+        ),
+      );
+      yield* Stream.runForEach(desktop, (request) =>
+        Effect.sync(() => desktopRequests.push(request)),
+      ).pipe(Effect.forkScoped);
+      yield* Stream.runForEach(headless, (request) =>
+        Effect.sync(() => headlessRequests.push(request)),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const dispatched = yield* broker.dispatchToHost({
+        threadId: scope.threadId,
+        operation: "streamStart",
+        input: {},
+      });
+      yield* Effect.yieldNow;
+
+      expect(dispatched).toBe(true);
+      expect(headlessRequests.map((request) => request.operation)).toEqual(["streamStart"]);
+      expect(desktopRequests).toEqual([]);
+    }),
+  ),
+);
+
 it.effect("announces a host once it has registered so stalled work can retry", () =>
   Effect.scoped(
     Effect.gen(function* () {

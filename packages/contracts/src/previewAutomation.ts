@@ -610,6 +610,17 @@ export const PreviewAutomationHost = Schema.Struct({
    * a newer server safely coexist with an older desktop during rollout.
    */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
+  /**
+   * Whether this host renders without depending on what a user is looking at.
+   *
+   * The desktop renders previews in a <webview> in its own window, so a tab it
+   * is not displaying is parked far offscreen where Chromium composites
+   * nothing. Such a host answers streamStart successfully and then produces no
+   * frames. A host that drives its own browser has no such dependency, and is
+   * the one a viewer on another device needs. Missing means false, which keeps
+   * an older desktop behaving as it did.
+   */
+  rendersIndependently: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
 

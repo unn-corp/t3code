@@ -92,6 +92,7 @@ interface ClientConnection {
   readonly connectionId: string;
   readonly environmentId: PreviewAutomationHost["environmentId"];
   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
+  readonly rendersIndependently: boolean;
   readonly focused: boolean;
   readonly focusOrder: number;
   readonly queue: Queue.Queue<PreviewAutomationStreamEvent>;
@@ -363,6 +364,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       connectionId,
       environmentId: host.environmentId,
       supportedOperations: new Set(host.supportedOperations ?? PREVIEW_AUTOMATION_V1_OPERATIONS),
+      rendersIndependently: host.rendersIndependently ?? false,
       focused: false,
       focusOrder: 0,
       queue,
@@ -624,10 +626,15 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
             (input.environmentId === undefined || host.environmentId === input.environmentId) &&
             supportsOperation(host, input.operation),
         )
-        // Same preference order as invoke: richest host, then focused, then
-        // most recently focused.
+        // Unlike invoke, this path serves a viewer on another device, so a
+        // host that renders independently comes first even when a desktop
+        // supports more operations. A desktop only composites the tab it is
+        // actually displaying; for anything else it accepts the request and
+        // then sends no frames, which reads to the viewer as a hang. Richest,
+        // then focused, then most recently focused still decide the rest.
         .sort(
           (left, right) =>
+            Number(right.rendersIndependently) - Number(left.rendersIndependently) ||
             right.supportedOperations.size - left.supportedOperations.size ||
             Number(right.focused) - Number(left.focused) ||
             right.focusOrder - left.focusOrder,
