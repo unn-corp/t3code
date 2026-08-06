@@ -502,6 +502,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const remoteCaptureSizesRef = yield* Ref.make<
     ReadonlyMap<string, { readonly width: number; readonly height: number }>
   >(new Map());
+  // Tabs whose remote frames come from a CDP screencast rather than the
+  // capturePage loop. capturePage needs a live compositor surface, so it fails
+  // with UnknownVizError for any tab the desktop is not itself displaying,
+  // which is the normal case when a phone is the only viewer. The screencast is
+  // served by the renderer and does not care whether anything is on screen.
+  const remoteScreencastTabsRef = yield* Ref.make<ReadonlySet<string>>(new Set<string>());
   const pickSessionsRef = yield* Ref.make<ReadonlyMap<string, PickSession>>(new Map());
   const controlSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<number, BrowserControlSession>
@@ -917,16 +923,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 const captureSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(
                   tabId,
                 );
+                const deviceWidth =
+                  typeof metadata["deviceWidth"] === "number" ? metadata["deviceWidth"] : 0;
+                const deviceHeight =
+                  typeof metadata["deviceHeight"] === "number" ? metadata["deviceHeight"] : 0;
                 if (captureSession?.consumers.has("recording")) {
                   const receivedAt = yield* currentIso;
                   const listeners = yield* Ref.get(recordingFrameListenersRef);
                   const frame: DesktopPreviewRecordingFrame = {
                     tabId,
                     data: params["data"],
-                    width:
-                      typeof metadata["deviceWidth"] === "number" ? metadata["deviceWidth"] : 0,
-                    height:
-                      typeof metadata["deviceHeight"] === "number" ? metadata["deviceHeight"] : 0,
+                    width: deviceWidth,
+                    height: deviceHeight,
                     receivedAt,
                   };
                   yield* Effect.forEach(
@@ -935,6 +943,35 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                       deliverEvent("recording-frame", frame.tabId, () => listener(frame)),
                     { discard: true },
                   );
+                }
+                if (captureSession?.consumers.has("remote")) {
+                  const remoteListeners = yield* Ref.get(remoteFrameListenersRef);
+                  if (remoteListeners.size > 0) {
+                    const receivedAt = yield* currentIso;
+                    // Chromium already scaled and encoded to the bounds passed
+                    // to Page.startScreencast, so unlike the capturePage path
+                    // there is nothing to resize or re-encode here. The frame
+                    // is described in CSS pixels for the same reason the
+                    // headless host does it: the viewer sizes its canvas from
+                    // these and maps pointers through the page size, so both
+                    // hosts have to agree on what the numbers mean.
+                    const viewport = (yield* Ref.get(remoteViewportsRef)).get(tabId);
+                    const remoteFrame: DesktopPreviewRemoteFrame = {
+                      tabId,
+                      data: params["data"],
+                      width: deviceWidth,
+                      height: deviceHeight,
+                      receivedAt,
+                      pageWidth: viewport?.width ?? deviceWidth,
+                      pageHeight: viewport?.height ?? deviceHeight,
+                    };
+                    yield* Effect.forEach(
+                      remoteListeners,
+                      (listener) =>
+                        deliverEvent("remote-frame", tabId, () => listener(remoteFrame)),
+                      { discard: true },
+                    );
+                  }
                 }
               }
             }
@@ -981,12 +1018,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               wc.debugger.attach("1.3");
             });
             yield* Effect.all(
-              ["Runtime.enable", "Accessibility.enable", "Network.enable", "Log.enable"].map(
-                (method) =>
-                  attemptPromise(
-                    { operation: `initializeDebugger.${method}`, webContentsId: wc.id },
-                    () => wc.debugger.sendCommand(method),
-                  ),
+              // Page.enable is what makes Page.startScreencast and its
+              // screencastFrame events available to the remote stream.
+              [
+                "Runtime.enable",
+                "Accessibility.enable",
+                "Network.enable",
+                "Log.enable",
+                "Page.enable",
+              ].map((method) =>
+                attemptPromise(
+                  { operation: `initializeDebugger.${method}`, webContentsId: wc.id },
+                  () => wc.debugger.sendCommand(method),
+                ),
               ),
               { concurrency: "unbounded", discard: true },
             );
@@ -2092,6 +2136,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const captureSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
     if (!captureSession) return;
+    // A tab streaming over CDP gets its remote frames from the screencast. If
+    // nothing else needs a full-page capture, skip the poll entirely rather
+    // than call capturePage on a surface that is very likely not composited.
+    const screencasting = (yield* Ref.get(remoteScreencastTabsRef)).has(tabId);
+    const needsCapturePage =
+      captureSession.consumers.has("recording") ||
+      captureSession.consumers.has("picture-in-picture");
+    if (screencasting && !needsCapturePage) return;
     const wc = yield* requireWebContents(tabId);
     const image = yield* attemptPromise(
       {
@@ -2148,7 +2200,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       receivedAt,
     };
     const deliveries: Array<Effect.Effect<void>> = [];
-    if (currentCaptureSession.consumers.has("remote")) {
+    // When the screencast is running it owns remote delivery; publishing here
+    // too would double every frame for a viewer that is already being served.
+    if (!screencasting && currentCaptureSession.consumers.has("remote")) {
       const bounds = (yield* Ref.get(remoteStreamBoundsRef)).get(tabId);
       const remoteListeners = yield* Ref.get(remoteFrameListenersRef);
       if (bounds && remoteListeners.size > 0) {
@@ -2370,6 +2424,46 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const startRemoteScreencast = Effect.fn("PreviewManager.startRemoteScreencast")(function* (
+    tabId: string,
+    bounds: DesktopPreviewRemoteStreamBounds,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    yield* ensureControlSession(wc);
+    yield* attemptPromise(
+      { operation: "remoteStream.startScreencast", tabId, webContentsId: wc.id },
+      () =>
+        wc.debugger.sendCommand("Page.startScreencast", {
+          format: "jpeg",
+          quality: bounds.quality,
+          maxWidth: bounds.maxWidth,
+          maxHeight: bounds.maxHeight,
+          everyNthFrame: 1,
+        }),
+    );
+    yield* Ref.update(remoteScreencastTabsRef, (tabs) => new Set([...tabs, tabId]));
+  });
+
+  const stopRemoteScreencast = Effect.fn("PreviewManager.stopRemoteScreencast")(function* (
+    tabId: string,
+  ) {
+    const wasStreaming = (yield* Ref.get(remoteScreencastTabsRef)).has(tabId);
+    yield* Ref.update(remoteScreencastTabsRef, (tabs) => {
+      const next = new Set(tabs);
+      next.delete(tabId);
+      return next;
+    });
+    if (!wasStreaming) return;
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    const wc = tab?.webContentsId != null ? webContents.fromId(tab.webContentsId) : undefined;
+    // A destroyed tab or a detached debugger has already stopped it for us.
+    if (!wc || wc.isDestroyed() || !wc.debugger.isAttached()) return;
+    yield* attemptPromise(
+      { operation: "remoteStream.stopScreencast", tabId, webContentsId: wc.id },
+      () => wc.debugger.sendCommand("Page.stopScreencast"),
+    ).pipe(Effect.ignore);
+  });
+
   const startRemoteStream = Effect.fn("PreviewManager.startRemoteStream")(function* (
     tabId: string,
     bounds: DesktopPreviewRemoteStreamBounds,
@@ -2380,10 +2474,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     );
     yield* startFrameCapture(tabId, "remote");
+    // The screencast is the working path; the capture loop stays as the
+    // fallback for the cases that deny a debugger session at all (DevTools
+    // open, another debugger attached), where it is no worse than before.
+    yield* startRemoteScreencast(tabId, bounds).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Preview screencast unavailable; falling back to page capture.", {
+          tabId,
+          error,
+        }),
+      ),
+    );
     yield* refreshRemoteViewport(tabId);
   });
 
   const stopRemoteStream = Effect.fn("PreviewManager.stopRemoteStream")(function* (tabId: string) {
+    yield* stopRemoteScreencast(tabId);
     yield* stopFrameCapture(tabId, "remote");
     yield* Ref.update(remoteStreamBoundsRef, (all) =>
       replaceMap(all, (copy) => {
