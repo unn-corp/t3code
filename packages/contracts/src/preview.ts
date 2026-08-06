@@ -352,6 +352,46 @@ export const PreviewInputInput = Schema.Struct({
 });
 export type PreviewInputInput = typeof PreviewInputInput.Type;
 
+export const PreviewPickElementInput = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  /** Page coordinates, the same space frames report their page size in. */
+  x: Schema.Number,
+  y: Schema.Number,
+});
+export type PreviewPickElementInput = typeof PreviewPickElementInput.Type;
+
+/**
+ * What a rendering host can say about the element under a point. React
+ * component and source data are deliberately absent: only the desktop's
+ * injected runtime can produce them, and inventing them here would put
+ * unreliable provenance in front of an agent.
+ */
+export const PreviewPickedElement = Schema.Struct({
+  pageUrl: Schema.String,
+  pageTitle: Schema.NullOr(Schema.String),
+  tagName: Schema.String,
+  selector: Schema.NullOr(Schema.String),
+  htmlPreview: Schema.String,
+  styles: Schema.String,
+  rect: Schema.Struct({
+    x: Schema.Number,
+    y: Schema.Number,
+    width: Schema.Number,
+    height: Schema.Number,
+  }),
+});
+export type PreviewPickedElement = typeof PreviewPickedElement.Type;
+
+export const PreviewPickElementResult = Schema.Struct({
+  tabId: PreviewTabId,
+  /** Null when the point resolved to nothing, such as a tap past the content. */
+  picked: Schema.NullOr(PreviewPickedElement),
+  /** Base64 JPEG of the element's own box, when it had one. */
+  screenshot: Schema.NullOr(Schema.String),
+});
+export type PreviewPickElementResult = typeof PreviewPickElementResult.Type;
+
 /**
  * A localhost server detected by the port scanner. Used to populate the
  * "Local" recommendations in the empty-state of the preview panel.

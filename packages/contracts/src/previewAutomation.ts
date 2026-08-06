@@ -49,6 +49,13 @@ export const PREVIEW_AUTOMATION_OPERATIONS = [
   "streamStart",
   "streamStop",
   "dispatchInput",
+  /**
+   * Resolve the element under a point, for a viewer whose picker cannot run
+   * in the page it is looking at. The desktop picks through an injected
+   * annotation surface in its own webview; a client watching frames has no
+   * page to inject into, so it asks whoever is rendering.
+   */
+  "pickElement",
 ] as const;
 
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);
@@ -297,6 +304,14 @@ export const PreviewAutomationStreamStartInput = Schema.Struct({
   quality: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
 });
 export type PreviewAutomationStreamStartInput = typeof PreviewAutomationStreamStartInput.Type;
+
+export const PreviewAutomationPickElementInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  /** Page coordinates, in the same space frames report their page size in. */
+  x: Schema.Number,
+  y: Schema.Number,
+});
+export type PreviewAutomationPickElementInput = typeof PreviewAutomationPickElementInput.Type;
 
 export const PreviewAutomationStreamStopInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,

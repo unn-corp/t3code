@@ -99,6 +99,9 @@ export const RPC_REQUIRED_SCOPES = {
   // the operate scope rather than read.
   [WS_METHODS.previewPublishFrame]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewInput]: AuthOrchestrationOperateScope,
+  // Reads page content through a rendering host, so it carries the same
+  // authority as driving that page rather than a read of server state.
+  [WS_METHODS.previewPickElement]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,

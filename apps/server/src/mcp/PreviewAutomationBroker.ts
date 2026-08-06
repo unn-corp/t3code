@@ -113,7 +113,7 @@ interface ClientConnection {
 export type PreviewViewerDispatch =
   | { readonly _tag: "no-host" }
   | { readonly _tag: "sent" }
-  | { readonly _tag: "accepted" }
+  | { readonly _tag: "accepted"; readonly result: unknown }
   | { readonly _tag: "rejected"; readonly reason: string };
 
 interface PendingRequest {
@@ -722,7 +722,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     }
     if (!deferred) return { _tag: "sent" } as const;
     const settled = yield* Deferred.await(deferred).pipe(
-      Effect.map(() => ({ _tag: "accepted" }) as PreviewViewerDispatch),
+      Effect.map((result) => ({ _tag: "accepted", result }) as PreviewViewerDispatch),
       Effect.catch((error: PreviewAutomationError) =>
         Effect.succeed({ _tag: "rejected", reason: error.message } as PreviewViewerDispatch),
       ),

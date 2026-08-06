@@ -33,8 +33,14 @@ export function PreviewRemoteSurface(props: {
   readonly threadId: ThreadId;
   readonly tabId: string;
   readonly className?: string;
+  /**
+   * While set, the next tap resolves the element under it instead of clicking
+   * through. The page cannot host a picker overlay for a viewer that is only
+   * receiving frames, so selection happens by asking the renderer.
+   */
+  readonly onPickAt?: (point: { readonly x: number; readonly y: number }) => void;
 }) {
-  const { environmentId, threadId, tabId } = props;
+  const { environmentId, threadId, tabId, onPickAt } = props;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const geometryRef = useRef<RemoteSurfaceGeometry>({
     elementWidth: 0,
@@ -213,12 +219,18 @@ export function PreviewRemoteSurface(props: {
       if (!isTapGesture(gesture)) return;
       const point = pointFor(reactEvent.clientX, reactEvent.clientY);
       if (!point) return;
+      if (onPickAt) {
+        // Picking must not also click: activating the thing being selected
+        // would navigate away from what the user meant to point at.
+        onPickAt(point);
+        return;
+      }
       tapAt(point, toModifiers(reactEvent));
       // A canvas cannot raise the on-screen keyboard, so a tap hands focus to
       // a hidden field. Whatever the page focused now receives what is typed.
       keyboardRef.current?.focus();
     },
-    [pointFor, tapAt],
+    [onPickAt, pointFor, tapAt],
   );
 
   const handlePointer = useCallback(
@@ -232,6 +244,10 @@ export function PreviewRemoteSurface(props: {
         }
         const point = pointFor(reactEvent.clientX, reactEvent.clientY);
         if (!point) return;
+        if (onPickAt) {
+          if (kind === "mousePressed") onPickAt(point);
+          return;
+        }
         if (kind === "mousePressed") {
           // Keeps keystrokes flowing to the surface after a tap.
           reactEvent.currentTarget.focus();
@@ -253,7 +269,7 @@ export function PreviewRemoteSurface(props: {
           modifiers: toModifiers(reactEvent),
         });
       },
-    [dispatch, handleTouchDown, handleTouchMove, handleTouchUp, pointFor],
+    [dispatch, handleTouchDown, handleTouchMove, handleTouchUp, onPickAt, pointFor],
   );
 
   const handleWheel = useCallback(

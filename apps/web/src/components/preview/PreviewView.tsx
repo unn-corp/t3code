@@ -93,6 +93,7 @@ export function PreviewView({
   const addImage = useComposerDraftStore((store) => store.addImage);
   const open = useAtomCommand(previewEnvironment.open);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
+  const pickElement = useAtomCommand(previewEnvironment.pickElement, { reportFailure: false });
 
   usePreviewSession(threadRef);
 
@@ -507,6 +508,69 @@ export function PreviewView({
     [recordingRuntimeTabId, runtimeTabId, tabId, threadRef],
   );
 
+  /**
+   * Picking for a viewer that has no page of its own. The desktop injects an
+   * annotation surface into its webview; here the renderer is asked what sits
+   * under the point instead, and the answer is assembled into the same
+   * annotation the composer already understands.
+   */
+  const handleRemotePick = useCallback(
+    (point: { readonly x: number; readonly y: number }) => {
+      if (!tabId) return;
+      setPickActive(false);
+      pickActiveRef.current = false;
+      void (async () => {
+        const result = await pickElement({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, tabId, x: point.x, y: point.y },
+        });
+        if (result._tag === "Failure") return;
+        const picked = result.value.picked;
+        if (!picked) return;
+        const pickedAt = new Date().toISOString();
+        addPreviewAnnotation(threadRef, {
+          id: `remote-pick-${pickedAt}`,
+          pageUrl: picked.pageUrl,
+          pageTitle: picked.pageTitle,
+          comment: "",
+          elements: [
+            {
+              id: `element-${pickedAt}`,
+              element: {
+                pageUrl: picked.pageUrl,
+                pageTitle: picked.pageTitle,
+                tagName: picked.tagName,
+                selector: picked.selector,
+                htmlPreview: picked.htmlPreview,
+                // Only the desktop's injected runtime can resolve React
+                // component and source data; absent is honest, invented is not.
+                componentName: null,
+                source: null,
+                stack: [],
+                styles: picked.styles,
+                pickedAt,
+              },
+              rect: picked.rect,
+            },
+          ],
+          regions: [],
+          strokes: [],
+          styleChanges: [],
+          screenshot: result.value.screenshot
+            ? {
+                dataUrl: `data:image/jpeg;base64,${result.value.screenshot}`,
+                width: picked.rect.width,
+                height: picked.rect.height,
+                cropRect: picked.rect,
+              }
+            : null,
+          createdAt: pickedAt,
+        });
+      })();
+    },
+    [addPreviewAnnotation, pickElement, tabId, threadRef],
+  );
+
   const handlePickElement = useCallback(() => {
     if (!previewBridge || !runtimeTabId) return;
     if (pickActiveRef.current) {
@@ -643,7 +707,13 @@ export function PreviewView({
         onPictureInPicture={previewBridge && tabId ? handlePictureInPicture : undefined}
         pictureInPicture={miniPlayer?.tabId === tabId}
         pictureInPictureDisabled={!desktopOverlay?.hasWebContents || isUnreachable}
-        onPickElement={previewBridge && tabId ? handlePickElement : undefined}
+        onPickElement={
+          tabId
+            ? previewBridge
+              ? handlePickElement
+              : () => setPickActive((active) => !active)
+            : undefined
+        }
         pickActive={pickActive}
         // Disable when there's no tab (nothing to pick on) OR the page
         // failed to load (a React overlay covers the webview, so the
@@ -698,6 +768,7 @@ export function PreviewView({
             threadId={threadRef.threadId}
             tabId={tabId}
             className="absolute inset-0 h-full w-full"
+            {...(pickActive ? { onPickAt: handleRemotePick } : {})}
           />
         ) : null}
         {showEmptyState ? (

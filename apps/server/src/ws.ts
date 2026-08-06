@@ -57,6 +57,7 @@ import {
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
   WS_METHODS,
+  type PreviewPickElementResult,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -2240,6 +2241,33 @@ const makeWsRpcLayer = (
                 input: { tabId: input.tabId, event: input.event },
               })
               .pipe(Effect.asVoid),
+            { "rpc.aggregate": "preview" },
+          ),
+        [WS_METHODS.previewPickElement]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewPickElement,
+            previewAutomationBroker
+              .dispatchToHost({
+                threadId: input.threadId,
+                tabId: input.tabId,
+                operation: "pickElement",
+                input: { tabId: input.tabId, x: input.x, y: input.y },
+                // Unlike streaming, the answer is the point of the call.
+                awaitResponse: true,
+              })
+              .pipe(
+                Effect.map((outcome) => {
+                  const result =
+                    outcome._tag === "accepted" && typeof outcome.result === "object"
+                      ? (outcome.result as { picked?: unknown; screenshot?: unknown })
+                      : null;
+                  return {
+                    tabId: input.tabId,
+                    picked: (result?.picked ?? null) as PreviewPickElementResult["picked"],
+                    screenshot: typeof result?.screenshot === "string" ? result.screenshot : null,
+                  } satisfies PreviewPickElementResult;
+                }),
+              ),
             { "rpc.aggregate": "preview" },
           ),
         [WS_METHODS.previewAutomationConnect]: (input) =>

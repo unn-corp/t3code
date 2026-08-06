@@ -16,9 +16,12 @@
  *   the viewer keeps its existing "nothing can render this" message.
  * - **It advertises only what it implements.** The broker routes by
  *   `supportedOperations`, so the operations that depend on the desktop's
- *   Playwright injected runtime and element picker are simply not offered.
- *   Claiming them would send agent calls to a host that cannot serve them, and
- *   the broker already prefers the richer host when both are connected.
+ *   Playwright injected runtime are simply not offered. Claiming them would
+ *   send agent calls to a host that cannot serve them, and the broker already
+ *   prefers the richer host when both are connected. Element picking is the
+ *   exception: it is served here from page script, without React component or
+ *   source data, because a viewer watching frames has no page of its own to
+ *   pick in and would otherwise have no selection at all.
  */
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
@@ -59,6 +62,7 @@ export const HEADLESS_SUPPORTED_OPERATIONS = [
   "setColorScheme",
   "streamStart",
   "streamStop",
+  "pickElement",
   "dispatchInput",
 ] as const satisfies ReadonlyArray<PreviewAutomationOperation>;
 
@@ -68,6 +72,58 @@ const STARTUP_TIMEOUT = Duration.seconds(20);
 const SCREENCAST_START_ATTEMPTS = 25;
 const SCREENCAST_START_RETRY_DELAY = Duration.millis(200);
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 } as const;
+
+/**
+ * Resolves the element under a point, in the page, and reports what a picker
+ * chip needs to describe it.
+ *
+ * This runs as page script rather than through the DOM domain because the
+ * answer is mostly page-level knowledge: a stable selector, the author's own
+ * CSS, the text a human would recognise the element by. The desktop gets the
+ * same information from react-grab inside its preload, which also supplies
+ * React component and source data; nothing equivalent is available here, and
+ * the payload allows those to be absent rather than guessed at.
+ */
+const PICK_ELEMENT_SCRIPT = (x: number, y: number): string => `(() => {
+  const element = document.elementFromPoint(${x}, ${y});
+  if (!element) return null;
+  const selectorFor = (node) => {
+    if (node.id) return "#" + CSS.escape(node.id);
+    const parts = [];
+    let current = node;
+    while (current && current.nodeType === 1 && parts.length < 6) {
+      let part = current.tagName.toLowerCase();
+      if (current.id) {
+        parts.unshift("#" + CSS.escape(current.id));
+        break;
+      }
+      const parent = current.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children).filter((c) => c.tagName === current.tagName);
+        if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
+      }
+      parts.unshift(part);
+      current = current.parentElement;
+    }
+    return parts.join(" > ") || null;
+  };
+  const authorStyles = () => {
+    const computed = window.getComputedStyle(element);
+    const interesting = ["display","position","width","height","margin","padding","color","background-color","font-size","font-family","border","flex","grid-template-columns"];
+    return interesting.map((name) => name + ": " + computed.getPropertyValue(name)).join("; ");
+  };
+  const rect = element.getBoundingClientRect();
+  const html = element.outerHTML ?? "";
+  return {
+    pageUrl: location.href,
+    pageTitle: document.title || null,
+    tagName: element.tagName.toLowerCase(),
+    selector: selectorFor(element),
+    htmlPreview: html.length > 512 ? html.slice(0, 512) + "…" : html,
+    styles: authorStyles(),
+    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+  };
+})()`;
 
 interface PageSession {
   readonly targetId: string;
@@ -560,6 +616,46 @@ export const run = Effect.gen(function* HeadlessBrowserHostRun() {
           maxHeight: readNumber(input, "maxHeight") ?? 800,
         });
         return { tabId: page.tabId, streaming: true };
+      }
+      case "pickElement": {
+        const page = yield* requirePage({ threadId: request.threadId, tabId: request.tabId });
+        const evaluated = yield* cdp.send(
+          "Runtime.evaluate",
+          {
+            expression: PICK_ELEMENT_SCRIPT(
+              readNumber(input, "x") ?? 0,
+              readNumber(input, "y") ?? 0,
+            ),
+            returnByValue: true,
+          },
+          page.sessionId,
+        );
+        const result = isRecord(evaluated["result"]) ? evaluated["result"] : {};
+        const picked = isRecord(result["value"]) ? result["value"] : null;
+        if (!picked) return { tabId: page.tabId, picked: null };
+        // The element's own screenshot is what makes the chip recognisable, and
+        // clipping here avoids shipping a whole page frame to crop remotely.
+        const rect = isRecord(picked["rect"]) ? picked["rect"] : null;
+        const clip =
+          rect && (readNumber(rect, "width") ?? 0) > 0 && (readNumber(rect, "height") ?? 0) > 0
+            ? {
+                x: readNumber(rect, "x") ?? 0,
+                y: readNumber(rect, "y") ?? 0,
+                width: readNumber(rect, "width") ?? 0,
+                height: readNumber(rect, "height") ?? 0,
+                scale: 1,
+              }
+            : null;
+        const shot = clip
+          ? yield* cdp
+              .send("Page.captureScreenshot", { format: "jpeg", quality: 70, clip }, page.sessionId)
+              .pipe(Effect.orElseSucceed(() => null))
+          : null;
+        return {
+          tabId: page.tabId,
+          picked,
+          screenshot: shot ? readString(shot, "data") : null,
+        };
       }
       case "streamStop": {
         const current = yield* Ref.get(pages);

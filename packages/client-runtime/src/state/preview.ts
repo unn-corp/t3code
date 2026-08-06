@@ -133,6 +133,10 @@ export function createPreviewEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.threadId, input.tabId]),
       },
     }),
+    pickElement: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:pick-element",
+      tag: WS_METHODS.previewPickElement,
+    }),
     sendInput: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:input",
       tag: WS_METHODS.previewInput,

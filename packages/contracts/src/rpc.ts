@@ -116,6 +116,8 @@ import {
   PreviewEvent,
   PreviewFrameStreamEvent,
   PreviewInputInput,
+  PreviewPickElementInput,
+  PreviewPickElementResult,
   PreviewListInput,
   PreviewListResult,
   PreviewNavigateInput,
@@ -235,6 +237,7 @@ export const WS_METHODS = {
   previewAttach: "preview.attach",
   previewPublishFrame: "preview.publishFrame",
   previewInput: "preview.input",
+  previewPickElement: "preview.pickElement",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -705,6 +708,13 @@ export const WsPreviewInputRpc = Rpc.make(WS_METHODS.previewInput, {
   error: Schema.Union([PreviewError, PreviewAutomationError, EnvironmentAuthorizationError]),
 });
 
+/** Resolves the element under a point for a viewer with no page to pick in. */
+export const WsPreviewPickElementRpc = Rpc.make(WS_METHODS.previewPickElement, {
+  payload: PreviewPickElementInput,
+  success: PreviewPickElementResult,
+  error: Schema.Union([PreviewError, PreviewAutomationError, EnvironmentAuthorizationError]),
+});
+
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -913,6 +923,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAttachRpc,
   WsPreviewPublishFrameRpc,
   WsPreviewInputRpc,
+  WsPreviewPickElementRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
