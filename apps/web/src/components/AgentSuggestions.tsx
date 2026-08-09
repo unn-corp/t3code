@@ -1,21 +1,40 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
   AlertCircleIcon,
+  BotIcon,
   CheckCircle2Icon,
   LightbulbIcon,
+  LoaderIcon,
   RefreshCwIcon,
   XIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import {
+  buildSuggestionWorkPrompt,
   buildNativeSuggestions,
   buildNativeReviewSuggestionsFromSnapshot,
   buildNativeSuggestionsFromSnapshot,
+  type NativeSuggestion,
 } from "../agentDashboardPages";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { usePrimarySettings } from "../hooks/useSettings";
+import { resolveAppModelSelectionState } from "../modelSelection";
+import { newMessageId, newThreadId } from "../lib/utils";
+import { waitForStartedServerThread } from "./ChatView.logic";
+import { usePrimaryEnvironment } from "../state/environments";
 import { agentDashboardEnvironment, useAgentDashboardSnapshot } from "../state/agentDashboard";
+import { primaryServerProvidersAtom } from "../state/server";
+import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useProjects, useThreadShells } from "../state/entities";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -32,6 +51,8 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
 import { Input } from "./ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
+import { stackedThreadToast, toastManager } from "./ui/toast";
+import ChatMarkdown from "./ChatMarkdown";
 import { AgentDashboardPageShell } from "./AgentDashboardPageShell";
 
 const SUGGESTIONS_DISMISSED_STORAGE_KEY = "t3.agent-dashboard.suggestions.dismissed";
@@ -61,6 +82,34 @@ function readStoredIds(key: string): ReadonlySet<string> {
   } catch {
     return new Set();
   }
+}
+
+function normalizeRepositoryPath(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed.length === 0) return "";
+  const normalized = trimmed.replace(/[/\\]+$/, "");
+  return normalized.length > 0 ? normalized : "/";
+}
+
+function findSuggestionProject(
+  projects: ReadonlyArray<EnvironmentProject>,
+  suggestion: NativeSuggestion,
+  environmentId: string,
+): EnvironmentProject | null {
+  const repositoryPath = normalizeRepositoryPath(suggestion.repositoryPath);
+  const pathMatch = projects.find(
+    (project) =>
+      project.environmentId === environmentId &&
+      repositoryPath.length > 0 &&
+      normalizeRepositoryPath(project.workspaceRoot) === repositoryPath,
+  );
+  return (
+    pathMatch ??
+    projects.find(
+      (project) => project.environmentId === environmentId && project.id === suggestion.projectId,
+    ) ??
+    null
+  );
 }
 
 function suggestionIcon(
@@ -94,14 +143,19 @@ function suggestionIcon(
 
 export function AgentSuggestions() {
   const navigate = useNavigate();
+  const settings = usePrimarySettings();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const projects = useProjects();
   const threads = useThreadShells();
   const dashboardSnapshot = useAgentDashboardSnapshot();
+  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const reviewSuggestion = useAtomCommand(agentDashboardEnvironment.reviewSuggestion, {
     reportFailure: false,
   });
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [startingSuggestionId, setStartingSuggestionId] = useState<string | null>(null);
   const [dismissedIds, setDismissedIds] = useState<ReadonlySet<string>>(() =>
     readDismissedSuggestionIds(),
   );
@@ -193,6 +247,134 @@ export function AgentSuggestions() {
     });
   };
 
+  const startSuggestionWork = useCallback(
+    async (suggestion: NativeSuggestion) => {
+      if (startingSuggestionId !== null) return;
+
+      const environmentId =
+        suggestion.environmentId !== "native"
+          ? (suggestion.environmentId as EnvironmentId)
+          : (dashboardSnapshot.environmentId ?? primaryEnvironment?.environmentId ?? null);
+      if (!environmentId) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Connect an environment first",
+            description: "The suggestion needs a T3 Code environment to start a work session.",
+          }),
+        );
+        return;
+      }
+
+      const project = findSuggestionProject(projects, suggestion, environmentId);
+      if (!project) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Add this repository to T3 Code first",
+            description: `No project is configured for ${suggestion.repositoryPath || suggestion.projectName}.`,
+          }),
+        );
+        return;
+      }
+
+      const modelSelection = resolveAppModelSelectionState(settings, serverProviders);
+      if (modelSelection.model.trim().length === 0) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Enable an agent provider first",
+            description: "Choose and authenticate a provider before starting suggestion work.",
+          }),
+        );
+        return;
+      }
+
+      const threadId = newThreadId();
+      const createdAt = new Date().toISOString();
+      const title = `Work on: ${suggestion.title}`.slice(0, 80);
+      setStartingSuggestionId(suggestion.id);
+
+      try {
+        const result = await startThreadTurn({
+          environmentId,
+          input: {
+            threadId,
+            message: {
+              messageId: newMessageId(),
+              role: "user",
+              text: buildSuggestionWorkPrompt(suggestion),
+              attachments: [],
+            },
+            modelSelection,
+            titleSeed: title,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: project.id,
+                title,
+                modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt,
+              },
+            },
+            createdAt,
+          },
+        });
+
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not start suggestion work",
+                description:
+                  error instanceof Error
+                    ? error.message
+                    : "The suggestion work session could not be started.",
+              }),
+            );
+          }
+          return;
+        }
+
+        await waitForStartedServerThread(scopeThreadRef(environmentId, threadId));
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId },
+        });
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not open suggestion work",
+            description:
+              error instanceof Error
+                ? error.message
+                : "The suggestion work session could not be opened.",
+          }),
+        );
+      } finally {
+        setStartingSuggestionId(null);
+      }
+    },
+    [
+      dashboardSnapshot.environmentId,
+      navigate,
+      primaryEnvironment?.environmentId,
+      projects,
+      serverProviders,
+      settings,
+      startThreadTurn,
+      startingSuggestionId,
+    ],
+  );
+
   return (
     <AgentDashboardPageShell
       actions={
@@ -255,7 +437,13 @@ export function AgentSuggestions() {
                         {suggestion.confidence} confidence
                       </Badge>
                     </div>
-                    <CardDescription className="mt-1">{suggestion.description}</CardDescription>
+                    <CardDescription className="mt-1">
+                      <ChatMarkdown
+                        className="text-sm"
+                        cwd={suggestion.repositoryPath || undefined}
+                        text={suggestion.description}
+                      />
+                    </CardDescription>
                   </div>
                   <Button
                     aria-label={`Dismiss ${suggestion.title}`}
@@ -276,6 +464,19 @@ export function AgentSuggestions() {
                   <span>{formatRelativeTimeLabel(suggestion.updatedAt) || "Unknown time"}</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <Button
+                    className="shrink-0"
+                    disabled={startingSuggestionId !== null}
+                    onClick={() => void startSuggestionWork(suggestion)}
+                    size="sm"
+                  >
+                    {startingSuggestionId === suggestion.id ? (
+                      <LoaderIcon className="animate-spin" />
+                    ) : (
+                      <BotIcon />
+                    )}
+                    {startingSuggestionId === suggestion.id ? "Starting work" : "Work on this"}
+                  </Button>
                   <Button
                     className="shrink-0"
                     onClick={() => setSelectedSuggestionId(suggestion.id)}
@@ -326,7 +527,12 @@ export function AgentSuggestions() {
           <DialogPopup className="max-w-2xl" showCloseButton>
             <DialogHeader>
               <DialogTitle>{selectedSuggestion.title}</DialogTitle>
-              <DialogDescription>{selectedSuggestion.description}</DialogDescription>
+              <DialogDescription render={<div />}>
+                <ChatMarkdown
+                  cwd={selectedSuggestion.repositoryPath || undefined}
+                  text={selectedSuggestion.description}
+                />
+              </DialogDescription>
             </DialogHeader>
             <DialogPanel className="space-y-5">
               <div className="flex flex-wrap gap-2">
@@ -339,19 +545,32 @@ export function AgentSuggestions() {
               </div>
               <div>
                 <p className="text-xs font-medium text-muted-foreground">Finding</p>
-                <p className="mt-2 text-sm">{selectedSuggestion.report}</p>
+                <ChatMarkdown
+                  className="mt-2"
+                  cwd={selectedSuggestion.repositoryPath || undefined}
+                  text={selectedSuggestion.report}
+                />
               </div>
               <div>
                 <p className="text-xs font-medium text-muted-foreground">Evidence</p>
                 <ul className="mt-2 grid gap-1 text-sm">
                   {selectedSuggestion.evidence.map((evidence) => (
-                    <li key={evidence}>{evidence}</li>
+                    <li key={evidence}>
+                      <ChatMarkdown
+                        cwd={selectedSuggestion.repositoryPath || undefined}
+                        text={evidence}
+                      />
+                    </li>
                   ))}
                 </ul>
               </div>
               <div className="rounded-lg border border-border/70 bg-muted/45 p-3">
                 <p className="text-xs font-medium text-muted-foreground">Recommended next step</p>
-                <p className="mt-1 text-sm">{selectedSuggestion.nextStep}</p>
+                <ChatMarkdown
+                  className="mt-1"
+                  cwd={selectedSuggestion.repositoryPath || undefined}
+                  text={selectedSuggestion.nextStep}
+                />
               </div>
             </DialogPanel>
             <DialogFooter>
@@ -360,6 +579,17 @@ export function AgentSuggestions() {
               </Button>
               <Button onClick={() => dismiss(selectedSuggestion.id)} variant="outline">
                 Dismiss
+              </Button>
+              <Button
+                disabled={startingSuggestionId !== null}
+                onClick={() => void startSuggestionWork(selectedSuggestion)}
+              >
+                {startingSuggestionId === selectedSuggestion.id ? (
+                  <LoaderIcon className="animate-spin" />
+                ) : (
+                  <BotIcon />
+                )}
+                {startingSuggestionId === selectedSuggestion.id ? "Starting work" : "Work on this"}
               </Button>
               {selectedSuggestion.threadId ? (
                 <Button

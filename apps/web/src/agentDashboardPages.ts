@@ -110,6 +110,47 @@ export interface NativeSuggestion {
   readonly durableSuggestion?: AgentDashboardReviewSuggestion;
 }
 
+/** Builds the implementation brief used when a suggestion starts a new thread. */
+export function buildSuggestionWorkPrompt(
+  suggestion: Pick<
+    NativeSuggestion,
+    | "repositoryPath"
+    | "projectName"
+    | "category"
+    | "title"
+    | "description"
+    | "report"
+    | "evidence"
+    | "nextStep"
+  >,
+): string {
+  const evidence = suggestion.evidence.map((item) => `- ${item}`).join("\n");
+  const findingDetails =
+    suggestion.description.trim() === suggestion.report.trim()
+      ? suggestion.report
+      : `${suggestion.description}\n\n${suggestion.report}`;
+
+  return [
+    "Investigate and complete the repository work described below.",
+    "",
+    `Repository: \`${suggestion.repositoryPath || suggestion.projectName}\``,
+    `Category: ${suggestion.category}`,
+    "",
+    "## Finding",
+    suggestion.title,
+    "",
+    findingDetails,
+    "",
+    "## Evidence",
+    evidence || "No additional evidence was recorded.",
+    "",
+    "## Recommended next step",
+    suggestion.nextStep,
+    "",
+    "Work in the repository above, verify the finding against the current code, and implement the appropriate fix or improvement. Run focused validation before you finish. If the finding is no longer applicable, explain what changed and why instead of making speculative edits.",
+  ].join("\n");
+}
+
 function timestampValue(timestamp: string): number {
   const value = Date.parse(timestamp);
   return Number.isFinite(value) ? value : 0;

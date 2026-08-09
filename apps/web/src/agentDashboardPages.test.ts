@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { compareDashboardRecency } from "./agentDashboardPages";
+import { buildSuggestionWorkPrompt, compareDashboardRecency } from "./agentDashboardPages";
 
 describe("agent dashboard ordering", () => {
   it("sorts the most recent record first", () => {
@@ -29,5 +29,29 @@ describe("agent dashboard ordering", () => {
       "agent-b",
       "agent-a",
     ]);
+  });
+});
+
+describe("agent dashboard suggestion actions", () => {
+  it("builds an implementation prompt from the research finding", () => {
+    const prompt = buildSuggestionWorkPrompt({
+      repositoryPath: "/workspace/t3code",
+      projectName: "T3 Code",
+      category: "bug",
+      title: "Handle stale repository metadata",
+      description: "The refresh path leaves repository metadata stale.",
+      report: "The metadata cache can remain stale after a repository refresh.",
+      evidence: [
+        "Refresh leaves the previous branch name visible.",
+        "The cache has no invalidation path.",
+      ],
+      nextStep: "Invalidate the cache when the repository snapshot changes.",
+    });
+
+    expect(prompt).toContain("Repository: `/workspace/t3code`");
+    expect(prompt).toContain("## Finding\nHandle stale repository metadata");
+    expect(prompt).toContain("- Refresh leaves the previous branch name visible.");
+    expect(prompt).toContain("## Recommended next step");
+    expect(prompt).toContain("Run focused validation before you finish.");
   });
 });
