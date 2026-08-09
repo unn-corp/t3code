@@ -134,6 +134,7 @@ import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./Setti
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import { DictationMicrophonePicker } from "./DictationMicrophonePicker";
 import { DictationKeybindRecorder } from "./DictationKeybindRecorder";
+import { DictationSetupAgentButton } from "./DictationSetupAgentButton";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -2197,12 +2198,15 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <DictationMicrophonePicker
-              value={settings.dictationMicrophoneDeviceId}
-              onValueChange={(dictationMicrophoneDeviceId) =>
-                updateSettings({ dictationMicrophoneDeviceId })
-              }
-            />
+            <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:w-80 sm:items-end">
+              <DictationMicrophonePicker
+                value={settings.dictationMicrophoneDeviceId}
+                onValueChange={(dictationMicrophoneDeviceId) =>
+                  updateSettings({ dictationMicrophoneDeviceId })
+                }
+              />
+              <DictationSetupAgentButton />
+            </div>
           }
         />
         <SettingsRow
