@@ -371,6 +371,19 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         },
       ]);
 
+      const activitySummaries = yield* snapshotQuery.getRecentActivitySummaries!(100);
+      assert.deepEqual(activitySummaries, [
+        {
+          id: asEventId("activity-1"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          tone: "info",
+          kind: "runtime.note",
+          summary: "provider started",
+          createdAt: "2026-02-24T00:00:06.000Z",
+        },
+      ]);
+
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.snapshotSequence, 5);
       assert.deepEqual(shellSnapshot.projects, [

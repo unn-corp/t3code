@@ -16,6 +16,7 @@ import type {
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
   OrchestrationThread,
+  OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadShell,
   ProjectId,
@@ -35,6 +36,14 @@ export interface ProjectionSnapshotCounts {
 export interface ProjectionSnapshotSequence {
   readonly snapshotSequence: number;
 }
+
+/** Compact activity fields for dashboard feeds; intentionally excludes payload bodies. */
+export type ProjectionActivitySummary = Pick<
+  OrchestrationThreadActivity,
+  "id" | "turnId" | "tone" | "kind" | "summary" | "createdAt"
+> & {
+  readonly threadId: ThreadId;
+};
 
 export interface ProjectionThreadCheckpointContext {
   readonly threadId: ThreadId;
@@ -84,6 +93,14 @@ export interface ProjectionSnapshotQueryShape {
     OrchestrationShellSnapshot,
     ProjectionRepositoryError
   >;
+
+  /**
+   * Read the newest activity summaries for aggregate views without hydrating
+   * activity payload JSON or full thread snapshots.
+   */
+  readonly getRecentActivitySummaries?: (
+    limit: number,
+  ) => Effect.Effect<ReadonlyArray<ProjectionActivitySummary>, ProjectionRepositoryError>;
 
   /**
    * Read archived thread shell summaries for the archive page.

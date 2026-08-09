@@ -17,8 +17,12 @@ import {
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
 import { registerPwaServiceWorker } from "./pwa";
+import { restorePersistedWorkspaceRoute } from "./workspaceRoutePersistence";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
+if (isElectron) {
+  restorePersistedWorkspaceRoute();
+}
 const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);

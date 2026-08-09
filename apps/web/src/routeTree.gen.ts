@@ -10,9 +10,12 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ResearchRouteImport } from './routes/research'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as ConnectRouteImport } from './routes/connect'
+import { Route as AgentDashboardRouteImport } from './routes/agent-dashboard'
 import { Route as ChatRouteImport } from './routes/_chat'
+import { Route as AgentDashboardIndexRouteImport } from './routes/agent-dashboard.index'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
@@ -24,12 +27,20 @@ import { Route as SettingsBetaRouteImport } from './routes/settings.beta'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
+import { Route as AgentDashboardSuggestionsRouteImport } from './routes/agent-dashboard.suggestions'
+import { Route as AgentDashboardResearchRouteImport } from './routes/agent-dashboard.research'
+import { Route as AgentDashboardFeedRouteImport } from './routes/agent-dashboard.feed'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResearchRoute = ResearchRouteImport.update({
+  id: '/research',
+  path: '/research',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PairRoute = PairRouteImport.update({
@@ -42,9 +53,19 @@ const ConnectRoute = ConnectRouteImport.update({
   path: '/connect',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentDashboardRoute = AgentDashboardRouteImport.update({
+  id: '/agent-dashboard',
+  path: '/agent-dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChatRoute = ChatRouteImport.update({
   id: '/_chat',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AgentDashboardIndexRoute = AgentDashboardIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AgentDashboardRoute,
 } as any)
 const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
@@ -101,6 +122,22 @@ const ConnectCallbackRoute = ConnectCallbackRouteImport.update({
   path: '/connect/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentDashboardSuggestionsRoute =
+  AgentDashboardSuggestionsRouteImport.update({
+    id: '/suggestions',
+    path: '/suggestions',
+    getParentRoute: () => AgentDashboardRoute,
+  } as any)
+const AgentDashboardResearchRoute = AgentDashboardResearchRouteImport.update({
+  id: '/research',
+  path: '/research',
+  getParentRoute: () => AgentDashboardRoute,
+} as any)
+const AgentDashboardFeedRoute = AgentDashboardFeedRouteImport.update({
+  id: '/feed',
+  path: '/feed',
+  getParentRoute: () => AgentDashboardRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -115,9 +152,14 @@ const ChatEnvironmentIdThreadIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
+  '/agent-dashboard': typeof AgentDashboardRouteWithChildren
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
+  '/research': typeof ResearchRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/agent-dashboard/feed': typeof AgentDashboardFeedRoute
+  '/agent-dashboard/research': typeof AgentDashboardResearchRoute
+  '/agent-dashboard/suggestions': typeof AgentDashboardSuggestionsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -128,13 +170,18 @@ export interface FileRoutesByFullPath {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/agent-dashboard/': typeof AgentDashboardIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
+  '/research': typeof ResearchRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/agent-dashboard/feed': typeof AgentDashboardFeedRoute
+  '/agent-dashboard/research': typeof AgentDashboardResearchRoute
+  '/agent-dashboard/suggestions': typeof AgentDashboardSuggestionsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -146,15 +193,21 @@ export interface FileRoutesByTo {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/': typeof ChatIndexRoute
+  '/agent-dashboard': typeof AgentDashboardIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
+  '/agent-dashboard': typeof AgentDashboardRouteWithChildren
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
+  '/research': typeof ResearchRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/agent-dashboard/feed': typeof AgentDashboardFeedRoute
+  '/agent-dashboard/research': typeof AgentDashboardResearchRoute
+  '/agent-dashboard/suggestions': typeof AgentDashboardSuggestionsRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -166,6 +219,7 @@ export interface FileRoutesById {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/_chat/': typeof ChatIndexRoute
+  '/agent-dashboard/': typeof AgentDashboardIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -173,9 +227,14 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/agent-dashboard'
     | '/connect'
     | '/pair'
+    | '/research'
     | '/settings'
+    | '/agent-dashboard/feed'
+    | '/agent-dashboard/research'
+    | '/agent-dashboard/suggestions'
     | '/connect/callback'
     | '/settings/appearance'
     | '/settings/archived'
@@ -186,13 +245,18 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/agent-dashboard/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
     | '/pair'
+    | '/research'
     | '/settings'
+    | '/agent-dashboard/feed'
+    | '/agent-dashboard/research'
+    | '/agent-dashboard/suggestions'
     | '/connect/callback'
     | '/settings/appearance'
     | '/settings/archived'
@@ -204,14 +268,20 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/source-control'
     | '/'
+    | '/agent-dashboard'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   id:
     | '__root__'
     | '/_chat'
+    | '/agent-dashboard'
     | '/connect'
     | '/pair'
+    | '/research'
     | '/settings'
+    | '/agent-dashboard/feed'
+    | '/agent-dashboard/research'
+    | '/agent-dashboard/suggestions'
     | '/connect_/callback'
     | '/settings/appearance'
     | '/settings/archived'
@@ -223,14 +293,17 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/source-control'
     | '/_chat/'
+    | '/agent-dashboard/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
+  AgentDashboardRoute: typeof AgentDashboardRouteWithChildren
   ConnectRoute: typeof ConnectRoute
   PairRoute: typeof PairRoute
+  ResearchRoute: typeof ResearchRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   ConnectCallbackRoute: typeof ConnectCallbackRoute
 }
@@ -242,6 +315,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/research': {
+      id: '/research'
+      path: '/research'
+      fullPath: '/research'
+      preLoaderRoute: typeof ResearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pair': {
@@ -258,12 +338,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConnectRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agent-dashboard': {
+      id: '/agent-dashboard'
+      path: '/agent-dashboard'
+      fullPath: '/agent-dashboard'
+      preLoaderRoute: typeof AgentDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_chat': {
       id: '/_chat'
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/agent-dashboard/': {
+      id: '/agent-dashboard/'
+      path: '/'
+      fullPath: '/agent-dashboard/'
+      preLoaderRoute: typeof AgentDashboardIndexRouteImport
+      parentRoute: typeof AgentDashboardRoute
     }
     '/_chat/': {
       id: '/_chat/'
@@ -342,6 +436,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConnectCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agent-dashboard/suggestions': {
+      id: '/agent-dashboard/suggestions'
+      path: '/suggestions'
+      fullPath: '/agent-dashboard/suggestions'
+      preLoaderRoute: typeof AgentDashboardSuggestionsRouteImport
+      parentRoute: typeof AgentDashboardRoute
+    }
+    '/agent-dashboard/research': {
+      id: '/agent-dashboard/research'
+      path: '/research'
+      fullPath: '/agent-dashboard/research'
+      preLoaderRoute: typeof AgentDashboardResearchRouteImport
+      parentRoute: typeof AgentDashboardRoute
+    }
+    '/agent-dashboard/feed': {
+      id: '/agent-dashboard/feed'
+      path: '/feed'
+      fullPath: '/agent-dashboard/feed'
+      preLoaderRoute: typeof AgentDashboardFeedRouteImport
+      parentRoute: typeof AgentDashboardRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -373,6 +488,24 @@ const ChatRouteChildren: ChatRouteChildren = {
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
+interface AgentDashboardRouteChildren {
+  AgentDashboardFeedRoute: typeof AgentDashboardFeedRoute
+  AgentDashboardResearchRoute: typeof AgentDashboardResearchRoute
+  AgentDashboardSuggestionsRoute: typeof AgentDashboardSuggestionsRoute
+  AgentDashboardIndexRoute: typeof AgentDashboardIndexRoute
+}
+
+const AgentDashboardRouteChildren: AgentDashboardRouteChildren = {
+  AgentDashboardFeedRoute: AgentDashboardFeedRoute,
+  AgentDashboardResearchRoute: AgentDashboardResearchRoute,
+  AgentDashboardSuggestionsRoute: AgentDashboardSuggestionsRoute,
+  AgentDashboardIndexRoute: AgentDashboardIndexRoute,
+}
+
+const AgentDashboardRouteWithChildren = AgentDashboardRoute._addFileChildren(
+  AgentDashboardRouteChildren,
+)
+
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
@@ -403,8 +536,10 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
+  AgentDashboardRoute: AgentDashboardRouteWithChildren,
   ConnectRoute: ConnectRoute,
   PairRoute: PairRoute,
+  ResearchRoute: ResearchRoute,
   SettingsRoute: SettingsRouteWithChildren,
   ConnectCallbackRoute: ConnectCallbackRoute,
 }

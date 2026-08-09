@@ -90,7 +90,10 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
-    "frame-src 'self' https://challenges.cloudflare.com",
+    // The research dashboard is served by a user-configured Tailscale origin.
+    // Keep executable sources host-restricted, while allowing the dashboard
+    // page to be embedded in the renderer's project-independent route.
+    "frame-src 'self' http: https:",
     "form-action 'self'",
   ].join("; ");
 }

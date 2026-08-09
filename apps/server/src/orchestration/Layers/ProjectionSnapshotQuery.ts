@@ -55,6 +55,7 @@ import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
   type ProjectionFullThreadDiffContext,
+  type ProjectionActivitySummary,
   type ProjectionSnapshotCounts,
   type ProjectionThreadCheckpointContext,
   type ProjectionSnapshotQueryShape,
@@ -112,6 +113,18 @@ const ProjectionCountsRowSchema = Schema.Struct({
 const ProjectionThreadSearchRequest = Schema.Struct({
   pattern: Schema.String,
   limit: Schema.Int,
+});
+const ProjectionRecentActivitySummariesRequest = Schema.Struct({
+  limit: Schema.Int,
+});
+const ProjectionRecentActivitySummaryRow = Schema.Struct({
+  id: ProjectionThreadActivity.fields.activityId,
+  threadId: ProjectionThreadActivity.fields.threadId,
+  turnId: ProjectionThreadActivity.fields.turnId,
+  tone: ProjectionThreadActivity.fields.tone,
+  kind: ProjectionThreadActivity.fields.kind,
+  summary: ProjectionThreadActivity.fields.summary,
+  createdAt: ProjectionThreadActivity.fields.createdAt,
 });
 const ProjectionThreadSearchRow = Schema.Struct({
   threadId: ThreadId,
@@ -531,6 +544,29 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sequence ASC,
           created_at ASC,
           activity_id ASC
+      `,
+  });
+
+  const listRecentActivitySummaryRows = SqlSchema.findAll({
+    Request: ProjectionRecentActivitySummariesRequest,
+    Result: ProjectionRecentActivitySummaryRow,
+    execute: ({ limit }) =>
+      sql`
+        SELECT
+          activities.activity_id AS "id",
+          activities.thread_id AS "threadId",
+          activities.turn_id AS "turnId",
+          activities.tone,
+          activities.kind,
+          activities.summary,
+          activities.created_at AS "createdAt"
+        FROM projection_thread_activities AS activities
+        INNER JOIN projection_threads AS threads
+          ON threads.thread_id = activities.thread_id
+        WHERE threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+        ORDER BY activities.created_at DESC, activities.activity_id DESC
+        LIMIT ${limit}
       `,
   });
 
@@ -1701,6 +1737,30 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         }),
       );
 
+  const getRecentActivitySummaries: ProjectionSnapshotQueryShape["getRecentActivitySummaries"] = (
+    limit,
+  ) =>
+    listRecentActivitySummaryRows({ limit }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getRecentActivitySummaries:query",
+          "ProjectionSnapshotQuery.getRecentActivitySummaries:decodeRows",
+        ),
+      ),
+      Effect.map(
+        (rows): ReadonlyArray<ProjectionActivitySummary> =>
+          rows.map((row) => ({
+            id: row.id,
+            threadId: row.threadId,
+            turnId: row.turnId,
+            tone: row.tone,
+            kind: row.kind,
+            summary: row.summary,
+            createdAt: row.createdAt,
+          })),
+      ),
+    );
+
   const getArchivedShellSnapshot: ProjectionSnapshotQueryShape["getArchivedShellSnapshot"] = () =>
     sql
       .withTransaction(
@@ -2271,6 +2331,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getCommandReadModel,
     getSnapshot,
     getShellSnapshot,
+    getRecentActivitySummaries,
     getArchivedShellSnapshot,
     searchThreads,
     getSnapshotSequence,

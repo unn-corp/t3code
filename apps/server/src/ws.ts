@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+  AgentDashboardError,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
@@ -65,6 +66,11 @@ import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/uns
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import {
+  AgentDashboardSnapshotReadError,
+  loadAgentDashboardSnapshot,
+} from "./agentDashboard/AgentDashboardSnapshot.ts";
+import * as AgentDashboardStore from "./agentDashboard/AgentDashboardStore.ts";
 import * as NodeOS from "node:os";
 
 import { discoverAgentSessions } from "./provider/agentSessionDiscovery.ts";
@@ -396,6 +402,7 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
+      const dashboardStore = AgentDashboardStore.getStore(config.stateDir);
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -1096,6 +1103,132 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [WS_METHODS.agentDashboardGetSnapshot]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardGetSnapshot,
+            Effect.gen(function* () {
+              const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new AgentDashboardError({
+                      message: "Failed to load the Agent Dashboard project snapshot.",
+                      cause,
+                    }),
+                ),
+              );
+              const activities = yield* (
+                projectionSnapshotQuery.getRecentActivitySummaries?.(100) ?? Effect.succeed([])
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new AgentDashboardError({
+                      message: "Failed to load the Agent Dashboard activity feed.",
+                      cause,
+                    }),
+                ),
+              );
+
+              const nativeSnapshot = yield* loadAgentDashboardSnapshot({
+                shellSnapshot,
+                activities,
+                observedAt: yield* nowIso,
+                readers: {
+                  readStatus: (cwd) =>
+                    vcsStatusBroadcaster.getStatus({ cwd }).pipe(
+                      Effect.catch(() => gitWorkflow.localStatus({ cwd })),
+                      Effect.mapError(
+                        (cause) =>
+                          new AgentDashboardSnapshotReadError({
+                            operation: "readStatus",
+                            message: "Failed to read VCS status for an Agent Dashboard project.",
+                            cause,
+                          }),
+                      ),
+                    ),
+                  listRefs: (input) =>
+                    gitWorkflow.listRefs(input).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new AgentDashboardSnapshotReadError({
+                            operation: "listRefs",
+                            message: "Failed to read VCS refs for an Agent Dashboard project.",
+                            cause,
+                          }),
+                      ),
+                    ),
+                },
+              });
+              const migrated = yield* Effect.all({
+                externalFeed: dashboardStore.readFeed,
+                researchFindings: dashboardStore.readResearchFindings,
+                reviewSuggestions: dashboardStore.readReviewSuggestions,
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to read migrated Agent Dashboard records", {
+                    cause,
+                  }).pipe(
+                    Effect.as({
+                      externalFeed: [],
+                      researchFindings: [],
+                      reviewSuggestions: [],
+                    }),
+                  ),
+                ),
+              );
+              return {
+                ...nativeSnapshot,
+                externalFeed: migrated.externalFeed,
+                researchFindings: migrated.researchFindings,
+                reviewSuggestions: migrated.reviewSuggestions,
+              };
+            }),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardDismissFeedCard]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardDismissFeedCard,
+            dashboardStore.dismissFeedCard(input.id).pipe(
+              Effect.map(() => ({ ok: true }) as const),
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to dismiss the Agent Dashboard feed card.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardClearFeed]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardClearFeed,
+            dashboardStore.clearFeed.pipe(
+              Effect.map(() => ({ ok: true }) as const),
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to clear the Agent Dashboard feed.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardReviewSuggestion]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardReviewSuggestion,
+            dashboardStore.reviewSuggestion(input.id, input.action).pipe(
+              Effect.map(() => ({ ok: true }) as const),
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to update the Agent Dashboard review suggestion.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,

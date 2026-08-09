@@ -4,6 +4,14 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
+  AgentDashboardError,
+  AgentDashboardFeedCardIdInput,
+  AgentDashboardGetSnapshotInput,
+  AgentDashboardMutationResult,
+  AgentDashboardReviewSuggestionActionInput,
+  AgentDashboardSnapshot,
+} from "./agentDashboard.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -178,6 +186,10 @@ import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
   // Project registry methods
+  agentDashboardGetSnapshot: "agentDashboard.getSnapshot",
+  agentDashboardDismissFeedCard: "agentDashboard.dismissFeedCard",
+  agentDashboardClearFeed: "agentDashboard.clearFeed",
+  agentDashboardReviewSuggestion: "agentDashboard.reviewSuggestion",
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
@@ -291,6 +303,36 @@ export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybi
   success: ServerUpsertKeybindingResult,
   error: Schema.Union([KeybindingsConfigError, EnvironmentAuthorizationError]),
 });
+
+export const WsAgentDashboardGetSnapshotRpc = Rpc.make(WS_METHODS.agentDashboardGetSnapshot, {
+  payload: AgentDashboardGetSnapshotInput,
+  success: AgentDashboardSnapshot,
+  error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentDashboardDismissFeedCardRpc = Rpc.make(
+  WS_METHODS.agentDashboardDismissFeedCard,
+  {
+    payload: AgentDashboardFeedCardIdInput,
+    success: AgentDashboardMutationResult,
+    error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsAgentDashboardClearFeedRpc = Rpc.make(WS_METHODS.agentDashboardClearFeed, {
+  payload: Schema.Struct({}),
+  success: AgentDashboardMutationResult,
+  error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentDashboardReviewSuggestionRpc = Rpc.make(
+  WS_METHODS.agentDashboardReviewSuggestion,
+  {
+    payload: AgentDashboardReviewSuggestionActionInput,
+    success: AgentDashboardMutationResult,
+    error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, {
   payload: ServerRemoveKeybindingInput,
@@ -855,6 +897,10 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
 });
 
 export const WsRpcGroup = RpcGroup.make(
+  WsAgentDashboardGetSnapshotRpc,
+  WsAgentDashboardDismissFeedCardRpc,
+  WsAgentDashboardClearFeedRpc,
+  WsAgentDashboardReviewSuggestionRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

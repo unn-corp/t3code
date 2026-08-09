@@ -31,6 +31,7 @@ import {
   ArrowLeftIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
+  FlaskConicalIcon,
   FolderIcon,
   FolderPlusIcon,
   LinkIcon,
@@ -1462,6 +1463,18 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:open-research-dashboard",
+    searchTerms: ["research", "dashboard", "agent", "findings", "repository research", "tailscale"],
+    title: "Open Agent Dashboard",
+    description: "Open codebase research in its own page",
+    icon: <FlaskConicalIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/agent-dashboard" });
+    },
+  });
 
   actionItems.push({
     kind: "action",

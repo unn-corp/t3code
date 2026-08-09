@@ -39,6 +39,7 @@ import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
+import { persistWorkspaceRoute } from "../workspaceRoutePersistence";
 import { shellEnvironment } from "../state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -88,6 +89,12 @@ function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
+
+  useEffect(() => {
+    if (authGateState.status === "authenticated" || authGateState.status === "hosted-static") {
+      persistWorkspaceRoute(pathname);
+    }
+  }, [authGateState.status, pathname]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -187,14 +194,18 @@ function FontAppearanceSync() {
 }
 
 function DocumentTitleSync() {
+  const pathname = useLocation({ select: (location) => location.pathname });
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
-  const title = resolveServerBackedAppDisplayName({
-    baseName: APP_BASE_NAME,
-    fallbackDisplayName: APP_DISPLAY_NAME,
-    fallbackStageLabel: APP_STAGE_LABEL,
-    primaryServerVersion,
-  });
+  const title =
+    pathname === "/agent-dashboard" || pathname.startsWith("/agent-dashboard/")
+      ? "Agent Dashboard"
+      : resolveServerBackedAppDisplayName({
+          baseName: APP_BASE_NAME,
+          fallbackDisplayName: APP_DISPLAY_NAME,
+          fallbackStageLabel: APP_STAGE_LABEL,
+          primaryServerVersion,
+        });
 
   useEffect(() => {
     document.title = title;

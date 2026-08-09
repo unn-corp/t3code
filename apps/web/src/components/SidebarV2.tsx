@@ -145,6 +145,7 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
+import { AgentDashboardSidebarButton } from "./sidebar/AgentDashboardSidebarButton";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -165,6 +166,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 import {
   SidebarContent,
   SidebarGroup,
+  SidebarMenu,
   SidebarMenuButton,
   SidebarSeparator,
   useSidebar,
@@ -2812,6 +2814,9 @@ export default function SidebarV2() {
                 </Tooltip>
               </div>
             </div>
+            <SidebarMenu>
+              <AgentDashboardSidebarButton />
+            </SidebarMenu>
             {projectGroups.length > 0 ? (
               <div className="flex items-center gap-1">
                 <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
