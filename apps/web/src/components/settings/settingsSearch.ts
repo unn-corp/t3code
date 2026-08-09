@@ -96,6 +96,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "dictation-microphone",
+    title: "Microphone",
+    to: "/settings/general",
+  },
+  {
+    id: "dictation-keybinds",
+    title: "Dictation keybinds",
+    to: "/settings/general",
+  },
+  {
     id: "hide-whitespace-changes",
     title: "Hide whitespace changes",
     to: "/settings/general",

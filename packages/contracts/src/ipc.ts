@@ -1023,6 +1023,7 @@ export interface DesktopBridge {
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   showAgentNotification: (event: AgentNotificationEvent) => Promise<DesktopNotificationAttempt>;
+  sendKeybinding: (keybinding: string) => Promise<boolean>;
   onAgentNotificationNavigate: (listener: (deepLink: string) => void) => () => void;
   getConnectionCatalog?: () => Promise<string | null>;
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;

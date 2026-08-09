@@ -132,6 +132,8 @@ import {
 } from "../../appearanceFonts";
 import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
+import { DictationMicrophonePicker } from "./DictationMicrophonePicker";
+import { DictationKeybindRecorder } from "./DictationKeybindRecorder";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -1024,6 +1026,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
+      ...(settings.dictationMicrophoneDeviceId !==
+      DEFAULT_UNIFIED_SETTINGS.dictationMicrophoneDeviceId
+        ? ["Microphone"]
+        : []),
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
@@ -1061,6 +1067,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
+      settings.dictationMicrophoneDeviceId,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
@@ -1098,6 +1105,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      dictationMicrophoneDeviceId: DEFAULT_UNIFIED_SETTINGS.dictationMicrophoneDeviceId,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
@@ -2171,6 +2179,67 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
+        <SettingsRow
+          {...searchableSetting("dictation-microphone")}
+          description="Choose the microphone used for voice dictation. Detect requests access so T3 can display specific device names."
+          resetAction={
+            settings.dictationMicrophoneDeviceId !==
+            DEFAULT_UNIFIED_SETTINGS.dictationMicrophoneDeviceId ? (
+              <SettingResetButton
+                label="dictation microphone"
+                onClick={() =>
+                  updateSettings({
+                    dictationMicrophoneDeviceId:
+                      DEFAULT_UNIFIED_SETTINGS.dictationMicrophoneDeviceId,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DictationMicrophonePicker
+              value={settings.dictationMicrophoneDeviceId}
+              onValueChange={(dictationMicrophoneDeviceId) =>
+                updateSettings({ dictationMicrophoneDeviceId })
+              }
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("dictation-keybinds")}
+          title="Dictation keybinds"
+          description="Record the shortcuts sent to the focused desktop app when dictation starts and ends."
+          resetAction={
+            settings.dictationStartKeybinds.length > 0 ||
+            settings.dictationEndKeybinds.length > 0 ? (
+              <SettingResetButton
+                label="dictation keybinds"
+                onClick={() =>
+                  updateSettings({
+                    dictationStartKeybinds: DEFAULT_UNIFIED_SETTINGS.dictationStartKeybinds,
+                    dictationEndKeybinds: DEFAULT_UNIFIED_SETTINGS.dictationEndKeybinds,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full min-w-0 flex-col gap-2 sm:w-72">
+              <DictationKeybindRecorder
+                label="Start"
+                value={settings.dictationStartKeybinds}
+                onValueChange={(dictationStartKeybinds) =>
+                  updateSettings({ dictationStartKeybinds })
+                }
+              />
+              <DictationKeybindRecorder
+                label="End"
+                value={settings.dictationEndKeybinds}
+                onValueChange={(dictationEndKeybinds) => updateSettings({ dictationEndKeybinds })}
+              />
+            </div>
+          }
+        />
         <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."

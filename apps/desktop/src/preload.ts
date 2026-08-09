@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
   showAgentNotification: (event) =>
     ipcRenderer.invoke(IpcChannels.SHOW_AGENT_NOTIFICATION_CHANNEL, event),
+  sendKeybinding: (keybinding) =>
+    ipcRenderer.invoke(IpcChannels.SEND_KEYBINDING_CHANNEL, keybinding),
   onAgentNotificationNavigate: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, deepLink: unknown) => {
       if (typeof deepLink === "string") {

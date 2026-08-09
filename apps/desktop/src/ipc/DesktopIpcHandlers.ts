@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import { showAgentNotification } from "./methods/notifications.ts";
+import { sendKeybinding } from "./methods/keybinding.ts";
 import {
   clearConnectionCatalog,
   getConnectionCatalog,
@@ -57,6 +58,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
   yield* ipc.handle(showAgentNotification);
+  yield* ipc.handle(sendKeybinding);
   yield* ipc.handle(getConnectionCatalog);
   yield* ipc.handle(setConnectionCatalog);
   yield* ipc.handle(clearConnectionCatalog);

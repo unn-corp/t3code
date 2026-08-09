@@ -56,6 +56,39 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
+describe("ClientSettings dictation", () => {
+  it("defaults to the system microphone and no injected keybinds for older settings", () => {
+    expect(decodeClientSettings({}).dictationMicrophoneDeviceId).toBe("");
+    expect(decodeClientSettings({}).dictationStartKeybinds).toEqual([]);
+    expect(decodeClientSettings({}).dictationEndKeybinds).toEqual([]);
+  });
+
+  it("persists the microphone and injected keybinds in full settings and patches", () => {
+    expect(
+      decodeClientSettings({
+        dictationMicrophoneDeviceId: "studio-mic",
+        dictationStartKeybinds: ["ctrl+shift"],
+        dictationEndKeybinds: ["ctrl"],
+      }),
+    ).toMatchObject({
+      dictationMicrophoneDeviceId: "studio-mic",
+      dictationStartKeybinds: ["ctrl+shift"],
+      dictationEndKeybinds: ["ctrl"],
+    });
+    expect(
+      decodeClientSettingsPatch({
+        dictationMicrophoneDeviceId: "studio-mic",
+        dictationStartKeybinds: ["ctrl+shift"],
+        dictationEndKeybinds: ["ctrl"],
+      }),
+    ).toEqual({
+      dictationMicrophoneDeviceId: "studio-mic",
+      dictationStartKeybinds: ["ctrl+shift"],
+      dictationEndKeybinds: ["ctrl"],
+    });
+  });
+});
+
 describe("ClientSettings environment identification", () => {
   it("defaults to artwork and accepts each presentation mode", () => {
     expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");

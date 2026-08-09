@@ -69,6 +69,8 @@ import {
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
+import { OpenWhisprVoiceInput } from "./OpenWhisprVoiceInput";
+import { type VoiceInputAudioSource, VoiceInputWaveform } from "./VoiceInputWaveform";
 import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
@@ -660,6 +662,9 @@ export interface ChatComposerProps {
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
+  onVoicePhaseChange: (
+    phase: "idle" | "recording" | "transcribing" | "success" | "no-audio",
+  ) => void;
 }
 
 // --------------------------------------------------------------------------
@@ -738,8 +743,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     scheduleComposerFocus,
     setThreadError,
     onExpandImage,
+    onVoicePhaseChange,
   } = props;
   const isSendDisabled = sendDisabledReason !== null;
+  const [voiceInputPhase, setVoiceInputPhase] = useState<
+    "idle" | "recording" | "transcribing" | "success" | "no-audio"
+  >("idle");
+  const [voiceInputAudioSource, setVoiceInputAudioSource] = useState<VoiceInputAudioSource | null>(
+    null,
+  );
+  const simulateVoiceInputLevel =
+    import.meta.env.DEV &&
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("simulateMic") === "1";
+  const handleVoicePhaseChange = useCallback(
+    (phase: "idle" | "recording" | "transcribing" | "success" | "no-audio") => {
+      setVoiceInputPhase(phase);
+      onVoicePhaseChange(phase);
+    },
+    [onVoicePhaseChange],
+  );
 
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
@@ -3273,50 +3296,88 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 </div>
               )}
 
-            <div className="relative">
-              <ComposerPromptEditor
-                editorRef={composerEditorRef}
-                value={
-                  isComposerApprovalState
-                    ? ""
-                    : activePendingProgress
-                      ? activePendingProgress.customAnswer
-                      : prompt
-                }
-                cursor={composerCursor}
-                terminalContexts={
-                  !isComposerApprovalState && pendingUserInputs.length === 0
-                    ? composerTerminalContexts
-                    : []
-                }
-                skills={selectedProviderStatus?.skills ?? []}
-                {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
-                onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
-                onChange={onPromptChange}
-                onCommandKeyDown={onComposerCommandKey}
-                onPaste={onComposerPaste}
-                onStructuredPaste={onStructuredComposerPaste}
-                placeholder={
-                  isComposerApprovalState
-                    ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
-                    : activePendingProgress
-                      ? "Type your own answer, or leave this blank to use the selected option"
-                      : showPlanFollowUpPrompt && activeProposedPlan
-                        ? "Add feedback to refine the plan, or leave this blank to implement it"
-                        : projectSelectionRequired
-                          ? "Choose a project above to start a thread"
-                          : environmentUnavailable
-                            ? `${environmentUnavailable.label}: ${connectionStatusText(
-                                environmentUnavailable.connection,
-                              )}`
-                            : noProviderAvailable
-                              ? "Enable a provider in Settings to send a message"
-                              : phase === "disconnected"
-                                ? "Ask for follow-up changes or attach images"
-                                : "Ask anything, @tag files/folders, $use skills, or / for commands"
-                }
-                disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
-              />
+            <div className="relative grid grid-cols-[minmax(0,1fr)_4.25rem] overflow-visible rounded-[18px]">
+              {voiceInputPhase === "recording" || voiceInputPhase === "transcribing" ? (
+                <VoiceInputWaveform
+                  key="voice-waveform"
+                  audioSource={voiceInputAudioSource}
+                  simulateInputLevel={simulateVoiceInputLevel}
+                />
+              ) : null}
+              {voiceInputPhase === "no-audio" ? (
+                <div className="sr-only" role="status">
+                  no audio detected
+                </div>
+              ) : null}
+              <div key="composer-editor" className="min-w-0">
+                <ComposerPromptEditor
+                  editorRef={composerEditorRef}
+                  value={
+                    isComposerApprovalState
+                      ? ""
+                      : activePendingProgress
+                        ? activePendingProgress.customAnswer
+                        : prompt
+                  }
+                  cursor={composerCursor}
+                  terminalContexts={
+                    !isComposerApprovalState && pendingUserInputs.length === 0
+                      ? composerTerminalContexts
+                      : []
+                  }
+                  skills={selectedProviderStatus?.skills ?? []}
+                  className={cn("ps-1 pe-2", showMobilePendingAnswerActions && "max-sm:pb-11")}
+                  onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
+                  onChange={onPromptChange}
+                  onCommandKeyDown={onComposerCommandKey}
+                  onPaste={onComposerPaste}
+                  onStructuredPaste={onStructuredComposerPaste}
+                  placeholder={
+                    isComposerApprovalState
+                      ? (activePendingApproval?.detail ??
+                        "Resolve this approval request to continue")
+                      : activePendingProgress
+                        ? "Type your own answer, or leave this blank to use the selected option"
+                        : showPlanFollowUpPrompt && activeProposedPlan
+                          ? "Add feedback to refine the plan, or leave this blank to implement it"
+                          : projectSelectionRequired
+                            ? "Choose a project above to start a thread"
+                            : environmentUnavailable
+                              ? `${environmentUnavailable.label}: ${connectionStatusText(
+                                  environmentUnavailable.connection,
+                                )}`
+                              : noProviderAvailable
+                                ? "Enable a provider in Settings to send a message"
+                                : phase === "disconnected"
+                                  ? "Ask for follow-up changes or attach images"
+                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                  }
+                  disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                />
+              </div>
+              <div
+                key="voice-control"
+                className="relative z-10 flex h-17.5 items-center justify-center"
+              >
+                <OpenWhisprVoiceInput
+                  phase={voiceInputPhase}
+                  disabled={
+                    isConnecting ||
+                    isComposerApprovalState ||
+                    projectSelectionRequired ||
+                    pendingUserInputs.length > 0
+                  }
+                  onTranscript={(transcript) => {
+                    insertComposerTextAtEnd(transcript, { ensureLeadingBoundary: true });
+                  }}
+                  onPhaseChange={handleVoicePhaseChange}
+                  onRecordingAudioSourceChange={setVoiceInputAudioSource}
+                  simulateInputLevel={simulateVoiceInputLevel}
+                  dictationMicrophoneDeviceId={settings.dictationMicrophoneDeviceId}
+                  dictationStartKeybinds={settings.dictationStartKeybinds}
+                  dictationEndKeybinds={settings.dictationEndKeybinds}
+                />
+              </div>
               {showMobilePendingAnswerActions ? (
                 <div
                   data-chat-composer-mobile-pending-actions="true"
@@ -3362,7 +3423,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               data-chat-composer-footer="true"
               data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
               className={cn(
-                "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-3 pb-3 sm:px-4 sm:pb-4",
+                "relative z-10 flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible bg-transparent px-3 pb-3 sm:px-4 sm:pb-4",
                 pendingUserInputs.length > 0 && "pt-2",
                 isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                 showMobilePendingAnswerActions && "hidden sm:flex",
