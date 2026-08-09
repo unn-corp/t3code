@@ -1229,6 +1229,36 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "agent-dashboard" },
           ),
+        [WS_METHODS.agentDashboardRunInvestigation]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardRunInvestigation,
+            dashboardStore.runInvestigation.pipe(
+              Effect.map(() => ({ ok: true }) as const),
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to start the Agent Dashboard repository investigation.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardCreateGithubIssue]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardCreateGithubIssue,
+            dashboardStore.createGithubIssue(input.id).pipe(
+              Effect.map(() => ({ ok: true }) as const),
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to create the GitHub issue for this finding.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,

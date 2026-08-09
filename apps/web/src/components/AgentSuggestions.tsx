@@ -6,6 +6,9 @@ import {
   AlertCircleIcon,
   BotIcon,
   CheckCircle2Icon,
+  ExternalLinkIcon,
+  FlaskConicalIcon,
+  GithubIcon,
   LightbulbIcon,
   LoaderIcon,
   RefreshCwIcon,
@@ -15,13 +18,12 @@ import { useCallback, useMemo, useState } from "react";
 
 import {
   buildSuggestionWorkPrompt,
-  buildNativeSuggestions,
   buildNativeReviewSuggestionsFromSnapshot,
-  buildNativeSuggestionsFromSnapshot,
   type NativeSuggestion,
 } from "../agentDashboardPages";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { usePrimarySettings } from "../hooks/useSettings";
+import { readLocalApi } from "../localApi";
 import { resolveAppModelSelectionState } from "../modelSelection";
 import { newMessageId, newThreadId } from "../lib/utils";
 import { waitForStartedServerThread } from "./ChatView.logic";
@@ -30,7 +32,7 @@ import { agentDashboardEnvironment, useAgentDashboardSnapshot } from "../state/a
 import { primaryServerProvidersAtom } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useProjects, useThreadShells } from "../state/entities";
+import { useProjects } from "../state/entities";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -48,7 +50,14 @@ import {
   DialogPopup,
   DialogTitle,
 } from "./ui/dialog";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "./ui/empty";
 import { Input } from "./ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -147,15 +156,22 @@ export function AgentSuggestions() {
   const primaryEnvironment = usePrimaryEnvironment();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const projects = useProjects();
-  const threads = useThreadShells();
   const dashboardSnapshot = useAgentDashboardSnapshot();
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const reviewSuggestion = useAtomCommand(agentDashboardEnvironment.reviewSuggestion, {
     reportFailure: false,
   });
+  const runInvestigationCommand = useAtomCommand(agentDashboardEnvironment.runInvestigation, {
+    reportFailure: false,
+  });
+  const createGithubIssueCommand = useAtomCommand(agentDashboardEnvironment.createGithubIssue, {
+    reportFailure: false,
+  });
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [startingSuggestionId, setStartingSuggestionId] = useState<string | null>(null);
+  const [creatingIssueId, setCreatingIssueId] = useState<string | null>(null);
+  const [isRunningInvestigation, setIsRunningInvestigation] = useState(false);
   const [dismissedIds, setDismissedIds] = useState<ReadonlySet<string>>(() =>
     readDismissedSuggestionIds(),
   );
@@ -163,25 +179,12 @@ export function AgentSuggestions() {
     readStoredIds(SUGGESTIONS_BLOCKED_STORAGE_KEY),
   );
   const records = useMemo(() => {
-    if (
-      dashboardSnapshot.data !== null &&
-      dashboardSnapshot.data.reviewSuggestions.length > 0 &&
-      dashboardSnapshot.environmentId
-    ) {
-      return buildNativeReviewSuggestionsFromSnapshot(
-        dashboardSnapshot.data,
-        dashboardSnapshot.environmentId,
-      );
-    }
-    const nativeSuggestions =
-      dashboardSnapshot.data !== null && dashboardSnapshot.data.suggestions.length > 0
-        ? buildNativeSuggestionsFromSnapshot(dashboardSnapshot.data).map((suggestion) => ({
-            ...suggestion,
-            environmentId: dashboardSnapshot.environmentId ?? suggestion.environmentId,
-          }))
-        : buildNativeSuggestions(projects, threads);
-    return nativeSuggestions;
-  }, [dashboardSnapshot.data, dashboardSnapshot.environmentId, projects, threads]);
+    if (dashboardSnapshot.data === null || !dashboardSnapshot.environmentId) return [];
+    return buildNativeReviewSuggestionsFromSnapshot(
+      dashboardSnapshot.data,
+      dashboardSnapshot.environmentId,
+    );
+  }, [dashboardSnapshot.data, dashboardSnapshot.environmentId]);
   const suggestions = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return records.filter((item) => {
@@ -194,6 +197,12 @@ export function AgentSuggestions() {
         .includes(needle);
     });
   }, [blockedIds, categoryFilter, dismissedIds, query, records]);
+  const hasActionableRecords = records.some(
+    (suggestion) => !dismissedIds.has(suggestion.id) && !blockedIds.has(suggestion.id),
+  );
+  const showInvestigationEmptyState = Boolean(
+    dashboardSnapshot.data !== null && !hasActionableRecords && dashboardSnapshot.environmentId,
+  );
   const [selectedSuggestionId, setSelectedSuggestionId] = useState<string | null>(null);
   const selectedSuggestion =
     records.find((suggestion) => suggestion.id === selectedSuggestionId) ?? null;
@@ -239,6 +248,111 @@ export function AgentSuggestions() {
     });
     setSelectedSuggestionId(null);
   };
+
+  const openGithubIssue = useCallback(async (url: string) => {
+    const localApi = readLocalApi();
+    if (!localApi) return;
+    try {
+      await localApi.shell.openExternal(url);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not open GitHub issue",
+          description:
+            error instanceof Error ? error.message : "The issue link could not be opened.",
+        }),
+      );
+    }
+  }, []);
+
+  const runRepositoryInvestigation = useCallback(async () => {
+    const environmentId = dashboardSnapshot.environmentId;
+    if (!environmentId || isRunningInvestigation) return;
+    setIsRunningInvestigation(true);
+    try {
+      const result = await runInvestigationCommand({ environmentId, input: {} });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not start investigation",
+              description:
+                error instanceof Error
+                  ? error.message
+                  : "The repository investigation could not be started.",
+            }),
+          );
+        }
+        return;
+      }
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: "Investigation started",
+          description: "The two-hour repository review is running in the background.",
+        }),
+      );
+      dashboardSnapshot.refresh();
+    } finally {
+      setIsRunningInvestigation(false);
+    }
+  }, [dashboardSnapshot, isRunningInvestigation, runInvestigationCommand]);
+
+  const createGithubIssueForSuggestion = useCallback(
+    async (suggestion: NativeSuggestion) => {
+      if (suggestion.githubIssueUrl) {
+        await openGithubIssue(suggestion.githubIssueUrl);
+        return;
+      }
+      if (!suggestion.durableSuggestion?.repository.githubRepo) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "No GitHub repository detected",
+            description: "This finding does not have a GitHub origin configured.",
+          }),
+        );
+        return;
+      }
+      const environmentId = dashboardSnapshot.environmentId;
+      if (!environmentId || creatingIssueId !== null) return;
+      setCreatingIssueId(suggestion.id);
+      try {
+        const result = await createGithubIssueCommand({
+          environmentId,
+          input: { id: suggestion.id },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not create GitHub issue",
+                description:
+                  error instanceof Error ? error.message : "The GitHub issue could not be created.",
+              }),
+            );
+          }
+          return;
+        }
+        toastManager.add(
+          stackedThreadToast({
+            type: "success",
+            title: "GitHub issue created",
+            description: "The issue link is now attached to this finding.",
+          }),
+        );
+        dashboardSnapshot.refresh();
+      } finally {
+        setCreatingIssueId(null);
+      }
+    },
+    [createGithubIssueCommand, creatingIssueId, dashboardSnapshot, openGithubIssue],
+  );
 
   const openSuggestionThread = (threadId: string, environmentId: string) => {
     void navigate({
@@ -510,11 +624,29 @@ export function AgentSuggestions() {
             </EmptyMedia>
             <EmptyTitle>No suggestions right now</EmptyTitle>
             <EmptyDescription>
-              {records.length === 0
-                ? "T3 Code will surface a native suggestion when an agent needs input, reports an error, or finds a repository change to review."
-                : "Try a different search or category filter."}
+              {dashboardSnapshot.data === null
+                ? "Loading repository review findings."
+                : hasActionableRecords
+                  ? "Try a different search or category filter."
+                  : "There are no pending repository review findings."}
             </EmptyDescription>
           </EmptyHeader>
+          {showInvestigationEmptyState ? (
+            <EmptyContent>
+              <Button
+                disabled={isRunningInvestigation}
+                onClick={() => void runRepositoryInvestigation()}
+                size="sm"
+              >
+                {isRunningInvestigation ? (
+                  <LoaderIcon className="animate-spin" />
+                ) : (
+                  <FlaskConicalIcon />
+                )}
+                {isRunningInvestigation ? "Starting investigation" : "Run investigation"}
+              </Button>
+            </EmptyContent>
+          ) : null}
         </Empty>
       )}
       <Dialog
@@ -580,6 +712,38 @@ export function AgentSuggestions() {
               <Button onClick={() => dismiss(selectedSuggestion.id)} variant="outline">
                 Dismiss
               </Button>
+              {selectedSuggestion.githubIssueUrl ? (
+                <Button
+                  onClick={() => void openGithubIssue(selectedSuggestion.githubIssueUrl!)}
+                  variant="outline"
+                >
+                  <ExternalLinkIcon />
+                  Open GitHub issue
+                </Button>
+              ) : (
+                <Button
+                  disabled={
+                    creatingIssueId !== null ||
+                    !selectedSuggestion.durableSuggestion?.repository.githubRepo
+                  }
+                  onClick={() => void createGithubIssueForSuggestion(selectedSuggestion)}
+                  variant="outline"
+                  title={
+                    selectedSuggestion.durableSuggestion?.repository.githubRepo
+                      ? undefined
+                      : "No GitHub origin was detected"
+                  }
+                >
+                  {creatingIssueId === selectedSuggestion.id ? (
+                    <LoaderIcon className="animate-spin" />
+                  ) : (
+                    <GithubIcon />
+                  )}
+                  {creatingIssueId === selectedSuggestion.id
+                    ? "Creating issue"
+                    : "Create GitHub issue"}
+                </Button>
+              )}
               <Button
                 disabled={startingSuggestionId !== null}
                 onClick={() => void startSuggestionWork(selectedSuggestion)}

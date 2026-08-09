@@ -8,6 +8,7 @@ import {
   AgentDashboardFeedCardIdInput,
   AgentDashboardGetSnapshotInput,
   AgentDashboardMutationResult,
+  AgentDashboardReviewSuggestionIdInput,
   AgentDashboardReviewSuggestionActionInput,
   AgentDashboardSnapshot,
 } from "./agentDashboard.ts";
@@ -190,6 +191,8 @@ export const WS_METHODS = {
   agentDashboardDismissFeedCard: "agentDashboard.dismissFeedCard",
   agentDashboardClearFeed: "agentDashboard.clearFeed",
   agentDashboardReviewSuggestion: "agentDashboard.reviewSuggestion",
+  agentDashboardRunInvestigation: "agentDashboard.runInvestigation",
+  agentDashboardCreateGithubIssue: "agentDashboard.createGithubIssue",
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
@@ -329,6 +332,24 @@ export const WsAgentDashboardReviewSuggestionRpc = Rpc.make(
   WS_METHODS.agentDashboardReviewSuggestion,
   {
     payload: AgentDashboardReviewSuggestionActionInput,
+    success: AgentDashboardMutationResult,
+    error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsAgentDashboardRunInvestigationRpc = Rpc.make(
+  WS_METHODS.agentDashboardRunInvestigation,
+  {
+    payload: Schema.Struct({}),
+    success: AgentDashboardMutationResult,
+    error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsAgentDashboardCreateGithubIssueRpc = Rpc.make(
+  WS_METHODS.agentDashboardCreateGithubIssue,
+  {
+    payload: AgentDashboardReviewSuggestionIdInput,
     success: AgentDashboardMutationResult,
     error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
   },
@@ -901,6 +922,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentDashboardDismissFeedCardRpc,
   WsAgentDashboardClearFeedRpc,
   WsAgentDashboardReviewSuggestionRpc,
+  WsAgentDashboardRunInvestigationRpc,
+  WsAgentDashboardCreateGithubIssueRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

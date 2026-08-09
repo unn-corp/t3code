@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -21,6 +22,10 @@ import * as ServerConfig from "../config.ts";
 const MAX_FEED_CARDS = 200;
 const MAX_RESEARCH_FINDINGS = 500;
 const MAX_TEXT = 8_000;
+const REVIEW_JOB_NAME = "Random Codebase Review";
+const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const GITHUB_ISSUE_URL_PATTERN =
+  /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[0-9]+$/;
 
 type JsonObject = Record<string, unknown>;
 
@@ -59,6 +64,8 @@ export interface AgentDashboardStoreService {
     id: string,
     action: "dismiss" | "block",
   ) => Effect.Effect<boolean, AgentDashboardStoreError>;
+  readonly runInvestigation: Effect.Effect<void, AgentDashboardStoreError>;
+  readonly createGithubIssue: (id: string) => Effect.Effect<boolean, AgentDashboardStoreError>;
   readonly feedToken: Effect.Effect<string, AgentDashboardStoreError>;
 }
 
@@ -245,6 +252,41 @@ const readLegacySuggestionRecords = (value: unknown): Array<JsonObject> => {
   return records.map(asObject).filter((item): item is JsonObject => item !== null);
 };
 
+const runExecutable = (
+  command: string,
+  args: ReadonlyArray<string>,
+  options: {
+    readonly timeout?: number;
+    readonly env?: NodeJS.ProcessEnv;
+  } = {},
+): Promise<{ readonly stdout: string; readonly stderr: string }> =>
+  new Promise((resolve, reject) => {
+    NodeChildProcess.execFile(
+      command,
+      [...args],
+      {
+        encoding: "utf8",
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: options.timeout ?? 30_000,
+        ...(options.env ? { env: options.env } : {}),
+      },
+      (error, stdout, stderr) => {
+        const output = {
+          stdout: String(stdout ?? ""),
+          stderr: String(stderr ?? ""),
+        };
+        if (error) {
+          const detail = [output.stderr.trim(), output.stdout.trim(), error.message.trim()]
+            .filter((part) => part.length > 0)
+            .join("\n");
+          reject(new Error(detail || `Command '${command}' failed.`));
+          return;
+        }
+        resolve(output);
+      },
+    );
+  });
+
 const normalizeResearch = (
   raw: JsonObject,
   lineNumber: number,
@@ -352,6 +394,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
 
   let initialized: Promise<void> | null = null;
   let mutation = Promise.resolve();
+  let investigationProcess: NodeChildProcess.ChildProcess | null = null;
 
   const initialize = (): Promise<void> => {
     if (initialized) return initialized;
@@ -399,6 +442,43 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       () => undefined,
     );
     return next;
+  };
+
+  const readReviewSuggestionRaw = async (): Promise<Array<JsonObject>> => {
+    const local = readLegacySuggestionRecords(await jsonDocument(suggestionsPath));
+    const legacy = readLegacySuggestionRecords(await jsonDocument(legacySuggestionsPath));
+    const byId = new Map<string, JsonObject>();
+
+    for (const record of legacy) {
+      const id = text(record.id, 100);
+      if (id) byId.set(id, record);
+    }
+    for (const record of local) {
+      const id = text(record.id, 100);
+      if (!id) continue;
+      const previous = byId.get(id);
+      if (!previous) {
+        byId.set(id, record);
+        continue;
+      }
+
+      const previousIssue = asObject(previous.github_issue) ?? {};
+      const currentIssue = asObject(record.github_issue) ?? {};
+      byId.set(id, {
+        ...previous,
+        ...record,
+        github_issue: {
+          ...previousIssue,
+          ...currentIssue,
+          title: text(currentIssue.title, 300) ?? text(previousIssue.title, 300),
+          body: text(currentIssue.body, 16_000) ?? text(previousIssue.body, 16_000),
+          url: text(currentIssue.url, 2_000) ?? text(previousIssue.url, 2_000),
+          number: currentIssue.number ?? previousIssue.number ?? null,
+        },
+      });
+    }
+
+    return [...byId.values()];
   };
 
   const readFeedRaw = async (): Promise<Array<JsonObject>> => jsonLines(feedPath);
@@ -501,7 +581,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
   });
 
   const readReviewSuggestions = run("read review suggestions", async () => {
-    const target = readLegacySuggestionRecords(await jsonDocument(suggestionsPath));
+    const target = await readReviewSuggestionRaw();
     const byId = new Map<string, JsonObject>();
     for (const record of target) {
       const id = text(record.id, 100);
@@ -530,7 +610,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
   const reviewSuggestion = (id: string, action: "dismiss" | "block") =>
     run("review suggestion", () =>
       withMutation(async () => {
-        const target = readLegacySuggestionRecords(await jsonDocument(suggestionsPath));
+        const target = await readReviewSuggestionRaw();
         const byId = new Map<string, JsonObject>();
         for (const record of target) {
           const recordId = text(record.id, 100);
@@ -552,6 +632,117 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       }),
     );
 
+  const runInvestigation = run("run repository investigation", async () => {
+    if (investigationProcess && investigationProcess.exitCode === null) return;
+
+    const preferredExecutable = NodePath.join(NodeOS.homedir(), ".local", "bin", "hermes");
+    let executable = "hermes";
+    try {
+      await NodeFSP.access(preferredExecutable);
+      executable = preferredExecutable;
+    } catch {
+      // Fall back to PATH for installations that expose Hermes elsewhere.
+    }
+
+    const child = NodeChildProcess.spawn(executable, ["cron", "run", REVIEW_JOB_NAME], {
+      cwd: NodeOS.homedir(),
+      detached: true,
+      stdio: "ignore",
+      env: process.env,
+    });
+    investigationProcess = child;
+    const clearProcess = () => {
+      if (investigationProcess === child) investigationProcess = null;
+    };
+    child.once("error", clearProcess);
+    child.once("exit", clearProcess);
+
+    await new Promise<void>((resolve, reject) => {
+      child.once("spawn", resolve);
+      child.once("error", reject);
+    }).catch((cause) => {
+      clearProcess();
+      throw cause;
+    });
+    child.unref();
+  });
+
+  const createGithubIssue = (id: string) =>
+    run("create GitHub issue", () =>
+      withMutation(async () => {
+        const target = await readReviewSuggestionRaw();
+        const record = target.find((candidate) => text(candidate.id, 100) === id);
+        if (!record || record.source !== "code_review") {
+          throw new Error("Suggestion not found.");
+        }
+        if (String(record.status ?? "pending") !== "pending") {
+          throw new Error("Suggestion is no longer pending.");
+        }
+
+        const issue = asObject(record.github_issue) ?? {};
+        const existingUrl = text(issue.url, 2_000);
+        if (existingUrl) return true;
+
+        const repository = asObject(record.repository) ?? {};
+        const githubRepository = text(repository.github_repo, 250);
+        if (!githubRepository || !GITHUB_REPOSITORY_PATTERN.test(githubRepository)) {
+          throw new Error("This finding does not have a GitHub repository configured.");
+        }
+
+        const title = text(issue.title, 300) ?? text(record.title, 300);
+        const body = text(issue.body, 16_000) ?? text(record.report, 16_000);
+        if (!title || !body) throw new Error("This finding does not contain an issue draft.");
+
+        const result = await runExecutable(
+          "gh",
+          [
+            "api",
+            `repos/${githubRepository}/issues`,
+            "--method",
+            "POST",
+            "-f",
+            `title=${title}`,
+            "-f",
+            `body=${body}`,
+          ],
+          {
+            timeout: 30_000,
+            env: {
+              ...process.env,
+              GH_PROMPT_DISABLED: "1",
+              GIT_TERMINAL_PROMPT: "0",
+            },
+          },
+        );
+        let payload: JsonObject;
+        try {
+          const parsed: unknown = JSON.parse(result.stdout);
+          payload = asObject(parsed) ?? {};
+        } catch {
+          throw new Error("GitHub returned an unreadable issue response.");
+        }
+
+        const url = text(payload.html_url, 2_000);
+        const number = integer(payload.number, 0);
+        if (!url || !GITHUB_ISSUE_URL_PATTERN.test(url) || number <= 0) {
+          throw new Error("GitHub returned an invalid issue response.");
+        }
+
+        record.github_issue = {
+          ...issue,
+          title,
+          body,
+          url,
+          number,
+        };
+        await writeAtomic(
+          suggestionsPath,
+          JSON.stringify({ suggestions: target, updated_at: new Date().toISOString() }, null, 2),
+        );
+        return true;
+      }),
+    );
+
   const feedToken = run("read feed token", async () => {
     const configured = process.env.T3_AGENT_FEED_TOKEN?.trim();
     if (configured) return configured;
@@ -567,6 +758,8 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     readResearchFindings,
     readReviewSuggestions,
     reviewSuggestion,
+    runInvestigation,
+    createGithubIssue,
     feedToken,
   } satisfies AgentDashboardStoreService;
 };

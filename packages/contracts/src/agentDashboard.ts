@@ -230,6 +230,12 @@ export const AgentDashboardReviewSuggestionActionInput = Schema.Struct({
 export type AgentDashboardReviewSuggestionActionInput =
   typeof AgentDashboardReviewSuggestionActionInput.Type;
 
+export const AgentDashboardReviewSuggestionIdInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+});
+export type AgentDashboardReviewSuggestionIdInput =
+  typeof AgentDashboardReviewSuggestionIdInput.Type;
+
 export const AgentDashboardMutationResult = Schema.Struct({ ok: Schema.Boolean });
 export type AgentDashboardMutationResult = typeof AgentDashboardMutationResult.Type;
 

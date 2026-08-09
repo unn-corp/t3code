@@ -26,6 +26,14 @@ export const agentDashboardEnvironment = {
     label: "environment-data:agent-dashboard:review-suggestion",
     tag: WS_METHODS.agentDashboardReviewSuggestion,
   }),
+  runInvestigation: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:agent-dashboard:run-investigation",
+    tag: WS_METHODS.agentDashboardRunInvestigation,
+  }),
+  createGithubIssue: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:agent-dashboard:create-github-issue",
+    tag: WS_METHODS.agentDashboardCreateGithubIssue,
+  }),
 };
 
 /** Shared native dashboard snapshot query for the dashboard child pages. */
