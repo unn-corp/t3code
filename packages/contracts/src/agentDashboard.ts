@@ -249,8 +249,269 @@ export const AgentDashboardReviewSuggestionIdInput = Schema.Struct({
 export type AgentDashboardReviewSuggestionIdInput =
   typeof AgentDashboardReviewSuggestionIdInput.Type;
 
-export const AgentDashboardMutationResult = Schema.Struct({ ok: Schema.Boolean });
+/**
+ * Truthful mutation outcome. Producers must set this explicitly for new code.
+ * Older `{ ok: boolean }` payloads still decode; missing `outcome` defaults to
+ * `"applied"` so existing clients that only check `ok` keep working.
+ */
+export const AgentDashboardMutationOutcome = Schema.Literals([
+  "applied",
+  "noop",
+  "not-found",
+  "rejected",
+  "failed",
+]);
+export type AgentDashboardMutationOutcome = typeof AgentDashboardMutationOutcome.Type;
+
+export const AgentDashboardMutationResult = Schema.Struct({
+  ok: Schema.Boolean,
+  outcome: AgentDashboardMutationOutcome.pipe(
+    Schema.withDecodingDefault(Effect.succeed("applied")),
+  ),
+  message: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  targetId: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  targetUrl: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+});
 export type AgentDashboardMutationResult = typeof AgentDashboardMutationResult.Type;
+
+// ── Canonical automation domain (ADW-01) ───────────────────────
+
+/** Full lifecycle for a single automation job through result ingestion. */
+export const AgentDashboardAutomationRunStatus = Schema.Literals([
+  "queued",
+  "running",
+  "ingesting",
+  "succeeded",
+  "partial",
+  "failed",
+  "cancelled",
+]);
+export type AgentDashboardAutomationRunStatus = typeof AgentDashboardAutomationRunStatus.Type;
+
+export const AgentDashboardAutomationRunTrigger = Schema.Literals(["manual", "scheduled", "retry"]);
+export type AgentDashboardAutomationRunTrigger = typeof AgentDashboardAutomationRunTrigger.Type;
+
+/**
+ * Durable history for one automation attempt. Success is only meaningful after
+ * structured findings have been ingested (see ADW-03 orchestration).
+ */
+export const AgentDashboardAutomationRun = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  status: AgentDashboardAutomationRunStatus,
+  trigger: AgentDashboardAutomationRunTrigger,
+  /** Logical automation kind, e.g. `repository-review`. */
+  kind: TrimmedNonEmptyString,
+  repository: AgentDashboardRepositoryRef,
+  /** Human-readable target label (branch, path, or check set). */
+  target: Schema.NullOr(TrimmedNonEmptyString),
+  threadId: Schema.NullOr(ThreadId),
+  /**
+   * Opaque job/correlation id used by workers. Never included in finding
+   * fingerprints — otherwise the same issue reappears every run.
+   */
+  jobId: Schema.NullOr(TrimmedNonEmptyString),
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  /** Zero-based retry count for this run lineage. */
+  retryCount: NonNegativeInt,
+  findingCount: NonNegativeInt,
+  /** Opaque accounting units when known; null means unmeasured. */
+  costUnits: Schema.NullOr(NonNegativeInt),
+  error: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+  startedAt: Schema.NullOr(IsoDateTime),
+  updatedAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime),
+});
+export type AgentDashboardAutomationRun = typeof AgentDashboardAutomationRun.Type;
+
+export const AgentDashboardFindingSeverity = Schema.Literals([
+  "info",
+  "low",
+  "medium",
+  "high",
+  "critical",
+]);
+export type AgentDashboardFindingSeverity = typeof AgentDashboardFindingSeverity.Type;
+
+export const AgentDashboardFindingConfidence = Schema.Literals(["low", "medium", "high"]);
+export type AgentDashboardFindingConfidence = typeof AgentDashboardFindingConfidence.Type;
+
+export const AgentDashboardFindingKind = Schema.Literals([
+  "review",
+  "research",
+  "security",
+  "engineering",
+  "operational",
+]);
+export type AgentDashboardFindingKind = typeof AgentDashboardFindingKind.Type;
+
+/**
+ * Source vs collection times so UI can warn about stale data without guessing.
+ * `sourceAt` is when the underlying system asserted the fact; `collectedAt` is
+ * when T3 normalized and stored it.
+ */
+export const AgentDashboardProvenance = Schema.Struct({
+  source: TrimmedNonEmptyString,
+  sourceAt: Schema.NullOr(IsoDateTime),
+  collectedAt: IsoDateTime,
+});
+export type AgentDashboardProvenance = typeof AgentDashboardProvenance.Type;
+
+/**
+ * Reversible lifecycle for a finding. `reopen` is a transition back to `open`,
+ * not a durable state. Existing review-suggestion statuses (pending/accepted/
+ * dismissed/blocked) map onto open/acknowledged/dismissed/blocked.
+ */
+export const AgentDashboardDispositionState = Schema.Literals([
+  "open",
+  "acknowledged",
+  "snoozed",
+  "assigned",
+  "dismissed",
+  "blocked",
+]);
+export type AgentDashboardDispositionState = typeof AgentDashboardDispositionState.Type;
+
+export const AgentDashboardDisposition = Schema.Struct({
+  state: AgentDashboardDispositionState,
+  updatedAt: IsoDateTime,
+  actor: Schema.NullOr(TrimmedNonEmptyString),
+  note: Schema.NullOr(TrimmedNonEmptyString),
+  snoozeUntil: Schema.NullOr(IsoDateTime),
+  assignee: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type AgentDashboardDisposition = typeof AgentDashboardDisposition.Type;
+
+export const AgentDashboardDispositionAction = Schema.Literals([
+  "acknowledge",
+  "snooze",
+  "assign",
+  "dismiss",
+  "block",
+  "reopen",
+]);
+export type AgentDashboardDispositionAction = typeof AgentDashboardDispositionAction.Type;
+
+export const AgentDashboardDispositionActionInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  action: AgentDashboardDispositionAction,
+  snoozeUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
+  assignee: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  note: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type AgentDashboardDispositionActionInput = typeof AgentDashboardDispositionActionInput.Type;
+
+/**
+ * Canonical finding. `fingerprint` is the stable cross-run identity and MUST
+ * NOT incorporate jobId or runId so the same issue collapses across retries.
+ */
+export const AgentDashboardFinding = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  fingerprint: TrimmedNonEmptyString,
+  kind: AgentDashboardFindingKind,
+  title: TrimmedNonEmptyString,
+  summary: TrimmedNonEmptyString,
+  severity: AgentDashboardFindingSeverity,
+  confidence: AgentDashboardFindingConfidence,
+  category: Schema.NullOr(TrimmedNonEmptyString),
+  evidence: Schema.Array(TrimmedNonEmptyString),
+  repository: AgentDashboardRepositoryRef,
+  /** Display/path label when project identity alone is not enough. */
+  repositoryPath: Schema.NullOr(TrimmedNonEmptyString),
+  disposition: AgentDashboardDisposition,
+  provenance: AgentDashboardProvenance,
+  firstSeenAt: IsoDateTime,
+  lastSeenAt: IsoDateTime,
+  occurrenceCount: NonNegativeInt,
+  lastRunId: Schema.NullOr(TrimmedNonEmptyString),
+  thread: Schema.NullOr(AgentDashboardThreadRef),
+  externalIssueUrl: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type AgentDashboardFinding = typeof AgentDashboardFinding.Type;
+
+export const AgentDashboardRiskTier = Schema.Literals(["low", "medium", "high", "critical"]);
+export type AgentDashboardRiskTier = typeof AgentDashboardRiskTier.Type;
+
+/** Per-repository scheduling and runtime policy (consumed by ADW-06). */
+export const AgentDashboardRepositoryPolicy = Schema.Struct({
+  repository: AgentDashboardRepositoryRef,
+  enabled: Schema.Boolean,
+  cadenceMinutes: NonNegativeInt,
+  /** Higher values win ties when selecting the next overdue repository. */
+  priority: NonNegativeInt,
+  riskTier: AgentDashboardRiskTier,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  owner: Schema.NullOr(TrimmedNonEmptyString),
+  enabledChecks: Schema.Array(TrimmedNonEmptyString),
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  budgetMinutes: Schema.NullOr(NonNegativeInt),
+  maxConcurrentRuns: NonNegativeInt,
+  exclusions: Schema.Array(TrimmedNonEmptyString),
+  updatedAt: IsoDateTime,
+});
+export type AgentDashboardRepositoryPolicy = typeof AgentDashboardRepositoryPolicy.Type;
+
+export const AgentDashboardCoverageStatus = Schema.Literals([
+  "never",
+  "current",
+  "due",
+  "overdue",
+  "stale",
+  "failing",
+]);
+export type AgentDashboardCoverageStatus = typeof AgentDashboardCoverageStatus.Type;
+
+/** Per-repository coverage and freshness projection. */
+export const AgentDashboardRepositoryCoverage = Schema.Struct({
+  repository: AgentDashboardRepositoryRef,
+  status: AgentDashboardCoverageStatus,
+  lastAttemptedAt: Schema.NullOr(IsoDateTime),
+  lastSucceededAt: Schema.NullOr(IsoDateTime),
+  nextDueAt: Schema.NullOr(IsoDateTime),
+  consecutiveFailures: NonNegativeInt,
+  lastError: Schema.NullOr(TrimmedNonEmptyString),
+  lastRunId: Schema.NullOr(TrimmedNonEmptyString),
+  observedAt: IsoDateTime,
+});
+export type AgentDashboardRepositoryCoverage = typeof AgentDashboardRepositoryCoverage.Type;
+
+export const AgentDashboardExternalActionKind = Schema.Literals([
+  "create-github-issue",
+  "open-thread",
+  "run-investigation",
+  "assign",
+  "other",
+]);
+export type AgentDashboardExternalActionKind = typeof AgentDashboardExternalActionKind.Type;
+
+export const AgentDashboardExternalActionStatus = Schema.Literals([
+  "pending",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+export type AgentDashboardExternalActionStatus = typeof AgentDashboardExternalActionStatus.Type;
+
+/** Record of an external side effect for closed-loop audit (ADW-08/19). */
+export const AgentDashboardExternalAction = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: AgentDashboardExternalActionKind,
+  status: AgentDashboardExternalActionStatus,
+  actor: Schema.NullOr(TrimmedNonEmptyString),
+  targetId: Schema.NullOr(TrimmedNonEmptyString),
+  targetUrl: Schema.NullOr(TrimmedNonEmptyString),
+  findingId: Schema.NullOr(TrimmedNonEmptyString),
+  runId: Schema.NullOr(TrimmedNonEmptyString),
+  result: Schema.NullOr(TrimmedNonEmptyString),
+  occurredAt: IsoDateTime,
+});
+export type AgentDashboardExternalAction = typeof AgentDashboardExternalAction.Type;
 
 /** A compact activity item; raw activity payloads stay in the thread read model. */
 export const AgentDashboardFeedUpdate = Schema.Struct({
@@ -379,6 +640,26 @@ export const AgentDashboardSnapshot = Schema.Struct({
   ),
   /** Status of the T3-owned two-hour repository review scheduler. */
   reviewSchedule: Schema.optionalKey(AgentDashboardReviewSchedule),
+  /** Canonical automation run history. Absent on older servers → empty. */
+  automationRuns: Schema.Array(AgentDashboardAutomationRun).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Canonical deduplicated findings across sources and runs. */
+  findings: Schema.Array(AgentDashboardFinding).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Per-repository scheduling and runtime policy. */
+  repositoryPolicies: Schema.Array(AgentDashboardRepositoryPolicy).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Per-repository coverage and freshness. */
+  repositoryCoverage: Schema.Array(AgentDashboardRepositoryCoverage).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** External side-effect audit trail (issues, threads, assignments). */
+  externalActions: Schema.Array(AgentDashboardExternalAction).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type AgentDashboardSnapshot = typeof AgentDashboardSnapshot.Type;
 
