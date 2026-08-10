@@ -678,5 +678,10 @@ export const loadAgentDashboardSnapshot = Effect.fn("loadAgentDashboardSnapshot"
     externalFeed: [],
     researchFindings: [],
     reviewSuggestions: [],
+    automationRuns: [],
+    findings: [],
+    repositoryPolicies: [],
+    repositoryCoverage: [],
+    externalActions: [],
   } satisfies AgentDashboardSnapshot;
 });
