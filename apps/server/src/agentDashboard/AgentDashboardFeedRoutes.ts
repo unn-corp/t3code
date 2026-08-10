@@ -1,12 +1,24 @@
+import { AuthOrchestrationReadScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/unstable/http";
 
-import * as AgentDashboardStore from "./AgentDashboardStore.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import {
+  failEnvironmentAuthInvalid,
+  failEnvironmentInternal,
+  failEnvironmentScopeRequired,
+} from "../auth/http.ts";
 import * as ServerConfig from "../config.ts";
+import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 
-const unauthorized = HttpServerResponse.jsonUnsafe(
+const publisherUnauthorized = HttpServerResponse.jsonUnsafe(
   { error: "agent feed write authorization required" },
   { status: 401 },
 );
@@ -21,11 +33,36 @@ const requestQuery = (request: HttpServerRequest.HttpServerRequest): URLSearchPa
   return Option.isSome(url) ? url.value.searchParams : null;
 };
 
-const authorized = (request: HttpServerRequest.HttpServerRequest, token: string): boolean => {
+/** Publisher auth — feed token only. Distinct from environment session auth used for reads. */
+const isPublisherAuthorized = (
+  request: HttpServerRequest.HttpServerRequest,
+  token: string,
+): boolean => {
   const supplied =
     request.headers["x-t3-agent-feed-token"] ?? request.headers["x-widget-token"] ?? "";
   return supplied.length > 0 && supplied === token;
 };
+
+/**
+ * Environment access boundary for feed/image reads. Standard client sessions
+ * carry orchestration:read; publisher feed tokens are not accepted here.
+ */
+const requireEnvironmentReadAccess = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
+    Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+      failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+    ),
+    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+      failEnvironmentInternal("internal_error", error),
+    ),
+  );
+  if (!session.scopes.includes(AuthOrchestrationReadScope)) {
+    return yield* failEnvironmentScopeRequired(AuthOrchestrationReadScope);
+  }
+  return session;
+});
 
 const makeRoutes = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -34,9 +71,9 @@ const makeRoutes = Effect.gen(function* () {
   const feedCollection = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const method = request.method;
-    const token = yield* store.feedToken;
     if (method === "POST" || method === "DELETE") {
-      if (!authorized(request, token)) return unauthorized;
+      const token = yield* store.feedToken;
+      if (!isPublisherAuthorized(request, token)) return publisherUnauthorized;
       if (method === "DELETE") {
         yield* store.clearFeed;
         return HttpServerResponse.jsonUnsafe({ ok: true });
@@ -47,6 +84,7 @@ const makeRoutes = Effect.gen(function* () {
     }
 
     if (method === "GET") {
+      yield* requireEnvironmentReadAccess;
       const query = requestQuery(request);
       const requestedLimit = Number(query?.get("limit") ?? 200);
       const cards = yield* store.readFeed;
@@ -63,6 +101,11 @@ const makeRoutes = Effect.gen(function* () {
     Effect.catchTag("AgentDashboardStoreError", (error) =>
       Effect.succeed(HttpServerResponse.text(error.message, { status: 500 })),
     ),
+    Effect.catchTags({
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentInternalError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+    }),
   );
 
   const feedItem = Effect.gen(function* () {
@@ -76,7 +119,7 @@ const makeRoutes = Effect.gen(function* () {
     }
     if (request.method === "DELETE") {
       const token = yield* store.feedToken;
-      if (!authorized(request, token)) return unauthorized;
+      if (!isPublisherAuthorized(request, token)) return publisherUnauthorized;
       const removed = yield* store.dismissFeedCard(id);
       return removed
         ? HttpServerResponse.jsonUnsafe({ ok: true, id })
@@ -84,6 +127,7 @@ const makeRoutes = Effect.gen(function* () {
     }
 
     if (path?.startsWith("/api/agent-feed/img/")) {
+      yield* requireEnvironmentReadAccess;
       const image = yield* store.readFeedImage(id);
       return image === null
         ? HttpServerResponse.jsonUnsafe({ error: "image not found" }, { status: 404 })
@@ -101,6 +145,11 @@ const makeRoutes = Effect.gen(function* () {
     Effect.catchTag("AgentDashboardStoreError", (error) =>
       Effect.succeed(HttpServerResponse.text(error.message, { status: 500 })),
     ),
+    Effect.catchTags({
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentInternalError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+    }),
   );
 
   return Layer.mergeAll(

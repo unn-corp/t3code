@@ -24,9 +24,19 @@ import * as ServerConfig from "../config.ts";
 const MAX_FEED_CARDS = 200;
 const MAX_RESEARCH_FINDINGS = 500;
 const MAX_TEXT = 8_000;
+const MAX_FEED_IMAGE_BYTES = 8 * 1024 * 1024;
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const GITHUB_ISSUE_URL_PATTERN =
   /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[0-9]+$/;
+const FEED_IMAGE_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".avif": "image/avif",
+};
 
 type JsonObject = Record<string, unknown>;
 
@@ -296,15 +306,6 @@ const jsonDocument = async (path: string): Promise<unknown> => {
   }
 };
 
-const fileIsEmpty = async (path: string): Promise<boolean> => {
-  try {
-    return (await NodeFSP.readFile(path, "utf8")).trim().length === 0;
-  } catch (cause) {
-    if (asObject(cause)?.code === "ENOENT") return true;
-    throw cause;
-  }
-};
-
 const writeAtomic = async (path: string, contents: string): Promise<void> => {
   const directory = NodePath.dirname(path);
   await NodeFSP.mkdir(directory, { recursive: true });
@@ -485,7 +486,8 @@ const normalizeSuggestion = (raw: JsonObject): AgentDashboardReviewSuggestion | 
 const makeStore = (stateDir: string): AgentDashboardStoreService => {
   const directory = NodePath.join(stateDir, "agent-dashboard");
   const feedPath = NodePath.join(directory, "feed.jsonl");
-  const feedMigrationPath = NodePath.join(directory, "feed.legacy-migrated");
+  const feedLegacyCursorPath = NodePath.join(directory, "feed.legacy-cursor");
+  const assetsDir = NodePath.join(directory, "assets");
   const researchPath = NodePath.join(directory, "research_findings.jsonl");
   const suggestionsPath = NodePath.join(directory, "suggestions.json");
   const tokenPath = NodePath.join(directory, "feed.token");
@@ -506,36 +508,174 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
 
   let initialized: Promise<void> | null = null;
   let mutation = Promise.resolve();
+  let lastLegacyFeedSignature: string | null = null;
+
+  const isPathInsideRoot = (root: string, candidate: string): boolean => {
+    const relative = NodePath.relative(root, candidate);
+    return relative === "" || (!relative.startsWith("..") && !NodePath.isAbsolute(relative));
+  };
+
+  const resolveOwnedImagePath = async (imagePath: string): Promise<string | null> => {
+    if (!imagePath || imagePath.includes("\0")) return null;
+    try {
+      await NodeFSP.mkdir(assetsDir, { recursive: true });
+      const assetsRoot = await NodeFSP.realpath(assetsDir);
+      const candidate = NodePath.isAbsolute(imagePath)
+        ? imagePath
+        : NodePath.resolve(assetsDir, imagePath);
+      // realpath collapses symlinks; containment after that blocks escape.
+      const realFile = await NodeFSP.realpath(candidate);
+      if (!isPathInsideRoot(assetsRoot, realFile)) return null;
+      const info = await NodeFSP.stat(realFile);
+      if (!info.isFile() || info.size > MAX_FEED_IMAGE_BYTES) return null;
+      const extension = NodePath.extname(realFile).toLowerCase();
+      if (!FEED_IMAGE_CONTENT_TYPES[extension]) return null;
+      return realFile;
+    } catch {
+      return null;
+    }
+  };
+
+  const importFeedImage = async (sourceSpec: string, cardId: number): Promise<string | null> => {
+    if (!sourceSpec || sourceSpec.includes("\0")) return null;
+    // Publishers may only hand us absolute local paths (widget contract).
+    if (!NodePath.isAbsolute(sourceSpec)) return null;
+    const extension = NodePath.extname(sourceSpec).toLowerCase();
+    if (!FEED_IMAGE_CONTENT_TYPES[extension]) return null;
+    try {
+      const info = await NodeFSP.stat(sourceSpec);
+      if (!info.isFile() || info.size > MAX_FEED_IMAGE_BYTES) return null;
+      const bytes = await NodeFSP.readFile(sourceSpec);
+      await NodeFSP.mkdir(assetsDir, { recursive: true });
+      const destination = NodePath.join(assetsDir, `${cardId}${extension}`);
+      // Never write through a pre-existing symlink in the assets directory.
+      try {
+        const existing = await NodeFSP.lstat(destination);
+        if (existing.isSymbolicLink() || !existing.isFile()) {
+          await NodeFSP.rm(destination, { force: true });
+        }
+      } catch (cause) {
+        if (asObject(cause)?.code !== "ENOENT") throw cause;
+      }
+      await NodeFSP.writeFile(destination, bytes, { mode: 0o600, flag: "w" });
+      return await resolveOwnedImagePath(destination);
+    } catch {
+      return null;
+    }
+  };
+
+  const attachOwnedImage = async (card: JsonObject, cardId: number): Promise<JsonObject> => {
+    const imageFile = text(card.image_file, 2_000);
+    if (!imageFile) return card;
+    const owned = await resolveOwnedImagePath(imageFile);
+    if (owned) {
+      return owned === imageFile ? card : { ...card, image_file: owned };
+    }
+    const imported = await importFeedImage(imageFile, cardId);
+    if (!imported) {
+      const { image_file: _removed, ...rest } = card;
+      return rest;
+    }
+    return { ...card, image_file: imported };
+  };
+
+  const readLegacyCursor = async (): Promise<number> => {
+    try {
+      const raw = (await NodeFSP.readFile(feedLegacyCursorPath, "utf8")).trim();
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
+    } catch (cause) {
+      if (asObject(cause)?.code === "ENOENT") return 0;
+      throw cause;
+    }
+  };
+
+  const legacyFeedSignature = async (): Promise<string | null> => {
+    try {
+      const info = await NodeFSP.stat(legacyFeedPath);
+      return `${info.size}:${Math.trunc(info.mtimeMs)}`;
+    } catch (cause) {
+      if (asObject(cause)?.code === "ENOENT") return null;
+      throw cause;
+    }
+  };
+
+  const ingestLegacyFeed = async (): Promise<void> => {
+    const signature = await legacyFeedSignature();
+    if (signature !== null && signature === lastLegacyFeedSignature) {
+      return;
+    }
+
+    let legacyCards: Array<JsonObject> = [];
+    try {
+      legacyCards = await jsonLines(legacyFeedPath);
+    } catch (cause) {
+      if (asObject(cause)?.code !== "ENOENT") throw cause;
+    }
+
+    const cursor = await readLegacyCursor();
+    const localCards = await jsonLines(feedPath);
+    const byId = new Map<number, JsonObject>();
+    for (const card of localCards) {
+      byId.set(integer(card.id, 0), card);
+    }
+
+    let changed = false;
+    let maxSeen = cursor;
+    for (const legacyCard of legacyCards) {
+      const id = integer(legacyCard.id, 0);
+      if (id <= 0) continue;
+      maxSeen = Math.max(maxSeen, id);
+      if (id <= cursor) continue;
+      if (byId.has(id)) continue;
+      const prepared = await attachOwnedImage({ ...legacyCard, id }, id);
+      byId.set(id, prepared);
+      changed = true;
+    }
+
+    if (changed) {
+      const merged = [...byId.values()].toSorted(
+        (left, right) => integer(left.id, 0) - integer(right.id, 0),
+      );
+      await writeAtomic(
+        feedPath,
+        merged.length === 0 ? "" : `${merged.map((card) => JSON.stringify(card)).join("\n")}\n`,
+      );
+    }
+    if (maxSeen > cursor) {
+      await writeAtomic(feedLegacyCursorPath, `${maxSeen}\n`);
+    }
+    lastLegacyFeedSignature = signature;
+  };
+
+  const ensureOwnedFeedImages = async (): Promise<void> => {
+    const cards = await jsonLines(feedPath);
+    let changed = false;
+    const next: Array<JsonObject> = [];
+    for (const card of cards) {
+      const id = integer(card.id, 0);
+      const prepared = await attachOwnedImage(card, id);
+      if (prepared !== card && JSON.stringify(prepared) !== JSON.stringify(card)) {
+        changed = true;
+      }
+      next.push(prepared);
+    }
+    if (changed) {
+      await writeAtomic(
+        feedPath,
+        next.length === 0 ? "" : `${next.map((card) => JSON.stringify(card)).join("\n")}\n`,
+      );
+    }
+  };
 
   const initialize = (): Promise<void> => {
     if (initialized) return initialized;
     initialized = (async () => {
       await NodeFSP.mkdir(directory, { recursive: true });
-      let feedMigrationComplete = false;
-      try {
-        await NodeFSP.access(feedMigrationPath);
-        feedMigrationComplete = true;
-      } catch (cause) {
-        if (asObject(cause)?.code !== "ENOENT") throw cause;
-      }
-      if (!feedMigrationComplete) {
-        if (await fileIsEmpty(feedPath)) {
-          try {
-            const legacyContents = await NodeFSP.readFile(legacyFeedPath, "utf8");
-            if (legacyContents.trim().length > 0) {
-              await writeAtomic(
-                feedPath,
-                legacyContents.endsWith("\n") ? legacyContents : `${legacyContents}\n`,
-              );
-              await writeAtomic(feedMigrationPath, "1\n");
-            }
-          } catch (cause) {
-            if (asObject(cause)?.code !== "ENOENT") throw cause;
-          }
-        } else {
-          await writeAtomic(feedMigrationPath, "1\n");
-        }
-      }
+      await NodeFSP.mkdir(assetsDir, { recursive: true });
+      // Continuous, idempotent legacy ingestion replaces the one-shot empty-feed copy.
+      await ingestLegacyFeed();
+      await ensureOwnedFeedImages();
       for (const [target, legacy] of [
         [researchPath, legacyResearchPath],
         [suggestionsPath, legacySuggestionsPath],
@@ -565,6 +705,9 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     Effect.tryPromise({
       try: async () => {
         await initialize();
+        // Continuous legacy ingestion: no-ops (no state writes) when the legacy
+        // feed signature is unchanged, so repeated pure reads keep stable mtimes.
+        await ingestLegacyFeed();
         return await task();
       },
       catch: (cause) => new AgentDashboardStoreError({ operation, cause }),
@@ -635,7 +778,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       withMutation(async () => {
         const cards = await readFeedRaw();
         const nextId = cards.reduce((max, card) => Math.max(max, integer(card.id, 0)), 0) + 1;
-        const raw = rawFeedCard(input, nextId);
+        const raw = await attachOwnedImage(rawFeedCard(input, nextId), nextId);
         await persistFeed([...cards, raw]);
         return feedCard(raw, nextId, Number(raw.ts));
       }),
@@ -663,20 +806,18 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       const cards = await readFeedRaw();
       const card = cards.find((entry) => integer(entry.id, 0) === id);
       const imagePath = text(card?.image_file, 2_000);
-      if (!imagePath || !NodePath.isAbsolute(imagePath)) return null;
+      if (!imagePath) return null;
+      // Serve only dashboard-owned asset files. Absolute paths outside assets/,
+      // traversal, and symlink escapes all resolve to null.
+      const ownedPath = await resolveOwnedImagePath(imagePath);
+      if (!ownedPath) return null;
       try {
-        const bytes = await NodeFSP.readFile(imagePath);
-        const extension = NodePath.extname(imagePath).toLowerCase();
-        const contentType: Record<string, string> = {
-          ".png": "image/png",
-          ".jpg": "image/jpeg",
-          ".jpeg": "image/jpeg",
-          ".gif": "image/gif",
-          ".webp": "image/webp",
-          ".svg": "image/svg+xml",
-          ".avif": "image/avif",
+        const bytes = await NodeFSP.readFile(ownedPath);
+        const extension = NodePath.extname(ownedPath).toLowerCase();
+        return {
+          bytes,
+          contentType: FEED_IMAGE_CONTENT_TYPES[extension] ?? "application/octet-stream",
         };
-        return { bytes, contentType: contentType[extension] ?? "application/octet-stream" };
       } catch (cause) {
         if (asObject(cause)?.code === "ENOENT") return null;
         throw cause;
@@ -701,18 +842,14 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           : normalized,
       );
     }
-    const findings = [...byId.values()]
+    // Read path is side-effect free: normalize in memory only.
+    return [...byId.values()]
       .toSorted(
         (left, right) =>
           Date.parse(right.timestamp) - Date.parse(left.timestamp) ||
           right.id.localeCompare(left.id),
       )
       .slice(0, MAX_RESEARCH_FINDINGS);
-    await writeAtomic(
-      researchPath,
-      `${findings.map((finding) => JSON.stringify(finding)).join("\n")}\n`,
-    );
-    return findings;
   });
 
   const readReviewSuggestions = run("read review suggestions", async () => {
@@ -729,20 +866,11 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       const suggestion = normalizeSuggestion(record);
       if (!suggestion || suggestion.status !== "pending") continue;
       if (suggestion.expiresAt !== null && Date.parse(suggestion.expiresAt) <= now) continue;
-
-      if (!(await isStableRepositoryPath(suggestion.repository.path))) {
-        record.status = "blocked";
-        record.resolved_at = new Date(now).toISOString();
-        record.resolution_reason = "repository_unavailable_or_linked_worktree";
-        continue;
-      }
+      // Filter unstable targets in memory only — do not rewrite suggestions on read.
+      if (!(await isStableRepositoryPath(suggestion.repository.path))) continue;
       visible.push(suggestion);
     }
 
-    await writeAtomic(
-      suggestionsPath,
-      JSON.stringify({ suggestions: all, updated_at: new Date().toISOString() }, null, 2),
-    );
     return visible.toSorted(
       (left, right) =>
         Date.parse(right.createdAt) - Date.parse(left.createdAt) || right.id.localeCompare(left.id),
