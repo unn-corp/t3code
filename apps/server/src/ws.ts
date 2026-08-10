@@ -72,8 +72,10 @@ import {
   loadAgentDashboardSnapshot,
 } from "./agentDashboard/AgentDashboardSnapshot.ts";
 import * as AgentDashboardStore from "./agentDashboard/AgentDashboardStore.ts";
+import * as AgentDashboardCollectors from "./agentDashboard/AgentDashboardCollectors.ts";
 import * as AgentDashboardRunHistory from "./agentDashboard/AgentDashboardRunHistory.ts";
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
+import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
 import * as NodeOS from "node:os";
 
@@ -1068,12 +1070,14 @@ const makeWsRpcLayer = (
 
       // Manual investigation uses the same server-scoped job service as the
       // two-hour scheduler: one run and one thread unless a target is selected.
-      const runAgentDashboardInvestigation = reviewJobService
-        .enqueueReview({
-          trigger: "manual",
-          idempotencyKey: "manual:repository-review",
-        })
-        .pipe(Effect.asVoid);
+      const runAgentDashboardInvestigation = (projectId?: ProjectId | null) =>
+        reviewJobService
+          .enqueueReview({
+            trigger: "manual",
+            ...(projectId ? { projectId } : {}),
+            idempotencyKey: projectId ? `manual:${String(projectId)}` : "manual:repository-review",
+          })
+          .pipe(Effect.asVoid);
 
       const appliedMutation = (targetId: string | null = null) =>
         ({
@@ -1185,6 +1189,11 @@ const makeWsRpcLayer = (
                 externalFeed: dashboardStore.readFeed,
                 researchFindings: dashboardStore.readResearchFindings,
                 reviewSuggestions: dashboardStore.readReviewSuggestions,
+                findings: dashboardStore.readFindings,
+                repositoryPolicies: dashboardStore.readRepositoryPolicies,
+                repositoryCoverage: dashboardStore.readRepositoryCoverage,
+                externalActions: dashboardStore.readExternalActions,
+                collectorStates: dashboardStore.readCollectorStates,
               }).pipe(
                 Effect.catch((cause) =>
                   Effect.logWarning("Failed to read migrated Agent Dashboard records", {
@@ -1194,10 +1203,75 @@ const makeWsRpcLayer = (
                       externalFeed: [],
                       researchFindings: [],
                       reviewSuggestions: [],
+                      findings: [],
+                      repositoryPolicies: [],
+                      repositoryCoverage: [],
+                      externalActions: [],
+                      collectorStates: [],
                     }),
                   ),
                 ),
               );
+              const policyByRepository = new Map(
+                migrated.repositoryPolicies.map((policy) => [String(policy.repository.projectId), policy]),
+              );
+              const coverageByRepository = new Map(
+                migrated.repositoryCoverage.map((coverage) => [String(coverage.repository.projectId), coverage]),
+              );
+              const repositoryPolicies = nativeSnapshot.repositories.map(
+                (repository) =>
+                  policyByRepository.get(String(repository.projectId)) ?? {
+                    repository: { projectId: repository.projectId },
+                    enabled: true,
+                    cadenceMinutes: AgentDashboardReviewRunner.REVIEW_INTERVAL_MINUTES,
+                    priority: 0,
+                    riskTier: "low" as const,
+                    branch: repository.vcs.branch,
+                    owner: null,
+                    enabledChecks: ["repository-review"],
+                    model: null,
+                    budgetMinutes: null,
+                    maxConcurrentRuns: 1,
+                    exclusions: [],
+                    updatedAt: nativeSnapshot.observedAt,
+                  },
+              );
+              const repositoryCoverage = nativeSnapshot.repositories.map((repository) => {
+                const stored = coverageByRepository.get(String(repository.projectId));
+                if (stored) return stored;
+                const isRepo = repository.vcs.isRepo && repository.vcs.availability === "available";
+                return {
+                  repository: { projectId: repository.projectId },
+                  status: isRepo ? ("never" as const) : ("stale" as const),
+                  lastAttemptedAt: null,
+                  lastSucceededAt: null,
+                  nextDueAt: null,
+                  consecutiveFailures: 0,
+                  lastError: isRepo ? null : "Repository VCS state is unavailable.",
+                  lastRunId: null,
+                  observedAt: nativeSnapshot.observedAt,
+                };
+              });
+              const automationRuns = yield* AgentDashboardRunHistory.readPersistedRuns(config.stateDir);
+              const activeRuns = automationRuns.filter(
+                (run) => run.status === "queued" || run.status === "running" || run.status === "ingesting",
+              );
+              const observedAtMs = Date.parse(nativeSnapshot.observedAt);
+              const openFindings = migrated.findings.filter(
+                (finding) =>
+                  finding.disposition.state !== "dismissed" && finding.disposition.state !== "blocked" &&
+                  !(finding.disposition.state === "snoozed" && finding.disposition.snoozeUntil !== null && Date.parse(finding.disposition.snoozeUntil) > observedAtMs),
+              );
+              const attentionRepositories = new Set(
+                repositoryCoverage
+                  .filter((coverage) => ["due", "overdue", "stale", "failing"].includes(coverage.status))
+                  .map((coverage) => String(coverage.repository.projectId)),
+              );
+              for (const finding of openFindings) attentionRepositories.add(String(finding.repository.projectId));
+              const lastRunAt = automationRuns
+                .map((run) => run.updatedAt)
+                .toSorted()
+                .at(-1) ?? null;
               return {
                 ...nativeSnapshot,
                 externalFeed: migrated.externalFeed,
@@ -1206,13 +1280,23 @@ const makeWsRpcLayer = (
                 reviewSchedule: yield* AgentDashboardReviewScheduler.readPersistedStatus(
                   config.stateDir,
                 ),
-                automationRuns: yield* AgentDashboardRunHistory.readPersistedRuns(config.stateDir),
-                // Canonical collections land in later workstreams; keep the
-                // snapshot type complete so older producers stay assignable.
-                findings: [],
-                repositoryPolicies: [],
-                repositoryCoverage: [],
-                externalActions: [],
+                automationRuns,
+                findings: migrated.findings,
+                repositoryPolicies,
+                repositoryCoverage,
+                externalActions: migrated.externalActions,
+                collectorStates: migrated.collectorStates,
+                portfolioHealth: {
+                  repositoryCount: nativeSnapshot.repositories.length,
+                  healthyRepositoryCount: Math.max(0, nativeSnapshot.repositories.length - attentionRepositories.size),
+                  attentionRepositoryCount: attentionRepositories.size,
+                  staleRepositoryCount: repositoryCoverage.filter((coverage) => coverage.status === "stale").length,
+                  openFindingCount: openFindings.length,
+                  criticalFindingCount: openFindings.filter((finding) => finding.severity === "critical").length,
+                  activeRunCount: activeRuns.length,
+                  lastRunAt,
+                  observedAt: nativeSnapshot.observedAt,
+                },
               };
             }),
             { "rpc.aggregate": "agent-dashboard" },
@@ -1282,15 +1366,46 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "agent-dashboard" },
           ),
-        [WS_METHODS.agentDashboardRunInvestigation]: (_input) =>
+        [WS_METHODS.agentDashboardRunInvestigation]: (input) =>
           observeRpcEffect(
             WS_METHODS.agentDashboardRunInvestigation,
-            runAgentDashboardInvestigation.pipe(
+            runAgentDashboardInvestigation(input.projectId).pipe(
               Effect.map(() => appliedMutation()),
               Effect.mapError(
                 (cause) =>
                   new AgentDashboardError({
                     message: "Failed to start the Agent Dashboard repository investigation.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardRetryRun]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardRetryRun,
+            Effect.gen(function* () {
+              const retried = yield* reviewJobService.retryRun(input.id);
+              yield* dashboardStore
+                .appendExternalAction({
+                  id: `action:retry-run:${retried.id}`,
+                  kind: "run-investigation",
+                  status: "succeeded",
+                  actor: "dashboard",
+                  targetId: retried.id,
+                  targetUrl: null,
+                  findingId: null,
+                  runId: retried.id,
+                  result: `retry-${retried.retryCount}`,
+                  occurredAt: retried.createdAt,
+                })
+                .pipe(Effect.orElseSucceed(() => undefined));
+              return appliedMutation(retried.id);
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to retry the Agent Dashboard automation run.",
                     cause,
                   }),
               ),
@@ -1316,6 +1431,102 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new AgentDashboardError({
                     message: "Failed to create the GitHub issue for this finding.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardApplyFindingAction]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardApplyFindingAction,
+            dashboardStore.applyFindingAction(input).pipe(
+              Effect.map((outcome) =>
+                outcome === "not-found"
+                  ? {
+                      ok: false as const,
+                      outcome: "not-found" as const,
+                      message: "Finding not found.",
+                      targetId: input.id,
+                      targetUrl: null,
+                    }
+                  : {
+                      ok: true as const,
+                      outcome,
+                      message: outcome === "noop" ? "Finding was already in that state." : null,
+                      targetId: input.id,
+                      targetUrl: null,
+                    },
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to update the Agent Dashboard finding.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardUpdateRepositoryPolicy]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardUpdateRepositoryPolicy,
+            dashboardStore.writeRepositoryPolicy(input).pipe(
+              Effect.map(() => appliedMutation(String(input.repository.projectId))),
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to save the repository dashboard policy.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardCollect]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardCollect,
+            Effect.gen(function* () {
+              const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new AgentDashboardError({
+                      message: "Failed to load repositories for collection.",
+                      cause,
+                    }),
+                ),
+              );
+              const collected = yield* Effect.tryPromise({
+                try: () =>
+                  AgentDashboardCollectors.collectAgentDashboardData({
+                    stateDir: config.stateDir,
+                    projects: shellSnapshot.projects,
+                    kind: input.kind,
+                    ...(input.projectId ? { projectId: input.projectId } : {}),
+                  }),
+                catch: (cause) =>
+                  new AgentDashboardError({
+                    message: "The Agent Dashboard collector failed.",
+                    cause,
+                  }),
+              });
+              const findingCount = yield* dashboardStore.appendFindings(collected.findings);
+              yield* Effect.forEach(collected.states, (state) => dashboardStore.writeCollectorState(state), {
+                concurrency: 1,
+                discard: true,
+              });
+              return {
+                ok: true as const,
+                outcome: findingCount > 0 || collected.states.length > 0 ? ("applied" as const) : ("noop" as const),
+                message: `Collection completed with ${findingCount} finding${findingCount === 1 ? "" : "s"}.`,
+                targetId: input.projectId ? String(input.projectId) : null,
+                targetUrl: null,
+              };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to persist Agent Dashboard collector results.",
                     cause,
                   }),
               ),

@@ -683,5 +683,6 @@ export const loadAgentDashboardSnapshot = Effect.fn("loadAgentDashboardSnapshot"
     repositoryPolicies: [],
     repositoryCoverage: [],
     externalActions: [],
+    collectorStates: [],
   } satisfies AgentDashboardSnapshot;
 });

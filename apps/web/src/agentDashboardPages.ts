@@ -6,6 +6,7 @@ import type {
   AgentDashboardFeedCard,
   AgentDashboardFeedKind,
   AgentDashboardFeedStatus,
+  AgentDashboardFinding,
   AgentDashboardReviewSuggestion,
   AgentDashboardSnapshot,
 } from "@t3tools/contracts";
@@ -127,6 +128,10 @@ export interface NativeSuggestion {
   readonly repositoryPath: string;
   readonly githubIssueUrl: string | null;
   readonly durableSuggestion?: AgentDashboardReviewSuggestion;
+  readonly legacySuggestionId?: string;
+  readonly findingId?: string;
+  readonly findingState?: AgentDashboardFinding["disposition"]["state"];
+  readonly findingSnoozeUntil?: string | null;
 }
 
 /** Builds the implementation brief used when a suggestion starts a new thread. */
@@ -483,6 +488,27 @@ export function buildNativeAgentFeedFromDurableCards(
     .toSorted(compareDashboardRecency);
 }
 
+/** Merges native and migrated feed records while retaining both source kinds. */
+export function mergeNativeAgentFeedRecords(
+  ...sources: ReadonlyArray<ReadonlyArray<NativeAgentFeedItem>>
+): ReadonlyArray<NativeAgentFeedItem> {
+  const byIdentity = new Map<string, NativeAgentFeedItem>();
+  for (const records of sources) {
+    for (const record of records) {
+      const identity = record.durableCard
+        ? `durable:${record.durableCard.id}`
+        : record.threadId
+          ? `thread:${record.threadId}:${record.kind}`
+          : record.id;
+      const previous = byIdentity.get(identity);
+      if (!previous || timestampValue(record.updatedAt) >= timestampValue(previous.updatedAt)) {
+        byIdentity.set(identity, record);
+      }
+    }
+  }
+  return [...byIdentity.values()].toSorted(compareDashboardRecency);
+}
+
 function projectPathLeaf(path: string): string | null {
   const normalized = path.trim().replace(/[\\/]+$/, "");
   if (!normalized) return null;
@@ -524,9 +550,17 @@ export function buildNativeResearchRecordsFromDurableFindings(
   snapshot: AgentDashboardSnapshot,
   environmentId: string,
 ): ReadonlyArray<NativeResearchRecord> {
-  return buildNativeResearchFindingsFromSnapshot(snapshot).map((finding) => ({
+  return buildNativeResearchFindingsFromSnapshot(snapshot).map((finding) => {
+    const repository = snapshot.repositories.find(
+      (candidate) =>
+        (finding.watchDir !== null &&
+          normalizeProjectPathForComparison(candidate.workspaceRoot) ===
+            normalizeProjectPathForComparison(finding.watchDir)) ||
+        finding.repositories.some((name) => candidate.title === name),
+    );
+    return {
     id: `research-finding:${finding.id}`,
-    projectId: finding.repositories[0] ?? finding.id,
+    projectId: repository?.projectId ?? finding.repositories[0] ?? finding.id,
     environmentId,
     repositoryName: finding.repositories[0] ?? finding.source,
     workspaceRoot: finding.watchDir ?? "",
@@ -552,7 +586,64 @@ export function buildNativeResearchRecordsFromDurableFindings(
     ],
     remoteUrl: finding.url,
     durableFinding: finding,
-  }));
+  } satisfies NativeResearchRecord;
+  });
+}
+
+export function buildNativeResearchRecordsFromCanonicalFindings(
+  snapshot: AgentDashboardSnapshot,
+): ReadonlyArray<NativeResearchRecord> {
+  return snapshot.findings.map((finding) => {
+    const repository = snapshot.repositories.find(
+      (candidate) => candidate.projectId === finding.repository.projectId,
+    );
+    const signal =
+      finding.severity === "critical" || finding.severity === "high"
+        ? "needs-attention"
+        : finding.kind === "research"
+          ? "active"
+          : "connected";
+    return {
+      id: `canonical-finding:${finding.id}`,
+      projectId: finding.repository.projectId,
+      environmentId: "native",
+      repositoryName: repository?.title ?? finding.repositoryPath ?? "Unknown repository",
+      workspaceRoot: repository?.workspaceRoot ?? finding.repositoryPath ?? "",
+      title: finding.title,
+      summary: finding.summary,
+      signal,
+      latestActivityAt: finding.lastSeenAt,
+      threadCount: 0,
+      activeThreadCount: 0,
+      latestThreadTitle: null,
+      source: finding.provenance.source,
+      relevanceScore: signal === "needs-attention" ? 40 : 75,
+      categories: [finding.kind, ...(finding.category ? [finding.category] : [])],
+      evidence: finding.evidence,
+      remoteUrl: finding.externalIssueUrl,
+    } satisfies NativeResearchRecord;
+  });
+}
+
+export function mergeNativeResearchRecords(
+  ...sources: ReadonlyArray<ReadonlyArray<NativeResearchRecord>>
+): ReadonlyArray<NativeResearchRecord> {
+  const byIdentity = new Map<string, NativeResearchRecord>();
+  for (const records of sources) {
+    for (const record of records) {
+      const identity = `${record.projectId}:${record.title.trim().toLocaleLowerCase()}:${record.source}`;
+      const previous = byIdentity.get(identity);
+      if (!previous || timestampValue(record.latestActivityAt) >= timestampValue(previous.latestActivityAt)) {
+        byIdentity.set(identity, record);
+      }
+    }
+  }
+  return [...byIdentity.values()].toSorted((left, right) =>
+    compareDashboardRecency(
+      { updatedAt: left.latestActivityAt, id: left.id },
+      { updatedAt: right.latestActivityAt, id: right.id },
+    ),
+  );
 }
 
 export function buildNativeResearchRecords(
@@ -811,14 +902,78 @@ export function buildNativeReviewSuggestionsFromSnapshot(
   snapshot: AgentDashboardSnapshot,
   environmentId: string,
 ): ReadonlyArray<NativeSuggestion> {
-  return snapshot.reviewSuggestions
+  const repositories = snapshot.repositories;
+  const legacySuggestionByFindingId = new Map(
+    snapshot.reviewSuggestions
+      .map((suggestion) => [
+        suggestion.id.replace(/^t3-review-/, "finding:"),
+        suggestion,
+      ] as const),
+  );
+  const projectForPath = (path: string): string =>
+    repositories.find(
+      (repository) =>
+        normalizeProjectPathForComparison(repository.workspaceRoot) ===
+        normalizeProjectPathForComparison(path),
+    )?.projectId ?? "agent-dashboard";
+  const canonicalSuggestions = snapshot.findings.map((finding) => {
+    const repository = repositories.find(
+      (candidate) => candidate.projectId === finding.repository.projectId,
+    );
+    const legacySuggestion = legacySuggestionByFindingId.get(finding.id);
+    const category = finding.category === "bug" || finding.category === "feature" || finding.category === "gap"
+      ? finding.category
+      : "insight";
+    const impact = finding.severity === "critical" || finding.severity === "high" ? "high" : finding.severity === "low" || finding.severity === "info" ? "low" : "medium";
+    return {
+      id: finding.id,
+      ...(legacySuggestion ? { legacySuggestionId: legacySuggestion.id } : {}),
+      findingId: finding.id,
+      findingState: finding.disposition.state,
+      findingSnoozeUntil: finding.disposition.snoozeUntil,
+      projectId: finding.repository.projectId,
+      environmentId,
+      threadId: finding.thread?.threadId ?? null,
+      projectName: repository?.title ?? finding.repositoryPath ?? "Unknown project",
+      title: finding.title,
+      description: finding.summary,
+      category,
+      confidence: finding.confidence,
+      impact,
+      evidence: finding.evidence,
+      nextStep: "Verify the finding, then acknowledge, assign, snooze, dismiss, or reopen it.",
+      report: finding.summary,
+      priority: impact === "high" ? "high" : "normal",
+      kind: finding.kind === "security" ? "inspect-error" : "review-changes",
+      updatedAt: finding.lastSeenAt,
+      expiresAt: null,
+      repositoryPath: repository?.workspaceRoot ?? finding.repositoryPath ?? "",
+      githubIssueUrl: finding.externalIssueUrl,
+      ...(legacySuggestion ? { durableSuggestion: legacySuggestion } : {}),
+    } satisfies NativeSuggestion;
+  });
+  const canonicalIds = new Set(canonicalSuggestions.map((suggestion) => suggestion.id));
+  const canonicalLegacyIds = new Set(
+    canonicalSuggestions.map(
+      (suggestion) => `t3-review-${suggestion.id.replace(/^finding:/, "")}`,
+    ),
+  );
+  const nativeSuggestions = buildNativeSuggestionsFromSnapshot(snapshot).filter(
+    (suggestion) => !canonicalIds.has(suggestion.id),
+  );
+  const legacySuggestions = snapshot.reviewSuggestions
     .map(
       (suggestion) =>
         ({
           id: suggestion.id,
-          projectId: suggestion.repository.path,
+          projectId: projectForPath(suggestion.repository.path),
           environmentId,
-          threadId: null,
+          threadId:
+            snapshot.findings.find(
+              (finding) =>
+                finding.id === suggestion.id ||
+                finding.id === suggestion.id.replace(/^t3-review-/, "finding:"),
+            )?.thread?.threadId ?? null,
           projectName: suggestion.repository.name,
           title: suggestion.title,
           description: suggestion.description,
@@ -848,5 +1003,11 @@ export function buildNativeReviewSuggestionsFromSnapshot(
           durableSuggestion: suggestion,
         }) satisfies NativeSuggestion,
     )
-    .toSorted(compareDashboardRecency);
+    .filter(
+      (suggestion) =>
+        !canonicalIds.has(suggestion.id) && !canonicalLegacyIds.has(suggestion.id),
+    );
+  return [...nativeSuggestions, ...canonicalSuggestions, ...legacySuggestions].toSorted(
+    compareDashboardRecency,
+  );
 }

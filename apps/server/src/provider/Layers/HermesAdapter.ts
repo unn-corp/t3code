@@ -1396,7 +1396,7 @@ export function makeHermesAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: { sessionModelSwitch: "in-session", automatedReview: "unsupported" },
       startSession,
       sendTurn,
       interruptTurn,

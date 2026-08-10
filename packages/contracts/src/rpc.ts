@@ -5,11 +5,16 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AgentDashboardError,
+  AgentDashboardCollectInput,
   AgentDashboardFeedCardIdInput,
   AgentDashboardGetSnapshotInput,
   AgentDashboardMutationResult,
+  AgentDashboardFindingActionInput,
+  AgentDashboardRepositoryPolicyInput,
+  AgentDashboardRetryRunInput,
   AgentDashboardReviewSuggestionIdInput,
   AgentDashboardReviewSuggestionActionInput,
+  AgentDashboardRunInvestigationInput,
   AgentDashboardSnapshot,
 } from "./agentDashboard.ts";
 import {
@@ -192,7 +197,11 @@ export const WS_METHODS = {
   agentDashboardClearFeed: "agentDashboard.clearFeed",
   agentDashboardReviewSuggestion: "agentDashboard.reviewSuggestion",
   agentDashboardRunInvestigation: "agentDashboard.runInvestigation",
+  agentDashboardRetryRun: "agentDashboard.retryRun",
   agentDashboardCreateGithubIssue: "agentDashboard.createGithubIssue",
+  agentDashboardApplyFindingAction: "agentDashboard.applyFindingAction",
+  agentDashboardUpdateRepositoryPolicy: "agentDashboard.updateRepositoryPolicy",
+  agentDashboardCollect: "agentDashboard.collect",
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
@@ -340,11 +349,41 @@ export const WsAgentDashboardReviewSuggestionRpc = Rpc.make(
 export const WsAgentDashboardRunInvestigationRpc = Rpc.make(
   WS_METHODS.agentDashboardRunInvestigation,
   {
-    payload: Schema.Struct({}),
+    payload: AgentDashboardRunInvestigationInput,
     success: AgentDashboardMutationResult,
     error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
   },
 );
+
+export const WsAgentDashboardRetryRunRpc = Rpc.make(WS_METHODS.agentDashboardRetryRun, {
+  payload: AgentDashboardRetryRunInput,
+  success: AgentDashboardMutationResult,
+  error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentDashboardApplyFindingActionRpc = Rpc.make(
+  WS_METHODS.agentDashboardApplyFindingAction,
+  {
+    payload: AgentDashboardFindingActionInput,
+    success: AgentDashboardMutationResult,
+    error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsAgentDashboardUpdateRepositoryPolicyRpc = Rpc.make(
+  WS_METHODS.agentDashboardUpdateRepositoryPolicy,
+  {
+    payload: AgentDashboardRepositoryPolicyInput,
+    success: AgentDashboardMutationResult,
+    error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsAgentDashboardCollectRpc = Rpc.make(WS_METHODS.agentDashboardCollect, {
+  payload: AgentDashboardCollectInput,
+  success: AgentDashboardMutationResult,
+  error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+});
 
 export const WsAgentDashboardCreateGithubIssueRpc = Rpc.make(
   WS_METHODS.agentDashboardCreateGithubIssue,
@@ -923,7 +962,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentDashboardClearFeedRpc,
   WsAgentDashboardReviewSuggestionRpc,
   WsAgentDashboardRunInvestigationRpc,
+  WsAgentDashboardRetryRunRpc,
   WsAgentDashboardCreateGithubIssueRpc,
+  WsAgentDashboardApplyFindingActionRpc,
+  WsAgentDashboardUpdateRepositoryPolicyRpc,
+  WsAgentDashboardCollectRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

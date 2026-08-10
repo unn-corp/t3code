@@ -296,6 +296,10 @@ const make = Effect.gen(function* () {
   // In-memory mirror for concurrency decisions without thrashing disk on every claim.
   const runsRef = yield* Ref.make<ReadonlyArray<AgentDashboardAutomationRun>>([]);
   const workerSlots = yield* Ref.make(0);
+  // Coverage writes are best-effort so disk latency cannot stall lifecycle
+  // transitions, but they remain ordered so an older heartbeat cannot overwrite
+  // a newer terminal result.
+  const coverageTail = yield* Ref.make<Effect.Effect<void>>(Effect.void);
 
   const randomId = crypto.randomUUIDv4.pipe(
     Effect.mapError(
@@ -315,6 +319,27 @@ const make = Effect.gen(function* () {
           const without = runs.filter((item) => item.id !== saved.id);
           return [saved, ...without];
         }),
+      ),
+      Effect.tap((saved) =>
+        Ref.modify(coverageTail, (previous) => {
+          const next = previous.pipe(
+            Effect.flatMap(() =>
+              dashboardStore.recordAutomationRun(saved).pipe(
+                Effect.tapError((cause) =>
+                  Effect.logWarning("T3 repository review coverage persistence failed", {
+                    runId: saved.id,
+                    cause,
+                  }),
+                ),
+                Effect.orElseSucceed(() => undefined),
+              ),
+            ),
+            Effect.asVoid,
+          );
+          return [next, next] as const;
+        }).pipe(
+          Effect.flatMap((next) => next.pipe(Effect.forkIn(scope), Effect.asVoid)),
+        ),
       ),
       Effect.mapError(
         (cause) =>
@@ -351,6 +376,13 @@ const make = Effect.gen(function* () {
     );
   }
   yield* Ref.set(runsRef, recovered);
+  if (recovered.length !== loadInitial.length || recovered.some((run, index) => run.status !== loadInitial[index]?.status)) {
+    yield* Effect.forEach(
+      recovered.filter((run, index) => run.status !== loadInitial[index]?.status),
+      (run) => dashboardStore.recordAutomationRun(run).pipe(Effect.orElseSucceed(() => undefined)),
+      { concurrency: 1, discard: true },
+    );
+  }
 
   const listRuns = Ref.get(runsRef);
 
@@ -368,6 +400,7 @@ const make = Effect.gen(function* () {
       let timedOut = true;
       let hasAssistantMessage = false;
       let assistantText: string | null = null;
+      const heartbeatEveryPolls = 15;
 
       for (let poll = 0; poll < maxPolls; poll += 1) {
         const thread = yield* projectionSnapshotQuery
@@ -386,6 +419,23 @@ const make = Effect.gen(function* () {
             assistantText = message?.text ?? null;
             break;
           }
+        }
+
+        // Persist a real worker heartbeat while the provider turn is still
+        // running. The scheduler and external health checks consume this
+        // timestamp, so a long review cannot look dead merely because its
+        // terminal state has not changed yet.
+        if (poll > 0 && poll % heartbeatEveryPolls === 0) {
+          const heartbeatAt = yield* nowIso;
+          yield* persist({
+            ...run,
+            status: "running",
+            threadId: review.threadId,
+            target: review.projectName,
+            repository: { projectId: review.projectId },
+            jobId: run.jobId ?? String(review.threadId),
+            updatedAt: heartbeatAt,
+          }).pipe(Effect.orElseSucceed(() => run));
         }
 
         if (poll + 1 < maxPolls) {
@@ -420,6 +470,9 @@ const make = Effect.gen(function* () {
         const writtenExit = yield* Effect.exit(
           dashboardStore.appendReviewSuggestions({
             jobId: String(review.threadId),
+            runId: run.id,
+            projectId: String(review.projectId),
+            threadId: String(review.threadId),
             repository: {
               name: review.projectName,
               path: review.workspaceRoot,

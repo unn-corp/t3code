@@ -243,6 +243,84 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
   }),
 );
 
+it.effect("deduplicates canonical findings across runs and preserves disposition", () =>
+  Effect.promise(async () => {
+    const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-canonical-findings-"));
+    const repositoryPath = NodePath.join(stateDir, "repository");
+
+    try {
+      await initializeGitRepository(repositoryPath);
+      const store = AgentDashboardStore.getStore(stateDir);
+      const baseInput: AgentDashboardStore.AgentDashboardReviewIngestInput = {
+        jobId: "review-job-1",
+        runId: "run-1",
+        projectId: "project-1",
+        threadId: "thread-1",
+        repository: {
+          name: "repository",
+          path: repositoryPath,
+        },
+        findings: [
+          {
+            title: "The parser drops the final record",
+            category: "bug",
+            summary: "A line-oriented parser never flushes its final buffered record.",
+            impact: "The last item silently disappears from imports.",
+            confidence: "high",
+            evidence: ["src/parser.ts:42"],
+            nextStep: "Flush the buffer before returning.",
+            githubIssueTitle: "Flush parser buffer",
+            githubIssueBody: "## Problem",
+          },
+        ],
+      };
+
+      expect(await Effect.runPromise(store.appendReviewSuggestions(baseInput))).toBe(1);
+      const first = await Effect.runPromise(store.readFindings);
+      expect(first).toHaveLength(1);
+      const firstFinding = first[0];
+      expect(firstFinding?.occurrenceCount).toBe(1);
+
+      expect(
+        await Effect.runPromise(
+          store.applyFindingAction({
+            id: firstFinding!.id,
+            action: "snooze",
+            snoozeUntil: "2026-08-12T00:00:00.000Z",
+            note: "Review after the parser migration.",
+          }),
+        ),
+      ).toBe("applied");
+
+      expect(
+        await Effect.runPromise(
+          store.appendReviewSuggestions({
+            ...baseInput,
+            jobId: "review-job-2",
+            runId: "run-2",
+          }),
+        ),
+      ).toBe(1);
+
+      const findings = await Effect.runPromise(store.readFindings);
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({
+        id: firstFinding?.id,
+        occurrenceCount: 2,
+        lastRunId: "run-2",
+        disposition: {
+          state: "snoozed",
+          snoozeUntil: "2026-08-12T00:00:00.000Z",
+          note: "Review after the parser migration.",
+        },
+        thread: { projectId: "project-1", threadId: "thread-1" },
+      });
+    } finally {
+      await NodeFSP.rm(stateDir, { recursive: true, force: true });
+    }
+  }),
+);
+
 it.effect("copies accepted images into owned assets and rejects foreign paths", () =>
   Effect.promise(async () => {
     const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-feed-image-"));

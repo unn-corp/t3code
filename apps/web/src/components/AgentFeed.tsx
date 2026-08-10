@@ -18,9 +18,12 @@ import {
   buildNativeAgentFeedFromDurableCards,
   buildNativeAgentFeedFromSnapshot,
   compareDashboardRecency,
+  mergeNativeAgentFeedRecords,
   nativeAgentStateLabel,
   type NativeAgentState,
 } from "../agentDashboardPages";
+import type { AgentDashboardFeedAction } from "@t3tools/contracts";
+import { readLocalApi } from "../localApi";
 import { useAgentDashboardSnapshot } from "../state/agentDashboard";
 import { agentDashboardEnvironment } from "../state/agentDashboard";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -78,14 +81,29 @@ function readDismissedFeedIds(): ReadonlySet<string> {
   }
 }
 
+function safeFeedFileUrl(workspaceRoot: string, file: string): string | null {
+  const trimmed = file.trim();
+  if (!trimmed || trimmed.includes("\0")) return null;
+  const segments = trimmed.replaceAll("\\", "/").split("/");
+  if (segments.some((segment) => segment === "..")) return null;
+  const base = workspaceRoot.trim().replaceAll("\\", "/").replace(/\/$/, "");
+  const target = trimmed.startsWith("/") || /^[A-Za-z]:\//.test(trimmed)
+    ? trimmed.replaceAll("\\", "/")
+    : `${base}/${trimmed.replace(/^\.\//, "")}`;
+  if (!base || (target !== base && !target.startsWith(`${base}/`))) return null;
+  return encodeURI(target.startsWith("file://") ? target : `file://${target}`);
+}
+
 function AgentFeedCard({
   item,
   onDismiss,
   onOpen,
+  onAction,
 }: {
   readonly item: ReturnType<typeof buildNativeAgentFeed>[number];
   readonly onDismiss: (id: string) => void;
   readonly onOpen: () => void;
+  readonly onAction: (action: AgentDashboardFeedAction) => void;
 }) {
   return (
     <Card>
@@ -125,7 +143,7 @@ function AgentFeedCard({
             {item.durableCard?.actions && item.durableCard.actions.length > 0 ? (
               <div className="mt-3 flex flex-wrap gap-2">
                 {item.durableCard.actions.map((action) =>
-                  action.url ? (
+                  action.url && /^https?:\/\//i.test(action.url) ? (
                     <Button
                       key={`${action.label}-${action.url}`}
                       render={<a href={action.url} rel="noreferrer" target="_blank" />}
@@ -133,6 +151,15 @@ function AgentFeedCard({
                       variant="outline"
                     >
                       {action.label}
+                    </Button>
+                  ) : action.file ? (
+                    <Button
+                      key={`${action.label}-${action.file}`}
+                      onClick={() => onAction(action)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      {action.reveal ? "Reveal" : action.label}
                     </Button>
                   ) : (
                     <span className="text-xs text-muted-foreground" key={action.label}>
@@ -209,23 +236,20 @@ export function AgentFeed() {
     readDismissedFeedIds(),
   );
   const records = useMemo(() => {
-    if (dashboardSnapshot.data !== null && dashboardSnapshot.data.externalFeed.length > 0) {
-      const environmentId = dashboardSnapshot.environmentId;
-      return buildNativeAgentFeedFromDurableCards(
+    if (dashboardSnapshot.data === null) return buildNativeAgentFeed(projects, threads);
+    const environmentId = dashboardSnapshot.environmentId ?? "native";
+    return mergeNativeAgentFeedRecords(
+      buildNativeAgentFeedFromSnapshot(dashboardSnapshot.data).map((record) => ({
+        ...record,
+        environmentId,
+      })),
+      buildNativeAgentFeedFromDurableCards(
         dashboardSnapshot.data.externalFeed,
-        environmentId ?? "native",
+        environmentId,
         projects,
         threads,
-      );
-    }
-    if (dashboardSnapshot.data !== null && dashboardSnapshot.data.feed.length > 0) {
-      const environmentId = dashboardSnapshot.environmentId;
-      return buildNativeAgentFeedFromSnapshot(dashboardSnapshot.data).map((record) => ({
-        ...record,
-        environmentId: environmentId ?? record.environmentId,
-      }));
-    }
-    return buildNativeAgentFeed(projects, threads);
+      ),
+    );
   }, [dashboardSnapshot.data, dashboardSnapshot.environmentId, projects, threads]);
   const visibleRecords = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -312,6 +336,13 @@ export function AgentFeed() {
     } catch {
       // Keep the in-memory clear when storage is unavailable.
     }
+  };
+
+  const openFeedAction = (action: AgentDashboardFeedAction, record: (typeof records)[number]) => {
+    if (!action.file) return;
+    const fileUrl = safeFeedFileUrl(record.workspaceRoot, action.file);
+    if (!fileUrl) return;
+    void readLocalApi()?.shell.openExternal(fileUrl);
   };
 
   return (
@@ -419,6 +450,7 @@ export function AgentFeed() {
             <AgentFeedCard
               item={item}
               key={item.id}
+              onAction={(action) => openFeedAction(action, item)}
               onDismiss={dismiss}
               onOpen={() =>
                 void navigate({

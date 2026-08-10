@@ -244,6 +244,32 @@ describe("buildTurnStartParams", () => {
       ],
     });
   });
+
+  it("forces automated reviews to a read-only, network-disabled turn", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "automated-review",
+        prompt: "Review the repository",
+      }),
+    );
+
+    NodeAssert.deepStrictEqual(params, {
+      threadId: "provider-thread-1",
+      approvalPolicy: "untrusted",
+      approvalsReviewer: "user",
+      sandboxPolicy: {
+        type: "readOnly",
+        networkAccess: false,
+      },
+      input: [
+        {
+          type: "text",
+          text: "Review the repository",
+        },
+      ],
+    });
+  });
 });
 
 describe("buildCodexDeveloperInstructions", () => {

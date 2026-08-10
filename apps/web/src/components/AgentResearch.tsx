@@ -7,16 +7,23 @@ import {
   SearchIcon,
   TerminalIcon,
   RefreshCwIcon,
+  LoaderIcon,
 } from "lucide-react";
 
 import {
   buildNativeResearchRecords,
+  buildNativeResearchRecordsFromCanonicalFindings,
   buildNativeResearchRecordsFromSnapshot,
   buildNativeResearchRecordsFromDurableFindings,
+  mergeNativeResearchRecords,
 } from "../agentDashboardPages";
 import { buildResearchRepositoryGroups } from "../researchDashboard";
 import { usePrimaryEnvironmentId } from "../state/environments";
-import { useAgentDashboardSnapshot } from "../state/agentDashboard";
+import {
+  agentDashboardEnvironment,
+  useAgentDashboardSnapshot,
+} from "../state/agentDashboard";
+import { useAtomCommand } from "../state/use-atom-command";
 import { useProjects, useThreadShells } from "../state/entities";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { Badge } from "./ui/badge";
@@ -59,28 +66,17 @@ export function AgentResearch() {
   const projects = useProjects();
   const threads = useThreadShells();
   const dashboardSnapshot = useAgentDashboardSnapshot();
+  const collect = useAtomCommand(agentDashboardEnvironment.collect, { reportFailure: false });
   const [query, setQuery] = useState("");
   const [signalFilter, setSignalFilter] = useState("all");
+  const [isCollecting, setIsCollecting] = useState(false);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const groups = useMemo(
     () => buildResearchRepositoryGroups(projects, primaryEnvironmentId),
     [primaryEnvironmentId, projects],
   );
   const records = useMemo(() => {
-    if (
-      dashboardSnapshot.data !== null &&
-      dashboardSnapshot.data.researchFindings.length > 0 &&
-      dashboardSnapshot.environmentId
-    ) {
-      return buildNativeResearchRecordsFromDurableFindings(
-        dashboardSnapshot.data,
-        dashboardSnapshot.environmentId,
-      );
-    }
-    if (dashboardSnapshot.data !== null && dashboardSnapshot.data.research.length > 0) {
-      return buildNativeResearchRecordsFromSnapshot(dashboardSnapshot.data);
-    }
-    return buildNativeResearchRecords(
+    const fallback = buildNativeResearchRecords(
       groups.map((group) => ({
         id: group.key,
         projectId: group.representative.id,
@@ -96,7 +92,37 @@ export function AgentResearch() {
         ),
       })),
     );
+    if (dashboardSnapshot.data === null) return fallback;
+    const native = buildNativeResearchRecordsFromSnapshot(dashboardSnapshot.data);
+    const durable = dashboardSnapshot.environmentId
+      ? buildNativeResearchRecordsFromDurableFindings(
+          dashboardSnapshot.data,
+          dashboardSnapshot.environmentId,
+        )
+      : [];
+    return mergeNativeResearchRecords(
+      fallback,
+      native,
+      durable,
+      buildNativeResearchRecordsFromCanonicalFindings(dashboardSnapshot.data),
+    );
   }, [dashboardSnapshot.data, groups, threads]);
+
+  const collectNow = async () => {
+    if (!dashboardSnapshot.environmentId || isCollecting) return;
+    setIsCollecting(true);
+    try {
+      const result = await collect({
+        environmentId: dashboardSnapshot.environmentId,
+        input: { kind: "all" },
+      });
+      if (result._tag === "Success") {
+        await dashboardSnapshot.refresh();
+      }
+    } finally {
+      setIsCollecting(false);
+    }
+  };
   const visibleRecords = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return records.filter((record) => {
@@ -120,15 +146,26 @@ export function AgentResearch() {
   return (
     <AgentDashboardPageShell
       actions={
-        <Button
-          aria-label="Refresh research"
-          disabled={dashboardSnapshot.isPending}
-          onClick={dashboardSnapshot.refresh}
-          size="icon-sm"
-          variant="outline"
-        >
-          <RefreshCwIcon className={dashboardSnapshot.isPending ? "animate-spin" : undefined} />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            disabled={isCollecting || dashboardSnapshot.environmentId === null}
+            onClick={() => void collectNow()}
+            size="sm"
+            variant="outline"
+          >
+            {isCollecting ? <LoaderIcon className="animate-spin" /> : <RefreshCwIcon />}
+            {isCollecting ? "Collecting" : "Collect now"}
+          </Button>
+          <Button
+            aria-label="Refresh research"
+            disabled={dashboardSnapshot.isPending}
+            onClick={dashboardSnapshot.refresh}
+            size="icon-sm"
+            variant="outline"
+          >
+            <RefreshCwIcon className={dashboardSnapshot.isPending ? "animate-spin" : undefined} />
+          </Button>
+        </div>
       }
       title="Research"
       description="Structured findings assembled from the repositories and agent activity connected to T3 Code, with the newest observation first."

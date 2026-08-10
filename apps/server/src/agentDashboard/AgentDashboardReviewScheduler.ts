@@ -316,7 +316,7 @@ const make = Effect.gen(function* () {
               };
               yield* Ref.set(stateRef, nextState);
               yield* persist(nextState);
-              return yield* Effect.fail(cause);
+              return yield* cause;
             }),
           ),
         );

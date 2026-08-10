@@ -590,6 +590,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.cwd.effective": effectiveCwd ?? "",
         });
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
+        if (
+          input.runtimeMode === "automated-review" &&
+          adapter.capabilities.automatedReview !== "supported"
+        ) {
+          return yield* toValidationError(
+            "ProviderService.startSession",
+            `Provider '${resolvedProvider}' explicitly rejects the automated-review runtime; no writable or network-capable fallback is allowed.`,
+          );
+        }
         yield* prepareMcpSession(threadId, resolvedInstanceId);
         const session = yield* adapter
           .startSession({

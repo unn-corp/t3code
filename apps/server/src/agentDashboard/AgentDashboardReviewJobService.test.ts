@@ -238,6 +238,12 @@ const waitForTerminal = (
       }
       yield* TestClock.adjust(Duration.seconds(1));
       yield* Effect.yieldNow;
+      // Durable finding ingestion uses real filesystem promises. Give the
+      // Node event loop a turn after advancing TestClock so this test waits
+      // for the worker receipt rather than sampling the intermediate state.
+      yield* Effect.promise(
+        () => new Promise<void>((resolve) => setImmediate(resolve)),
+      );
     }
     const runs = yield* jobService.listRuns;
     return runs.find((item) => item.id === runId) ?? null;

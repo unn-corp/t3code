@@ -260,6 +260,11 @@ const runtimeModeConfig: Record<
     description: "An AI reviewer approves routine actions; risky ones still ask.",
     icon: SparklesIcon,
   },
+  "automated-review": {
+    label: "Automated review",
+    description: "Read-only repository review with network access disabled.",
+    icon: BotIcon,
+  },
   "full-access": {
     label: "Full access",
     description: "Allow commands and edits without prompts.",
@@ -267,7 +272,9 @@ const runtimeModeConfig: Record<
   },
 };
 
-const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
+const runtimeModeOptions = (Object.keys(runtimeModeConfig) as RuntimeMode[]).filter(
+  (mode) => mode !== "automated-review",
+);
 const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="popover-popup"]',
   '[data-slot="menu-popup"]',

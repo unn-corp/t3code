@@ -513,6 +513,43 @@ export const AgentDashboardExternalAction = Schema.Struct({
 });
 export type AgentDashboardExternalAction = typeof AgentDashboardExternalAction.Type;
 
+/** Collectors are local-first. A missing optional integration is visible rather than silent. */
+export const AgentDashboardCollectorKind = Schema.Literals([
+  "research",
+  "engineering",
+  "security",
+  "all",
+]);
+export type AgentDashboardCollectorKind = typeof AgentDashboardCollectorKind.Type;
+
+export const AgentDashboardCollectorStatus = Schema.Literals(["available", "partial", "unavailable"]);
+export type AgentDashboardCollectorStatus = typeof AgentDashboardCollectorStatus.Type;
+
+export const AgentDashboardCollectorState = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: AgentDashboardCollectorKind,
+  status: AgentDashboardCollectorStatus,
+  source: TrimmedNonEmptyString,
+  repository: Schema.NullOr(AgentDashboardRepositoryRef),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+  observedAt: IsoDateTime,
+});
+export type AgentDashboardCollectorState = typeof AgentDashboardCollectorState.Type;
+
+/** Portfolio-level counters used by the landing page and remote clients. */
+export const AgentDashboardPortfolioHealth = Schema.Struct({
+  repositoryCount: NonNegativeInt,
+  healthyRepositoryCount: NonNegativeInt,
+  attentionRepositoryCount: NonNegativeInt,
+  staleRepositoryCount: NonNegativeInt,
+  openFindingCount: NonNegativeInt,
+  criticalFindingCount: NonNegativeInt,
+  activeRunCount: NonNegativeInt,
+  lastRunAt: Schema.NullOr(IsoDateTime),
+  observedAt: IsoDateTime,
+});
+export type AgentDashboardPortfolioHealth = typeof AgentDashboardPortfolioHealth.Type;
+
 /** A compact activity item; raw activity payloads stay in the thread read model. */
 export const AgentDashboardFeedUpdate = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -660,8 +697,34 @@ export const AgentDashboardSnapshot = Schema.Struct({
   externalActions: Schema.Array(AgentDashboardExternalAction).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  collectorStates: Schema.Array(AgentDashboardCollectorState).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  portfolioHealth: Schema.optionalKey(AgentDashboardPortfolioHealth),
 });
 export type AgentDashboardSnapshot = typeof AgentDashboardSnapshot.Type;
+
+export const AgentDashboardFindingActionInput = AgentDashboardDispositionActionInput;
+export type AgentDashboardFindingActionInput = typeof AgentDashboardFindingActionInput.Type;
+
+export const AgentDashboardRepositoryPolicyInput = AgentDashboardRepositoryPolicy;
+export type AgentDashboardRepositoryPolicyInput = typeof AgentDashboardRepositoryPolicyInput.Type;
+
+export const AgentDashboardRunInvestigationInput = Schema.Struct({
+  projectId: Schema.optional(Schema.NullOr(ProjectId)),
+});
+export type AgentDashboardRunInvestigationInput = typeof AgentDashboardRunInvestigationInput.Type;
+
+export const AgentDashboardRetryRunInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+});
+export type AgentDashboardRetryRunInput = typeof AgentDashboardRetryRunInput.Type;
+
+export const AgentDashboardCollectInput = Schema.Struct({
+  kind: AgentDashboardCollectorKind,
+  projectId: Schema.optional(Schema.NullOr(ProjectId)),
+});
+export type AgentDashboardCollectInput = typeof AgentDashboardCollectInput.Type;
 
 export class AgentDashboardError extends Schema.TaggedErrorClass<AgentDashboardError>()(
   "AgentDashboardError",
