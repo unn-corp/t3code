@@ -10,6 +10,7 @@ import {
 
 import {
   buildNativeAgentFeedFromDurableCards,
+  buildNativeResearchRecordsFromDurableFindings,
   buildNativeReviewSuggestionsFromSnapshot,
   buildSuggestionWorkPrompt,
   compareDashboardRecency,
@@ -267,5 +268,90 @@ describe("agent dashboard suggestion actions", () => {
 
     expect(suggestions).toHaveLength(1);
     expect(suggestions[0]?.findingId).toBe("finding:abc");
+  });
+
+  it("keeps native branch signals off the scheduled suggestions page", () => {
+    const snapshot = {
+      repositories: [],
+      suggestions: [
+        {
+          id: "suggestion:sync-branch",
+          kind: "sync-branch",
+          status: "actionable",
+          action: "open-repository",
+          title: "Sync the feature branch",
+          summary: "The feature branch is behind its default branch.",
+          updatedAt: "2026-08-09T12:00:00.000Z",
+          repository: { projectId: ProjectId.make("project-1") },
+          thread: null,
+        },
+      ],
+      findings: [{ id: "finding:security", kind: "security" }],
+      reviewSuggestions: [],
+    } as unknown as AgentDashboardSnapshot;
+
+    expect(buildNativeReviewSuggestionsFromSnapshot(snapshot, "environment-1")).toEqual([]);
+  });
+
+  it("keeps repository and canonical signals off the research findings page", () => {
+    const snapshot = {
+      repositories: [
+        {
+          projectId: ProjectId.make("project-1"),
+          title: "T3 Code",
+          workspaceRoot: "/workspace/t3code",
+        },
+      ],
+      researchFindings: [
+        {
+          id: "paper-1",
+          title: "A research paper",
+          source: "arxiv",
+          url: null,
+          timestamp: "2026-08-09T12:00:00.000Z",
+          abstract: "A useful research result.",
+          authors: ["Researcher"],
+          published: "2026-08-01",
+          categories: ["machine-learning"],
+          relevanceScore: 90,
+          topicContext: null,
+          repositories: ["T3 Code"],
+          watchDir: "/workspace/t3code",
+          sinceDays: null,
+          pdfUrl: null,
+          citationCount: null,
+          occurrences: 1,
+        },
+      ],
+      research: [
+        {
+          id: "repository-signal",
+          status: "dirty",
+          title: "T3 Code workspace",
+          summary: "The repository has local changes.",
+          observedAt: "2026-08-09T12:01:00.000Z",
+          repository: { projectId: ProjectId.make("project-1") },
+          branch: "main",
+          defaultBranch: "main",
+          worktreePath: null,
+          threadCount: 0,
+          activeThreadCount: 0,
+          latestThread: null,
+        },
+      ],
+      findings: [
+        {
+          id: "finding:bug",
+          kind: "review",
+          title: "A bug finding",
+          summary: "A scheduled review finding.",
+          repository: { projectId: ProjectId.make("project-1") },
+        },
+      ],
+    } as unknown as AgentDashboardSnapshot;
+
+    expect(buildNativeResearchRecordsFromDurableFindings(snapshot, "environment-1")).toMatchObject([
+      { id: "research-finding:paper-1", title: "A research paper" },
+    ]);
   });
 });

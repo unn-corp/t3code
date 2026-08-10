@@ -10,21 +10,9 @@ import {
   LoaderIcon,
 } from "lucide-react";
 
-import {
-  buildNativeResearchRecords,
-  buildNativeResearchRecordsFromCanonicalFindings,
-  buildNativeResearchRecordsFromSnapshot,
-  buildNativeResearchRecordsFromDurableFindings,
-  mergeNativeResearchRecords,
-} from "../agentDashboardPages";
-import { buildResearchRepositoryGroups } from "../researchDashboard";
-import { usePrimaryEnvironmentId } from "../state/environments";
-import {
-  agentDashboardEnvironment,
-  useAgentDashboardSnapshot,
-} from "../state/agentDashboard";
+import { buildNativeResearchRecordsFromDurableFindings } from "../agentDashboardPages";
+import { agentDashboardEnvironment, useAgentDashboardSnapshot } from "../state/agentDashboard";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useProjects, useThreadShells } from "../state/entities";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -63,50 +51,18 @@ function scoreVariant(score: number) {
 }
 
 export function AgentResearch() {
-  const projects = useProjects();
-  const threads = useThreadShells();
   const dashboardSnapshot = useAgentDashboardSnapshot();
   const collect = useAtomCommand(agentDashboardEnvironment.collect, { reportFailure: false });
   const [query, setQuery] = useState("");
   const [signalFilter, setSignalFilter] = useState("all");
   const [isCollecting, setIsCollecting] = useState(false);
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const groups = useMemo(
-    () => buildResearchRepositoryGroups(projects, primaryEnvironmentId),
-    [primaryEnvironmentId, projects],
-  );
   const records = useMemo(() => {
-    const fallback = buildNativeResearchRecords(
-      groups.map((group) => ({
-        id: group.key,
-        projectId: group.representative.id,
-        environmentId: group.representative.environmentId,
-        repositoryName: group.label,
-        workspaceRoot: group.representative.workspaceRoot,
-        projects: group.members.map((member) => member.project),
-        threads: threads.filter((thread) =>
-          group.memberProjectRefs.some(
-            (ref) =>
-              ref.environmentId === thread.environmentId && ref.projectId === thread.projectId,
-          ),
-        ),
-      })),
+    if (dashboardSnapshot.data === null || dashboardSnapshot.environmentId === null) return [];
+    return buildNativeResearchRecordsFromDurableFindings(
+      dashboardSnapshot.data,
+      dashboardSnapshot.environmentId,
     );
-    if (dashboardSnapshot.data === null) return fallback;
-    const native = buildNativeResearchRecordsFromSnapshot(dashboardSnapshot.data);
-    const durable = dashboardSnapshot.environmentId
-      ? buildNativeResearchRecordsFromDurableFindings(
-          dashboardSnapshot.data,
-          dashboardSnapshot.environmentId,
-        )
-      : [];
-    return mergeNativeResearchRecords(
-      fallback,
-      native,
-      durable,
-      buildNativeResearchRecordsFromCanonicalFindings(dashboardSnapshot.data),
-    );
-  }, [dashboardSnapshot.data, groups, threads]);
+  }, [dashboardSnapshot.data, dashboardSnapshot.environmentId]);
 
   const collectNow = async () => {
     if (!dashboardSnapshot.environmentId || isCollecting) return;
@@ -114,7 +70,7 @@ export function AgentResearch() {
     try {
       const result = await collect({
         environmentId: dashboardSnapshot.environmentId,
-        input: { kind: "all" },
+        input: { kind: "research" },
       });
       if (result._tag === "Success") {
         await dashboardSnapshot.refresh();
@@ -168,7 +124,7 @@ export function AgentResearch() {
         </div>
       }
       title="Research"
-      description="Structured findings assembled from the repositories and agent activity connected to T3 Code, with the newest observation first."
+      description="Research findings collected from the configured research sources, with the newest observation first."
     >
       <div className="flex flex-col gap-3 sm:flex-row">
         <div className="relative min-w-0 flex-1">
@@ -333,7 +289,7 @@ export function AgentResearch() {
             </EmptyTitle>
             <EmptyDescription>
               {records.length === 0
-                ? "Add a project or run a native research agent in T3 Code and its findings will appear here."
+                ? "Run a research collection in T3 Code and its findings will appear here."
                 : "Try a different search or signal filter."}
             </EmptyDescription>
           </EmptyHeader>

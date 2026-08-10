@@ -36,6 +36,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.agentDashboardRetryRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.agentDashboardCreateGithubIssue]: AuthOrchestrationOperateScope,
   [WS_METHODS.agentDashboardApplyFindingAction]: AuthOrchestrationOperateScope,
+  [WS_METHODS.agentDashboardLinkFindingThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.agentDashboardUpdateRepositoryPolicy]: AuthOrchestrationOperateScope,
   [WS_METHODS.agentDashboardCollect]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,

@@ -370,6 +370,7 @@ export type AgentDashboardProvenance = typeof AgentDashboardProvenance.Type;
  */
 export const AgentDashboardDispositionState = Schema.Literals([
   "open",
+  "in-progress",
   "acknowledged",
   "snoozed",
   "assigned",
@@ -522,7 +523,11 @@ export const AgentDashboardCollectorKind = Schema.Literals([
 ]);
 export type AgentDashboardCollectorKind = typeof AgentDashboardCollectorKind.Type;
 
-export const AgentDashboardCollectorStatus = Schema.Literals(["available", "partial", "unavailable"]);
+export const AgentDashboardCollectorStatus = Schema.Literals([
+  "available",
+  "partial",
+  "unavailable",
+]);
 export type AgentDashboardCollectorStatus = typeof AgentDashboardCollectorStatus.Type;
 
 export const AgentDashboardCollectorState = Schema.Struct({
@@ -706,6 +711,14 @@ export type AgentDashboardSnapshot = typeof AgentDashboardSnapshot.Type;
 
 export const AgentDashboardFindingActionInput = AgentDashboardDispositionActionInput;
 export type AgentDashboardFindingActionInput = typeof AgentDashboardFindingActionInput.Type;
+
+/** Durable association created when a dashboard finding starts work in T3. */
+export const AgentDashboardLinkFindingThreadInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  projectId: ProjectId,
+  threadId: ThreadId,
+});
+export type AgentDashboardLinkFindingThreadInput = typeof AgentDashboardLinkFindingThreadInput.Type;
 
 export const AgentDashboardRepositoryPolicyInput = AgentDashboardRepositoryPolicy;
 export type AgentDashboardRepositoryPolicyInput = typeof AgentDashboardRepositoryPolicyInput.Type;

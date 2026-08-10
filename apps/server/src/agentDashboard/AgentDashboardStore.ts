@@ -22,6 +22,7 @@ import type {
   AgentDashboardFeedCard,
   AgentDashboardFeedOrigin,
   AgentDashboardDispositionActionInput,
+  AgentDashboardLinkFindingThreadInput,
   AgentDashboardRepositoryCoverage,
   AgentDashboardRepositoryPolicy,
   AgentDashboardResearchFinding,
@@ -143,12 +144,18 @@ export interface AgentDashboardStoreService {
     action: "dismiss" | "block",
   ) => Effect.Effect<boolean, AgentDashboardStoreError>;
   readonly createGithubIssue: (id: string) => Effect.Effect<boolean, AgentDashboardStoreError>;
-  readonly readFindings: Effect.Effect<ReadonlyArray<AgentDashboardFinding>, AgentDashboardStoreError>;
+  readonly readFindings: Effect.Effect<
+    ReadonlyArray<AgentDashboardFinding>,
+    AgentDashboardStoreError
+  >;
   readonly appendFindings: (
     input: ReadonlyArray<AgentDashboardCanonicalFindingInput>,
   ) => Effect.Effect<number, AgentDashboardStoreError>;
   readonly applyFindingAction: (
     input: AgentDashboardDispositionActionInput,
+  ) => Effect.Effect<AgentDashboardStoreMutationOutcome, AgentDashboardStoreError>;
+  readonly linkFindingThread: (
+    input: AgentDashboardLinkFindingThreadInput,
   ) => Effect.Effect<AgentDashboardStoreMutationOutcome, AgentDashboardStoreError>;
   readonly readRepositoryPolicies: Effect.Effect<
     ReadonlyArray<AgentDashboardRepositoryPolicy>,
@@ -451,25 +458,31 @@ export const isStableRepositoryPath = async (repositoryPath: string): Promise<bo
   try {
     const repositoryStat = await NodeFSP.stat(repositoryPath);
     if (!repositoryStat.isDirectory()) return false;
-
-    // A linked worktree and a submodule expose .git as a pointer file. A
-    // durable project checkout has its own .git directory.
     const gitStat = await NodeFSP.lstat(NodePath.join(repositoryPath, ".git"));
-    if (!gitStat.isDirectory()) return false;
+    if (!gitStat.isDirectory() && !gitStat.isFile()) return false;
 
     const result = await runExecutable(
       "git",
-      ["-C", repositoryPath, "rev-parse", "--show-toplevel"],
+      ["-C", repositoryPath, "rev-parse", "--git-dir", "--git-common-dir", "--show-toplevel"],
       { timeout: 5_000 },
     );
-    const repositoryRoot = result.stdout.trim();
-    if (repositoryRoot.length === 0) return false;
+    const [gitDir, commonGitDir, repositoryRoot] = result.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim());
+    if (!gitDir || !commonGitDir || !repositoryRoot) return false;
 
-    const [resolvedPath, resolvedRoot] = await Promise.all([
+    const resolveGitPath = (gitPath: string): string =>
+      NodePath.isAbsolute(gitPath) ? gitPath : NodePath.resolve(repositoryPath, gitPath);
+    const [resolvedPath, resolvedRoot, resolvedGitDir, resolvedCommonGitDir] = await Promise.all([
       NodeFSP.realpath(repositoryPath),
       NodeFSP.realpath(repositoryRoot),
+      NodeFSP.realpath(resolveGitPath(gitDir)),
+      NodeFSP.realpath(resolveGitPath(commonGitDir)),
     ]);
-    return resolvedPath === resolvedRoot;
+    // Git submodule checkouts use a .git pointer file but share the same
+    // common directory as their git dir. Linked worktrees have a separate
+    // per-worktree git dir, so reject those disposable paths.
+    return resolvedPath === resolvedRoot && resolvedGitDir === resolvedCommonGitDir;
   } catch {
     return false;
   }
@@ -866,7 +879,9 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       .map(decodeFinding)
       .filter((value): value is AgentDashboardFinding => value !== null);
 
-  const findingSeverity = (input: AgentDashboardCanonicalFindingInput): AgentDashboardFindingSeverity => {
+  const findingSeverity = (
+    input: AgentDashboardCanonicalFindingInput,
+  ): AgentDashboardFindingSeverity => {
     if (input.severity) return input.severity;
     const textValue = `${input.title} ${input.summary} ${input.category ?? ""}`.toLowerCase();
     if (/(critical|credential|secret|remote code|data loss)/.test(textValue)) return "critical";
@@ -923,15 +938,14 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         evidence,
         repository: { projectId: ProjectId.make(input.repository.projectId.trim()) },
         repositoryPath: input.repositoryPath?.trim().slice(0, 2_000) || null,
-        disposition:
-          previous?.disposition ?? {
-            state: "open",
-            updatedAt: now,
-            actor: null,
-            note: null,
-            snoozeUntil: null,
-            assignee: null,
-          },
+        disposition: previous?.disposition ?? {
+          state: "open",
+          updatedAt: now,
+          actor: null,
+          note: null,
+          snoozeUntil: null,
+          assignee: null,
+        },
         provenance: {
           source: input.source.trim().slice(0, 120) || "agent-dashboard",
           sourceAt: input.sourceAt ? timestamp(input.sourceAt, now) : null,
@@ -941,10 +955,12 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         lastSeenAt: now,
         occurrenceCount: Math.min(1_000_000, (previous?.occurrenceCount ?? 0) + 1),
         lastRunId: input.runId?.trim() || previous?.lastRunId || null,
-        thread:
-          input.threadId?.trim()
-            ? { projectId: ProjectId.make(input.repository.projectId.trim()), threadId: ThreadId.make(input.threadId.trim()) }
-            : previous?.thread ?? null,
+        thread: input.threadId?.trim()
+          ? {
+              projectId: ProjectId.make(input.repository.projectId.trim()),
+              threadId: ThreadId.make(input.threadId.trim()),
+            }
+          : (previous?.thread ?? null),
         externalIssueUrl: input.externalIssueUrl?.trim() || previous?.externalIssueUrl || null,
       };
       byFingerprint.set(fingerprint, next);
@@ -1126,10 +1142,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1_000).toISOString();
         let changed = 0;
         const canonicalInputs: Array<AgentDashboardCanonicalFindingInput> = [];
-        const migratedDispositions = new Map<
-          string,
-          "acknowledged" | "dismissed" | "blocked"
-        >();
+        const migratedDispositions = new Map<string, "acknowledged" | "dismissed" | "blocked">();
         for (const finding of input.findings.slice(0, 3)) {
           const title = finding.title.trim().slice(0, 300);
           if (!title) continue;
@@ -1260,7 +1273,9 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       }),
     );
 
-  const appendExternalActionInternal = async (action: AgentDashboardExternalAction): Promise<void> => {
+  const appendExternalActionInternal = async (
+    action: AgentDashboardExternalAction,
+  ): Promise<void> => {
     const actions = await readDocumentArray(externalActionsPath, "actions");
     const next = [
       action as unknown as JsonObject,
@@ -1343,16 +1358,17 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         );
         const canonicalFindings = await readCanonicalFindingsRaw();
         const canonical = canonicalFindings.find(
-          (finding) =>
-            finding.id === id ||
-            finding.id === id.replace(/^t3-review-/, "finding:"),
+          (finding) => finding.id === id || finding.id === id.replace(/^t3-review-/, "finding:"),
         );
         if (canonical) {
           await writeDocumentArray(
             findingsPath,
             "findings",
-            canonicalFindings.map((finding) =>
-              (finding.id === canonical.id ? { ...finding, externalIssueUrl: url } : finding) as unknown as JsonObject,
+            canonicalFindings.map(
+              (finding) =>
+                (finding.id === canonical.id
+                  ? { ...finding, externalIssueUrl: url }
+                  : finding) as unknown as JsonObject,
             ),
           );
         }
@@ -1423,7 +1439,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
 
         const snoozeUntil =
           input.action === "snooze"
-            ? input.snoozeUntil ?? new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString()
+            ? (input.snoozeUntil ?? new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString())
             : null;
         const nextDisposition = {
           state: nextState,
@@ -1431,8 +1447,12 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           actor: "dashboard",
           note: input.note ?? null,
           snoozeUntil,
-          assignee: input.action === "assign" ? input.assignee ?? null :
-            input.action === "reopen" ? null : target.disposition.assignee,
+          assignee:
+            input.action === "assign"
+              ? (input.assignee ?? null)
+              : input.action === "reopen"
+                ? null
+                : target.disposition.assignee,
         } satisfies AgentDashboardFinding["disposition"];
         if (
           target.disposition.state === nextDisposition.state &&
@@ -1455,13 +1475,69 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         const legacy = await readReviewSuggestionRaw();
         const legacyTarget = legacy.find((record) => {
           const legacyId = text(record.id, 100);
-          return legacyId === target.id || legacyId === `t3-review-${target.id.replace(/^finding:/, "")}`;
+          return (
+            legacyId === target.id || legacyId === `t3-review-${target.id.replace(/^finding:/, "")}`
+          );
         });
         if (legacyTarget && (input.action === "dismiss" || input.action === "block")) {
           legacyTarget.status = input.action === "block" ? "blocked" : "dismissed";
           legacyTarget.resolved_at = now;
           await writeDocumentArray(suggestionsPath, "suggestions", legacy);
         }
+        return "applied";
+      }),
+    );
+
+  const linkFindingThread = (input: AgentDashboardLinkFindingThreadInput) =>
+    run("link finding thread", () =>
+      withMutation(async () => {
+        const findings = await readCanonicalFindingsRaw();
+        const legacyCanonicalId = input.id.replace(/^t3-review-/, "finding:");
+        const target = findings.find(
+          (finding) =>
+            finding.id === input.id ||
+            finding.fingerprint === input.id ||
+            finding.id === legacyCanonicalId,
+        );
+        if (!target) return "not-found";
+
+        const now = new Date().toISOString();
+        const nextThread = { projectId: input.projectId, threadId: input.threadId };
+        const nextDisposition = {
+          ...target.disposition,
+          state: "in-progress" as const,
+          updatedAt: now,
+          actor: "dashboard",
+          note: "Work started from the T3 Code Agent Dashboard.",
+          snoozeUntil: null,
+        } satisfies AgentDashboardFinding["disposition"];
+        const alreadyLinked =
+          target.thread?.projectId === nextThread.projectId &&
+          target.thread?.threadId === nextThread.threadId;
+        if (alreadyLinked && target.disposition.state === "in-progress") return "noop";
+
+        await writeDocumentArray(
+          findingsPath,
+          "findings",
+          findings.map(
+            (finding) =>
+              (finding.id === target.id
+                ? { ...finding, thread: nextThread, disposition: nextDisposition }
+                : finding) as unknown as JsonObject,
+          ),
+        );
+        await appendExternalActionInternal({
+          id: `action:open-thread:${target.id}:${input.threadId}`,
+          kind: "open-thread",
+          status: "succeeded",
+          actor: "dashboard",
+          targetId: input.threadId,
+          targetUrl: null,
+          findingId: target.id,
+          runId: target.lastRunId,
+          result: "linked",
+          occurredAt: now,
+        });
         return "applied";
       }),
     );
@@ -1480,10 +1556,13 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       withMutation(async () => {
         const policies = await readRepositoryPoliciesRaw();
         const byRepository = new Map(
-          policies.map((item) => [
-            String(asObject(item.repository)?.projectId ?? NodeCrypto.randomUUID()),
-            item,
-          ] as const),
+          policies.map(
+            (item) =>
+              [
+                String(asObject(item.repository)?.projectId ?? NodeCrypto.randomUUID()),
+                item,
+              ] as const,
+          ),
         );
         byRepository.set(String(policy.repository.projectId), policy as unknown as JsonObject);
         await writeDocumentArray(policiesPath, "policies", [...byRepository.values()]);
@@ -1521,17 +1600,15 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         const failures = successful ? 0 : (existing?.consecutiveFailures ?? 0) + (terminal ? 1 : 0);
         const backoffMinutes = Math.min(7 * 24 * 60, cadenceMinutes * 2 ** Math.min(failures, 6));
         const nextDueAt = terminal
-          ? new Date(Date.parse(now) + (successful ? cadenceMinutes : backoffMinutes) * 60_000).toISOString()
-          : existing?.nextDueAt ?? null;
+          ? new Date(
+              Date.parse(now) + (successful ? cadenceMinutes : backoffMinutes) * 60_000,
+            ).toISOString()
+          : (existing?.nextDueAt ?? null);
         const next: AgentDashboardRepositoryCoverage = {
           repository: { projectId: ProjectId.make(projectId) },
-          status: successful
-            ? "current"
-            : terminal
-              ? "failing"
-              : existing?.status ?? "due",
-          lastAttemptedAt: terminal ? now : existing?.lastAttemptedAt ?? now,
-          lastSucceededAt: successful ? now : existing?.lastSucceededAt ?? null,
+          status: successful ? "current" : terminal ? "failing" : (existing?.status ?? "due"),
+          lastAttemptedAt: terminal ? now : (existing?.lastAttemptedAt ?? now),
+          lastSucceededAt: successful ? now : (existing?.lastSucceededAt ?? null),
           nextDueAt,
           consecutiveFailures: Math.max(0, failures),
           lastError: successful ? null : runRecord.error,
@@ -1541,7 +1618,9 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         const byRepository = new Map(
           coverage.map((item) => {
             const decoded = decodeCoverage(item);
-            return decoded ? [String(decoded.repository.projectId), item] as const : [NodeCrypto.randomUUID(), item] as const;
+            return decoded
+              ? ([String(decoded.repository.projectId), item] as const)
+              : ([NodeCrypto.randomUUID(), item] as const);
           }),
         );
         byRepository.set(projectId, next as unknown as JsonObject);
@@ -1572,7 +1651,10 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     run("write collector state", () =>
       withMutation(async () => {
         const states = await readDocumentArray(collectorStatesPath, "collectors");
-        const next = [state as unknown as JsonObject, ...states.filter((item) => item.id !== state.id)].slice(0, 200);
+        const next = [
+          state as unknown as JsonObject,
+          ...states.filter((item) => item.id !== state.id),
+        ].slice(0, 200);
         await writeDocumentArray(collectorStatesPath, "collectors", next);
       }),
     );
@@ -1597,6 +1679,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     readFindings,
     appendFindings,
     applyFindingAction,
+    linkFindingThread,
     readRepositoryPolicies,
     writeRepositoryPolicy,
     readRepositoryCoverage,

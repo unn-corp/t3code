@@ -1213,10 +1213,16 @@ const makeWsRpcLayer = (
                 ),
               );
               const policyByRepository = new Map(
-                migrated.repositoryPolicies.map((policy) => [String(policy.repository.projectId), policy]),
+                migrated.repositoryPolicies.map((policy) => [
+                  String(policy.repository.projectId),
+                  policy,
+                ]),
               );
               const coverageByRepository = new Map(
-                migrated.repositoryCoverage.map((coverage) => [String(coverage.repository.projectId), coverage]),
+                migrated.repositoryCoverage.map((coverage) => [
+                  String(coverage.repository.projectId),
+                  coverage,
+                ]),
               );
               const repositoryPolicies = nativeSnapshot.repositories.map(
                 (repository) =>
@@ -1252,26 +1258,38 @@ const makeWsRpcLayer = (
                   observedAt: nativeSnapshot.observedAt,
                 };
               });
-              const automationRuns = yield* AgentDashboardRunHistory.readPersistedRuns(config.stateDir);
+              const automationRuns = yield* AgentDashboardRunHistory.readPersistedRuns(
+                config.stateDir,
+              );
               const activeRuns = automationRuns.filter(
-                (run) => run.status === "queued" || run.status === "running" || run.status === "ingesting",
+                (run) =>
+                  run.status === "queued" || run.status === "running" || run.status === "ingesting",
               );
               const observedAtMs = Date.parse(nativeSnapshot.observedAt);
               const openFindings = migrated.findings.filter(
                 (finding) =>
-                  finding.disposition.state !== "dismissed" && finding.disposition.state !== "blocked" &&
-                  !(finding.disposition.state === "snoozed" && finding.disposition.snoozeUntil !== null && Date.parse(finding.disposition.snoozeUntil) > observedAtMs),
+                  finding.disposition.state !== "dismissed" &&
+                  finding.disposition.state !== "blocked" &&
+                  !(
+                    finding.disposition.state === "snoozed" &&
+                    finding.disposition.snoozeUntil !== null &&
+                    Date.parse(finding.disposition.snoozeUntil) > observedAtMs
+                  ),
               );
               const attentionRepositories = new Set(
                 repositoryCoverage
-                  .filter((coverage) => ["due", "overdue", "stale", "failing"].includes(coverage.status))
+                  .filter((coverage) =>
+                    ["due", "overdue", "stale", "failing"].includes(coverage.status),
+                  )
                   .map((coverage) => String(coverage.repository.projectId)),
               );
-              for (const finding of openFindings) attentionRepositories.add(String(finding.repository.projectId));
-              const lastRunAt = automationRuns
-                .map((run) => run.updatedAt)
-                .toSorted()
-                .at(-1) ?? null;
+              for (const finding of openFindings)
+                attentionRepositories.add(String(finding.repository.projectId));
+              const lastRunAt =
+                automationRuns
+                  .map((run) => run.updatedAt)
+                  .toSorted()
+                  .at(-1) ?? null;
               return {
                 ...nativeSnapshot,
                 externalFeed: migrated.externalFeed,
@@ -1288,11 +1306,18 @@ const makeWsRpcLayer = (
                 collectorStates: migrated.collectorStates,
                 portfolioHealth: {
                   repositoryCount: nativeSnapshot.repositories.length,
-                  healthyRepositoryCount: Math.max(0, nativeSnapshot.repositories.length - attentionRepositories.size),
+                  healthyRepositoryCount: Math.max(
+                    0,
+                    nativeSnapshot.repositories.length - attentionRepositories.size,
+                  ),
                   attentionRepositoryCount: attentionRepositories.size,
-                  staleRepositoryCount: repositoryCoverage.filter((coverage) => coverage.status === "stale").length,
+                  staleRepositoryCount: repositoryCoverage.filter(
+                    (coverage) => coverage.status === "stale",
+                  ).length,
                   openFindingCount: openFindings.length,
-                  criticalFindingCount: openFindings.filter((finding) => finding.severity === "critical").length,
+                  criticalFindingCount: openFindings.filter(
+                    (finding) => finding.severity === "critical",
+                  ).length,
                   activeRunCount: activeRuns.length,
                   lastRunAt,
                   observedAt: nativeSnapshot.observedAt,
@@ -1468,6 +1493,38 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "agent-dashboard" },
           ),
+        [WS_METHODS.agentDashboardLinkFindingThread]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardLinkFindingThread,
+            dashboardStore.linkFindingThread(input).pipe(
+              Effect.map((outcome) =>
+                outcome === "not-found"
+                  ? {
+                      ok: false as const,
+                      outcome: "not-found" as const,
+                      message: "Finding not found.",
+                      targetId: input.id,
+                      targetUrl: null,
+                    }
+                  : {
+                      ok: true as const,
+                      outcome,
+                      message:
+                        outcome === "noop" ? "Finding is already linked to that chat." : null,
+                      targetId: input.id,
+                      targetUrl: null,
+                    },
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to link the Agent Dashboard finding to its chat.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
         [WS_METHODS.agentDashboardUpdateRepositoryPolicy]: (input) =>
           observeRpcEffect(
             WS_METHODS.agentDashboardUpdateRepositoryPolicy,
@@ -1511,13 +1568,20 @@ const makeWsRpcLayer = (
                   }),
               });
               const findingCount = yield* dashboardStore.appendFindings(collected.findings);
-              yield* Effect.forEach(collected.states, (state) => dashboardStore.writeCollectorState(state), {
-                concurrency: 1,
-                discard: true,
-              });
+              yield* Effect.forEach(
+                collected.states,
+                (state) => dashboardStore.writeCollectorState(state),
+                {
+                  concurrency: 1,
+                  discard: true,
+                },
+              );
               return {
                 ok: true as const,
-                outcome: findingCount > 0 || collected.states.length > 0 ? ("applied" as const) : ("noop" as const),
+                outcome:
+                  findingCount > 0 || collected.states.length > 0
+                    ? ("applied" as const)
+                    : ("noop" as const),
                 message: `Collection completed with ${findingCount} finding${findingCount === 1 ? "" : "s"}.`,
                 targetId: input.projectId ? String(input.projectId) : null,
                 targetUrl: null,

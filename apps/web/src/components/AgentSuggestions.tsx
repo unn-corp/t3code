@@ -1,9 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  AgentDashboardDispositionAction,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import type { AgentDashboardDispositionAction, EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
   AlertCircleIcon,
@@ -174,6 +171,9 @@ export function AgentSuggestions() {
   const dashboardSnapshot = useAgentDashboardSnapshot();
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const applyFindingAction = useAtomCommand(agentDashboardEnvironment.applyFindingAction, {
+    reportFailure: false,
+  });
+  const linkFindingThread = useAtomCommand(agentDashboardEnvironment.linkFindingThread, {
     reportFailure: false,
   });
   const reviewSuggestion = useAtomCommand(agentDashboardEnvironment.reviewSuggestion, {
@@ -459,13 +459,6 @@ export function AgentSuggestions() {
     [createGithubIssueCommand, creatingIssueId, dashboardSnapshot, openGithubIssue],
   );
 
-  const openSuggestionThread = (threadId: string, environmentId: string) => {
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: { environmentId, threadId },
-    });
-  };
-
   const startSuggestionWork = useCallback(
     async (suggestion: NativeSuggestion) => {
       if (startingSuggestionId !== null) return;
@@ -482,6 +475,14 @@ export function AgentSuggestions() {
             description: "The suggestion needs a T3 Code environment to start a work session.",
           }),
         );
+        return;
+      }
+
+      if (suggestion.threadId) {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: suggestion.threadId },
+        });
         return;
       }
 
@@ -562,6 +563,45 @@ export function AgentSuggestions() {
           return;
         }
 
+        const findingId = suggestion.findingId ?? suggestion.legacySuggestionId;
+        if (findingId) {
+          const linkResult = await linkFindingThread({
+            environmentId,
+            input: {
+              id: findingId,
+              projectId: project.id,
+              threadId,
+            },
+          });
+          if (linkResult._tag === "Failure") {
+            if (!isAtomCommandInterrupted(linkResult)) {
+              const error = squashAtomCommandFailure(linkResult);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "warning",
+                  title: "Work started without a finding link",
+                  description:
+                    error instanceof Error
+                      ? `The chat is running, but the dashboard could not save its link: ${error.message}`
+                      : "The chat is running, but the dashboard could not save its link.",
+                }),
+              );
+            }
+          } else if (!linkResult.value.ok || linkResult.value.outcome === "not-found") {
+            toastManager.add(
+              stackedThreadToast({
+                type: "warning",
+                title: "Work started without a finding link",
+                description:
+                  linkResult.value.message ??
+                  "The chat is running, but the finding could not be linked.",
+              }),
+            );
+          } else {
+            void dashboardSnapshot.refresh();
+          }
+        }
+
         await waitForStartedServerThread(scopeThreadRef(environmentId, threadId));
         await navigate({
           to: "/$environmentId/$threadId",
@@ -584,6 +624,8 @@ export function AgentSuggestions() {
     },
     [
       dashboardSnapshot.environmentId,
+      dashboardSnapshot.refresh,
+      linkFindingThread,
       navigate,
       primaryEnvironment?.environmentId,
       projects,
@@ -634,7 +676,12 @@ export function AgentSuggestions() {
       {suggestions.length > 0 ? (
         <div className="grid gap-3">
           {suggestions.map((suggestion) => (
-            <Card key={suggestion.id}>
+            <Card
+              className={
+                suggestion.findingState === "in-progress" ? "border-info/40 bg-info/4" : undefined
+              }
+              key={suggestion.id}
+            >
               <CardHeader className="gap-3 p-4 sm:p-5">
                 <div className="flex items-start gap-3">
                   <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted">
@@ -659,10 +706,16 @@ export function AgentSuggestions() {
                         <Badge
                           size="sm"
                           variant={
-                            suggestion.findingState === "open" ? "warning" : "outline"
+                            suggestion.findingState === "open"
+                              ? "warning"
+                              : suggestion.findingState === "in-progress"
+                                ? "info"
+                                : "outline"
                           }
                         >
-                          {suggestion.findingState}
+                          {suggestion.findingState === "in-progress"
+                            ? "In progress"
+                            : suggestion.findingState}
                         </Badge>
                       ) : null}
                     </div>
@@ -741,10 +794,16 @@ export function AgentSuggestions() {
                   >
                     {startingSuggestionId === suggestion.id ? (
                       <LoaderIcon className="animate-spin" />
+                    ) : suggestion.threadId ? (
+                      <ExternalLinkIcon />
                     ) : (
                       <BotIcon />
                     )}
-                    {startingSuggestionId === suggestion.id ? "Starting work" : "Work on this"}
+                    {startingSuggestionId === suggestion.id
+                      ? "Starting work"
+                      : suggestion.threadId
+                        ? "Open working chat"
+                        : "Work on this"}
                   </Button>
                   <Button
                     className="shrink-0"
@@ -784,18 +843,6 @@ export function AgentSuggestions() {
                   >
                     View finding
                   </Button>
-                  {suggestion.threadId ? (
-                    <Button
-                      className="shrink-0"
-                      onClick={() =>
-                        openSuggestionThread(suggestion.threadId!, suggestion.environmentId)
-                      }
-                      size="sm"
-                      variant="outline"
-                    >
-                      Open agent
-                    </Button>
-                  ) : null}
                 </div>
               </CardPanel>
             </Card>
@@ -969,23 +1016,17 @@ export function AgentSuggestions() {
               >
                 {startingSuggestionId === selectedSuggestion.id ? (
                   <LoaderIcon className="animate-spin" />
+                ) : selectedSuggestion.threadId ? (
+                  <ExternalLinkIcon />
                 ) : (
                   <BotIcon />
                 )}
-                {startingSuggestionId === selectedSuggestion.id ? "Starting work" : "Work on this"}
+                {startingSuggestionId === selectedSuggestion.id
+                  ? "Starting work"
+                  : selectedSuggestion.threadId
+                    ? "Open working chat"
+                    : "Work on this"}
               </Button>
-              {selectedSuggestion.threadId ? (
-                <Button
-                  onClick={() =>
-                    openSuggestionThread(
-                      selectedSuggestion.threadId!,
-                      selectedSuggestion.environmentId,
-                    )
-                  }
-                >
-                  Open agent
-                </Button>
-              ) : null}
             </DialogFooter>
           </DialogPopup>
         ) : null}

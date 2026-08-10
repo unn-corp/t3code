@@ -9,6 +9,7 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 
@@ -112,16 +113,21 @@ it.effect("preserves feed origin metadata for project and chat navigation", () =
   }),
 );
 
-it.effect("hides missing and linked-worktree review targets", () =>
+it.effect("hides missing and linked-worktree review targets but accepts submodule checkouts", () =>
   Effect.promise(async () => {
     const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-review-targets-"));
     const repositoryPath = NodePath.join(stateDir, "repository");
+    const submodulePath = NodePath.join(stateDir, "submodule-checkout");
+    const submoduleGitPath = NodePath.join(stateDir, "submodule-git");
     const linkedWorktreePath = NodePath.join(stateDir, "Photonic-wt-216");
     const suggestionsPath = NodePath.join(stateDir, "agent-dashboard", "suggestions.json");
     const createdAt = "2026-08-09T00:00:00.000Z";
 
     try {
       await initializeGitRepository(repositoryPath);
+      await initializeGitRepository(submodulePath);
+      await NodeFSP.rename(NodePath.join(submodulePath, ".git"), submoduleGitPath);
+      await NodeFSP.writeFile(NodePath.join(submodulePath, ".git"), "gitdir: ../submodule-git\n");
       NodeChildProcess.execFileSync("git", [
         "-C",
         repositoryPath,
@@ -154,6 +160,14 @@ it.effect("hides missing and linked-worktree review targets", () =>
               repository: { name: "Photonic-wt-216", path: linkedWorktreePath },
             },
             {
+              id: "submodule",
+              title: "Durable submodule checkout finding",
+              source: "code_review",
+              status: "pending",
+              created_at: createdAt,
+              repository: { name: "submodule-checkout", path: submodulePath },
+            },
+            {
               id: "missing",
               title: "Missing checkout finding",
               source: "code_review",
@@ -172,7 +186,10 @@ it.effect("hides missing and linked-worktree review targets", () =>
       const beforeStat = await NodeFSP.stat(suggestionsPath);
       const visible = await Effect.runPromise(store.readReviewSuggestions);
 
-      expect(visible.map((suggestion) => suggestion.id)).toEqual(["stable"]);
+      expect(visible.map((suggestion) => suggestion.id)).toEqual(
+        expect.arrayContaining(["stable", "submodule"]),
+      );
+      expect(visible).toHaveLength(2);
       // Read path must not rewrite suggestions (no status mutation side effects).
       const afterStat = await NodeFSP.stat(suggestionsPath);
       expect(afterStat.mtimeMs).toBe(beforeStat.mtimeMs);
@@ -245,7 +262,9 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
 
 it.effect("deduplicates canonical findings across runs and preserves disposition", () =>
   Effect.promise(async () => {
-    const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-canonical-findings-"));
+    const stateDir = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "t3-canonical-findings-"),
+    );
     const repositoryPath = NodePath.join(stateDir, "repository");
 
     try {
@@ -315,6 +334,85 @@ it.effect("deduplicates canonical findings across runs and preserves disposition
         },
         thread: { projectId: "project-1", threadId: "thread-1" },
       });
+    } finally {
+      await NodeFSP.rm(stateDir, { recursive: true, force: true });
+    }
+  }),
+);
+
+it.effect("links a finding to its working chat and records the transition", () =>
+  Effect.promise(async () => {
+    const stateDir = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "t3-finding-thread-link-"),
+    );
+    const repositoryPath = NodePath.join(stateDir, "repository");
+
+    try {
+      await initializeGitRepository(repositoryPath);
+      const store = AgentDashboardStore.getStore(stateDir);
+      await Effect.runPromise(
+        store.appendReviewSuggestions({
+          jobId: "review-job-1",
+          projectId: "project-1",
+          repository: { name: "repository", path: repositoryPath },
+          findings: [
+            {
+              title: "The parser drops the final record",
+              category: "bug",
+              summary: "A line-oriented parser never flushes its final buffered record.",
+              impact: "The last item silently disappears from imports.",
+              confidence: "high",
+              evidence: ["src/parser.ts:42"],
+              nextStep: "Flush the buffer before returning.",
+              githubIssueTitle: "Flush parser buffer",
+              githubIssueBody: "## Problem",
+            },
+          ],
+        }),
+      );
+
+      const [finding] = await Effect.runPromise(store.readFindings);
+      expect(finding).toBeDefined();
+      expect(
+        await Effect.runPromise(
+          store.linkFindingThread({
+            id: finding!.id,
+            projectId: ProjectId.make("project-1"),
+            threadId: ThreadId.make("thread-working"),
+          }),
+        ),
+      ).toBe("applied");
+
+      const [linked] = await Effect.runPromise(store.readFindings);
+      expect(linked).toMatchObject({
+        id: finding!.id,
+        thread: { projectId: "project-1", threadId: "thread-working" },
+        disposition: {
+          state: "in-progress",
+          note: "Work started from the T3 Code Agent Dashboard.",
+        },
+      });
+      expect(await Effect.runPromise(store.readExternalActions)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "open-thread",
+            status: "succeeded",
+            findingId: finding!.id,
+            targetId: "thread-working",
+            result: "linked",
+          }),
+        ]),
+      );
+      expect(
+        await Effect.runPromise(
+          store.linkFindingThread({
+            id: finding!.id,
+            projectId: ProjectId.make("project-1"),
+            threadId: ThreadId.make("thread-working"),
+          }),
+        ),
+      ).toBe("noop");
+      expect(await Effect.runPromise(store.readExternalActions)).toHaveLength(1);
     } finally {
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
     }
