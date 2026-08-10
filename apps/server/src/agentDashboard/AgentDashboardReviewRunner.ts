@@ -24,6 +24,9 @@ import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 const REVIEW_MODEL = "gpt-5.6-luna";
 const REVIEW_REASONING_EFFORT = "xhigh";
 
+/** Logical automation kind recorded on durable runs. */
+export const REVIEW_KIND = "repository-review";
+
 /** The migrated review keeps the former Luna/max-reasoning contract explicit. */
 export const REVIEW_MODEL_SELECTION: ModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -42,6 +45,11 @@ export interface AgentDashboardReviewRunResult {
   readonly startedAt: string;
 }
 
+export interface AgentDashboardReviewRunOptions {
+  /** When set to a real project id, review that project; otherwise pick one stable project. */
+  readonly projectId?: ProjectId | null | undefined;
+}
+
 export class AgentDashboardReviewRunnerError extends Schema.TaggedErrorClass<AgentDashboardReviewRunnerError>()(
   "AgentDashboardReviewRunnerError",
   {
@@ -52,7 +60,14 @@ export class AgentDashboardReviewRunnerError extends Schema.TaggedErrorClass<Age
 ) {}
 
 export interface AgentDashboardReviewRunnerService {
-  /** Select one durable T3 project and start its native review thread. */
+  /**
+   * Start one native review thread for a single project. Without an explicit
+   * target, selects one stable T3 project (random among eligible).
+   */
+  readonly runReview: (
+    options?: AgentDashboardReviewRunOptions,
+  ) => Effect.Effect<AgentDashboardReviewRunResult, AgentDashboardReviewRunnerError>;
+  /** @deprecated Prefer runReview — kept as an alias for callers. */
   readonly runRandomReview: Effect.Effect<
     AgentDashboardReviewRunResult,
     AgentDashboardReviewRunnerError
@@ -99,10 +114,12 @@ const githubRepositoryForProject = (project: OrchestrationProjectShell): string 
   for (const candidate of candidates) {
     if (!candidate) continue;
     const match = candidate.match(/github\.com[/:]([^/\s]+)\/([^/\s#]+?)(?:\.git)?$/i);
-    if (match?.[1] && match[2]) return `${match[1]}/${match[2]}`;
+    if (match?.[1] && match?.[2]) return `${match[1]}/${match[2]}`;
   }
   return null;
 };
+
+const PENDING_SELECTION = "pending-selection";
 
 const stableProjects = Effect.fn("AgentDashboardReviewRunner.stableProjects")(function* (
   projects: ReadonlyArray<OrchestrationProjectShell>,
@@ -157,8 +174,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const runRandomReview: AgentDashboardReviewRunnerService["runRandomReview"] = Effect.gen(
-    function* () {
+  const runReview: AgentDashboardReviewRunnerService["runReview"] = (options = {}) =>
+    Effect.gen(function* () {
       const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
         Effect.mapError(
           (cause) =>
@@ -179,9 +196,27 @@ const make = Effect.gen(function* () {
         );
       }
 
-      const randomValue = yield* randomUuid;
-      const randomIndex = Number.parseInt(randomValue.slice(0, 8), 16) % projects.length;
-      const project = projects[randomIndex] ?? null;
+      const requestedId = options.projectId ? String(options.projectId) : null;
+      const explicitTarget =
+        requestedId && requestedId !== PENDING_SELECTION
+          ? (projects.find((project) => String(project.id) === requestedId) ?? null)
+          : null;
+
+      if (requestedId && requestedId !== PENDING_SELECTION && explicitTarget === null) {
+        return yield* Effect.fail(
+          new AgentDashboardReviewRunnerError({
+            operation: "select project",
+            message: "The requested T3 project is not available for review.",
+          }),
+        );
+      }
+
+      let project = explicitTarget;
+      if (project === null) {
+        const randomValue = yield* randomUuid;
+        const randomIndex = Number.parseInt(randomValue.slice(0, 8), 16) % projects.length;
+        project = projects[randomIndex] ?? null;
+      }
       if (project === null) {
         return yield* Effect.fail(
           new AgentDashboardReviewRunnerError({
@@ -190,6 +225,7 @@ const make = Effect.gen(function* () {
           }),
         );
       }
+
       const startedAt = yield* nowIso;
       const threadId = ThreadId.make(yield* randomUuid);
       const title = `Repository review: ${project.title}`.slice(0, 80);
@@ -247,10 +283,11 @@ const make = Effect.gen(function* () {
         threadId,
         startedAt,
       } satisfies AgentDashboardReviewRunResult;
-    },
-  );
+    });
 
-  return { runRandomReview } satisfies AgentDashboardReviewRunnerService;
+  const runRandomReview = runReview();
+
+  return { runReview, runRandomReview } satisfies AgentDashboardReviewRunnerService;
 });
 
 export const layer = Layer.effect(AgentDashboardReviewRunner, make);

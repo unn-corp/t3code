@@ -72,6 +72,8 @@ import {
   loadAgentDashboardSnapshot,
 } from "./agentDashboard/AgentDashboardSnapshot.ts";
 import * as AgentDashboardStore from "./agentDashboard/AgentDashboardStore.ts";
+import * as AgentDashboardRunHistory from "./agentDashboard/AgentDashboardRunHistory.ts";
+import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
 import * as NodeOS from "node:os";
 
@@ -405,6 +407,7 @@ const makeWsRpcLayer = (
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
       const dashboardStore = AgentDashboardStore.getStore(config.stateDir);
+      const reviewJobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -1063,66 +1066,23 @@ const makeWsRpcLayer = (
           );
       };
 
-      const runAgentDashboardInvestigation = Effect.gen(function* () {
-        const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot();
-        const eligibleProjects = yield* Effect.forEach(
-          shellSnapshot.projects,
-          (project) =>
-            Effect.tryPromise({
-              try: () => AgentDashboardStore.isStableRepositoryPath(project.workspaceRoot),
-              catch: () => false,
-            }).pipe(
-              Effect.catch(() => Effect.succeed(false)),
-              Effect.map((isStable) => (isStable ? project : null)),
-            ),
-          { concurrency: 4 },
-        );
+      // Manual investigation uses the same server-scoped job service as the
+      // two-hour scheduler: one run and one thread unless a target is selected.
+      const runAgentDashboardInvestigation = reviewJobService
+        .enqueueReview({
+          trigger: "manual",
+          idempotencyKey: "manual:repository-review",
+        })
+        .pipe(Effect.asVoid);
 
-        for (const project of eligibleProjects) {
-          if (project === null) continue;
-
-          const createdAt = yield* nowIso;
-          const threadId = ThreadId.make(yield* randomUUID);
-          const title = `Repository review: ${project.title}`.slice(0, 80);
-          const modelSelection =
-            project.defaultModelSelection ??
-            ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection();
-          const normalizedCommand = yield* normalizeDispatchCommand({
-            type: "thread.turn.start",
-            commandId: yield* serverCommandId("agent-dashboard-review"),
-            threadId,
-            message: {
-              messageId: MessageId.make(yield* randomUUID),
-              role: "user",
-              text: [
-                "Run a read-only repository review for this T3 Code project.",
-                `Inspect only the main checkout at ${project.workspaceRoot}.`,
-                "Do not create, select, or depend on a linked Git worktree.",
-                "Do not modify files. Report only high-confidence findings with a title, category, impact, evidence, and next step.",
-              ].join("\n\n"),
-              attachments: [],
-            },
-            modelSelection,
-            titleSeed: title,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            bootstrap: {
-              createThread: {
-                projectId: project.id,
-                title,
-                modelSelection,
-                runtimeMode: "full-access",
-                interactionMode: "default",
-                branch: null,
-                worktreePath: null,
-                createdAt,
-              },
-            },
-            createdAt,
-          });
-          yield* dispatchNormalizedCommand(normalizedCommand);
-        }
-      });
+      const appliedMutation = (targetId: string | null = null) =>
+        ({
+          ok: true as const,
+          outcome: "applied" as const,
+          message: null,
+          targetId,
+          targetUrl: null,
+        }) as const;
 
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
@@ -1246,6 +1206,13 @@ const makeWsRpcLayer = (
                 reviewSchedule: yield* AgentDashboardReviewScheduler.readPersistedStatus(
                   config.stateDir,
                 ),
+                automationRuns: yield* AgentDashboardRunHistory.readPersistedRuns(config.stateDir),
+                // Canonical collections land in later workstreams; keep the
+                // snapshot type complete so older producers stay assignable.
+                findings: [],
+                repositoryPolicies: [],
+                repositoryCoverage: [],
+                externalActions: [],
               };
             }),
             { "rpc.aggregate": "agent-dashboard" },
@@ -1254,7 +1221,17 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentDashboardDismissFeedCard,
             dashboardStore.dismissFeedCard(input.id).pipe(
-              Effect.map(() => ({ ok: true }) as const),
+              Effect.map((changed) =>
+                changed
+                  ? appliedMutation(String(input.id))
+                  : {
+                      ok: false as const,
+                      outcome: "not-found" as const,
+                      message: "Feed card not found.",
+                      targetId: String(input.id),
+                      targetUrl: null,
+                    },
+              ),
               Effect.mapError(
                 (cause) =>
                   new AgentDashboardError({
@@ -1269,7 +1246,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentDashboardClearFeed,
             dashboardStore.clearFeed.pipe(
-              Effect.map(() => ({ ok: true }) as const),
+              Effect.map(() => appliedMutation()),
               Effect.mapError(
                 (cause) =>
                   new AgentDashboardError({
@@ -1284,7 +1261,17 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentDashboardReviewSuggestion,
             dashboardStore.reviewSuggestion(input.id, input.action).pipe(
-              Effect.map(() => ({ ok: true }) as const),
+              Effect.map((changed) =>
+                changed
+                  ? appliedMutation(input.id)
+                  : {
+                      ok: false as const,
+                      outcome: "not-found" as const,
+                      message: "Review suggestion not found.",
+                      targetId: input.id,
+                      targetUrl: null,
+                    },
+              ),
               Effect.mapError(
                 (cause) =>
                   new AgentDashboardError({
@@ -1299,7 +1286,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentDashboardRunInvestigation,
             runAgentDashboardInvestigation.pipe(
-              Effect.map(() => ({ ok: true }) as const),
+              Effect.map(() => appliedMutation()),
               Effect.mapError(
                 (cause) =>
                   new AgentDashboardError({
@@ -1314,7 +1301,17 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentDashboardCreateGithubIssue,
             dashboardStore.createGithubIssue(input.id).pipe(
-              Effect.map(() => ({ ok: true }) as const),
+              Effect.map((changed) =>
+                changed
+                  ? appliedMutation(input.id)
+                  : {
+                      ok: false as const,
+                      outcome: "not-found" as const,
+                      message: "Review suggestion not found.",
+                      targetId: input.id,
+                      targetUrl: null,
+                    },
+              ),
               Effect.mapError(
                 (cause) =>
                   new AgentDashboardError({
