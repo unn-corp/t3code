@@ -593,6 +593,36 @@ export function AgentSuggestions() {
                   </Button>
                   <Button
                     className="shrink-0"
+                    disabled={
+                      creatingIssueId !== null ||
+                      (!suggestion.githubIssueUrl &&
+                        !suggestion.durableSuggestion?.repository.githubRepo)
+                    }
+                    onClick={() => void createGithubIssueForSuggestion(suggestion)}
+                    size="sm"
+                    title={
+                      suggestion.githubIssueUrl ||
+                      suggestion.durableSuggestion?.repository.githubRepo
+                        ? undefined
+                        : "No GitHub origin was detected"
+                    }
+                    variant="outline"
+                  >
+                    {creatingIssueId === suggestion.id ? (
+                      <LoaderIcon className="animate-spin" />
+                    ) : suggestion.githubIssueUrl ? (
+                      <ExternalLinkIcon />
+                    ) : (
+                      <GithubIcon />
+                    )}
+                    {creatingIssueId === suggestion.id
+                      ? "Creating issue"
+                      : suggestion.githubIssueUrl
+                        ? "Open GitHub issue"
+                        : "Create GitHub issue"}
+                  </Button>
+                  <Button
+                    className="shrink-0"
                     onClick={() => setSelectedSuggestionId(suggestion.id)}
                     size="sm"
                     variant="outline"

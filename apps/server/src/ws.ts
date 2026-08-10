@@ -19,6 +19,7 @@ import {
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
+  MessageId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
@@ -71,6 +72,7 @@ import {
   loadAgentDashboardSnapshot,
 } from "./agentDashboard/AgentDashboardSnapshot.ts";
 import * as AgentDashboardStore from "./agentDashboard/AgentDashboardStore.ts";
+import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
 import * as NodeOS from "node:os";
 
 import { discoverAgentSessions } from "./provider/agentSessionDiscovery.ts";
@@ -1061,6 +1063,67 @@ const makeWsRpcLayer = (
           );
       };
 
+      const runAgentDashboardInvestigation = Effect.gen(function* () {
+        const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+        const eligibleProjects = yield* Effect.forEach(
+          shellSnapshot.projects,
+          (project) =>
+            Effect.tryPromise({
+              try: () => AgentDashboardStore.isStableRepositoryPath(project.workspaceRoot),
+              catch: () => false,
+            }).pipe(
+              Effect.catch(() => Effect.succeed(false)),
+              Effect.map((isStable) => (isStable ? project : null)),
+            ),
+          { concurrency: 4 },
+        );
+
+        for (const project of eligibleProjects) {
+          if (project === null) continue;
+
+          const createdAt = yield* nowIso;
+          const threadId = ThreadId.make(yield* randomUUID);
+          const title = `Repository review: ${project.title}`.slice(0, 80);
+          const modelSelection =
+            project.defaultModelSelection ??
+            ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection();
+          const normalizedCommand = yield* normalizeDispatchCommand({
+            type: "thread.turn.start",
+            commandId: yield* serverCommandId("agent-dashboard-review"),
+            threadId,
+            message: {
+              messageId: MessageId.make(yield* randomUUID),
+              role: "user",
+              text: [
+                "Run a read-only repository review for this T3 Code project.",
+                `Inspect only the main checkout at ${project.workspaceRoot}.`,
+                "Do not create, select, or depend on a linked Git worktree.",
+                "Do not modify files. Report only high-confidence findings with a title, category, impact, evidence, and next step.",
+              ].join("\n\n"),
+              attachments: [],
+            },
+            modelSelection,
+            titleSeed: title,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: project.id,
+                title,
+                modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt,
+              },
+            },
+            createdAt,
+          });
+          yield* dispatchNormalizedCommand(normalizedCommand);
+        }
+      });
+
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const providers = yield* providerRegistry.getProviders;
@@ -1180,6 +1243,9 @@ const makeWsRpcLayer = (
                 externalFeed: migrated.externalFeed,
                 researchFindings: migrated.researchFindings,
                 reviewSuggestions: migrated.reviewSuggestions,
+                reviewSchedule: yield* AgentDashboardReviewScheduler.readPersistedStatus(
+                  config.stateDir,
+                ),
               };
             }),
             { "rpc.aggregate": "agent-dashboard" },
@@ -1232,7 +1298,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.agentDashboardRunInvestigation]: (_input) =>
           observeRpcEffect(
             WS_METHODS.agentDashboardRunInvestigation,
-            dashboardStore.runInvestigation.pipe(
+            runAgentDashboardInvestigation.pipe(
               Effect.map(() => ({ ok: true }) as const),
               Effect.mapError(
                 (cause) =>

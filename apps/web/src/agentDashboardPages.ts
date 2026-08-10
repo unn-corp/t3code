@@ -9,6 +9,7 @@ import type {
   AgentDashboardReviewSuggestion,
   AgentDashboardSnapshot,
 } from "@t3tools/contracts";
+import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
 export type NativeAgentState =
   | "running"
@@ -36,8 +37,26 @@ export interface NativeAgentFeedItem {
   readonly tags: ReadonlyArray<string>;
   readonly state: NativeAgentState;
   readonly updatedAt: string;
+  readonly chatLabel?: string;
   readonly durableCard?: AgentDashboardFeedCard;
 }
+
+type FeedProjectContext = Pick<
+  EnvironmentProject,
+  "environmentId" | "id" | "title" | "workspaceRoot"
+>;
+type FeedThreadContext = Pick<
+  EnvironmentThreadShell,
+  | "environmentId"
+  | "id"
+  | "projectId"
+  | "title"
+  | "modelSelection"
+  | "branch"
+  | "worktreePath"
+  | "updatedAt"
+  | "archivedAt"
+>;
 
 export interface NativeResearchFinding {
   readonly id: string;
@@ -367,9 +386,67 @@ export function buildNativeAgentFeedFromSnapshot(
 export function buildNativeAgentFeedFromDurableCards(
   cards: ReadonlyArray<AgentDashboardFeedCard>,
   environmentId: string,
+  projects: ReadonlyArray<FeedProjectContext> = [],
+  threads: ReadonlyArray<FeedThreadContext> = [],
 ): ReadonlyArray<NativeAgentFeedItem> {
   return cards
     .map((card) => {
+      const origin = card.origin ?? null;
+      const threadById = origin?.threadId
+        ? (threads.find(
+            (thread) => thread.environmentId === environmentId && thread.id === origin.threadId,
+          ) ?? null)
+        : null;
+      const threadByPath = origin?.projectPath
+        ? (threads.find(
+            (thread) =>
+              thread.environmentId === environmentId &&
+              thread.worktreePath !== null &&
+              normalizeProjectPathForComparison(thread.worktreePath) ===
+                normalizeProjectPathForComparison(origin.projectPath!),
+          ) ?? null)
+        : null;
+      const referencedThread = threadById ?? (origin?.threadId ? null : threadByPath);
+      let project: FeedProjectContext | null = null;
+      if (referencedThread) {
+        project =
+          projects.find(
+            (candidate) =>
+              candidate.environmentId === environmentId &&
+              candidate.id === referencedThread.projectId,
+          ) ?? null;
+      }
+      if (!project && origin?.projectId) {
+        project =
+          projects.find(
+            (candidate) =>
+              candidate.environmentId === environmentId && candidate.id === origin.projectId,
+          ) ?? null;
+      }
+      if (!project && origin?.projectPath) {
+        project =
+          projects.find(
+            (candidate) =>
+              candidate.environmentId === environmentId &&
+              normalizeProjectPathForComparison(candidate.workspaceRoot) ===
+                normalizeProjectPathForComparison(origin.projectPath!),
+          ) ?? null;
+      }
+      const latestProjectThread = project
+        ? (threads
+            .filter(
+              (thread) => thread.environmentId === environmentId && thread.projectId === project.id,
+            )
+            .toSorted(compareDashboardRecency)[0] ?? null)
+        : null;
+      const targetThread = referencedThread ?? (origin?.threadId ? null : latestProjectThread);
+      const targetThreadId = targetThread?.id ?? origin?.threadId ?? "";
+      const projectPath = project?.workspaceRoot ?? origin?.projectPath ?? "";
+      const projectName =
+        project?.title ??
+        origin?.projectName ??
+        projectPathLeaf(projectPath) ??
+        "Project unavailable";
       const updatedAt = new Date(card.ts * 1_000).toISOString();
       const state: NativeAgentState =
         card.level === "error"
@@ -382,25 +459,35 @@ export function buildNativeAgentFeedFromDurableCards(
       return {
         id: `feed:${card.id}`,
         environmentId,
-        projectId: "agent-feed",
-        projectName: "Agent Feed",
-        workspaceRoot: "",
-        threadId: "",
+        projectId: project?.id ?? targetThread?.projectId ?? origin?.projectId ?? "agent-feed",
+        projectName,
+        workspaceRoot: projectPath,
+        threadId: targetThreadId,
         title: card.title ?? `${card.agent} update`,
-        branch: null,
-        worktreePath: null,
-        provider: card.agent,
-        model: "",
+        branch: targetThread?.branch ?? null,
+        worktreePath: targetThread?.worktreePath ?? null,
+        provider: targetThread?.modelSelection.instanceId ?? card.agent,
+        model: targetThread?.modelSelection.model ?? "",
         summary: card.text ?? card.title ?? `${card.agent} update`,
         kind: "activity",
         level: card.level,
         tags: card.tags,
         state,
         updatedAt,
+        ...(targetThreadId
+          ? { chatLabel: threadById || threadByPath ? "Open chat" : "Open latest chat" }
+          : {}),
         durableCard: card,
       } satisfies NativeAgentFeedItem;
     })
     .toSorted(compareDashboardRecency);
+}
+
+function projectPathLeaf(path: string): string | null {
+  const normalized = path.trim().replace(/[\\/]+$/, "");
+  if (!normalized) return null;
+  const leaf = normalized.split(/[\\/]/).at(-1)?.trim();
+  return leaf || null;
 }
 
 export function buildNativeResearchFindingsFromSnapshot(
