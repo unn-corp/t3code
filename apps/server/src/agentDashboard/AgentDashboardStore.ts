@@ -13,16 +13,19 @@ import * as NodeCrypto from "node:crypto";
 import type {
   AgentDashboardFeedAction,
   AgentDashboardFeedCard,
+  AgentDashboardFeedOrigin,
   AgentDashboardResearchFinding,
   AgentDashboardReviewSuggestion,
 } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 
 const MAX_FEED_CARDS = 200;
 const MAX_RESEARCH_FINDINGS = 500;
 const MAX_TEXT = 8_000;
-const REVIEW_JOB_NAME = "Random Codebase Review";
+const REVIEW_SUGGESTION_SOURCE = "code_review";
+const REVIEW_SUGGESTION_PROFILE = "t3-random-codebase-review";
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const GITHUB_ISSUE_URL_PATTERN =
   /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[0-9]+$/;
@@ -40,6 +43,29 @@ export class AgentDashboardStoreError extends Schema.TaggedErrorClass<AgentDashb
 export interface AgentDashboardFeedImage {
   readonly contentType: string;
   readonly bytes: Uint8Array;
+}
+
+export interface AgentDashboardReviewFindingInput {
+  readonly title: string;
+  readonly category: string;
+  readonly summary: string;
+  readonly impact: string;
+  readonly confidence: string;
+  readonly evidence: ReadonlyArray<string>;
+  readonly nextStep: string;
+  readonly githubIssueTitle: string;
+  readonly githubIssueBody: string;
+  readonly markdown?: string | undefined;
+}
+
+export interface AgentDashboardReviewIngestInput {
+  readonly jobId: string;
+  readonly repository: {
+    readonly name: string;
+    readonly path: string;
+    readonly githubRepo?: string | null | undefined;
+  };
+  readonly findings: ReadonlyArray<AgentDashboardReviewFindingInput>;
 }
 
 export interface AgentDashboardStoreService {
@@ -60,11 +86,13 @@ export interface AgentDashboardStoreService {
     ReadonlyArray<AgentDashboardReviewSuggestion>,
     AgentDashboardStoreError
   >;
+  readonly appendReviewSuggestions: (
+    input: AgentDashboardReviewIngestInput,
+  ) => Effect.Effect<number, AgentDashboardStoreError>;
   readonly reviewSuggestion: (
     id: string,
     action: "dismiss" | "block",
   ) => Effect.Effect<boolean, AgentDashboardStoreError>;
-  readonly runInvestigation: Effect.Effect<void, AgentDashboardStoreError>;
   readonly createGithubIssue: (id: string) => Effect.Effect<boolean, AgentDashboardStoreError>;
   readonly feedToken: Effect.Effect<string, AgentDashboardStoreError>;
 }
@@ -126,6 +154,40 @@ const feedAction = (value: unknown): AgentDashboardFeedAction | null => {
   };
 };
 
+const feedOrigin = (source: JsonObject): AgentDashboardFeedOrigin => {
+  const nested = asObject(source.origin) ?? {};
+  const projectId = text(
+    nested.projectId ?? nested.project_id ?? source.projectId ?? source.project_id,
+    200,
+  );
+  const projectName = text(
+    nested.projectName ?? nested.project_name ?? source.projectName ?? source.project_name,
+    200,
+  );
+  const projectPath = text(
+    nested.projectPath ??
+      nested.project_path ??
+      nested.path ??
+      source.projectPath ??
+      source.project_path ??
+      source.workspaceRoot ??
+      source.workspace_root ??
+      source.cwd,
+    2_000,
+  );
+  const threadId = text(
+    nested.threadId ?? nested.thread_id ?? source.threadId ?? source.thread_id,
+    200,
+  );
+
+  return {
+    projectId: projectId === null ? null : ProjectId.make(projectId),
+    projectName,
+    projectPath,
+    threadId: threadId === null ? null : ThreadId.make(threadId),
+  };
+};
+
 const feedCard = (raw: unknown, id: number, nowSeconds: number): AgentDashboardFeedCard => {
   const source = asObject(raw) ?? {};
   const imageUrl = text(source.image_url ?? source.imageUrl, 4_000);
@@ -157,6 +219,7 @@ const feedCard = (raw: unknown, id: number, nowSeconds: number): AgentDashboardF
     ...(source.research !== undefined ? { research: source.research } : {}),
     ...(source.focus !== undefined ? { focus: source.focus } : {}),
     actions: rawActions,
+    origin: feedOrigin(source),
   };
 };
 
@@ -194,6 +257,11 @@ const rawFeedCard = (raw: unknown, id: number): JsonObject => {
         .filter((action): action is AgentDashboardFeedAction => action !== null)
     : [];
   if (actions.length > 0) card.actions = actions;
+  const origin = feedOrigin(source);
+  if (origin.projectId !== null) card.project_id = origin.projectId;
+  if (origin.projectName !== null) card.project_name = origin.projectName;
+  if (origin.projectPath !== null) card.project_path = origin.projectPath;
+  if (origin.threadId !== null) card.thread_id = origin.threadId;
   if (!(card.title || card.text || card.image_url || card.image_file || card.chart)) {
     throw new Error("feed card needs title, text, image, or chart content");
   }
@@ -226,6 +294,15 @@ const jsonDocument = async (path: string): Promise<unknown> => {
   } catch (cause) {
     const code = asObject(cause)?.code;
     if (code === "ENOENT") return null;
+    throw cause;
+  }
+};
+
+const fileIsEmpty = async (path: string): Promise<boolean> => {
+  try {
+    return (await NodeFSP.readFile(path, "utf8")).trim().length === 0;
+  } catch (cause) {
+    if (asObject(cause)?.code === "ENOENT") return true;
     throw cause;
   }
 };
@@ -287,6 +364,51 @@ const runExecutable = (
     );
   });
 
+/**
+ * Review findings must point at a durable repository checkout. Linked
+ * worktrees are disposable review targets: they can be pruned after the
+ * investigation finishes, leaving the dashboard with a path that cannot be
+ * opened when the user chooses "Work on this".
+ */
+export const isStableRepositoryPath = async (repositoryPath: string): Promise<boolean> => {
+  if (!NodePath.isAbsolute(repositoryPath)) return false;
+
+  try {
+    const repositoryStat = await NodeFSP.stat(repositoryPath);
+    if (!repositoryStat.isDirectory()) return false;
+
+    // Submodule checkouts expose .git as a pointer file, while linked
+    // worktrees expose a per-worktree git directory. Both are valid Git
+    // repositories, but only the former is a durable project checkout.
+    const gitStat = await NodeFSP.lstat(NodePath.join(repositoryPath, ".git"));
+    if (!gitStat.isDirectory() && !gitStat.isFile()) return false;
+
+    const result = await runExecutable(
+      "git",
+      ["-C", repositoryPath, "rev-parse", "--git-dir", "--git-common-dir", "--show-toplevel"],
+      { timeout: 5_000 },
+    );
+    const [gitDir, commonGitDir, repositoryRoot] = result.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim());
+    if (!gitDir || !commonGitDir || !repositoryRoot) return false;
+
+    const resolveGitPath = (gitPath: string): string =>
+      NodePath.isAbsolute(gitPath) ? gitPath : NodePath.resolve(repositoryPath, gitPath);
+    const [resolvedPath, resolvedRoot, resolvedGitDir, resolvedCommonGitDir] = await Promise.all([
+      NodeFSP.realpath(repositoryPath),
+      NodeFSP.realpath(repositoryRoot),
+      NodeFSP.realpath(resolveGitPath(gitDir)),
+      NodeFSP.realpath(resolveGitPath(commonGitDir)),
+    ]);
+    // A submodule's git dir and common dir resolve to the same location.
+    // Linked worktrees have a separate per-worktree git dir and are rejected.
+    return resolvedPath === resolvedRoot && resolvedGitDir === resolvedCommonGitDir;
+  } catch {
+    return false;
+  }
+};
+
 const normalizeResearch = (
   raw: JsonObject,
   lineNumber: number,
@@ -332,10 +454,18 @@ const normalizeResearch = (
 };
 
 const normalizeSuggestion = (raw: JsonObject): AgentDashboardReviewSuggestion | null => {
-  if (raw.source !== "code_review") return null;
+  if (raw.source !== REVIEW_SUGGESTION_SOURCE) return null;
   const id = text(raw.id, 100);
   const title = text(raw.title, 300);
   if (!id || !title) return null;
+  // Older Hermes records also used source=code_review. Only the T3-native
+  // review profile represents an individual codebase research run.
+  const profile = text(raw.profile, 100);
+  if (profile !== REVIEW_SUGGESTION_PROFILE) return null;
+  const jobId = text(raw.job_id, 200) ?? text(raw.run_id, 200);
+  // A review source without a run id has no individual-run provenance and is
+  // not allowed to cross into the Suggestions section.
+  if (!jobId) return null;
   const repository = asObject(raw.repository) ?? {};
   const issue = asObject(raw.github_issue) ?? {};
   const status = ["pending", "accepted", "dismissed", "blocked"].includes(String(raw.status))
@@ -343,10 +473,10 @@ const normalizeSuggestion = (raw: JsonObject): AgentDashboardReviewSuggestion | 
     : "pending";
   return {
     id,
-    profile: text(raw.profile, 100),
+    profile,
     title,
     description: text(raw.description, 4_000) ?? title,
-    source: "code_review",
+    source: REVIEW_SUGGESTION_SOURCE,
     status,
     createdAt: timestamp(raw.created_at),
     expiresAt: raw.expires_at ? timestamp(raw.expires_at) : null,
@@ -367,13 +497,14 @@ const normalizeSuggestion = (raw: JsonObject): AgentDashboardReviewSuggestion | 
       url: text(issue.url, 2_000),
       number: issue.number === null || issue.number === undefined ? null : integer(issue.number, 0),
     },
-    jobId: text(raw.job_id, 200),
+    jobId,
   };
 };
 
 const makeStore = (stateDir: string): AgentDashboardStoreService => {
   const directory = NodePath.join(stateDir, "agent-dashboard");
   const feedPath = NodePath.join(directory, "feed.jsonl");
+  const feedMigrationPath = NodePath.join(directory, "feed.legacy-migrated");
   const researchPath = NodePath.join(directory, "research_findings.jsonl");
   const suggestionsPath = NodePath.join(directory, "suggestions.json");
   const tokenPath = NodePath.join(directory, "feed.token");
@@ -394,14 +525,37 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
 
   let initialized: Promise<void> | null = null;
   let mutation = Promise.resolve();
-  let investigationProcess: NodeChildProcess.ChildProcess | null = null;
 
   const initialize = (): Promise<void> => {
     if (initialized) return initialized;
     initialized = (async () => {
       await NodeFSP.mkdir(directory, { recursive: true });
+      let feedMigrationComplete = false;
+      try {
+        await NodeFSP.access(feedMigrationPath);
+        feedMigrationComplete = true;
+      } catch (cause) {
+        if (asObject(cause)?.code !== "ENOENT") throw cause;
+      }
+      if (!feedMigrationComplete) {
+        if (await fileIsEmpty(feedPath)) {
+          try {
+            const legacyContents = await NodeFSP.readFile(legacyFeedPath, "utf8");
+            if (legacyContents.trim().length > 0) {
+              await writeAtomic(
+                feedPath,
+                legacyContents.endsWith("\n") ? legacyContents : `${legacyContents}\n`,
+              );
+              await writeAtomic(feedMigrationPath, "1\n");
+            }
+          } catch (cause) {
+            if (asObject(cause)?.code !== "ENOENT") throw cause;
+          }
+        } else {
+          await writeAtomic(feedMigrationPath, "1\n");
+        }
+      }
       for (const [target, legacy] of [
-        [feedPath, legacyFeedPath],
         [researchPath, legacyResearchPath],
         [suggestionsPath, legacySuggestionsPath],
       ] as const) {
@@ -588,24 +742,109 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       if (id) byId.set(id, record);
     }
     const all = [...byId.values()];
+    const now = Date.now();
+    const visible: Array<AgentDashboardReviewSuggestion> = [];
+    for (const record of all) {
+      const suggestion = normalizeSuggestion(record);
+      if (!suggestion || suggestion.status !== "pending") continue;
+      if (suggestion.expiresAt !== null && Date.parse(suggestion.expiresAt) <= now) continue;
+
+      if (!(await isStableRepositoryPath(suggestion.repository.path))) {
+        record.status = "blocked";
+        record.resolved_at = new Date(now).toISOString();
+        record.resolution_reason = "repository_unavailable_or_linked_worktree";
+        continue;
+      }
+      visible.push(suggestion);
+    }
+
     await writeAtomic(
       suggestionsPath,
       JSON.stringify({ suggestions: all, updated_at: new Date().toISOString() }, null, 2),
     );
-    const now = Date.now();
-    return all
-      .map(normalizeSuggestion)
-      .filter((suggestion): suggestion is AgentDashboardReviewSuggestion => suggestion !== null)
-      .filter((suggestion) => {
-        if (suggestion.status !== "pending") return false;
-        return suggestion.expiresAt === null || Date.parse(suggestion.expiresAt) > now;
-      })
-      .toSorted(
-        (left, right) =>
-          Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
-          right.id.localeCompare(left.id),
-      );
+    return visible.toSorted(
+      (left, right) =>
+        Date.parse(right.createdAt) - Date.parse(left.createdAt) || right.id.localeCompare(left.id),
+    );
   });
+
+  const appendReviewSuggestions = (input: AgentDashboardReviewIngestInput) =>
+    run("append review suggestions", () =>
+      withMutation(async () => {
+        const jobId = input.jobId.trim().slice(0, 200);
+        if (!jobId) return 0;
+        const existingRecords = await readReviewSuggestionRaw();
+        const byId = new Map<string, JsonObject>();
+        for (const record of existingRecords) {
+          const recordId = text(record.id, 100);
+          if (recordId) byId.set(recordId, record);
+        }
+
+        const createdAt = new Date().toISOString();
+        const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1_000).toISOString();
+        let changed = 0;
+        for (const finding of input.findings.slice(0, 3)) {
+          const title = finding.title.trim().slice(0, 300);
+          if (!title) continue;
+          const digest = NodeCrypto.createHash("sha256")
+            .update(
+              JSON.stringify({
+                jobId,
+                repository: input.repository.path,
+                title,
+                evidence: finding.evidence,
+              }),
+            )
+            .digest("hex")
+            .slice(0, 24);
+          const id = `t3-review-${digest}`;
+          const previous = byId.get(id);
+          const previousIssue = asObject(previous?.github_issue) ?? {};
+          const report =
+            finding.markdown?.trim().slice(0, 16_000) || finding.summary.trim().slice(0, 4_000);
+          const record: JsonObject = {
+            ...previous,
+            id,
+            source: REVIEW_SUGGESTION_SOURCE,
+            profile: "t3-random-codebase-review",
+            title,
+            description: finding.summary.trim().slice(0, 4_000) || title,
+            status: text(previous?.status, 40) ?? "pending",
+            created_at: text(previous?.created_at, 100) ?? createdAt,
+            expires_at: text(previous?.expires_at, 100) ?? expiresAt,
+            repository: {
+              name: input.repository.name.trim().slice(0, 200) || "Unknown repository",
+              path: input.repository.path.trim().slice(0, 1_000),
+              ...(input.repository.githubRepo
+                ? { github_repo: input.repository.githubRepo.trim().slice(0, 250) }
+                : {}),
+            },
+            category: finding.category.trim().slice(0, 40) || "insight",
+            impact: finding.impact.trim().slice(0, 1_200),
+            confidence: finding.confidence.trim().slice(0, 40) || "medium",
+            evidence: finding.evidence.slice(0, 24).map((item) => item.trim().slice(0, 1_000)),
+            next_step: finding.nextStep.trim().slice(0, 1_200),
+            report,
+            github_issue: {
+              ...previousIssue,
+              title: finding.githubIssueTitle.trim().slice(0, 300) || title,
+              body: finding.githubIssueBody.trim().slice(0, 16_000) || report,
+              url: text(previousIssue.url, 2_000),
+              number: previousIssue.number ?? null,
+            },
+            job_id: jobId,
+          };
+          byId.set(id, record);
+          changed += 1;
+        }
+
+        await writeAtomic(
+          suggestionsPath,
+          JSON.stringify({ suggestions: [...byId.values()], updated_at: createdAt }, null, 2),
+        );
+        return changed;
+      }),
+    );
 
   const reviewSuggestion = (id: string, action: "dismiss" | "block") =>
     run("review suggestion", () =>
@@ -617,7 +856,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           if (recordId) byId.set(recordId, record);
         }
         const record = byId.get(id);
-        if (!record || record.source !== "code_review") return false;
+        if (!record || !normalizeSuggestion(record)) return false;
         record.status = action === "block" ? "blocked" : "dismissed";
         record.resolved_at = new Date().toISOString();
         await writeAtomic(
@@ -632,47 +871,12 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       }),
     );
 
-  const runInvestigation = run("run repository investigation", async () => {
-    if (investigationProcess && investigationProcess.exitCode === null) return;
-
-    const preferredExecutable = NodePath.join(NodeOS.homedir(), ".local", "bin", "hermes");
-    let executable = "hermes";
-    try {
-      await NodeFSP.access(preferredExecutable);
-      executable = preferredExecutable;
-    } catch {
-      // Fall back to PATH for installations that expose Hermes elsewhere.
-    }
-
-    const child = NodeChildProcess.spawn(executable, ["cron", "run", REVIEW_JOB_NAME], {
-      cwd: NodeOS.homedir(),
-      detached: true,
-      stdio: "ignore",
-      env: process.env,
-    });
-    investigationProcess = child;
-    const clearProcess = () => {
-      if (investigationProcess === child) investigationProcess = null;
-    };
-    child.once("error", clearProcess);
-    child.once("exit", clearProcess);
-
-    await new Promise<void>((resolve, reject) => {
-      child.once("spawn", resolve);
-      child.once("error", reject);
-    }).catch((cause) => {
-      clearProcess();
-      throw cause;
-    });
-    child.unref();
-  });
-
   const createGithubIssue = (id: string) =>
     run("create GitHub issue", () =>
       withMutation(async () => {
         const target = await readReviewSuggestionRaw();
         const record = target.find((candidate) => text(candidate.id, 100) === id);
-        if (!record || record.source !== "code_review") {
+        if (!record || !normalizeSuggestion(record)) {
           throw new Error("Suggestion not found.");
         }
         if (String(record.status ?? "pending") !== "pending") {
@@ -757,8 +961,8 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     readFeedImage,
     readResearchFindings,
     readReviewSuggestions,
+    appendReviewSuggestions,
     reviewSuggestion,
-    runInvestigation,
     createGithubIssue,
     feedToken,
   } satisfies AgentDashboardStoreService;

@@ -71,6 +71,7 @@ import {
   loadAgentDashboardSnapshot,
 } from "./agentDashboard/AgentDashboardSnapshot.ts";
 import * as AgentDashboardStore from "./agentDashboard/AgentDashboardStore.ts";
+import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
 import * as NodeOS from "node:os";
 
 import { discoverAgentSessions } from "./provider/agentSessionDiscovery.ts";
@@ -402,6 +403,9 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
+      const reviewScheduler = yield* Effect.serviceOption(
+        AgentDashboardReviewScheduler.AgentDashboardReviewScheduler,
+      );
       const dashboardStore = AgentDashboardStore.getStore(config.stateDir);
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -1061,6 +1065,26 @@ const makeWsRpcLayer = (
           );
       };
 
+      // Manual and scheduled reviews share the same single-run path. The
+      // scheduler owns completion monitoring and durable result ingestion.
+      const runAgentDashboardInvestigation: Effect.Effect<void, AgentDashboardError> =
+        Option.isNone(reviewScheduler)
+          ? Effect.fail(
+              new AgentDashboardError({
+                message: "The Agent Dashboard review scheduler is not available on this server.",
+              }),
+            )
+          : reviewScheduler.value.runNow.pipe(
+              Effect.asVoid,
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "The Agent Dashboard repository review could not be started.",
+                    cause,
+                  }),
+              ),
+            );
+
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const providers = yield* providerRegistry.getProviders;
@@ -1180,6 +1204,9 @@ const makeWsRpcLayer = (
                 externalFeed: migrated.externalFeed,
                 researchFindings: migrated.researchFindings,
                 reviewSuggestions: migrated.reviewSuggestions,
+                reviewSchedule: yield* AgentDashboardReviewScheduler.readPersistedStatus(
+                  config.stateDir,
+                ),
               };
             }),
             { "rpc.aggregate": "agent-dashboard" },
@@ -1232,7 +1259,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.agentDashboardRunInvestigation]: (_input) =>
           observeRpcEffect(
             WS_METHODS.agentDashboardRunInvestigation,
-            dashboardStore.runInvestigation.pipe(
+            runAgentDashboardInvestigation.pipe(
               Effect.map(() => ({ ok: true }) as const),
               Effect.mapError(
                 (cause) =>

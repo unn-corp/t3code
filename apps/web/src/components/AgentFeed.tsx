@@ -174,13 +174,18 @@ function AgentFeedCard({
             <GitBranchIcon className="size-3.5 shrink-0" />
             <span className="truncate font-mono">{item.branch ?? "No branch"}</span>
           </span>
+          {item.workspaceRoot ? (
+            <span className="max-w-full truncate font-mono" title={item.workspaceRoot}>
+              {item.workspaceRoot}
+            </span>
+          ) : null}
           {item.worktreePath ? (
             <span className="max-w-full truncate font-mono">{item.worktreePath}</span>
           ) : null}
         </div>
         {item.threadId ? (
           <Button className="shrink-0" onClick={onOpen} size="sm" variant="outline">
-            Open agent
+            {item.chatLabel ?? "Open chat"}
           </Button>
         ) : null}
       </CardPanel>
@@ -209,10 +214,9 @@ export function AgentFeed() {
       return buildNativeAgentFeedFromDurableCards(
         dashboardSnapshot.data.externalFeed,
         environmentId ?? "native",
+        projects,
+        threads,
       );
-    }
-    if (dashboardSnapshot.data !== null && dashboardSnapshot.data.externalFeed.length === 0) {
-      return [];
     }
     if (dashboardSnapshot.data !== null && dashboardSnapshot.data.feed.length > 0) {
       const environmentId = dashboardSnapshot.environmentId;
@@ -240,6 +244,7 @@ export function AgentFeed() {
           record.kind,
           ...record.tags,
           record.branch ?? "",
+          record.workspaceRoot,
         ]
           .join(" ")
           .toLocaleLowerCase()

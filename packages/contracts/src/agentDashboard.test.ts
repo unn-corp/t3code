@@ -148,6 +148,12 @@ describe("AgentDashboardSnapshot", () => {
           level: "success",
           tags: ["release"],
           actions: [{ label: "Open source", url: "https://example.com/release" }],
+          origin: {
+            projectId: "project-1",
+            projectName: "T3 Code",
+            projectPath: "/workspace/t3code",
+            threadId: "thread-1",
+          },
         },
       ],
       researchFindings: [
@@ -174,6 +180,12 @@ describe("AgentDashboardSnapshot", () => {
     });
 
     expect(snapshot.externalFeed[0]?.actions[0]?.label).toBe("Open source");
+    expect(snapshot.externalFeed[0]?.origin).toEqual({
+      projectId: "project-1",
+      projectName: "T3 Code",
+      projectPath: "/workspace/t3code",
+      threadId: "thread-1",
+    });
     expect(snapshot.researchFindings[0]?.relevanceScore).toBe(91);
     expect(snapshot.researchFindings[0]?.repositories).toEqual(["t3code"]);
     expect(snapshot.reviewSuggestions).toEqual([]);

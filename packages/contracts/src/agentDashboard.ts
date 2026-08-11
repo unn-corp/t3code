@@ -135,6 +135,15 @@ export const AgentDashboardFeedAction = Schema.Struct({
 });
 export type AgentDashboardFeedAction = typeof AgentDashboardFeedAction.Type;
 
+/** Origin metadata used to connect an external feed card back to T3. */
+export const AgentDashboardFeedOrigin = Schema.Struct({
+  projectId: Schema.NullOr(ProjectId),
+  projectName: Schema.NullOr(TrimmedNonEmptyString),
+  projectPath: Schema.NullOr(TrimmedNonEmptyString),
+  threadId: Schema.NullOr(ThreadId),
+});
+export type AgentDashboardFeedOrigin = typeof AgentDashboardFeedOrigin.Type;
+
 /**
  * The original agent-widget card, normalized into a T3-owned contract.
  * Structured chart/research/focus payloads remain opaque so migrating older
@@ -154,6 +163,10 @@ export const AgentDashboardFeedCard = Schema.Struct({
   research: Schema.optional(Schema.Unknown),
   focus: Schema.optional(Schema.Unknown),
   actions: Schema.Array(AgentDashboardFeedAction),
+  /** Optional so cards written by older feed clients continue to decode. */
+  origin: Schema.NullOr(AgentDashboardFeedOrigin).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type AgentDashboardFeedCard = typeof AgentDashboardFeedCard.Type;
 
@@ -303,7 +316,31 @@ export type AgentDashboardSuggestionStatus = typeof AgentDashboardSuggestionStat
 export const AgentDashboardSuggestionAction = Schema.Literals(["open-repository", "open-thread"]);
 export type AgentDashboardSuggestionAction = typeof AgentDashboardSuggestionAction.Type;
 
-/** A deterministic, native-navigation suggestion derived from current state. */
+/** Runtime status for the T3-owned recurring repository review. */
+export const AgentDashboardReviewScheduleStatus = Schema.Literals([
+  "idle",
+  "running",
+  "completed",
+  "failed",
+]);
+export type AgentDashboardReviewScheduleStatus = typeof AgentDashboardReviewScheduleStatus.Type;
+
+export const AgentDashboardReviewSchedule = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  enabled: Schema.Boolean,
+  intervalMinutes: NonNegativeInt,
+  nextRunAt: IsoDateTime,
+  lastRunAt: Schema.NullOr(IsoDateTime),
+  lastCompletedAt: Schema.NullOr(IsoDateTime),
+  lastStatus: AgentDashboardReviewScheduleStatus,
+  lastError: Schema.NullOr(TrimmedNonEmptyString),
+  lastTarget: Schema.NullOr(TrimmedNonEmptyString),
+  heartbeatAt: IsoDateTime,
+  runCount: NonNegativeInt,
+});
+export type AgentDashboardReviewSchedule = typeof AgentDashboardReviewSchedule.Type;
+
+/** Legacy native-navigation signal kept for wire compatibility; not Suggestions content. */
 export const AgentDashboardSuggestion = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: AgentDashboardSuggestionKind,
@@ -333,6 +370,7 @@ export const AgentDashboardSnapshot = Schema.Struct({
   researchFindings: Schema.Array(AgentDashboardResearchFinding).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /** Legacy native-navigation signals; Suggestions consumes reviewSuggestions instead. */
   suggestions: Schema.Array(AgentDashboardSuggestion).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -340,6 +378,8 @@ export const AgentDashboardSnapshot = Schema.Struct({
   reviewSuggestions: Schema.Array(AgentDashboardReviewSuggestion).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /** Status of the T3-owned two-hour repository review scheduler. */
+  reviewSchedule: Schema.optionalKey(AgentDashboardReviewSchedule),
 });
 export type AgentDashboardSnapshot = typeof AgentDashboardSnapshot.Type;
 

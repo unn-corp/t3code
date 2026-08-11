@@ -9,7 +9,6 @@ import type {
   AgentDashboardResearchRecord,
   AgentDashboardResearchStatus,
   AgentDashboardSnapshot,
-  AgentDashboardSuggestion,
   AgentDashboardThread,
   AgentDashboardThreadState,
   AgentDashboardVcsStatus,
@@ -483,119 +482,6 @@ const toResearchRecord = (input: {
   };
 };
 
-const toSuggestion = (input: {
-  readonly id: string;
-  readonly kind: AgentDashboardSuggestion["kind"];
-  readonly action: AgentDashboardSuggestion["action"];
-  readonly title: string;
-  readonly summary: string;
-  readonly updatedAt: IsoDateTime;
-  readonly projectId: OrchestrationShellSnapshot["projects"][number]["id"];
-  readonly thread: OrchestrationThreadShell | null;
-}): AgentDashboardSuggestion => ({
-  id: input.id,
-  kind: input.kind,
-  status: "actionable",
-  action: input.action,
-  title: input.title,
-  summary: input.summary,
-  updatedAt: input.updatedAt,
-  repository: repositoryRef(input.projectId),
-  thread: input.thread === null ? null : threadRef(input.thread),
-});
-
-const buildSuggestions = (input: {
-  readonly repositories: ReadonlyArray<AgentDashboardRepository>;
-  readonly threads: ReadonlyArray<OrchestrationThreadShell>;
-  readonly observedAt: IsoDateTime;
-}): Array<AgentDashboardSuggestion> => {
-  const suggestions: Array<AgentDashboardSuggestion> = [];
-
-  for (const repository of input.repositories) {
-    if (repository.vcs.state === "dirty") {
-      suggestions.push(
-        toSuggestion({
-          id: `repository:${repository.projectId}:review-changes`,
-          kind: "review-changes",
-          action: "open-repository",
-          title: "Review local changes",
-          summary: `${repository.title} has working-tree changes to inspect`,
-          updatedAt: input.observedAt,
-          projectId: repository.projectId,
-          thread: null,
-        }),
-      );
-    }
-    if ((repository.vcs.behindCount ?? 0) > 0) {
-      suggestions.push(
-        toSuggestion({
-          id: `repository:${repository.projectId}:sync-branch`,
-          kind: "sync-branch",
-          action: "open-repository",
-          title: "Sync branch",
-          summary: `${repository.title} is behind its upstream branch`,
-          updatedAt: input.observedAt,
-          projectId: repository.projectId,
-          thread: null,
-        }),
-      );
-    }
-  }
-
-  const projectIds = new Set(input.repositories.map((repository) => repository.projectId));
-  for (const thread of input.threads) {
-    if (!projectIds.has(thread.projectId)) {
-      continue;
-    }
-    if (thread.hasPendingApprovals || thread.hasPendingUserInput) {
-      suggestions.push(
-        toSuggestion({
-          id: `thread:${thread.id}:respond`,
-          kind: "respond-to-thread",
-          action: "open-thread",
-          title: "Respond to agent",
-          summary: `${thread.title} is waiting for input`,
-          updatedAt: thread.updatedAt,
-          projectId: thread.projectId,
-          thread,
-        }),
-      );
-    }
-    if (thread.hasActionableProposedPlan) {
-      suggestions.push(
-        toSuggestion({
-          id: `thread:${thread.id}:review-plan`,
-          kind: "review-plan",
-          action: "open-thread",
-          title: "Review proposed plan",
-          summary: `${thread.title} has a plan ready for review`,
-          updatedAt: thread.updatedAt,
-          projectId: thread.projectId,
-          thread,
-        }),
-      );
-    }
-    if (thread.session?.status === "error") {
-      suggestions.push(
-        toSuggestion({
-          id: `thread:${thread.id}:inspect-error`,
-          kind: "inspect-error",
-          action: "open-thread",
-          title: "Inspect agent error",
-          summary: `${thread.title} has an agent session error`,
-          updatedAt: thread.session.updatedAt,
-          projectId: thread.projectId,
-          thread,
-        }),
-      );
-    }
-  }
-
-  return sortNewest(
-    suggestions.map((suggestion) => ({ ...suggestion, at: suggestion.updatedAt })),
-  ).map(({ at: _at, ...suggestion }) => suggestion);
-};
-
 /**
  * Load the dashboard's read model from T3's active project/thread shell and
  * VCS primitives. The only paths read are projected project roots; worktree
@@ -662,19 +548,16 @@ export const loadAgentDashboardSnapshot = Effect.fn("loadAgentDashboardSnapshot"
         timestampMs(right.observedAt) - timestampMs(left.observedAt) ||
         right.id.localeCompare(left.id),
     );
-  const suggestions = buildSuggestions({
-    repositories,
-    threads: input.shellSnapshot.threads,
-    observedAt: input.observedAt,
-  });
-
   return {
     snapshotSequence: input.shellSnapshot.snapshotSequence,
     observedAt: input.observedAt,
     repositories,
     feed,
     research,
-    suggestions,
+    // Native VCS/thread navigation belongs to Overview and Feed. Suggestions
+    // is owned exclusively by durable review-run records joined below by the
+    // websocket layer.
+    suggestions: [],
     externalFeed: [],
     researchFindings: [],
     reviewSuggestions: [],

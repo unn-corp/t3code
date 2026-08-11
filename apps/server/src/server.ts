@@ -10,6 +10,8 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
+import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
+import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
@@ -648,6 +650,15 @@ export const makeServerLayer = Layer.unwrap(
       ).pipe(Effect.asVoid),
     }).pipe(Layer.provideMerge(RuntimeDependenciesLive), Layer.provide(launcherLayer));
 
+    // The review runner depends on ServerRuntimeStartup so scheduled commands
+    // share the same readiness gate as browser-dispatched commands. Provide
+    // this server-scoped service to routes after mergeAll so websocket RPCs
+    // and the scheduler share one instance.
+    const reviewSchedulerLayer = AgentDashboardReviewScheduler.layer.pipe(
+      Layer.provide(AgentDashboardReviewRunner.layer),
+      Layer.provide(runtimeServicesLive),
+    );
+
     const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
       disableLogger: !config.logWebSocketEvents,
     }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
@@ -657,7 +668,7 @@ export const makeServerLayer = Layer.unwrap(
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
-    );
+    ).pipe(Layer.provideMerge(reviewSchedulerLayer));
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),

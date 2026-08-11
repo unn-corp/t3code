@@ -292,7 +292,7 @@ export function AgentSuggestions() {
         stackedThreadToast({
           type: "success",
           title: "Investigation started",
-          description: "The two-hour repository review is running in the background.",
+          description: "The two-hour repository investigation is running in the background.",
         }),
       );
       dashboardSnapshot.refresh();
@@ -503,7 +503,7 @@ export function AgentSuggestions() {
         </Button>
       }
       title="Suggestions"
-      description="Repository review findings migrated into T3 Code, ordered newest first."
+      description="Staged investigative findings from individual repository research runs, ordered newest first."
     >
       <div className="flex flex-col gap-3 sm:flex-row">
         <Input
@@ -593,6 +593,36 @@ export function AgentSuggestions() {
                   </Button>
                   <Button
                     className="shrink-0"
+                    disabled={
+                      creatingIssueId !== null ||
+                      (!suggestion.githubIssueUrl &&
+                        !suggestion.durableSuggestion?.repository.githubRepo)
+                    }
+                    onClick={() => void createGithubIssueForSuggestion(suggestion)}
+                    size="sm"
+                    title={
+                      suggestion.githubIssueUrl ||
+                      suggestion.durableSuggestion?.repository.githubRepo
+                        ? undefined
+                        : "No GitHub origin was detected"
+                    }
+                    variant="outline"
+                  >
+                    {creatingIssueId === suggestion.id ? (
+                      <LoaderIcon className="animate-spin" />
+                    ) : suggestion.githubIssueUrl ? (
+                      <ExternalLinkIcon />
+                    ) : (
+                      <GithubIcon />
+                    )}
+                    {creatingIssueId === suggestion.id
+                      ? "Creating issue"
+                      : suggestion.githubIssueUrl
+                        ? "Open GitHub issue"
+                        : "Create GitHub issue"}
+                  </Button>
+                  <Button
+                    className="shrink-0"
                     onClick={() => setSelectedSuggestionId(suggestion.id)}
                     size="sm"
                     variant="outline"
@@ -625,10 +655,10 @@ export function AgentSuggestions() {
             <EmptyTitle>No suggestions right now</EmptyTitle>
             <EmptyDescription>
               {dashboardSnapshot.data === null
-                ? "Loading repository review findings."
+                ? "Loading repository investigation findings."
                 : hasActionableRecords
                   ? "Try a different search or category filter."
-                  : "There are no pending repository review findings."}
+                  : "There are no pending repository investigation findings."}
             </EmptyDescription>
           </EmptyHeader>
           {showInvestigationEmptyState ? (
