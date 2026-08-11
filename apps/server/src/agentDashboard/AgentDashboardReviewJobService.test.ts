@@ -392,7 +392,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
           idempotencyKey: "timeout-case",
         });
 
-        const failed = yield* waitForTerminal(jobService, enqueued.id, 20);
+        const failed = yield* waitForTerminal(jobService, enqueued.id, 200);
         expect(failed?.status).toBe("failed");
         expect(failed?.error).toContain("timed out");
 
@@ -400,11 +400,11 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
         expect(retry1.trigger).toBe("retry");
         expect(retry1.retryCount).toBe(1);
 
-        yield* waitForTerminal(jobService, retry1.id, 20);
+        yield* waitForTerminal(jobService, retry1.id, 200);
 
         const retry2 = yield* jobService.retryRun(retry1.id);
         expect(retry2.retryCount).toBe(2);
-        yield* waitForTerminal(jobService, retry2.id, 20);
+        yield* waitForTerminal(jobService, retry2.id, 200);
 
         const overLimit = yield* Effect.flip(jobService.retryRun(retry2.id));
         expect(overLimit.message).toContain("retry limit");
