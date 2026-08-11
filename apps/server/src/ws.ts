@@ -77,6 +77,7 @@ import * as AgentDashboardRunHistory from "./agentDashboard/AgentDashboardRunHis
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
+import * as AgentDashboardSecurityScheduler from "./agentDashboard/AgentDashboardSecurityScheduler.ts";
 import * as NodeOS from "node:os";
 
 import { discoverAgentSessions } from "./provider/agentSessionDiscovery.ts";
@@ -1296,6 +1297,9 @@ const makeWsRpcLayer = (
                 researchFindings: migrated.researchFindings,
                 reviewSuggestions: migrated.reviewSuggestions,
                 reviewSchedule: yield* AgentDashboardReviewScheduler.readPersistedStatus(
+                  config.stateDir,
+                ),
+                securitySchedule: yield* AgentDashboardSecurityScheduler.readPersistedStatus(
                   config.stateDir,
                 ),
                 automationRuns,

@@ -13,6 +13,7 @@ import * as ServerConfig from "./config.ts";
 import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
+import * as AgentDashboardSecurityScheduler from "./agentDashboard/AgentDashboardSecurityScheduler.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
@@ -661,6 +662,9 @@ export const makeServerLayer = Layer.unwrap(
       ),
       Layer.provide(runtimeServicesLive),
     );
+    const securityCollectionLayer = AgentDashboardSecurityScheduler.layer.pipe(
+      Layer.provide(runtimeServicesLive),
+    );
 
     const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
       disableLogger: !config.logWebSocketEvents,
@@ -673,7 +677,10 @@ export const makeServerLayer = Layer.unwrap(
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
-    ).pipe(Layer.provideMerge(reviewOrchestrationLayer));
+    ).pipe(
+      Layer.provideMerge(reviewOrchestrationLayer),
+      Layer.provideMerge(securityCollectionLayer),
+    );
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),

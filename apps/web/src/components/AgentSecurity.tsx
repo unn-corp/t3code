@@ -50,6 +50,7 @@ export function AgentSecurity() {
     dashboardSnapshot.data?.collectorStates.filter(
       (state) => state.kind === "security" || state.kind === "all",
     ) ?? [];
+  const securitySchedule = dashboardSnapshot.data?.securitySchedule;
 
   const apply = async (finding: AgentDashboardFinding, action: AgentDashboardDispositionAction) => {
     if (!dashboardSnapshot.environmentId || updatingId !== null) return;
@@ -106,11 +107,19 @@ export function AgentSecurity() {
       title="Security"
       description="Local-first security observations with explicit collector availability and reversible finding actions."
     >
-      {collectors.length > 0 ? (
+      {collectors.length > 0 || securitySchedule ? (
         <Card>
           <CardHeader className="p-4 sm:p-5">
             <CardTitle className="text-base">Collector health</CardTitle>
             <CardDescription>
+              Automatic local scans run every {securitySchedule?.intervalMinutes ?? 120} minutes.
+              {securitySchedule
+                ? ` Last run: ${securitySchedule.lastStatus}${
+                    securitySchedule.lastCompletedAt
+                      ? ` (${formatRelativeTimeLabel(securitySchedule.lastCompletedAt)})`
+                      : ""
+                  }.`
+                : ""}{" "}
               Unavailable integrations stay visible instead of being reported as clean.
             </CardDescription>
           </CardHeader>

@@ -221,7 +221,7 @@ const makeTempStateDir = () =>
 const waitForTerminal = (
   jobService: AgentDashboardReviewJobService.AgentDashboardReviewJobService["Service"],
   runId: string,
-  maxSteps = 40,
+  maxSteps = 200,
 ) =>
   Effect.gen(function* () {
     for (let step = 0; step < maxSteps; step += 1) {
