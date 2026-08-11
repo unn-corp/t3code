@@ -5,7 +5,6 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -13,20 +12,19 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import type {
+  AgentDashboardAutomationRun,
   AgentDashboardReviewSchedule,
   AgentDashboardReviewScheduleStatus,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
-import * as AgentDashboardStore from "./AgentDashboardStore.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
-  AgentDashboardReviewRunner,
-  type AgentDashboardReviewRunResult,
-  type AgentDashboardReviewRunnerError,
-  REVIEW_INTERVAL_MINUTES,
-} from "./AgentDashboardReviewRunner.ts";
-
+  AgentDashboardReviewJobService,
+  type AgentDashboardReviewJobServiceError,
+  parseReviewMetadata,
+} from "./AgentDashboardReviewJobService.ts";
+import type { AgentDashboardReviewRunnerError } from "./AgentDashboardReviewRunner.ts";
+import { REVIEW_INTERVAL_MINUTES } from "./AgentDashboardReviewRunner.ts";
 const SCHEDULE_ID = "t3-random-codebase-review";
 const POLL_INTERVAL = Duration.seconds(30);
 const INTERVAL_MS = REVIEW_INTERVAL_MINUTES * 60_000;
@@ -42,10 +40,15 @@ export class AgentDashboardReviewSchedulerError extends Schema.TaggedErrorClass<
 
 export interface AgentDashboardReviewSchedulerService {
   readonly getStatus: Effect.Effect<AgentDashboardReviewSchedule>;
-  /** Starts one review immediately; a running scheduled review is not duplicated. */
+  /**
+   * Enqueues one review through the shared job service. Returns the automation
+   * run, or null when the schedule is disabled / not due / already in flight.
+   */
   readonly runNow: Effect.Effect<
-    AgentDashboardReviewRunResult | null,
-    AgentDashboardReviewSchedulerError | AgentDashboardReviewRunnerError
+    AgentDashboardAutomationRun | null,
+    | AgentDashboardReviewSchedulerError
+    | AgentDashboardReviewJobServiceError
+    | AgentDashboardReviewRunnerError
   >;
 }
 
@@ -150,62 +153,26 @@ export const readPersistedStatus = (
     catch: () => undefined,
   }).pipe(Effect.orElseSucceed(() => defaultSchedule()));
 
-const stringList = (value: unknown): Array<string> =>
-  Array.isArray(value)
-    ? value
-        .map(stringValue)
-        .filter((item): item is string => item !== null)
-        .slice(0, 24)
-    : [];
-
-const parseReviewMetadata = (
-  text: string,
-): ReadonlyArray<AgentDashboardStore.AgentDashboardReviewFindingInput> | null => {
-  const metadataLine = text
-    .split(/\r?\n/)
-    .find((line) => line.trimStart().startsWith("T3_REVIEW_METADATA:"));
-  if (!metadataLine) return null;
-
-  try {
-    const parsed = JSON.parse(
-      metadataLine.slice(
-        metadataLine.indexOf("T3_REVIEW_METADATA:") + "T3_REVIEW_METADATA:".length,
-      ),
-    );
-    const rawFindings = asObject(parsed)?.findings;
-    if (!Array.isArray(rawFindings)) return [];
-    return rawFindings
-      .map(asObject)
-      .filter((finding): finding is JsonObject => finding !== null)
-      .slice(0, 3)
-      .map((finding) => {
-        const title = stringValue(finding.title) ?? "";
-        const summary = stringValue(finding.summary) ?? title;
-        const markdown = stringValue(finding.markdown);
-        return {
-          title,
-          category: stringValue(finding.category) ?? "insight",
-          summary,
-          impact: stringValue(finding.impact) ?? "",
-          confidence: stringValue(finding.confidence) ?? "medium",
-          evidence: stringList(finding.evidence),
-          nextStep: stringValue(finding.next_step) ?? "",
-          githubIssueTitle: stringValue(finding.github_issue_title) ?? title,
-          githubIssueBody: stringValue(finding.github_issue_body) ?? markdown ?? summary,
-          ...(markdown ? { markdown } : {}),
-        } satisfies AgentDashboardStore.AgentDashboardReviewFindingInput;
-      })
-      .filter((finding) => finding.title.length > 0);
-  } catch {
-    return [];
+const scheduleStatusFromRun = (
+  run: AgentDashboardAutomationRun,
+): AgentDashboardReviewScheduleStatus => {
+  switch (run.status) {
+    case "queued":
+    case "running":
+    case "ingesting":
+      return "running";
+    case "succeeded":
+    case "partial":
+      return "completed";
+    case "failed":
+    case "cancelled":
+      return "failed";
   }
 };
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const runner = yield* AgentDashboardReviewRunner;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const dashboardStore = AgentDashboardStore.getStore(config.stateDir);
+  const jobService = yield* AgentDashboardReviewJobService;
   const schedulerScope = yield* Effect.scope;
   const schedulePath = NodePath.join(config.stateDir, "agent-dashboard", "review-schedule.json");
   const stateRef = yield* Ref.make<AgentDashboardReviewSchedule>(
@@ -234,50 +201,41 @@ const make = Effect.gen(function* () {
   const initial = yield* Ref.get(stateRef);
   yield* persist(initial);
 
-  const monitorReview = (review: AgentDashboardReviewRunResult) =>
+  const applyRunToSchedule = (
+    run: AgentDashboardAutomationRun,
+    startedAtMs: number,
+    startedAt: string,
+  ) =>
     Effect.gen(function* () {
-      for (let attempt = 0; attempt < 180; attempt += 1) {
-        const thread = yield* projectionSnapshotQuery
-          .getThreadDetailById(review.threadId)
-          .pipe(Effect.orElseSucceed(() => Option.none()));
-        if (Option.isSome(thread)) {
-          const latestTurn = thread.value.latestTurn;
-          if (latestTurn !== null && latestTurn.state !== "running") {
-            const assistantMessage = latestTurn.assistantMessageId
-              ? thread.value.messages.find(
-                  (message) => message.id === latestTurn.assistantMessageId,
-                )
-              : null;
-            if (assistantMessage) {
-              const findings = parseReviewMetadata(assistantMessage.text);
-              if (findings !== null && findings.length > 0) {
-                yield* dashboardStore.appendReviewSuggestions({
-                  jobId: review.threadId,
-                  repository: {
-                    name: review.projectName,
-                    path: review.workspaceRoot,
-                    githubRepo: review.githubRepo,
-                  },
-                  findings,
-                });
-              }
-            }
-            return;
-          }
-        }
-        yield* Effect.sleep("10 seconds");
-      }
-      yield* Effect.logWarning("T3 repository review did not finish before the monitor timeout", {
-        threadId: review.threadId,
-      });
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("T3 repository review result ingestion failed", {
-          threadId: review.threadId,
-          cause,
-        }),
-      ),
-    );
+      const current = yield* Ref.get(stateRef);
+      const status = scheduleStatusFromRun(run);
+      const completed =
+        run.status === "succeeded" ||
+        run.status === "partial" ||
+        run.status === "failed" ||
+        run.status === "cancelled";
+      const completedAtMs = completed ? Date.parse(run.completedAt ?? run.updatedAt) : Number.NaN;
+      const nextState: AgentDashboardReviewSchedule = {
+        ...current,
+        lastStatus: status,
+        lastRunAt: current.lastRunAt ?? startedAt,
+        lastCompletedAt: completed ? (run.completedAt ?? run.updatedAt) : current.lastCompletedAt,
+        lastError: completed ? run.error : current.lastError,
+        lastTarget: run.target ?? current.lastTarget,
+        nextRunAt: completed
+          ? isoAt(
+              Math.max(
+                Number.isFinite(completedAtMs) ? completedAtMs : startedAtMs,
+                startedAtMs + INTERVAL_MS,
+              ),
+            )
+          : current.nextRunAt,
+        heartbeatAt: run.updatedAt,
+        runCount: current.runCount,
+      };
+      yield* Ref.set(stateRef, nextState);
+      yield* persist(nextState);
+    });
 
   const run = (force: boolean): AgentDashboardReviewSchedulerService["runNow"] =>
     Effect.gen(function* () {
@@ -307,46 +265,63 @@ const make = Effect.gen(function* () {
       if (!claimed) return null;
 
       yield* persist(yield* Ref.get(stateRef));
-      const result = yield* runner.runRandomReview.pipe(
-        Effect.tap((run) =>
-          Effect.gen(function* () {
-            const current = yield* Ref.get(stateRef);
-            const completedAtTime = yield* DateTime.now;
-            const completedAt = DateTime.formatIso(completedAtTime);
-            const completedAtMs = DateTime.toEpochMillis(completedAtTime);
-            const nextState: AgentDashboardReviewSchedule = {
-              ...current,
-              lastStatus: "completed",
-              lastCompletedAt: completedAt,
-              lastError: null,
-              lastTarget: run.projectName,
-              nextRunAt: isoAt(Math.max(completedAtMs, startedAtMs + INTERVAL_MS)),
-              heartbeatAt: completedAt,
-            };
-            yield* Ref.set(stateRef, nextState);
-            yield* persist(nextState);
-            yield* monitorReview(run).pipe(Effect.forkIn(schedulerScope));
-          }),
-        ),
-        Effect.catch((cause) =>
-          Effect.gen(function* () {
-            const now = yield* DateTime.now;
-            const nowIso = DateTime.formatIso(now);
-            const current = yield* Ref.get(stateRef);
-            const nextState: AgentDashboardReviewSchedule = {
-              ...current,
-              lastStatus: "failed",
-              lastError: cause.message,
-              nextRunAt: isoAt(DateTime.toEpochMillis(now) + INTERVAL_MS),
-              heartbeatAt: nowIso,
-            };
-            yield* Ref.set(stateRef, nextState);
-            yield* persist(nextState);
-            return yield* Effect.fail(cause);
-          }),
-        ),
-      );
-      return result;
+
+      const run = yield* jobService
+        .enqueueReview({
+          trigger: force ? "manual" : "scheduled",
+          // Shared key so schedule ticks and manual force do not pile up.
+          idempotencyKey: force ? "manual:repository-review" : "scheduled:repository-review",
+        })
+        .pipe(
+          Effect.tap((enqueued) => applyRunToSchedule(enqueued, startedAtMs, startedAt)),
+          Effect.tap((enqueued) =>
+            // Follow the job until terminal so schedule lastStatus is truthful.
+            Effect.gen(function* () {
+              for (let attempt = 0; attempt < 2_000; attempt += 1) {
+                const runs = yield* jobService.listRuns.pipe(Effect.orElseSucceed(() => []));
+                const current = runs.find((item) => item.id === enqueued.id);
+                if (!current) return;
+                yield* applyRunToSchedule(current, startedAtMs, startedAt);
+                if (
+                  current.status === "succeeded" ||
+                  current.status === "partial" ||
+                  current.status === "failed" ||
+                  current.status === "cancelled"
+                ) {
+                  return;
+                }
+                yield* Effect.sleep(Duration.seconds(1));
+              }
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("T3 schedule follow-up for review job failed", {
+                  runId: enqueued.id,
+                  cause,
+                }),
+              ),
+              Effect.forkIn(schedulerScope),
+            ),
+          ),
+          Effect.catch((cause) =>
+            Effect.gen(function* () {
+              const now = yield* DateTime.now;
+              const nowIso = DateTime.formatIso(now);
+              const current = yield* Ref.get(stateRef);
+              const nextState: AgentDashboardReviewSchedule = {
+                ...current,
+                lastStatus: "failed",
+                lastError: "message" in cause ? String(cause.message) : "Review enqueue failed.",
+                nextRunAt: isoAt(DateTime.toEpochMillis(now) + INTERVAL_MS),
+                heartbeatAt: nowIso,
+              };
+              yield* Ref.set(stateRef, nextState);
+              yield* persist(nextState);
+              return yield* cause;
+            }),
+          ),
+        );
+
+      return run;
     });
 
   const runNow = run(true);
@@ -382,6 +357,12 @@ export const layer = Layer.effect(AgentDashboardReviewScheduler, make);
 export const __testing = {
   defaultSchedule,
   normalizeSchedule,
-  parseReviewMetadata,
+  parseReviewMetadata: (text: string) => {
+    const parsed = parseReviewMetadata(text);
+    if (parsed.kind === "parsed") return parsed.findings;
+    if (parsed.kind === "missing") return null;
+    return [];
+  },
+  scheduleStatusFromRun,
   intervalMs: INTERVAL_MS,
 };

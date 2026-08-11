@@ -11,6 +11,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
+import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
 import {
   otlpTracesProxyRouteLayer,
@@ -650,25 +651,29 @@ export const makeServerLayer = Layer.unwrap(
       ).pipe(Effect.asVoid),
     }).pipe(Layer.provideMerge(RuntimeDependenciesLive), Layer.provide(launcherLayer));
 
-    // The review runner depends on ServerRuntimeStartup so scheduled commands
-    // share the same readiness gate as browser-dispatched commands. Provide
-    // this server-scoped service to routes after mergeAll so websocket RPCs
-    // and the scheduler share one instance.
-    const reviewSchedulerLayer = AgentDashboardReviewScheduler.layer.pipe(
-      Layer.provide(AgentDashboardReviewRunner.layer),
+    // Review jobs and the two-hour scheduler share one server-scoped job service
+    // so manual clicks and schedule ticks enqueue through the same lifecycle.
+    // Keep this stack beside the server application (not RuntimeDependencies) so
+    // it is acquired once and never once per websocket connection.
+    const reviewOrchestrationLayer = AgentDashboardReviewScheduler.layer.pipe(
+      Layer.provideMerge(
+        AgentDashboardReviewJobService.layer.pipe(Layer.provide(AgentDashboardReviewRunner.layer)),
+      ),
       Layer.provide(runtimeServicesLive),
     );
 
     const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
       disableLogger: !config.logWebSocketEvents,
     }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
+    // Provide review orchestration after mergeAll so routes/ws can resolve the
+    // shared job service, while the scheduler still starts with the server.
     const serverApplicationLayer = Layer.mergeAll(
       routesLayer,
       httpListeningLayer,
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
-    ).pipe(Layer.provideMerge(reviewSchedulerLayer));
+    ).pipe(Layer.provideMerge(reviewOrchestrationLayer));
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),

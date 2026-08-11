@@ -11,24 +11,51 @@ import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
 
 import type {
+  AgentDashboardAutomationRun,
+  AgentDashboardCollectorState,
+  AgentDashboardExternalAction,
+  AgentDashboardFinding,
+  AgentDashboardFindingConfidence,
+  AgentDashboardFindingKind,
+  AgentDashboardFindingSeverity,
   AgentDashboardFeedAction,
   AgentDashboardFeedCard,
   AgentDashboardFeedOrigin,
+  AgentDashboardDispositionActionInput,
+  AgentDashboardLinkFindingThreadInput,
+  AgentDashboardRepositoryCoverage,
+  AgentDashboardRepositoryPolicy,
   AgentDashboardResearchFinding,
   AgentDashboardReviewSuggestion,
 } from "@t3tools/contracts";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  AgentDashboardCollectorState as AgentDashboardCollectorStateSchema,
+  AgentDashboardExternalAction as AgentDashboardExternalActionSchema,
+  AgentDashboardFinding as AgentDashboardFindingSchema,
+  AgentDashboardRepositoryCoverage as AgentDashboardRepositoryCoverageSchema,
+  AgentDashboardRepositoryPolicy as AgentDashboardRepositoryPolicySchema,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 
 const MAX_FEED_CARDS = 200;
 const MAX_RESEARCH_FINDINGS = 500;
 const MAX_TEXT = 8_000;
-const REVIEW_SUGGESTION_SOURCE = "code_review";
-const REVIEW_SUGGESTION_PROFILE = "t3-random-codebase-review";
+const MAX_FEED_IMAGE_BYTES = 8 * 1024 * 1024;
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const GITHUB_ISSUE_URL_PATTERN =
   /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[0-9]+$/;
+const FEED_IMAGE_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".avif": "image/avif",
+};
 
 type JsonObject = Record<string, unknown>;
 
@@ -60,6 +87,9 @@ export interface AgentDashboardReviewFindingInput {
 
 export interface AgentDashboardReviewIngestInput {
   readonly jobId: string;
+  readonly runId?: string | null | undefined;
+  readonly projectId?: string | null | undefined;
+  readonly threadId?: string | null | undefined;
   readonly repository: {
     readonly name: string;
     readonly path: string;
@@ -67,6 +97,26 @@ export interface AgentDashboardReviewIngestInput {
   };
   readonly findings: ReadonlyArray<AgentDashboardReviewFindingInput>;
 }
+
+export interface AgentDashboardCanonicalFindingInput {
+  readonly kind: AgentDashboardFindingKind;
+  readonly title: string;
+  readonly summary: string;
+  readonly severity?: AgentDashboardFindingSeverity | undefined;
+  readonly confidence?: AgentDashboardFindingConfidence | undefined;
+  readonly category?: string | null | undefined;
+  readonly evidence?: ReadonlyArray<string> | undefined;
+  readonly repository: { readonly projectId: string };
+  readonly repositoryPath?: string | null | undefined;
+  readonly source: string;
+  readonly sourceAt?: string | null | undefined;
+  readonly collectedAt?: string | undefined;
+  readonly runId?: string | null | undefined;
+  readonly threadId?: string | null | undefined;
+  readonly externalIssueUrl?: string | null | undefined;
+}
+
+export type AgentDashboardStoreMutationOutcome = "applied" | "noop" | "not-found";
 
 export interface AgentDashboardStoreService {
   readonly readFeed: Effect.Effect<ReadonlyArray<AgentDashboardFeedCard>, AgentDashboardStoreError>;
@@ -94,6 +144,47 @@ export interface AgentDashboardStoreService {
     action: "dismiss" | "block",
   ) => Effect.Effect<boolean, AgentDashboardStoreError>;
   readonly createGithubIssue: (id: string) => Effect.Effect<boolean, AgentDashboardStoreError>;
+  readonly readFindings: Effect.Effect<
+    ReadonlyArray<AgentDashboardFinding>,
+    AgentDashboardStoreError
+  >;
+  readonly appendFindings: (
+    input: ReadonlyArray<AgentDashboardCanonicalFindingInput>,
+  ) => Effect.Effect<number, AgentDashboardStoreError>;
+  readonly applyFindingAction: (
+    input: AgentDashboardDispositionActionInput,
+  ) => Effect.Effect<AgentDashboardStoreMutationOutcome, AgentDashboardStoreError>;
+  readonly linkFindingThread: (
+    input: AgentDashboardLinkFindingThreadInput,
+  ) => Effect.Effect<AgentDashboardStoreMutationOutcome, AgentDashboardStoreError>;
+  readonly readRepositoryPolicies: Effect.Effect<
+    ReadonlyArray<AgentDashboardRepositoryPolicy>,
+    AgentDashboardStoreError
+  >;
+  readonly writeRepositoryPolicy: (
+    policy: AgentDashboardRepositoryPolicy,
+  ) => Effect.Effect<boolean, AgentDashboardStoreError>;
+  readonly readRepositoryCoverage: Effect.Effect<
+    ReadonlyArray<AgentDashboardRepositoryCoverage>,
+    AgentDashboardStoreError
+  >;
+  readonly recordAutomationRun: (
+    run: AgentDashboardAutomationRun,
+  ) => Effect.Effect<void, AgentDashboardStoreError>;
+  readonly readExternalActions: Effect.Effect<
+    ReadonlyArray<AgentDashboardExternalAction>,
+    AgentDashboardStoreError
+  >;
+  readonly appendExternalAction: (
+    action: AgentDashboardExternalAction,
+  ) => Effect.Effect<void, AgentDashboardStoreError>;
+  readonly readCollectorStates: Effect.Effect<
+    ReadonlyArray<AgentDashboardCollectorState>,
+    AgentDashboardStoreError
+  >;
+  readonly writeCollectorState: (
+    state: AgentDashboardCollectorState,
+  ) => Effect.Effect<void, AgentDashboardStoreError>;
   readonly feedToken: Effect.Effect<string, AgentDashboardStoreError>;
 }
 
@@ -298,15 +389,6 @@ const jsonDocument = async (path: string): Promise<unknown> => {
   }
 };
 
-const fileIsEmpty = async (path: string): Promise<boolean> => {
-  try {
-    return (await NodeFSP.readFile(path, "utf8")).trim().length === 0;
-  } catch (cause) {
-    if (asObject(cause)?.code === "ENOENT") return true;
-    throw cause;
-  }
-};
-
 const writeAtomic = async (path: string, contents: string): Promise<void> => {
   const directory = NodePath.dirname(path);
   await NodeFSP.mkdir(directory, { recursive: true });
@@ -376,10 +458,6 @@ export const isStableRepositoryPath = async (repositoryPath: string): Promise<bo
   try {
     const repositoryStat = await NodeFSP.stat(repositoryPath);
     if (!repositoryStat.isDirectory()) return false;
-
-    // Submodule checkouts expose .git as a pointer file, while linked
-    // worktrees expose a per-worktree git directory. Both are valid Git
-    // repositories, but only the former is a durable project checkout.
     const gitStat = await NodeFSP.lstat(NodePath.join(repositoryPath, ".git"));
     if (!gitStat.isDirectory() && !gitStat.isFile()) return false;
 
@@ -401,8 +479,9 @@ export const isStableRepositoryPath = async (repositoryPath: string): Promise<bo
       NodeFSP.realpath(resolveGitPath(gitDir)),
       NodeFSP.realpath(resolveGitPath(commonGitDir)),
     ]);
-    // A submodule's git dir and common dir resolve to the same location.
-    // Linked worktrees have a separate per-worktree git dir and are rejected.
+    // Git submodule checkouts use a .git pointer file but share the same
+    // common directory as their git dir. Linked worktrees have a separate
+    // per-worktree git dir, so reject those disposable paths.
     return resolvedPath === resolvedRoot && resolvedGitDir === resolvedCommonGitDir;
   } catch {
     return false;
@@ -454,18 +533,10 @@ const normalizeResearch = (
 };
 
 const normalizeSuggestion = (raw: JsonObject): AgentDashboardReviewSuggestion | null => {
-  if (raw.source !== REVIEW_SUGGESTION_SOURCE) return null;
+  if (raw.source !== "code_review") return null;
   const id = text(raw.id, 100);
   const title = text(raw.title, 300);
   if (!id || !title) return null;
-  // Older Hermes records also used source=code_review. Only the T3-native
-  // review profile represents an individual codebase research run.
-  const profile = text(raw.profile, 100);
-  if (profile !== REVIEW_SUGGESTION_PROFILE) return null;
-  const jobId = text(raw.job_id, 200) ?? text(raw.run_id, 200);
-  // A review source without a run id has no individual-run provenance and is
-  // not allowed to cross into the Suggestions section.
-  if (!jobId) return null;
   const repository = asObject(raw.repository) ?? {};
   const issue = asObject(raw.github_issue) ?? {};
   const status = ["pending", "accepted", "dismissed", "blocked"].includes(String(raw.status))
@@ -473,10 +544,10 @@ const normalizeSuggestion = (raw: JsonObject): AgentDashboardReviewSuggestion | 
     : "pending";
   return {
     id,
-    profile,
+    profile: text(raw.profile, 100),
     title,
     description: text(raw.description, 4_000) ?? title,
-    source: REVIEW_SUGGESTION_SOURCE,
+    source: "code_review",
     status,
     createdAt: timestamp(raw.created_at),
     expiresAt: raw.expires_at ? timestamp(raw.expires_at) : null,
@@ -497,16 +568,22 @@ const normalizeSuggestion = (raw: JsonObject): AgentDashboardReviewSuggestion | 
       url: text(issue.url, 2_000),
       number: issue.number === null || issue.number === undefined ? null : integer(issue.number, 0),
     },
-    jobId,
+    jobId: text(raw.job_id, 200),
   };
 };
 
 const makeStore = (stateDir: string): AgentDashboardStoreService => {
   const directory = NodePath.join(stateDir, "agent-dashboard");
   const feedPath = NodePath.join(directory, "feed.jsonl");
-  const feedMigrationPath = NodePath.join(directory, "feed.legacy-migrated");
+  const feedLegacyCursorPath = NodePath.join(directory, "feed.legacy-cursor");
+  const assetsDir = NodePath.join(directory, "assets");
   const researchPath = NodePath.join(directory, "research_findings.jsonl");
   const suggestionsPath = NodePath.join(directory, "suggestions.json");
+  const findingsPath = NodePath.join(directory, "findings.json");
+  const policiesPath = NodePath.join(directory, "repository-policies.json");
+  const coveragePath = NodePath.join(directory, "repository-coverage.json");
+  const externalActionsPath = NodePath.join(directory, "external-actions.json");
+  const collectorStatesPath = NodePath.join(directory, "collector-states.json");
   const tokenPath = NodePath.join(directory, "feed.token");
   const legacyFeedPath = NodePath.join(
     NodeOS.homedir(),
@@ -525,36 +602,174 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
 
   let initialized: Promise<void> | null = null;
   let mutation = Promise.resolve();
+  let lastLegacyFeedSignature: string | null = null;
+
+  const isPathInsideRoot = (root: string, candidate: string): boolean => {
+    const relative = NodePath.relative(root, candidate);
+    return relative === "" || (!relative.startsWith("..") && !NodePath.isAbsolute(relative));
+  };
+
+  const resolveOwnedImagePath = async (imagePath: string): Promise<string | null> => {
+    if (!imagePath || imagePath.includes("\0")) return null;
+    try {
+      await NodeFSP.mkdir(assetsDir, { recursive: true });
+      const assetsRoot = await NodeFSP.realpath(assetsDir);
+      const candidate = NodePath.isAbsolute(imagePath)
+        ? imagePath
+        : NodePath.resolve(assetsDir, imagePath);
+      // realpath collapses symlinks; containment after that blocks escape.
+      const realFile = await NodeFSP.realpath(candidate);
+      if (!isPathInsideRoot(assetsRoot, realFile)) return null;
+      const info = await NodeFSP.stat(realFile);
+      if (!info.isFile() || info.size > MAX_FEED_IMAGE_BYTES) return null;
+      const extension = NodePath.extname(realFile).toLowerCase();
+      if (!FEED_IMAGE_CONTENT_TYPES[extension]) return null;
+      return realFile;
+    } catch {
+      return null;
+    }
+  };
+
+  const importFeedImage = async (sourceSpec: string, cardId: number): Promise<string | null> => {
+    if (!sourceSpec || sourceSpec.includes("\0")) return null;
+    // Publishers may only hand us absolute local paths (widget contract).
+    if (!NodePath.isAbsolute(sourceSpec)) return null;
+    const extension = NodePath.extname(sourceSpec).toLowerCase();
+    if (!FEED_IMAGE_CONTENT_TYPES[extension]) return null;
+    try {
+      const info = await NodeFSP.stat(sourceSpec);
+      if (!info.isFile() || info.size > MAX_FEED_IMAGE_BYTES) return null;
+      const bytes = await NodeFSP.readFile(sourceSpec);
+      await NodeFSP.mkdir(assetsDir, { recursive: true });
+      const destination = NodePath.join(assetsDir, `${cardId}${extension}`);
+      // Never write through a pre-existing symlink in the assets directory.
+      try {
+        const existing = await NodeFSP.lstat(destination);
+        if (existing.isSymbolicLink() || !existing.isFile()) {
+          await NodeFSP.rm(destination, { force: true });
+        }
+      } catch (cause) {
+        if (asObject(cause)?.code !== "ENOENT") throw cause;
+      }
+      await NodeFSP.writeFile(destination, bytes, { mode: 0o600, flag: "w" });
+      return await resolveOwnedImagePath(destination);
+    } catch {
+      return null;
+    }
+  };
+
+  const attachOwnedImage = async (card: JsonObject, cardId: number): Promise<JsonObject> => {
+    const imageFile = text(card.image_file, 2_000);
+    if (!imageFile) return card;
+    const owned = await resolveOwnedImagePath(imageFile);
+    if (owned) {
+      return owned === imageFile ? card : { ...card, image_file: owned };
+    }
+    const imported = await importFeedImage(imageFile, cardId);
+    if (!imported) {
+      const { image_file: _removed, ...rest } = card;
+      return rest;
+    }
+    return { ...card, image_file: imported };
+  };
+
+  const readLegacyCursor = async (): Promise<number> => {
+    try {
+      const raw = (await NodeFSP.readFile(feedLegacyCursorPath, "utf8")).trim();
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
+    } catch (cause) {
+      if (asObject(cause)?.code === "ENOENT") return 0;
+      throw cause;
+    }
+  };
+
+  const legacyFeedSignature = async (): Promise<string | null> => {
+    try {
+      const info = await NodeFSP.stat(legacyFeedPath);
+      return `${info.size}:${Math.trunc(info.mtimeMs)}`;
+    } catch (cause) {
+      if (asObject(cause)?.code === "ENOENT") return null;
+      throw cause;
+    }
+  };
+
+  const ingestLegacyFeed = async (): Promise<void> => {
+    const signature = await legacyFeedSignature();
+    if (signature !== null && signature === lastLegacyFeedSignature) {
+      return;
+    }
+
+    let legacyCards: Array<JsonObject> = [];
+    try {
+      legacyCards = await jsonLines(legacyFeedPath);
+    } catch (cause) {
+      if (asObject(cause)?.code !== "ENOENT") throw cause;
+    }
+
+    const cursor = await readLegacyCursor();
+    const localCards = await jsonLines(feedPath);
+    const byId = new Map<number, JsonObject>();
+    for (const card of localCards) {
+      byId.set(integer(card.id, 0), card);
+    }
+
+    let changed = false;
+    let maxSeen = cursor;
+    for (const legacyCard of legacyCards) {
+      const id = integer(legacyCard.id, 0);
+      if (id <= 0) continue;
+      maxSeen = Math.max(maxSeen, id);
+      if (id <= cursor) continue;
+      if (byId.has(id)) continue;
+      const prepared = await attachOwnedImage({ ...legacyCard, id }, id);
+      byId.set(id, prepared);
+      changed = true;
+    }
+
+    if (changed) {
+      const merged = [...byId.values()].toSorted(
+        (left, right) => integer(left.id, 0) - integer(right.id, 0),
+      );
+      await writeAtomic(
+        feedPath,
+        merged.length === 0 ? "" : `${merged.map((card) => JSON.stringify(card)).join("\n")}\n`,
+      );
+    }
+    if (maxSeen > cursor) {
+      await writeAtomic(feedLegacyCursorPath, `${maxSeen}\n`);
+    }
+    lastLegacyFeedSignature = signature;
+  };
+
+  const ensureOwnedFeedImages = async (): Promise<void> => {
+    const cards = await jsonLines(feedPath);
+    let changed = false;
+    const next: Array<JsonObject> = [];
+    for (const card of cards) {
+      const id = integer(card.id, 0);
+      const prepared = await attachOwnedImage(card, id);
+      if (prepared !== card && JSON.stringify(prepared) !== JSON.stringify(card)) {
+        changed = true;
+      }
+      next.push(prepared);
+    }
+    if (changed) {
+      await writeAtomic(
+        feedPath,
+        next.length === 0 ? "" : `${next.map((card) => JSON.stringify(card)).join("\n")}\n`,
+      );
+    }
+  };
 
   const initialize = (): Promise<void> => {
     if (initialized) return initialized;
     initialized = (async () => {
       await NodeFSP.mkdir(directory, { recursive: true });
-      let feedMigrationComplete = false;
-      try {
-        await NodeFSP.access(feedMigrationPath);
-        feedMigrationComplete = true;
-      } catch (cause) {
-        if (asObject(cause)?.code !== "ENOENT") throw cause;
-      }
-      if (!feedMigrationComplete) {
-        if (await fileIsEmpty(feedPath)) {
-          try {
-            const legacyContents = await NodeFSP.readFile(legacyFeedPath, "utf8");
-            if (legacyContents.trim().length > 0) {
-              await writeAtomic(
-                feedPath,
-                legacyContents.endsWith("\n") ? legacyContents : `${legacyContents}\n`,
-              );
-              await writeAtomic(feedMigrationPath, "1\n");
-            }
-          } catch (cause) {
-            if (asObject(cause)?.code !== "ENOENT") throw cause;
-          }
-        } else {
-          await writeAtomic(feedMigrationPath, "1\n");
-        }
-      }
+      await NodeFSP.mkdir(assetsDir, { recursive: true });
+      // Continuous, idempotent legacy ingestion replaces the one-shot empty-feed copy.
+      await ingestLegacyFeed();
+      await ensureOwnedFeedImages();
       for (const [target, legacy] of [
         [researchPath, legacyResearchPath],
         [suggestionsPath, legacySuggestionsPath],
@@ -584,6 +799,9 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     Effect.tryPromise({
       try: async () => {
         await initialize();
+        // Continuous legacy ingestion: no-ops (no state writes) when the legacy
+        // feed signature is unchanged, so repeated pure reads keep stable mtimes.
+        await ingestLegacyFeed();
         return await task();
       },
       catch: (cause) => new AgentDashboardStoreError({ operation, cause }),
@@ -596,6 +814,163 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       () => undefined,
     );
     return next;
+  };
+
+  const readDocumentArray = async (path: string, key: string): Promise<Array<JsonObject>> => {
+    const raw = await jsonDocument(path);
+    const object = asObject(raw);
+    const values = Array.isArray(object?.[key]) ? object[key] : Array.isArray(raw) ? raw : [];
+    return values.map(asObject).filter((value): value is JsonObject => value !== null);
+  };
+
+  const writeDocumentArray = async (
+    path: string,
+    key: string,
+    values: ReadonlyArray<JsonObject>,
+  ): Promise<void> => {
+    await writeAtomic(
+      path,
+      JSON.stringify({ [key]: values, updated_at: new Date().toISOString() }, null, 2),
+    );
+  };
+
+  const decodeFinding = (value: unknown): AgentDashboardFinding | null => {
+    try {
+      return Schema.decodeUnknownSync(AgentDashboardFindingSchema)(value);
+    } catch {
+      return null;
+    }
+  };
+
+  const decodePolicy = (value: unknown): AgentDashboardRepositoryPolicy | null => {
+    try {
+      return Schema.decodeUnknownSync(AgentDashboardRepositoryPolicySchema)(value);
+    } catch {
+      return null;
+    }
+  };
+
+  const decodeCoverage = (value: unknown): AgentDashboardRepositoryCoverage | null => {
+    try {
+      return Schema.decodeUnknownSync(AgentDashboardRepositoryCoverageSchema)(value);
+    } catch {
+      return null;
+    }
+  };
+
+  const decodeExternalAction = (value: unknown): AgentDashboardExternalAction | null => {
+    try {
+      return Schema.decodeUnknownSync(AgentDashboardExternalActionSchema)(value);
+    } catch {
+      return null;
+    }
+  };
+
+  const decodeCollectorState = (value: unknown): AgentDashboardCollectorState | null => {
+    try {
+      return Schema.decodeUnknownSync(AgentDashboardCollectorStateSchema)(value);
+    } catch {
+      return null;
+    }
+  };
+
+  const readCanonicalFindingsRaw = async (): Promise<Array<AgentDashboardFinding>> =>
+    (await readDocumentArray(findingsPath, "findings"))
+      .map(decodeFinding)
+      .filter((value): value is AgentDashboardFinding => value !== null);
+
+  const findingSeverity = (
+    input: AgentDashboardCanonicalFindingInput,
+  ): AgentDashboardFindingSeverity => {
+    if (input.severity) return input.severity;
+    const textValue = `${input.title} ${input.summary} ${input.category ?? ""}`.toLowerCase();
+    if (/(critical|credential|secret|remote code|data loss)/.test(textValue)) return "critical";
+    if (/(security|vulnerability|crash|corrupt)/.test(textValue)) return "high";
+    if (/(bug|failure|missing|unsafe)/.test(textValue)) return "medium";
+    return "low";
+  };
+
+  const findingConfidence = (
+    input: AgentDashboardCanonicalFindingInput,
+  ): AgentDashboardFindingConfidence => input.confidence ?? "medium";
+
+  const stableFindingFingerprint = (input: AgentDashboardCanonicalFindingInput): string => {
+    const normalized = {
+      repository: input.repository.projectId.trim(),
+      kind: input.kind,
+      title: input.title.trim().replace(/\s+/g, " ").toLocaleLowerCase(),
+      category: input.category?.trim().replace(/\s+/g, " ").toLocaleLowerCase() ?? "",
+      evidence: (input.evidence ?? [])
+        .map((item) => item.trim().replace(/\s+/g, " ").toLocaleLowerCase())
+        .filter(Boolean)
+        .toSorted(),
+    };
+    return `finding:${NodeCrypto.createHash("sha256").update(JSON.stringify(normalized)).digest("hex").slice(0, 32)}`;
+  };
+
+  const mergeCanonicalFindings = async (
+    inputs: ReadonlyArray<AgentDashboardCanonicalFindingInput>,
+  ): Promise<number> => {
+    const existing = await readCanonicalFindingsRaw();
+    const byFingerprint = new Map(existing.map((finding) => [finding.fingerprint, finding]));
+    const now = new Date().toISOString();
+    let changed = 0;
+
+    for (const input of inputs.slice(0, 100)) {
+      const title = input.title.trim().slice(0, 300);
+      if (!title || !input.repository.projectId.trim()) continue;
+      const evidence = (input.evidence ?? [])
+        .map((item) => item.trim().slice(0, 1_000))
+        .filter(Boolean)
+        .slice(0, 24);
+      const fingerprint = stableFindingFingerprint({ ...input, title, evidence });
+      const previous = byFingerprint.get(fingerprint);
+      const id = previous?.id ?? fingerprint;
+      const next: AgentDashboardFinding = {
+        id,
+        fingerprint,
+        kind: input.kind,
+        title,
+        summary: input.summary.trim().slice(0, 4_000) || title,
+        severity: findingSeverity(input),
+        confidence: findingConfidence(input),
+        category: input.category?.trim().slice(0, 80) || null,
+        evidence,
+        repository: { projectId: ProjectId.make(input.repository.projectId.trim()) },
+        repositoryPath: input.repositoryPath?.trim().slice(0, 2_000) || null,
+        disposition: previous?.disposition ?? {
+          state: "open",
+          updatedAt: now,
+          actor: null,
+          note: null,
+          snoozeUntil: null,
+          assignee: null,
+        },
+        provenance: {
+          source: input.source.trim().slice(0, 120) || "agent-dashboard",
+          sourceAt: input.sourceAt ? timestamp(input.sourceAt, now) : null,
+          collectedAt: input.collectedAt ? timestamp(input.collectedAt, now) : now,
+        },
+        firstSeenAt: previous?.firstSeenAt ?? now,
+        lastSeenAt: now,
+        occurrenceCount: Math.min(1_000_000, (previous?.occurrenceCount ?? 0) + 1),
+        lastRunId: input.runId?.trim() || previous?.lastRunId || null,
+        thread: input.threadId?.trim()
+          ? {
+              projectId: ProjectId.make(input.repository.projectId.trim()),
+              threadId: ThreadId.make(input.threadId.trim()),
+            }
+          : (previous?.thread ?? null),
+        externalIssueUrl: input.externalIssueUrl?.trim() || previous?.externalIssueUrl || null,
+      };
+      byFingerprint.set(fingerprint, next);
+      changed += 1;
+    }
+
+    if (changed > 0) {
+      await writeDocumentArray(findingsPath, "findings", [...byFingerprint.values()]);
+    }
+    return changed;
   };
 
   const readReviewSuggestionRaw = async (): Promise<Array<JsonObject>> => {
@@ -654,7 +1029,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       withMutation(async () => {
         const cards = await readFeedRaw();
         const nextId = cards.reduce((max, card) => Math.max(max, integer(card.id, 0)), 0) + 1;
-        const raw = rawFeedCard(input, nextId);
+        const raw = await attachOwnedImage(rawFeedCard(input, nextId), nextId);
         await persistFeed([...cards, raw]);
         return feedCard(raw, nextId, Number(raw.ts));
       }),
@@ -682,20 +1057,18 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       const cards = await readFeedRaw();
       const card = cards.find((entry) => integer(entry.id, 0) === id);
       const imagePath = text(card?.image_file, 2_000);
-      if (!imagePath || !NodePath.isAbsolute(imagePath)) return null;
+      if (!imagePath) return null;
+      // Serve only dashboard-owned asset files. Absolute paths outside assets/,
+      // traversal, and symlink escapes all resolve to null.
+      const ownedPath = await resolveOwnedImagePath(imagePath);
+      if (!ownedPath) return null;
       try {
-        const bytes = await NodeFSP.readFile(imagePath);
-        const extension = NodePath.extname(imagePath).toLowerCase();
-        const contentType: Record<string, string> = {
-          ".png": "image/png",
-          ".jpg": "image/jpeg",
-          ".jpeg": "image/jpeg",
-          ".gif": "image/gif",
-          ".webp": "image/webp",
-          ".svg": "image/svg+xml",
-          ".avif": "image/avif",
+        const bytes = await NodeFSP.readFile(ownedPath);
+        const extension = NodePath.extname(ownedPath).toLowerCase();
+        return {
+          bytes,
+          contentType: FEED_IMAGE_CONTENT_TYPES[extension] ?? "application/octet-stream",
         };
-        return { bytes, contentType: contentType[extension] ?? "application/octet-stream" };
       } catch (cause) {
         if (asObject(cause)?.code === "ENOENT") return null;
         throw cause;
@@ -720,18 +1093,14 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           : normalized,
       );
     }
-    const findings = [...byId.values()]
+    // Read path is side-effect free: normalize in memory only.
+    return [...byId.values()]
       .toSorted(
         (left, right) =>
           Date.parse(right.timestamp) - Date.parse(left.timestamp) ||
           right.id.localeCompare(left.id),
       )
       .slice(0, MAX_RESEARCH_FINDINGS);
-    await writeAtomic(
-      researchPath,
-      `${findings.map((finding) => JSON.stringify(finding)).join("\n")}\n`,
-    );
-    return findings;
   });
 
   const readReviewSuggestions = run("read review suggestions", async () => {
@@ -748,20 +1117,11 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       const suggestion = normalizeSuggestion(record);
       if (!suggestion || suggestion.status !== "pending") continue;
       if (suggestion.expiresAt !== null && Date.parse(suggestion.expiresAt) <= now) continue;
-
-      if (!(await isStableRepositoryPath(suggestion.repository.path))) {
-        record.status = "blocked";
-        record.resolved_at = new Date(now).toISOString();
-        record.resolution_reason = "repository_unavailable_or_linked_worktree";
-        continue;
-      }
+      // Filter unstable targets in memory only — do not rewrite suggestions on read.
+      if (!(await isStableRepositoryPath(suggestion.repository.path))) continue;
       visible.push(suggestion);
     }
 
-    await writeAtomic(
-      suggestionsPath,
-      JSON.stringify({ suggestions: all, updated_at: new Date().toISOString() }, null, 2),
-    );
     return visible.toSorted(
       (left, right) =>
         Date.parse(right.createdAt) - Date.parse(left.createdAt) || right.id.localeCompare(left.id),
@@ -771,8 +1131,6 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
   const appendReviewSuggestions = (input: AgentDashboardReviewIngestInput) =>
     run("append review suggestions", () =>
       withMutation(async () => {
-        const jobId = input.jobId.trim().slice(0, 200);
-        if (!jobId) return 0;
         const existingRecords = await readReviewSuggestionRaw();
         const byId = new Map<string, JsonObject>();
         for (const record of existingRecords) {
@@ -783,29 +1141,45 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         const createdAt = new Date().toISOString();
         const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1_000).toISOString();
         let changed = 0;
+        const canonicalInputs: Array<AgentDashboardCanonicalFindingInput> = [];
+        const migratedDispositions = new Map<string, "acknowledged" | "dismissed" | "blocked">();
         for (const finding of input.findings.slice(0, 3)) {
           const title = finding.title.trim().slice(0, 300);
           if (!title) continue;
-          const digest = NodeCrypto.createHash("sha256")
-            .update(
-              JSON.stringify({
-                jobId,
-                repository: input.repository.path,
-                title,
-                evidence: finding.evidence,
-              }),
-            )
-            .digest("hex")
-            .slice(0, 24);
-          const id = `t3-review-${digest}`;
+          const canonicalInput: AgentDashboardCanonicalFindingInput = {
+            kind: "review",
+            title,
+            summary: finding.summary,
+            confidence:
+              finding.confidence === "high" || finding.confidence === "low"
+                ? finding.confidence
+                : "medium",
+            category: finding.category,
+            evidence: finding.evidence,
+            repository: { projectId: input.projectId ?? "pending-selection" },
+            repositoryPath: input.repository.path,
+            source: "code_review",
+            sourceAt: createdAt,
+            collectedAt: createdAt,
+            runId: input.runId ?? input.jobId,
+            threadId: input.threadId ?? null,
+          };
+          const fingerprint = stableFindingFingerprint(canonicalInput);
+          const id = `t3-review-${fingerprint.slice("finding:".length)}`;
           const previous = byId.get(id);
+          const previousStatus = text(previous?.status, 40);
+          if (previousStatus === "accepted") {
+            migratedDispositions.set(fingerprint, "acknowledged");
+          } else if (previousStatus === "dismissed" || previousStatus === "blocked") {
+            migratedDispositions.set(fingerprint, previousStatus);
+          }
           const previousIssue = asObject(previous?.github_issue) ?? {};
           const report =
             finding.markdown?.trim().slice(0, 16_000) || finding.summary.trim().slice(0, 4_000);
           const record: JsonObject = {
             ...previous,
             id,
-            source: REVIEW_SUGGESTION_SOURCE,
+            source: "code_review",
             profile: "t3-random-codebase-review",
             title,
             description: finding.summary.trim().slice(0, 4_000) || title,
@@ -832,9 +1206,10 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
               url: text(previousIssue.url, 2_000),
               number: previousIssue.number ?? null,
             },
-            job_id: jobId,
+            job_id: input.jobId.trim().slice(0, 200),
           };
           byId.set(id, record);
+          canonicalInputs.push(canonicalInput);
           changed += 1;
         }
 
@@ -842,6 +1217,33 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           suggestionsPath,
           JSON.stringify({ suggestions: [...byId.values()], updated_at: createdAt }, null, 2),
         );
+        await mergeCanonicalFindings(canonicalInputs);
+        if (migratedDispositions.size > 0) {
+          const canonicalFindings = await readCanonicalFindingsRaw();
+          let dispositionChanged = false;
+          const migrated = canonicalFindings.map((finding) => {
+            const state = migratedDispositions.get(finding.fingerprint);
+            if (!state || finding.disposition.state !== "open") return finding;
+            dispositionChanged = true;
+            return {
+              ...finding,
+              disposition: {
+                ...finding.disposition,
+                state,
+                updatedAt: createdAt,
+                actor: "legacy-migration",
+                note: "Migrated from the legacy review suggestion state.",
+              },
+            };
+          });
+          if (dispositionChanged) {
+            await writeDocumentArray(
+              findingsPath,
+              "findings",
+              migrated.map((finding) => finding as unknown as JsonObject),
+            );
+          }
+        }
         return changed;
       }),
     );
@@ -856,7 +1258,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           if (recordId) byId.set(recordId, record);
         }
         const record = byId.get(id);
-        if (!record || !normalizeSuggestion(record)) return false;
+        if (!record || record.source !== "code_review") return false;
         record.status = action === "block" ? "blocked" : "dismissed";
         record.resolved_at = new Date().toISOString();
         await writeAtomic(
@@ -871,12 +1273,23 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       }),
     );
 
+  const appendExternalActionInternal = async (
+    action: AgentDashboardExternalAction,
+  ): Promise<void> => {
+    const actions = await readDocumentArray(externalActionsPath, "actions");
+    const next = [
+      action as unknown as JsonObject,
+      ...actions.filter((item) => item.id !== action.id),
+    ].slice(0, 500);
+    await writeDocumentArray(externalActionsPath, "actions", next);
+  };
+
   const createGithubIssue = (id: string) =>
     run("create GitHub issue", () =>
       withMutation(async () => {
         const target = await readReviewSuggestionRaw();
         const record = target.find((candidate) => text(candidate.id, 100) === id);
-        if (!record || !normalizeSuggestion(record)) {
+        if (!record || record.source !== "code_review") {
           throw new Error("Suggestion not found.");
         }
         if (String(record.status ?? "pending") !== "pending") {
@@ -943,7 +1356,306 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           suggestionsPath,
           JSON.stringify({ suggestions: target, updated_at: new Date().toISOString() }, null, 2),
         );
+        const canonicalFindings = await readCanonicalFindingsRaw();
+        const canonical = canonicalFindings.find(
+          (finding) => finding.id === id || finding.id === id.replace(/^t3-review-/, "finding:"),
+        );
+        if (canonical) {
+          await writeDocumentArray(
+            findingsPath,
+            "findings",
+            canonicalFindings.map(
+              (finding) =>
+                (finding.id === canonical.id
+                  ? { ...finding, externalIssueUrl: url }
+                  : finding) as unknown as JsonObject,
+            ),
+          );
+        }
+        await appendExternalActionInternal({
+          id: `action:create-github-issue:${id}`,
+          kind: "create-github-issue",
+          status: "succeeded",
+          actor: "dashboard",
+          targetId: String(number),
+          targetUrl: url,
+          findingId: canonical?.id ?? id,
+          runId: canonical?.lastRunId ?? null,
+          result: "created",
+          occurredAt: new Date().toISOString(),
+        });
         return true;
+      }),
+    );
+
+  const readFindings = run("read canonical findings", async () =>
+    (await readCanonicalFindingsRaw()).toSorted(
+      (left, right) =>
+        Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt) ||
+        right.id.localeCompare(left.id),
+    ),
+  );
+
+  const appendFindings = (inputs: ReadonlyArray<AgentDashboardCanonicalFindingInput>) =>
+    run("append canonical findings", () => withMutation(() => mergeCanonicalFindings(inputs)));
+
+  const applyFindingAction = (input: AgentDashboardDispositionActionInput) =>
+    run("apply finding action", () =>
+      withMutation(async () => {
+        const findings = await readCanonicalFindingsRaw();
+        const target = findings.find(
+          (finding) => finding.id === input.id || finding.fingerprint === input.id,
+        );
+        const now = new Date().toISOString();
+        const nextState = (() => {
+          switch (input.action) {
+            case "acknowledge":
+              return "acknowledged" as const;
+            case "snooze":
+              return "snoozed" as const;
+            case "assign":
+              return "assigned" as const;
+            case "dismiss":
+              return "dismissed" as const;
+            case "block":
+              return "blocked" as const;
+            case "reopen":
+              return "open" as const;
+          }
+        })();
+
+        if (!target) {
+          const legacy = await readReviewSuggestionRaw();
+          const legacyTarget = legacy.find((record) => text(record.id, 100) === input.id);
+          if (!legacyTarget || legacyTarget.source !== "code_review") return "not-found";
+          if (input.action === "dismiss" || input.action === "block") {
+            legacyTarget.status = input.action === "block" ? "blocked" : "dismissed";
+            legacyTarget.resolved_at = now;
+            await writeDocumentArray(suggestionsPath, "suggestions", legacy);
+            return "applied";
+          }
+          return "not-found";
+        }
+
+        const snoozeUntil =
+          input.action === "snooze"
+            ? (input.snoozeUntil ?? new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString())
+            : null;
+        const nextDisposition = {
+          state: nextState,
+          updatedAt: now,
+          actor: "dashboard",
+          note: input.note ?? null,
+          snoozeUntil,
+          assignee:
+            input.action === "assign"
+              ? (input.assignee ?? null)
+              : input.action === "reopen"
+                ? null
+                : target.disposition.assignee,
+        } satisfies AgentDashboardFinding["disposition"];
+        if (
+          target.disposition.state === nextDisposition.state &&
+          target.disposition.snoozeUntil === nextDisposition.snoozeUntil &&
+          target.disposition.assignee === nextDisposition.assignee &&
+          target.disposition.note === nextDisposition.note
+        ) {
+          return "noop";
+        }
+
+        const nextFindings = findings.map((finding) =>
+          finding.id === target.id ? { ...finding, disposition: nextDisposition } : finding,
+        );
+        await writeDocumentArray(
+          findingsPath,
+          "findings",
+          nextFindings.map((finding) => finding as unknown as JsonObject),
+        );
+
+        const legacy = await readReviewSuggestionRaw();
+        const legacyTarget = legacy.find((record) => {
+          const legacyId = text(record.id, 100);
+          return (
+            legacyId === target.id || legacyId === `t3-review-${target.id.replace(/^finding:/, "")}`
+          );
+        });
+        if (legacyTarget && (input.action === "dismiss" || input.action === "block")) {
+          legacyTarget.status = input.action === "block" ? "blocked" : "dismissed";
+          legacyTarget.resolved_at = now;
+          await writeDocumentArray(suggestionsPath, "suggestions", legacy);
+        }
+        return "applied";
+      }),
+    );
+
+  const linkFindingThread = (input: AgentDashboardLinkFindingThreadInput) =>
+    run("link finding thread", () =>
+      withMutation(async () => {
+        const findings = await readCanonicalFindingsRaw();
+        const legacyCanonicalId = input.id.replace(/^t3-review-/, "finding:");
+        const target = findings.find(
+          (finding) =>
+            finding.id === input.id ||
+            finding.fingerprint === input.id ||
+            finding.id === legacyCanonicalId,
+        );
+        if (!target) return "not-found";
+
+        const now = new Date().toISOString();
+        const nextThread = { projectId: input.projectId, threadId: input.threadId };
+        const nextDisposition = {
+          ...target.disposition,
+          state: "in-progress" as const,
+          updatedAt: now,
+          actor: "dashboard",
+          note: "Work started from the T3 Code Agent Dashboard.",
+          snoozeUntil: null,
+        } satisfies AgentDashboardFinding["disposition"];
+        const alreadyLinked =
+          target.thread?.projectId === nextThread.projectId &&
+          target.thread?.threadId === nextThread.threadId;
+        if (alreadyLinked && target.disposition.state === "in-progress") return "noop";
+
+        await writeDocumentArray(
+          findingsPath,
+          "findings",
+          findings.map(
+            (finding) =>
+              (finding.id === target.id
+                ? { ...finding, thread: nextThread, disposition: nextDisposition }
+                : finding) as unknown as JsonObject,
+          ),
+        );
+        await appendExternalActionInternal({
+          id: `action:open-thread:${target.id}:${input.threadId}`,
+          kind: "open-thread",
+          status: "succeeded",
+          actor: "dashboard",
+          targetId: input.threadId,
+          targetUrl: null,
+          findingId: target.id,
+          runId: target.lastRunId,
+          result: "linked",
+          occurredAt: now,
+        });
+        return "applied";
+      }),
+    );
+
+  const readRepositoryPolicies = run("read repository policies", async () =>
+    (await readDocumentArray(policiesPath, "policies"))
+      .map(decodePolicy)
+      .filter((value): value is AgentDashboardRepositoryPolicy => value !== null),
+  );
+
+  const readRepositoryPoliciesRaw = async (): Promise<Array<JsonObject>> =>
+    readDocumentArray(policiesPath, "policies");
+
+  const writeRepositoryPolicy = (policy: AgentDashboardRepositoryPolicy) =>
+    run("write repository policy", () =>
+      withMutation(async () => {
+        const policies = await readRepositoryPoliciesRaw();
+        const byRepository = new Map(
+          policies.map(
+            (item) =>
+              [
+                String(asObject(item.repository)?.projectId ?? NodeCrypto.randomUUID()),
+                item,
+              ] as const,
+          ),
+        );
+        byRepository.set(String(policy.repository.projectId), policy as unknown as JsonObject);
+        await writeDocumentArray(policiesPath, "policies", [...byRepository.values()]);
+        return true;
+      }),
+    );
+
+  const readRepositoryCoverage = run("read repository coverage", async () =>
+    (await readDocumentArray(coveragePath, "coverage"))
+      .map(decodeCoverage)
+      .filter((value): value is AgentDashboardRepositoryCoverage => value !== null),
+  );
+
+  const recordAutomationRun = (runRecord: AgentDashboardAutomationRun) =>
+    run("record automation run coverage", () =>
+      withMutation(async () => {
+        const projectId = String(runRecord.repository.projectId);
+        if (!projectId || projectId === "pending-selection") return;
+        const now = runRecord.updatedAt;
+        const coverage = await readDocumentArray(coveragePath, "coverage");
+        const policies = await readRepositoryPoliciesRaw();
+        const policy = policies
+          .map(decodePolicy)
+          .find((item) => item !== null && String(item.repository.projectId) === projectId);
+        const cadenceMinutes = policy?.cadenceMinutes ?? 120;
+        const existing = coverage
+          .map(decodeCoverage)
+          .find((item) => item !== null && String(item.repository.projectId) === projectId);
+        const terminal =
+          runRecord.status === "succeeded" ||
+          runRecord.status === "partial" ||
+          runRecord.status === "failed" ||
+          runRecord.status === "cancelled";
+        const successful = runRecord.status === "succeeded" || runRecord.status === "partial";
+        const failures = successful ? 0 : (existing?.consecutiveFailures ?? 0) + (terminal ? 1 : 0);
+        const backoffMinutes = Math.min(7 * 24 * 60, cadenceMinutes * 2 ** Math.min(failures, 6));
+        const nextDueAt = terminal
+          ? new Date(
+              Date.parse(now) + (successful ? cadenceMinutes : backoffMinutes) * 60_000,
+            ).toISOString()
+          : (existing?.nextDueAt ?? null);
+        const next: AgentDashboardRepositoryCoverage = {
+          repository: { projectId: ProjectId.make(projectId) },
+          status: successful ? "current" : terminal ? "failing" : (existing?.status ?? "due"),
+          lastAttemptedAt: terminal ? now : (existing?.lastAttemptedAt ?? now),
+          lastSucceededAt: successful ? now : (existing?.lastSucceededAt ?? null),
+          nextDueAt,
+          consecutiveFailures: Math.max(0, failures),
+          lastError: successful ? null : runRecord.error,
+          lastRunId: runRecord.id,
+          observedAt: now,
+        };
+        const byRepository = new Map(
+          coverage.map((item) => {
+            const decoded = decodeCoverage(item);
+            return decoded
+              ? ([String(decoded.repository.projectId), item] as const)
+              : ([NodeCrypto.randomUUID(), item] as const);
+          }),
+        );
+        byRepository.set(projectId, next as unknown as JsonObject);
+        await writeDocumentArray(coveragePath, "coverage", [...byRepository.values()]);
+      }),
+    );
+
+  const readExternalActions = run("read external action audit", async () =>
+    (await readDocumentArray(externalActionsPath, "actions"))
+      .map(decodeExternalAction)
+      .filter((value): value is AgentDashboardExternalAction => value !== null)
+      .toSorted((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt)),
+  );
+
+  const appendExternalAction = (action: AgentDashboardExternalAction) =>
+    run("append external action audit", () =>
+      withMutation(() => appendExternalActionInternal(action)),
+    );
+
+  const readCollectorStates = run("read collector states", async () =>
+    (await readDocumentArray(collectorStatesPath, "collectors"))
+      .map(decodeCollectorState)
+      .filter((value): value is AgentDashboardCollectorState => value !== null)
+      .toSorted((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt)),
+  );
+
+  const writeCollectorState = (state: AgentDashboardCollectorState) =>
+    run("write collector state", () =>
+      withMutation(async () => {
+        const states = await readDocumentArray(collectorStatesPath, "collectors");
+        const next = [
+          state as unknown as JsonObject,
+          ...states.filter((item) => item.id !== state.id),
+        ].slice(0, 200);
+        await writeDocumentArray(collectorStatesPath, "collectors", next);
       }),
     );
 
@@ -964,6 +1676,18 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     appendReviewSuggestions,
     reviewSuggestion,
     createGithubIssue,
+    readFindings,
+    appendFindings,
+    applyFindingAction,
+    linkFindingThread,
+    readRepositoryPolicies,
+    writeRepositoryPolicy,
+    readRepositoryCoverage,
+    recordAutomationRun,
+    readExternalActions,
+    appendExternalAction,
+    readCollectorStates,
+    writeCollectorState,
     feedToken,
   } satisfies AgentDashboardStoreService;
 };

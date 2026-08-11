@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { AgentDashboardDispositionAction, EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
   AlertCircleIcon,
@@ -66,6 +66,18 @@ import { AgentDashboardPageShell } from "./AgentDashboardPageShell";
 
 const SUGGESTIONS_DISMISSED_STORAGE_KEY = "t3.agent-dashboard.suggestions.dismissed";
 const SUGGESTIONS_BLOCKED_STORAGE_KEY = "t3.agent-dashboard.suggestions.blocked";
+
+const canonicalFindingIsHidden = (suggestion: NativeSuggestion): boolean => {
+  if (suggestion.findingState === "dismissed" || suggestion.findingState === "blocked") {
+    return true;
+  }
+  return (
+    suggestion.findingState === "snoozed" &&
+    suggestion.findingSnoozeUntil !== null &&
+    suggestion.findingSnoozeUntil !== undefined &&
+    Date.parse(suggestion.findingSnoozeUntil) > Date.now()
+  );
+};
 
 function readDismissedSuggestionIds(): ReadonlySet<string> {
   try {
@@ -158,6 +170,12 @@ export function AgentSuggestions() {
   const projects = useProjects();
   const dashboardSnapshot = useAgentDashboardSnapshot();
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const applyFindingAction = useAtomCommand(agentDashboardEnvironment.applyFindingAction, {
+    reportFailure: false,
+  });
+  const linkFindingThread = useAtomCommand(agentDashboardEnvironment.linkFindingThread, {
+    reportFailure: false,
+  });
   const reviewSuggestion = useAtomCommand(agentDashboardEnvironment.reviewSuggestion, {
     reportFailure: false,
   });
@@ -172,6 +190,7 @@ export function AgentSuggestions() {
   const [startingSuggestionId, setStartingSuggestionId] = useState<string | null>(null);
   const [creatingIssueId, setCreatingIssueId] = useState<string | null>(null);
   const [isRunningInvestigation, setIsRunningInvestigation] = useState(false);
+  const [updatingFindingId, setUpdatingFindingId] = useState<string | null>(null);
   const [dismissedIds, setDismissedIds] = useState<ReadonlySet<string>>(() =>
     readDismissedSuggestionIds(),
   );
@@ -188,6 +207,7 @@ export function AgentSuggestions() {
   const suggestions = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return records.filter((item) => {
+      if (canonicalFindingIsHidden(item)) return false;
       if (dismissedIds.has(item.id) || blockedIds.has(item.id)) return false;
       if (categoryFilter !== "all" && item.category !== categoryFilter) return false;
       if (!needle) return true;
@@ -198,7 +218,10 @@ export function AgentSuggestions() {
     });
   }, [blockedIds, categoryFilter, dismissedIds, query, records]);
   const hasActionableRecords = records.some(
-    (suggestion) => !dismissedIds.has(suggestion.id) && !blockedIds.has(suggestion.id),
+    (suggestion) =>
+      !canonicalFindingIsHidden(suggestion) &&
+      !dismissedIds.has(suggestion.id) &&
+      !blockedIds.has(suggestion.id),
   );
   const showInvestigationEmptyState = Boolean(
     dashboardSnapshot.data !== null && !hasActionableRecords && dashboardSnapshot.environmentId,
@@ -207,13 +230,74 @@ export function AgentSuggestions() {
   const selectedSuggestion =
     records.find((suggestion) => suggestion.id === selectedSuggestionId) ?? null;
 
-  const dismiss = (id: string) => {
+  const applyCanonicalDisposition = useCallback(
+    async (
+      suggestion: NativeSuggestion,
+      action: AgentDashboardDispositionAction,
+      extra: { readonly assignee?: string; readonly note?: string } = {},
+    ): Promise<boolean> => {
+      const environmentId = dashboardSnapshot.environmentId;
+      if (!suggestion.findingId || !environmentId) return false;
+      setUpdatingFindingId(suggestion.findingId);
+      try {
+        const result = await applyFindingAction({
+          environmentId,
+          input: {
+            id: suggestion.findingId,
+            action,
+            ...(extra.assignee ? { assignee: extra.assignee } : {}),
+            ...(extra.note ? { note: extra.note } : {}),
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not update finding",
+                description:
+                  error instanceof Error ? error.message : "The finding mutation failed.",
+              }),
+            );
+          }
+          return false;
+        }
+        if (!result.value.ok || result.value.outcome === "not-found") {
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: "Finding was not updated",
+              description: result.value.message ?? "The finding no longer exists.",
+            }),
+          );
+          return false;
+        }
+        await dashboardSnapshot.refresh();
+        return true;
+      } finally {
+        setUpdatingFindingId(null);
+      }
+    },
+    [applyFindingAction, dashboardSnapshot],
+  );
+
+  const dismiss = async (id: string) => {
     const suggestion = records.find((item) => item.id === id);
+    if (suggestion?.findingId) {
+      if (await applyCanonicalDisposition(suggestion, "dismiss")) setSelectedSuggestionId(null);
+      return;
+    }
     if (suggestion?.durableSuggestion && dashboardSnapshot.environmentId) {
-      void reviewSuggestion({
+      const result = await reviewSuggestion({
         environmentId: dashboardSnapshot.environmentId,
         input: { id, action: "dismiss" },
-      }).then(() => dashboardSnapshot.refresh());
+      });
+      if (result._tag === "Success" && result.value.ok) {
+        await dashboardSnapshot.refresh();
+      } else {
+        return;
+      }
     }
     setDismissedIds((current) => {
       const next = new Set(current);
@@ -228,13 +312,22 @@ export function AgentSuggestions() {
     setSelectedSuggestionId(null);
   };
 
-  const block = (id: string) => {
+  const block = async (id: string) => {
     const suggestion = records.find((item) => item.id === id);
+    if (suggestion?.findingId) {
+      if (await applyCanonicalDisposition(suggestion, "block")) setSelectedSuggestionId(null);
+      return;
+    }
     if (suggestion?.durableSuggestion && dashboardSnapshot.environmentId) {
-      void reviewSuggestion({
+      const result = await reviewSuggestion({
         environmentId: dashboardSnapshot.environmentId,
         input: { id, action: "block" },
-      }).then(() => dashboardSnapshot.refresh());
+      });
+      if (result._tag === "Success" && result.value.ok) {
+        await dashboardSnapshot.refresh();
+      } else {
+        return;
+      }
     }
     setBlockedIds((current) => {
       const next = new Set(current);
@@ -248,6 +341,18 @@ export function AgentSuggestions() {
     });
     setSelectedSuggestionId(null);
   };
+
+  const acknowledge = (suggestion: NativeSuggestion) =>
+    void applyCanonicalDisposition(suggestion, "acknowledge");
+  const snooze = (suggestion: NativeSuggestion) =>
+    void applyCanonicalDisposition(suggestion, "snooze");
+  const assign = (suggestion: NativeSuggestion) =>
+    void applyCanonicalDisposition(suggestion, "assign", {
+      assignee: "dashboard",
+      note: "Assigned from the T3 Code Agent Dashboard.",
+    });
+  const reopen = (suggestion: NativeSuggestion) =>
+    void applyCanonicalDisposition(suggestion, "reopen");
 
   const openGithubIssue = useCallback(async (url: string) => {
     const localApi = readLocalApi();
@@ -323,7 +428,7 @@ export function AgentSuggestions() {
       try {
         const result = await createGithubIssueCommand({
           environmentId,
-          input: { id: suggestion.id },
+          input: { id: suggestion.legacySuggestionId ?? suggestion.id },
         });
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
@@ -354,13 +459,6 @@ export function AgentSuggestions() {
     [createGithubIssueCommand, creatingIssueId, dashboardSnapshot, openGithubIssue],
   );
 
-  const openSuggestionThread = (threadId: string, environmentId: string) => {
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: { environmentId, threadId },
-    });
-  };
-
   const startSuggestionWork = useCallback(
     async (suggestion: NativeSuggestion) => {
       if (startingSuggestionId !== null) return;
@@ -377,6 +475,14 @@ export function AgentSuggestions() {
             description: "The suggestion needs a T3 Code environment to start a work session.",
           }),
         );
+        return;
+      }
+
+      if (suggestion.threadId) {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: suggestion.threadId },
+        });
         return;
       }
 
@@ -457,6 +563,45 @@ export function AgentSuggestions() {
           return;
         }
 
+        const findingId = suggestion.findingId ?? suggestion.legacySuggestionId;
+        if (findingId) {
+          const linkResult = await linkFindingThread({
+            environmentId,
+            input: {
+              id: findingId,
+              projectId: project.id,
+              threadId,
+            },
+          });
+          if (linkResult._tag === "Failure") {
+            if (!isAtomCommandInterrupted(linkResult)) {
+              const error = squashAtomCommandFailure(linkResult);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "warning",
+                  title: "Work started without a finding link",
+                  description:
+                    error instanceof Error
+                      ? `The chat is running, but the dashboard could not save its link: ${error.message}`
+                      : "The chat is running, but the dashboard could not save its link.",
+                }),
+              );
+            }
+          } else if (!linkResult.value.ok || linkResult.value.outcome === "not-found") {
+            toastManager.add(
+              stackedThreadToast({
+                type: "warning",
+                title: "Work started without a finding link",
+                description:
+                  linkResult.value.message ??
+                  "The chat is running, but the finding could not be linked.",
+              }),
+            );
+          } else {
+            void dashboardSnapshot.refresh();
+          }
+        }
+
         await waitForStartedServerThread(scopeThreadRef(environmentId, threadId));
         await navigate({
           to: "/$environmentId/$threadId",
@@ -479,6 +624,8 @@ export function AgentSuggestions() {
     },
     [
       dashboardSnapshot.environmentId,
+      dashboardSnapshot.refresh,
+      linkFindingThread,
       navigate,
       primaryEnvironment?.environmentId,
       projects,
@@ -529,7 +676,12 @@ export function AgentSuggestions() {
       {suggestions.length > 0 ? (
         <div className="grid gap-3">
           {suggestions.map((suggestion) => (
-            <Card key={suggestion.id}>
+            <Card
+              className={
+                suggestion.findingState === "in-progress" ? "border-info/40 bg-info/4" : undefined
+              }
+              key={suggestion.id}
+            >
               <CardHeader className="gap-3 p-4 sm:p-5">
                 <div className="flex items-start gap-3">
                   <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted">
@@ -550,6 +702,22 @@ export function AgentSuggestions() {
                       <Badge size="sm" variant="outline">
                         {suggestion.confidence} confidence
                       </Badge>
+                      {suggestion.findingState ? (
+                        <Badge
+                          size="sm"
+                          variant={
+                            suggestion.findingState === "open"
+                              ? "warning"
+                              : suggestion.findingState === "in-progress"
+                                ? "info"
+                                : "outline"
+                          }
+                        >
+                          {suggestion.findingState === "in-progress"
+                            ? "In progress"
+                            : suggestion.findingState}
+                        </Badge>
+                      ) : null}
                     </div>
                     <CardDescription className="mt-1">
                       <ChatMarkdown
@@ -562,7 +730,7 @@ export function AgentSuggestions() {
                   <Button
                     aria-label={`Dismiss ${suggestion.title}`}
                     className="shrink-0"
-                    onClick={() => dismiss(suggestion.id)}
+                    onClick={() => void dismiss(suggestion.id)}
                     size="icon-xs"
                     variant="ghost"
                   >
@@ -578,6 +746,46 @@ export function AgentSuggestions() {
                   <span>{formatRelativeTimeLabel(suggestion.updatedAt) || "Unknown time"}</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {suggestion.findingId ? (
+                    <>
+                      {suggestion.findingState !== "acknowledged" ? (
+                        <Button
+                          disabled={updatingFindingId !== null}
+                          onClick={() => acknowledge(suggestion)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          Acknowledge
+                        </Button>
+                      ) : null}
+                      <Button
+                        disabled={updatingFindingId !== null}
+                        onClick={() => snooze(suggestion)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Snooze
+                      </Button>
+                      <Button
+                        disabled={updatingFindingId !== null}
+                        onClick={() => assign(suggestion)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Assign
+                      </Button>
+                      {suggestion.findingState !== "open" ? (
+                        <Button
+                          disabled={updatingFindingId !== null}
+                          onClick={() => reopen(suggestion)}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          Reopen
+                        </Button>
+                      ) : null}
+                    </>
+                  ) : null}
                   <Button
                     className="shrink-0"
                     disabled={startingSuggestionId !== null}
@@ -586,10 +794,46 @@ export function AgentSuggestions() {
                   >
                     {startingSuggestionId === suggestion.id ? (
                       <LoaderIcon className="animate-spin" />
+                    ) : suggestion.threadId ? (
+                      <ExternalLinkIcon />
                     ) : (
                       <BotIcon />
                     )}
-                    {startingSuggestionId === suggestion.id ? "Starting work" : "Work on this"}
+                    {startingSuggestionId === suggestion.id
+                      ? "Starting work"
+                      : suggestion.threadId
+                        ? "Open working chat"
+                        : "Work on this"}
+                  </Button>
+                  <Button
+                    className="shrink-0"
+                    disabled={
+                      creatingIssueId !== null ||
+                      (!suggestion.githubIssueUrl &&
+                        !suggestion.durableSuggestion?.repository.githubRepo)
+                    }
+                    onClick={() => void createGithubIssueForSuggestion(suggestion)}
+                    size="sm"
+                    title={
+                      suggestion.githubIssueUrl ||
+                      suggestion.durableSuggestion?.repository.githubRepo
+                        ? undefined
+                        : "No GitHub origin was detected"
+                    }
+                    variant="outline"
+                  >
+                    {creatingIssueId === suggestion.id ? (
+                      <LoaderIcon className="animate-spin" />
+                    ) : suggestion.githubIssueUrl ? (
+                      <ExternalLinkIcon />
+                    ) : (
+                      <GithubIcon />
+                    )}
+                    {creatingIssueId === suggestion.id
+                      ? "Creating issue"
+                      : suggestion.githubIssueUrl
+                        ? "Open GitHub issue"
+                        : "Create GitHub issue"}
                   </Button>
                   <Button
                     className="shrink-0"
@@ -629,18 +873,6 @@ export function AgentSuggestions() {
                   >
                     View finding
                   </Button>
-                  {suggestion.threadId ? (
-                    <Button
-                      className="shrink-0"
-                      onClick={() =>
-                        openSuggestionThread(suggestion.threadId!, suggestion.environmentId)
-                      }
-                      size="sm"
-                      variant="outline"
-                    >
-                      Open agent
-                    </Button>
-                  ) : null}
                 </div>
               </CardPanel>
             </Card>
@@ -736,10 +968,44 @@ export function AgentSuggestions() {
               </div>
             </DialogPanel>
             <DialogFooter>
-              <Button onClick={() => block(selectedSuggestion.id)} variant="ghost">
+              {selectedSuggestion.findingId ? (
+                <>
+                  <Button
+                    disabled={updatingFindingId !== null}
+                    onClick={() => acknowledge(selectedSuggestion)}
+                    variant="ghost"
+                  >
+                    Acknowledge
+                  </Button>
+                  <Button
+                    disabled={updatingFindingId !== null}
+                    onClick={() => snooze(selectedSuggestion)}
+                    variant="ghost"
+                  >
+                    Snooze
+                  </Button>
+                  <Button
+                    disabled={updatingFindingId !== null}
+                    onClick={() => assign(selectedSuggestion)}
+                    variant="ghost"
+                  >
+                    Assign
+                  </Button>
+                  {selectedSuggestion.findingState !== "open" ? (
+                    <Button
+                      disabled={updatingFindingId !== null}
+                      onClick={() => reopen(selectedSuggestion)}
+                      variant="ghost"
+                    >
+                      Reopen
+                    </Button>
+                  ) : null}
+                </>
+              ) : null}
+              <Button onClick={() => void block(selectedSuggestion.id)} variant="ghost">
                 Block
               </Button>
-              <Button onClick={() => dismiss(selectedSuggestion.id)} variant="outline">
+              <Button onClick={() => void dismiss(selectedSuggestion.id)} variant="outline">
                 Dismiss
               </Button>
               {selectedSuggestion.githubIssueUrl ? (
@@ -780,23 +1046,17 @@ export function AgentSuggestions() {
               >
                 {startingSuggestionId === selectedSuggestion.id ? (
                   <LoaderIcon className="animate-spin" />
+                ) : selectedSuggestion.threadId ? (
+                  <ExternalLinkIcon />
                 ) : (
                   <BotIcon />
                 )}
-                {startingSuggestionId === selectedSuggestion.id ? "Starting work" : "Work on this"}
+                {startingSuggestionId === selectedSuggestion.id
+                  ? "Starting work"
+                  : selectedSuggestion.threadId
+                    ? "Open working chat"
+                    : "Work on this"}
               </Button>
-              {selectedSuggestion.threadId ? (
-                <Button
-                  onClick={() =>
-                    openSuggestionThread(
-                      selectedSuggestion.threadId!,
-                      selectedSuggestion.environmentId,
-                    )
-                  }
-                >
-                  Open agent
-                </Button>
-              ) : null}
             </DialogFooter>
           </DialogPopup>
         ) : null}

@@ -1,94 +1,105 @@
-import { it } from "@effect/vitest";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
-import { expect } from "vite-plus/test";
-
+import { describe, expect, it } from "@effect/vitest";
 import {
   ProjectId,
-  ProviderInstanceId,
-  type OrchestrationCommand,
+  type AgentDashboardRepositoryCoverage,
+  type AgentDashboardRepositoryPolicy,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
 
-import * as AgentDashboardReviewRunner from "./AgentDashboardReviewRunner.ts";
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import { selectNextRepository } from "./AgentDashboardReviewRunner.ts";
 
-const project: OrchestrationProjectShell = {
-  id: ProjectId.make("project-review"),
-  title: "T3 Code",
-  workspaceRoot: process.cwd(),
-  repositoryIdentity: null,
+const NOW = Date.parse("2026-08-10T00:00:00.000Z");
+
+const project = (id: string, title = id): OrchestrationProjectShell => ({
+  id: ProjectId.make(id),
+  title,
+  workspaceRoot: `/workspace/${id}`,
   defaultModelSelection: null,
   scripts: [],
-  createdAt: "2026-08-10T00:00:00.000Z",
-  updatedAt: "2026-08-10T00:00:00.000Z",
-};
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-01T00:00:00.000Z",
+});
 
-it.effect("starts every dashboard review command in full-access mode", () => {
-  const commands: Array<OrchestrationCommand> = [];
-  const layer = AgentDashboardReviewRunner.layer.pipe(
-    Layer.provide(
-      Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getShellSnapshot: () =>
-          Effect.succeed({
-            snapshotSequence: 1,
-            projects: [project],
-            threads: [],
-            updatedAt: "2026-08-10T00:00:00.000Z",
-          }),
-      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]),
-    ),
-    Layer.provide(
-      Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
-        readEvents: () => Stream.empty,
-        dispatch: (command) =>
-          Effect.sync(() => {
-            commands.push(command);
-            return { sequence: commands.length };
-          }),
-        streamDomainEvents: Stream.empty,
-        latestSequence: Effect.succeed(0),
-      }),
-    ),
-    Layer.provide(
-      Layer.succeed(ServerRuntimeStartup.ServerRuntimeStartup, {
-        awaitCommandReady: Effect.void,
-        markHttpListening: Effect.void,
-        enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) => effect,
-      }),
-    ),
-    Layer.provide(NodeServices.layer),
-  );
+const policy = (
+  id: string,
+  overrides: Partial<AgentDashboardRepositoryPolicy> = {},
+): AgentDashboardRepositoryPolicy => ({
+  repository: { projectId: ProjectId.make(id) },
+  enabled: true,
+  cadenceMinutes: 120,
+  priority: 0,
+  riskTier: "low",
+  branch: null,
+  owner: null,
+  enabledChecks: ["repository-review"],
+  model: null,
+  budgetMinutes: null,
+  maxConcurrentRuns: 1,
+  exclusions: [],
+  updatedAt: "2026-08-01T00:00:00.000Z",
+  ...overrides,
+});
 
-  return Effect.gen(function* () {
-    const runner = yield* AgentDashboardReviewRunner.AgentDashboardReviewRunner;
-    const result = yield* runner.runRandomReview;
+const coverage = (
+  id: string,
+  nextDueAt: string | null,
+  overrides: Partial<AgentDashboardRepositoryCoverage> = {},
+): AgentDashboardRepositoryCoverage => ({
+  repository: { projectId: ProjectId.make(id) },
+  status: nextDueAt !== null && Date.parse(nextDueAt) <= NOW ? "overdue" : "current",
+  lastAttemptedAt: "2026-08-09T00:00:00.000Z",
+  lastSucceededAt: "2026-08-09T00:00:00.000Z",
+  nextDueAt,
+  consecutiveFailures: 0,
+  lastError: null,
+  lastRunId: "run-1",
+  observedAt: "2026-08-09T00:00:00.000Z",
+  ...overrides,
+});
 
-    expect(result.projectId).toBe(project.id);
-    expect(commands).toHaveLength(2);
-    expect(commands[0]).toMatchObject({
-      type: "thread.create",
-      projectId: project.id,
-      runtimeMode: AgentDashboardReviewRunner.REVIEW_RUNTIME_MODE,
+describe("selectNextRepository", () => {
+  it("chooses overdue repositories before priority and risk tie-breakers", () => {
+    const selected = selectNextRepository({
+      nowMs: NOW,
+      projects: [project("high-priority"), project("overdue")],
+      policies: [
+        policy("high-priority", { priority: 100, riskTier: "critical" }),
+        policy("overdue", { priority: 0, riskTier: "low" }),
+      ],
+      coverage: [
+        coverage("high-priority", "2026-08-11T00:00:00.000Z"),
+        coverage("overdue", "2026-08-09T00:00:00.000Z"),
+      ],
     });
-    expect(commands[1]).toMatchObject({
-      type: "thread.turn.start",
-      runtimeMode: AgentDashboardReviewRunner.REVIEW_RUNTIME_MODE,
+
+    expect(selected).toBe(ProjectId.make("overdue"));
+  });
+
+  it("skips disabled and excluded repositories and keeps tie ordering stable", () => {
+    const selected = selectNextRepository({
+      nowMs: NOW,
+      projects: [project("disabled"), project("excluded"), project("zeta"), project("alpha")],
+      policies: [
+        policy("disabled", { enabled: false }),
+        policy("excluded", { exclusions: ["excluded"] }),
+        policy("zeta"),
+        policy("alpha"),
+      ],
+      coverage: [],
     });
 
-    const createCommand = commands[0];
-    const turnCommand = commands[1];
-    if (createCommand?.type !== "thread.create" || turnCommand?.type !== "thread.turn.start") {
-      throw new Error("Dashboard review did not dispatch its expected commands.");
-    }
-    expect(turnCommand.threadId).toBe(createCommand.threadId);
-    expect(turnCommand.modelSelection?.instanceId).toEqual(ProviderInstanceId.make("codex"));
-    expect(turnCommand.commandId).toEqual(expect.any(String));
-    expect(turnCommand.message.messageId).toEqual(expect.any(String));
-    expect(createCommand.commandId).toEqual(expect.any(String));
-  }).pipe(Effect.provide(layer));
+    expect(selected).toBe(ProjectId.make("alpha"));
+  });
+
+  it("can report that no repository is due without inventing work", () => {
+    const input = {
+      nowMs: NOW,
+      projects: [project("future")],
+      policies: [policy("future")],
+      coverage: [coverage("future", "2026-08-11T00:00:00.000Z")],
+    };
+
+    expect(selectNextRepository(input)).toBeNull();
+    expect(selectNextRepository({ ...input, allowNotDue: true })).toBe(ProjectId.make("future"));
+  });
 });

@@ -30,9 +30,29 @@ export const agentDashboardEnvironment = {
     label: "environment-data:agent-dashboard:run-investigation",
     tag: WS_METHODS.agentDashboardRunInvestigation,
   }),
+  retryRun: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:agent-dashboard:retry-run",
+    tag: WS_METHODS.agentDashboardRetryRun,
+  }),
   createGithubIssue: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:agent-dashboard:create-github-issue",
     tag: WS_METHODS.agentDashboardCreateGithubIssue,
+  }),
+  applyFindingAction: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:agent-dashboard:apply-finding-action",
+    tag: WS_METHODS.agentDashboardApplyFindingAction,
+  }),
+  linkFindingThread: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:agent-dashboard:link-finding-thread",
+    tag: WS_METHODS.agentDashboardLinkFindingThread,
+  }),
+  updateRepositoryPolicy: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:agent-dashboard:update-repository-policy",
+    tag: WS_METHODS.agentDashboardUpdateRepositoryPolicy,
+  }),
+  collect: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:agent-dashboard:collect",
+    tag: WS_METHODS.agentDashboardCollect,
   }),
 };
 

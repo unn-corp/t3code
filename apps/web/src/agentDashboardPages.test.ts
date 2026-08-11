@@ -10,6 +10,7 @@ import {
 
 import {
   buildNativeAgentFeedFromDurableCards,
+  buildNativeResearchRecordsFromDurableFindings,
   buildNativeReviewSuggestionsFromSnapshot,
   buildSuggestionWorkPrompt,
   compareDashboardRecency,
@@ -165,135 +166,6 @@ describe("durable agent feed origins", () => {
 });
 
 describe("agent dashboard suggestion actions", () => {
-  it("only adapts code-review results that have an individual run id", () => {
-    const snapshot = {
-      snapshotSequence: 1,
-      observedAt: "2026-08-09T12:00:00.000Z",
-      repositories: [],
-      feed: [],
-      externalFeed: [],
-      research: [],
-      researchFindings: [],
-      suggestions: [
-        {
-          id: "thread:random:respond",
-          kind: "respond-to-thread",
-          status: "actionable",
-          action: "open-thread",
-          title: "Respond to an agent",
-          summary: "This is native thread state, not a review result.",
-          updatedAt: "2026-08-09T12:00:00.000Z",
-          repository: { projectId: ProjectId.make("project-1") },
-          thread: null,
-        },
-        {
-          id: "repository:project-1:review-changes",
-          kind: "review-changes",
-          status: "actionable",
-          action: "open-repository",
-          title: "Review local changes",
-          summary: "Operational repository state, not investigative reporting.",
-          updatedAt: "2026-08-09T12:00:01.000Z",
-          repository: { projectId: ProjectId.make("project-1") },
-          thread: null,
-        },
-        {
-          id: "repository:project-1:sync-branch",
-          kind: "sync-branch",
-          status: "actionable",
-          action: "open-repository",
-          title: "Sync from remote",
-          summary: "Operational repository state, not investigative reporting.",
-          updatedAt: "2026-08-09T12:00:02.000Z",
-          repository: { projectId: ProjectId.make("project-1") },
-          thread: null,
-        },
-      ],
-      reviewSuggestions: [
-        {
-          id: "review-run-result",
-          profile: "t3-random-codebase-review",
-          title: "A real review finding",
-          description: "Produced by one repository review run.",
-          source: "code_review",
-          status: "pending",
-          createdAt: "2026-08-09T12:00:00.000Z",
-          expiresAt: null,
-          repository: { name: "T3 Code", path: "/workspace/t3code", githubRepo: null },
-          category: "bug",
-          impact: "high",
-          confidence: "high",
-          evidence: ["src/example.ts:1"],
-          nextStep: "Fix it.",
-          report: "The report.",
-          githubIssue: { title: "Fix it", body: "The report.", url: null, number: null },
-          jobId: "review-thread-1",
-        },
-        {
-          id: "legacy-code-review",
-          profile: null,
-          title: "Legacy review record",
-          description: "Older code-review content without T3 run provenance.",
-          source: "code_review",
-          status: "pending",
-          createdAt: "2026-08-09T12:00:30.000Z",
-          expiresAt: null,
-          repository: { name: "T3 Code", path: "/workspace/t3code", githubRepo: null },
-          category: "bug",
-          impact: "high",
-          confidence: "high",
-          evidence: ["src/legacy.ts:1"],
-          nextStep: "Ignore it.",
-          report: "This legacy record must stay out of Suggestions.",
-          githubIssue: { title: "Legacy", body: "Legacy.", url: null, number: null },
-          jobId: "legacy-hermes-run",
-        },
-        {
-          id: "native-signal",
-          profile: null,
-          title: "Native signal",
-          description: "Not a code review result.",
-          source: "agent_activity",
-          status: "pending",
-          createdAt: "2026-08-09T12:01:00.000Z",
-          expiresAt: null,
-          repository: { name: "T3 Code", path: "/workspace/t3code", githubRepo: null },
-          category: "insight",
-          impact: "medium",
-          confidence: "medium",
-          evidence: [],
-          nextStep: "Ignore it.",
-          report: "Not owned by Suggestions.",
-          githubIssue: { title: "Native signal", body: "Not a review.", url: null, number: null },
-          jobId: "native-run",
-        },
-        {
-          id: "unscoped-review",
-          profile: null,
-          title: "Unscoped review",
-          description: "No individual run id.",
-          source: "code_review",
-          status: "pending",
-          createdAt: "2026-08-09T12:02:00.000Z",
-          expiresAt: null,
-          repository: { name: "T3 Code", path: "/workspace/t3code", githubRepo: null },
-          category: "insight",
-          impact: "medium",
-          confidence: "medium",
-          evidence: [],
-          nextStep: "Ignore it.",
-          report: "Not a run result.",
-          githubIssue: { title: "Unscoped", body: "Not a run.", url: null, number: null },
-          jobId: null,
-        },
-      ],
-    } satisfies AgentDashboardSnapshot;
-
-    expect(buildNativeReviewSuggestionsFromSnapshot(snapshot, "environment-1")).toMatchObject([
-      { id: "review-run-result", projectId: "/workspace/t3code" },
-    ]);
-  });
-
   it("builds an implementation prompt from the research finding", () => {
     const prompt = buildSuggestionWorkPrompt({
       repositoryPath: "/workspace/t3code",
@@ -314,5 +186,246 @@ describe("agent dashboard suggestion actions", () => {
     expect(prompt).toContain("- Refresh leaves the previous branch name visible.");
     expect(prompt).toContain("## Recommended next step");
     expect(prompt).toContain("Run focused validation before you finish.");
+  });
+
+  it("does not render a migrated legacy suggestion twice after canonical ingestion", () => {
+    const snapshot = {
+      repositories: [
+        {
+          projectId: ProjectId.make("project-1"),
+          title: "T3 Code",
+          workspaceRoot: "/workspace/t3code",
+        },
+      ],
+      suggestions: [],
+      findings: [
+        {
+          id: "finding:abc",
+          fingerprint: "finding:abc",
+          kind: "review",
+          title: "A canonical review finding",
+          summary: "The same finding was normalized from a legacy review.",
+          severity: "medium",
+          confidence: "high",
+          category: "bug",
+          evidence: ["src/example.ts:10"],
+          repository: { projectId: ProjectId.make("project-1") },
+          repositoryPath: "/workspace/t3code",
+          disposition: {
+            state: "open",
+            updatedAt: "2026-08-09T12:00:00.000Z",
+            actor: null,
+            note: null,
+            snoozeUntil: null,
+            assignee: null,
+          },
+          provenance: {
+            source: "code_review",
+            sourceAt: "2026-08-09T12:00:00.000Z",
+            collectedAt: "2026-08-09T12:00:00.000Z",
+          },
+          firstSeenAt: "2026-08-09T12:00:00.000Z",
+          lastSeenAt: "2026-08-09T12:00:00.000Z",
+          occurrenceCount: 1,
+          lastRunId: "run-1",
+          thread: null,
+          externalIssueUrl: null,
+        },
+      ],
+      reviewSuggestions: [
+        {
+          id: "t3-review-abc",
+          profile: "t3-random-codebase-review",
+          title: "A canonical review finding",
+          description: "The same finding was normalized from a legacy review.",
+          source: "code_review",
+          status: "pending",
+          createdAt: "2026-08-09T12:00:00.000Z",
+          expiresAt: null,
+          repository: {
+            name: "T3 Code",
+            path: "/workspace/t3code",
+            githubRepo: null,
+          },
+          category: "bug",
+          impact: "medium",
+          confidence: "high",
+          evidence: ["src/example.ts:10"],
+          nextStep: "Verify the finding.",
+          report: "The same finding was normalized from a legacy review.",
+          githubIssue: {
+            title: "A canonical review finding",
+            body: "The same finding was normalized from a legacy review.",
+            url: null,
+            number: null,
+          },
+          jobId: "run-1",
+        },
+      ],
+    } as unknown as AgentDashboardSnapshot;
+
+    const suggestions = buildNativeReviewSuggestionsFromSnapshot(snapshot, "environment-1");
+
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]?.findingId).toBe("finding:abc");
+  });
+
+  it("keeps native branch signals off the scheduled suggestions page", () => {
+    const snapshot = {
+      repositories: [],
+      suggestions: [
+        {
+          id: "suggestion:sync-branch",
+          kind: "sync-branch",
+          status: "actionable",
+          action: "open-repository",
+          title: "Sync the feature branch",
+          summary: "The feature branch is behind its default branch.",
+          updatedAt: "2026-08-09T12:00:00.000Z",
+          repository: { projectId: ProjectId.make("project-1") },
+          thread: null,
+        },
+      ],
+      findings: [{ id: "finding:security", kind: "security" }],
+      reviewSuggestions: [],
+    } as unknown as AgentDashboardSnapshot;
+
+    expect(buildNativeReviewSuggestionsFromSnapshot(snapshot, "environment-1")).toEqual([]);
+  });
+
+  it("only includes findings tied to an individual codebase review run", () => {
+    const snapshot = {
+      repositories: [
+        {
+          projectId: ProjectId.make("project-1"),
+          title: "T3 Code",
+          workspaceRoot: "/workspace/t3code",
+        },
+      ],
+      suggestions: [
+        {
+          id: "suggestion:sync-branch",
+          kind: "sync-branch",
+          status: "actionable",
+          action: "open-repository",
+          title: "Sync from remote",
+          summary: "The branch is behind its remote.",
+          updatedAt: "2026-08-09T12:00:00.000Z",
+          repository: { projectId: ProjectId.make("project-1") },
+          thread: null,
+        },
+      ],
+      findings: [
+        {
+          id: "finding:reconcile",
+          kind: "review",
+          provenance: { source: "vcs-reconciliation" },
+          lastRunId: "action-1",
+        },
+        {
+          id: "finding:security",
+          kind: "security",
+          provenance: { source: "security-collector" },
+          lastRunId: "scan-1",
+        },
+      ],
+      reviewSuggestions: [
+        {
+          id: "reconcile-suggestion",
+          profile: "vcs-reconciliation",
+          source: "code_review",
+          jobId: null,
+          title: "Review local changes",
+          repository: { name: "T3 Code", path: "/workspace/t3code", githubRepo: null },
+        },
+        {
+          id: "review-suggestion",
+          profile: "t3-random-codebase-review",
+          source: "code_review",
+          jobId: "run-1",
+          title: "Parser finding",
+          repository: { name: "T3 Code", path: "/workspace/t3code", githubRepo: null },
+          description: "A review finding.",
+          status: "pending",
+          createdAt: "2026-08-09T12:00:00.000Z",
+          expiresAt: null,
+          category: "bug",
+          impact: "high",
+          confidence: "high",
+          evidence: ["src/parser.ts:42"],
+          nextStep: "Fix the parser.",
+          report: "The parser drops the final item.",
+          githubIssue: { title: "Fix parser", body: "Fix parser", url: null, number: null },
+        },
+      ],
+    } as unknown as AgentDashboardSnapshot;
+
+    expect(
+      buildNativeReviewSuggestionsFromSnapshot(snapshot, "environment-1").map(
+        (suggestion) => suggestion.id,
+      ),
+    ).toEqual(["review-suggestion"]);
+  });
+
+  it("keeps repository and canonical signals off the research findings page", () => {
+    const snapshot = {
+      repositories: [
+        {
+          projectId: ProjectId.make("project-1"),
+          title: "T3 Code",
+          workspaceRoot: "/workspace/t3code",
+        },
+      ],
+      researchFindings: [
+        {
+          id: "paper-1",
+          title: "A research paper",
+          source: "arxiv",
+          url: null,
+          timestamp: "2026-08-09T12:00:00.000Z",
+          abstract: "A useful research result.",
+          authors: ["Researcher"],
+          published: "2026-08-01",
+          categories: ["machine-learning"],
+          relevanceScore: 90,
+          topicContext: null,
+          repositories: ["T3 Code"],
+          watchDir: "/workspace/t3code",
+          sinceDays: null,
+          pdfUrl: null,
+          citationCount: null,
+          occurrences: 1,
+        },
+      ],
+      research: [
+        {
+          id: "repository-signal",
+          status: "dirty",
+          title: "T3 Code workspace",
+          summary: "The repository has local changes.",
+          observedAt: "2026-08-09T12:01:00.000Z",
+          repository: { projectId: ProjectId.make("project-1") },
+          branch: "main",
+          defaultBranch: "main",
+          worktreePath: null,
+          threadCount: 0,
+          activeThreadCount: 0,
+          latestThread: null,
+        },
+      ],
+      findings: [
+        {
+          id: "finding:bug",
+          kind: "review",
+          title: "A bug finding",
+          summary: "A scheduled review finding.",
+          repository: { projectId: ProjectId.make("project-1") },
+        },
+      ],
+    } as unknown as AgentDashboardSnapshot;
+
+    expect(buildNativeResearchRecordsFromDurableFindings(snapshot, "environment-1")).toMatchObject([
+      { id: "research-finding:paper-1", title: "A research paper" },
+    ]);
   });
 });

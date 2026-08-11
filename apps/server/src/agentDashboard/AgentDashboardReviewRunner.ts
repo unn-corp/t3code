@@ -15,17 +15,26 @@ import {
   type ModelSelection,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
+import type {
+  AgentDashboardRepositoryCoverage,
+  AgentDashboardRepositoryPolicy,
+} from "@t3tools/contracts";
 
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 
 const REVIEW_MODEL = "gpt-5.6-luna";
 const REVIEW_REASONING_EFFORT = "xhigh";
 
-/** Review prompts are read-only; the provider execution policy is always full access. */
+/** Repository review agents are read-only by instruction but need autonomous
+ * process/filesystem access so the provider never pauses for approval. */
 export const REVIEW_RUNTIME_MODE = "full-access" as const;
+
+/** Logical automation kind recorded on durable runs. */
+export const REVIEW_KIND = "repository-review";
 
 /** The migrated review keeps the former Luna/max-reasoning contract explicit. */
 export const REVIEW_MODEL_SELECTION: ModelSelection = {
@@ -45,6 +54,11 @@ export interface AgentDashboardReviewRunResult {
   readonly startedAt: string;
 }
 
+export interface AgentDashboardReviewRunOptions {
+  /** When set to a real project id, review that project; otherwise pick one stable project. */
+  readonly projectId?: ProjectId | null | undefined;
+}
+
 export class AgentDashboardReviewRunnerError extends Schema.TaggedErrorClass<AgentDashboardReviewRunnerError>()(
   "AgentDashboardReviewRunnerError",
   {
@@ -55,7 +69,13 @@ export class AgentDashboardReviewRunnerError extends Schema.TaggedErrorClass<Age
 ) {}
 
 export interface AgentDashboardReviewRunnerService {
-  /** Select one durable T3 project and start its native review thread. */
+  /** Start one native review thread for a single project. */
+  readonly runReview: (
+    options?: AgentDashboardReviewRunOptions,
+  ) => Effect.Effect<AgentDashboardReviewRunResult, AgentDashboardReviewRunnerError>;
+  /** Deterministically selects the next eligible repository for scheduled work. */
+  readonly selectNextProject?: Effect.Effect<ProjectId | null, AgentDashboardReviewRunnerError>;
+  /** @deprecated Prefer runReview — kept as an alias for callers. */
   readonly runRandomReview: Effect.Effect<
     AgentDashboardReviewRunResult,
     AgentDashboardReviewRunnerError
@@ -102,9 +122,95 @@ const githubRepositoryForProject = (project: OrchestrationProjectShell): string 
   for (const candidate of candidates) {
     if (!candidate) continue;
     const match = candidate.match(/github\.com[/:]([^/\s]+)\/([^/\s#]+?)(?:\.git)?$/i);
-    if (match?.[1] && match[2]) return `${match[1]}/${match[2]}`;
+    if (match?.[1] && match?.[2]) return `${match[1]}/${match[2]}`;
   }
   return null;
+};
+
+const PENDING_SELECTION = "pending-selection";
+
+const riskWeight = (riskTier: AgentDashboardRepositoryPolicy["riskTier"]): number => {
+  switch (riskTier) {
+    case "critical":
+      return 4;
+    case "high":
+      return 3;
+    case "medium":
+      return 2;
+    case "low":
+      return 1;
+  }
+};
+
+const matchesExclusion = (project: OrchestrationProjectShell, exclusions: ReadonlyArray<string>) =>
+  exclusions.some((pattern) => {
+    const escaped = pattern
+      .trim()
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*");
+    if (escaped.length === 0) return false;
+    return (
+      new RegExp(`^${escaped}$`, "i").test(project.title) ||
+      new RegExp(escaped, "i").test(project.workspaceRoot)
+    );
+  });
+
+export const selectNextRepository = (input: {
+  readonly projects: ReadonlyArray<OrchestrationProjectShell>;
+  readonly policies: ReadonlyArray<AgentDashboardRepositoryPolicy>;
+  readonly coverage: ReadonlyArray<AgentDashboardRepositoryCoverage>;
+  readonly nowMs: number;
+  /** Manual runs may select the earliest next-due repository when none is overdue. */
+  readonly allowNotDue?: boolean;
+}): ProjectId | null => {
+  const coverageByProject = new Map(
+    input.coverage.map((item) => [String(item.repository.projectId), item]),
+  );
+  const policyByProject = new Map(
+    input.policies.map((item) => [String(item.repository.projectId), item]),
+  );
+  const candidates = input.projects
+    .filter(
+      (project) =>
+        !matchesExclusion(project, policyByProject.get(String(project.id))?.exclusions ?? []),
+    )
+    .map((project) => {
+      const policy = policyByProject.get(String(project.id));
+      const effectivePolicy: AgentDashboardRepositoryPolicy = policy ?? {
+        repository: { projectId: project.id },
+        enabled: true,
+        cadenceMinutes: REVIEW_INTERVAL_MINUTES,
+        priority: 0,
+        riskTier: "low",
+        branch: null,
+        owner: null,
+        enabledChecks: [REVIEW_KIND],
+        model: REVIEW_MODEL,
+        budgetMinutes: null,
+        maxConcurrentRuns: 1,
+        exclusions: [],
+        updatedAt: new Date(input.nowMs).toISOString(),
+      };
+      const coverage = coverageByProject.get(String(project.id));
+      const nextDueMs = coverage?.nextDueAt
+        ? Date.parse(coverage.nextDueAt)
+        : Number.NEGATIVE_INFINITY;
+      const due =
+        coverage === undefined || coverage.lastSucceededAt === null || nextDueMs <= input.nowMs;
+      return { project, policy: effectivePolicy, coverage, due, nextDueMs };
+    })
+    .filter(
+      (candidate) => candidate.policy.enabled && (input.allowNotDue === true || candidate.due),
+    )
+    .toSorted(
+      (left, right) =>
+        Number(right.due) - Number(left.due) ||
+        right.policy.priority - left.policy.priority ||
+        riskWeight(right.policy.riskTier) - riskWeight(left.policy.riskTier) ||
+        left.nextDueMs - right.nextDueMs ||
+        String(left.project.id).localeCompare(String(right.project.id)),
+    );
+  return candidates[0]?.project.id ?? null;
 };
 
 const stableProjects = Effect.fn("AgentDashboardReviewRunner.stableProjects")(function* (
@@ -117,7 +223,7 @@ const stableProjects = Effect.fn("AgentDashboardReviewRunner.stableProjects")(fu
         try: () => AgentDashboardStore.isStableRepositoryPath(project.workspaceRoot),
         catch: () => false,
       }).pipe(
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
         Effect.map((isStable) => (isStable ? project : null)),
       ),
     { concurrency: 4 },
@@ -133,6 +239,8 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+  const config = yield* ServerConfig.ServerConfig;
+  const dashboardStore = AgentDashboardStore.getStore(config.stateDir);
 
   const randomUuid = crypto.randomUUIDv4.pipe(
     Effect.mapError(
@@ -160,8 +268,51 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const runRandomReview: AgentDashboardReviewRunnerService["runRandomReview"] = Effect.gen(
-    function* () {
+  const selectNextProject: Effect.Effect<ProjectId | null, AgentDashboardReviewRunnerError> =
+    Effect.gen(function* () {
+      const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+        Effect.mapError(
+          (cause) =>
+            new AgentDashboardReviewRunnerError({
+              operation: "select project",
+              message: "Failed to load T3 projects for scheduler selection.",
+              cause,
+            }),
+        ),
+      );
+      const projects = yield* stableProjects(shellSnapshot.projects);
+      const policies = yield* dashboardStore.readRepositoryPolicies.pipe(
+        Effect.mapError(
+          (cause) =>
+            new AgentDashboardReviewRunnerError({
+              operation: "select project",
+              message: "Failed to load repository review policies.",
+              cause,
+            }),
+        ),
+      );
+      const coverage = yield* dashboardStore.readRepositoryCoverage.pipe(
+        Effect.mapError(
+          (cause) =>
+            new AgentDashboardReviewRunnerError({
+              operation: "select project",
+              message: "Failed to load repository review coverage.",
+              cause,
+            }),
+        ),
+      );
+      const now = yield* DateTime.now;
+      return selectNextRepository({
+        projects,
+        policies,
+        coverage,
+        nowMs: DateTime.toEpochMillis(now),
+        allowNotDue: true,
+      });
+    });
+
+  const runReview: AgentDashboardReviewRunnerService["runReview"] = (options = {}) =>
+    Effect.gen(function* () {
       const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
         Effect.mapError(
           (cause) =>
@@ -174,25 +325,40 @@ const make = Effect.gen(function* () {
       );
       const projects = yield* stableProjects(shellSnapshot.projects);
       if (projects.length === 0) {
-        return yield* Effect.fail(
-          new AgentDashboardReviewRunnerError({
-            operation: "select project",
-            message: "No stable T3 repository checkout is available for review.",
-          }),
-        );
+        return yield* new AgentDashboardReviewRunnerError({
+          operation: "select project",
+          message: "No stable T3 repository checkout is available for review.",
+        });
       }
 
-      const randomValue = yield* randomUuid;
-      const randomIndex = Number.parseInt(randomValue.slice(0, 8), 16) % projects.length;
-      const project = projects[randomIndex] ?? null;
-      if (project === null) {
-        return yield* Effect.fail(
-          new AgentDashboardReviewRunnerError({
-            operation: "select project",
-            message: "The T3 repository review candidate list changed before selection.",
-          }),
-        );
+      const requestedId = options.projectId ? String(options.projectId) : null;
+      const explicitTarget =
+        requestedId && requestedId !== PENDING_SELECTION
+          ? (projects.find((project) => String(project.id) === requestedId) ?? null)
+          : null;
+
+      if (requestedId && requestedId !== PENDING_SELECTION && explicitTarget === null) {
+        return yield* new AgentDashboardReviewRunnerError({
+          operation: "select project",
+          message: "The requested T3 project is not available for review.",
+        });
       }
+
+      let project = explicitTarget;
+      if (project === null) {
+        const selectedId = yield* selectNextProject;
+        project =
+          selectedId === null
+            ? null
+            : (projects.find((candidate) => candidate.id === selectedId) ?? null);
+      }
+      if (project === null) {
+        return yield* new AgentDashboardReviewRunnerError({
+          operation: "select project",
+          message: "The T3 repository review candidate list changed before selection.",
+        });
+      }
+
       const startedAt = yield* nowIso;
       const threadId = ThreadId.make(yield* randomUuid);
       const title = `Repository review: ${project.title}`.slice(0, 80);
@@ -237,7 +403,7 @@ const make = Effect.gen(function* () {
               commandId: cleanupCommandId,
               threadId,
             }).pipe(Effect.ignore);
-            return yield* Effect.fail(cause);
+            return yield* cause;
           }),
         ),
       );
@@ -250,10 +416,15 @@ const make = Effect.gen(function* () {
         threadId,
         startedAt,
       } satisfies AgentDashboardReviewRunResult;
-    },
-  );
+    });
 
-  return { runRandomReview } satisfies AgentDashboardReviewRunnerService;
+  const runRandomReview = runReview();
+
+  return {
+    runReview,
+    runRandomReview,
+    selectNextProject,
+  } satisfies AgentDashboardReviewRunnerService;
 });
 
 export const layer = Layer.effect(AgentDashboardReviewRunner, make);

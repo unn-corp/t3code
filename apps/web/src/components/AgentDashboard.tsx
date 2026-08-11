@@ -488,6 +488,7 @@ export function AgentDashboard() {
       ),
     [serverRepositories],
   );
+  const portfolioHealth = serverSnapshotQuery.data?.portfolioHealth;
   const environmentLabelById = useMemo(
     () =>
       new Map(environments.map((environment) => [environment.environmentId, environment.label])),
@@ -568,6 +569,39 @@ export function AgentDashboard() {
                 {activeThreadCount} active {activeThreadCount === 1 ? "thread" : "threads"}
               </p>
             </div>
+
+            {portfolioHealth ? (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Card>
+                  <CardPanel className="p-4">
+                    <p className="text-xs text-muted-foreground">Healthy repositories</p>
+                    <p className="mt-1 text-lg font-semibold text-success">
+                      {portfolioHealth.healthyRepositoryCount}/{portfolioHealth.repositoryCount}
+                    </p>
+                  </CardPanel>
+                </Card>
+                <Card>
+                  <CardPanel className="p-4">
+                    <p className="text-xs text-muted-foreground">Needs attention</p>
+                    <p className="mt-1 text-lg font-semibold text-warning">
+                      {portfolioHealth.attentionRepositoryCount}
+                    </p>
+                  </CardPanel>
+                </Card>
+                <Card>
+                  <CardPanel className="p-4">
+                    <p className="text-xs text-muted-foreground">Open findings</p>
+                    <p className="mt-1 text-lg font-semibold">{portfolioHealth.openFindingCount}</p>
+                  </CardPanel>
+                </Card>
+                <Card>
+                  <CardPanel className="p-4">
+                    <p className="text-xs text-muted-foreground">Active runs</p>
+                    <p className="mt-1 text-lg font-semibold">{portfolioHealth.activeRunCount}</p>
+                  </CardPanel>
+                </Card>
+              </div>
+            ) : null}
 
             {!allEnvironmentShellsBootstrapped && repositoryGroups.length === 0 ? (
               <DashboardLoadingState />

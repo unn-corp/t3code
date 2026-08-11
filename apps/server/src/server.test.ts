@@ -16,6 +16,7 @@ import {
   KeybindingRule,
   MessageId,
   ExternalLauncherCommandNotFoundError,
+  type AgentDashboardAutomationRun,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
   type OrchestrationCommand,
@@ -73,6 +74,7 @@ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
+import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import { makeRoutesLayer } from "./server.ts";
 import { resolveAvailableEditorsForConfig } from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -143,6 +145,43 @@ const testEnvironmentDescriptor = {
     repositoryIdentity: true,
   },
 };
+
+const testReviewJobService: AgentDashboardReviewJobService.AgentDashboardReviewJobService["Service"] =
+  {
+    listRuns: Effect.succeed([]),
+    enqueueReview: (input) =>
+      Effect.succeed({
+        id: "test-review-run",
+        status: "queued",
+        trigger: input.trigger,
+        kind: "repository-review",
+        repository: { projectId: input.projectId ?? defaultProjectId },
+        target: input.target ?? null,
+        threadId: null,
+        jobId: input.idempotencyKey ?? "test-review-run",
+        model: null,
+        retryCount: input.retryCount ?? 0,
+        findingCount: 0,
+        costUnits: null,
+        error: null,
+        createdAt: "1970-01-01T00:00:00.000Z",
+        startedAt: null,
+        updatedAt: "1970-01-01T00:00:00.000Z",
+        completedAt: null,
+      } satisfies AgentDashboardAutomationRun),
+    retryRun: () =>
+      Effect.fail(
+        new AgentDashboardReviewJobService.AgentDashboardReviewJobServiceError({
+          operation: "retry",
+          message: "Review retry is not used by the HTTP router seam tests.",
+        }),
+      ),
+  };
+const testReviewJobServiceLayer = Layer.succeed(
+  AgentDashboardReviewJobService.AgentDashboardReviewJobService,
+  testReviewJobService,
+);
+
 const makeDefaultOrchestrationReadModel = () => {
   const now = "2026-01-01T00:00:00.000Z";
   return {
@@ -552,7 +591,10 @@ const buildAppUnderTest = (options?: {
     );
 
     const servedRoutesLayer = HttpRouter.serve(
-      makeRoutesLayer.pipe(Layer.provide(ServiceLauncherClient.layer)),
+      makeRoutesLayer.pipe(
+        Layer.provide(ServiceLauncherClient.layer),
+        Layer.provide(testReviewJobServiceLayer),
+      ),
       {
         disableListenLog: true,
         disableLogger: true,
@@ -768,6 +810,7 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
+      Layer.provide(testReviewJobServiceLayer),
       Layer.provide(resourceTelemetryLayer),
       Layer.provide(
         Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({

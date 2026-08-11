@@ -5,6 +5,8 @@ import {
   FlaskConicalIcon,
   LayoutDashboardIcon,
   LightbulbIcon,
+  ListChecksIcon,
+  ShieldCheckIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
@@ -24,7 +26,9 @@ type AgentDashboardPath =
   | "/agent-dashboard"
   | "/agent-dashboard/feed"
   | "/agent-dashboard/research"
-  | "/agent-dashboard/suggestions";
+  | "/agent-dashboard/suggestions"
+  | "/agent-dashboard/security"
+  | "/agent-dashboard/runs";
 
 type AgentDashboardNavItem = {
   readonly label: string;
@@ -36,7 +40,9 @@ const AGENT_DASHBOARD_NAV_ITEMS = [
   { label: "Overview", to: "/agent-dashboard", icon: LayoutDashboardIcon },
   { label: "Agent Feed", to: "/agent-dashboard/feed", icon: ActivityIcon },
   { label: "Research", to: "/agent-dashboard/research", icon: FlaskConicalIcon },
+  { label: "Security", to: "/agent-dashboard/security", icon: ShieldCheckIcon },
   { label: "Suggestions", to: "/agent-dashboard/suggestions", icon: LightbulbIcon },
+  { label: "Runs", to: "/agent-dashboard/runs", icon: ListChecksIcon },
 ] as const satisfies readonly AgentDashboardNavItem[];
 
 const AGENT_DASHBOARD_SUBMENU_ID = "agent-dashboard-sidebar-submenu";
