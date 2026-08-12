@@ -22,6 +22,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
 import * as AgentDashboardReviewJobService from "./AgentDashboardReviewJobService.ts";
+import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import {
   AgentDashboardReviewRunner,
   type AgentDashboardReviewRunResult,
@@ -295,6 +296,10 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
         expect(terminal?.threadId).toEqual(THREAD_ID);
         expect(terminal?.error).toBeNull();
         expect(yield* Ref.get(dispatchCount)).toBe(1);
+        const findings = yield* AgentDashboardStore.getStore(NodePath.join(baseDir, "userdata"))
+          .readFindings;
+        expect(findings).toHaveLength(1);
+        expect(findings[0]?.thread).toBeNull();
       }).pipe(
         Effect.provide(
           jobServiceLayer({

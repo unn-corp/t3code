@@ -9,8 +9,54 @@ import type {
   AgentDashboardFinding,
   AgentDashboardReviewSuggestion,
   AgentDashboardSnapshot,
+  AgentDashboardVcsStatus,
+  RepositoryIdentity,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
+
+const GITHUB_REPOSITORY_PART = /^[A-Za-z0-9_.-]+$/;
+
+function validGithubRepository(owner: string | undefined, name: string | undefined): string | null {
+  const normalizedOwner = owner?.trim();
+  const normalizedName = name?.trim();
+  if (
+    !normalizedOwner ||
+    !normalizedName ||
+    !GITHUB_REPOSITORY_PART.test(normalizedOwner) ||
+    !GITHUB_REPOSITORY_PART.test(normalizedName)
+  ) {
+    return null;
+  }
+  return `${normalizedOwner}/${normalizedName}`;
+}
+
+/** Returns the current GitHub owner/name only when the project identity points at GitHub. */
+export function githubRepositoryForIdentity(
+  identity: RepositoryIdentity | null | undefined,
+): string | null {
+  if (!identity) return null;
+
+  if (identity.provider?.trim().toLowerCase() === "github") {
+    const fromIdentity = validGithubRepository(identity.owner, identity.name);
+    if (fromIdentity) return fromIdentity;
+  }
+
+  for (const candidate of [identity.canonicalKey, identity.locator.remoteUrl]) {
+    const remoteMatch = candidate.match(
+      /github\.com[/:]([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/i,
+    );
+    if (remoteMatch?.[1] && remoteMatch[2]) {
+      return validGithubRepository(remoteMatch[1], remoteMatch[2]);
+    }
+
+    const shorthandMatch = candidate.match(/^github:([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)$/i);
+    if (shorthandMatch?.[1] && shorthandMatch[2]) {
+      return validGithubRepository(shorthandMatch[1], shorthandMatch[2]);
+    }
+  }
+
+  return null;
+}
 
 export type NativeAgentState =
   | "running"
@@ -132,6 +178,33 @@ export interface NativeSuggestion {
   readonly findingId?: string;
   readonly findingState?: AgentDashboardFinding["disposition"]["state"];
   readonly findingSnoozeUntil?: string | null;
+}
+
+export type SuggestionWorkflowStatus = "pending" | "in-progress" | "tracked";
+
+/** Maps persisted suggestion side effects to the compact workflow shown in the dashboard. */
+export function suggestionWorkflowStatus(
+  suggestion: Pick<NativeSuggestion, "findingState" | "githubIssueUrl" | "threadId">,
+): SuggestionWorkflowStatus {
+  if (suggestion.threadId || suggestion.findingState === "in-progress") return "in-progress";
+  if (suggestion.githubIssueUrl) return "tracked";
+  return "pending";
+}
+
+function normalizePrimaryBranch(branch: string | null | undefined): "main" | "master" | null {
+  const normalized = branch
+    ?.trim()
+    .replace(/^refs\/heads\//, "")
+    .replace(/^refs\/remotes\/origin\//, "")
+    .replace(/^origin\//, "");
+  return normalized === "main" || normalized === "master" ? normalized : null;
+}
+
+/** Selects the repository's primary branch without guessing at another branch name. */
+export function suggestionWorktreeBaseBranch(
+  vcs: Pick<AgentDashboardVcsStatus, "branch" | "defaultBranch"> | null | undefined,
+): "main" | "master" | null {
+  return normalizePrimaryBranch(vcs?.defaultBranch) ?? normalizePrimaryBranch(vcs?.branch);
 }
 
 /** Builds the implementation brief used when a suggestion starts a new thread. */
@@ -906,6 +979,13 @@ export function buildNativeReviewSuggestionsFromSnapshot(
   environmentId: string,
 ): ReadonlyArray<NativeSuggestion> {
   const repositories = snapshot.repositories;
+  const researchThreadIds = new Set(
+    (snapshot.automationRuns ?? []).flatMap((run) =>
+      run.kind === "repository-review" && run.threadId !== null ? [String(run.threadId)] : [],
+    ),
+  );
+  const implementationThreadId = (threadId: string | null | undefined): string | null =>
+    threadId && !researchThreadIds.has(threadId) ? threadId : null;
   const isRepositoryReviewSuggestion = (suggestion: AgentDashboardReviewSuggestion): boolean =>
     suggestion.source === "code_review" &&
     suggestion.profile === "t3-random-codebase-review" &&
@@ -954,7 +1034,7 @@ export function buildNativeReviewSuggestionsFromSnapshot(
         findingSnoozeUntil: finding.disposition.snoozeUntil,
         projectId: finding.repository.projectId,
         environmentId,
-        threadId: finding.thread?.threadId ?? null,
+        threadId: implementationThreadId(finding.thread?.threadId),
         projectName: repository?.title ?? finding.repositoryPath ?? "Unknown project",
         title: finding.title,
         description: finding.summary,
@@ -962,7 +1042,7 @@ export function buildNativeReviewSuggestionsFromSnapshot(
         confidence: finding.confidence,
         impact,
         evidence: finding.evidence,
-        nextStep: "Verify the finding, then acknowledge, assign, snooze, dismiss, or reopen it.",
+        nextStep: "Verify the finding, then snooze, dismiss, block, or reopen it.",
         report: finding.summary,
         priority: impact === "high" ? "high" : "normal",
         kind: finding.kind === "security" ? "inspect-error" : "review-changes",
@@ -985,12 +1065,13 @@ export function buildNativeReviewSuggestionsFromSnapshot(
           id: suggestion.id,
           projectId: projectForPath(suggestion.repository.path),
           environmentId,
-          threadId:
+          threadId: implementationThreadId(
             snapshot.findings.find(
               (finding) =>
                 finding.id === suggestion.id ||
                 finding.id === suggestion.id.replace(/^t3-review-/, "finding:"),
-            )?.thread?.threadId ?? null,
+            )?.thread?.threadId,
+          ),
           projectName: suggestion.repository.name,
           title: suggestion.title,
           description: suggestion.description,

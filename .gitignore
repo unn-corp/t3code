@@ -2,6 +2,7 @@ node_modules
 .bun
 .turbo
 .DS_Store
+.npmrc
 *.log
 *.tsbuildinfo
 apps/*/dist

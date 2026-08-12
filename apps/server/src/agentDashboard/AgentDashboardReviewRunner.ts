@@ -4,6 +4,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -69,10 +70,14 @@ export class AgentDashboardReviewRunnerError extends Schema.TaggedErrorClass<Age
 ) {}
 
 export interface AgentDashboardReviewRunnerService {
-  /** Start one native review thread for a single project. */
+  /** Start one headless review session for a single project. */
   readonly runReview: (
     options?: AgentDashboardReviewRunOptions,
   ) => Effect.Effect<AgentDashboardReviewRunResult, AgentDashboardReviewRunnerError>;
+  /** Keep an internal review session out of user-facing thread navigation. */
+  readonly hideReviewThread?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<void, AgentDashboardReviewRunnerError>;
   /** Deterministically selects the next eligible repository for scheduled work. */
   readonly selectNextProject?: Effect.Effect<ProjectId | null, AgentDashboardReviewRunnerError>;
   /** @deprecated Prefer runReview — kept as an alias for callers. */
@@ -268,6 +273,37 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const hideReviewThread: NonNullable<AgentDashboardReviewRunnerService["hideReviewThread"]> = (
+    threadId,
+  ) =>
+    projectionSnapshotQuery.getThreadShellById(threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentDashboardReviewRunnerError({
+            operation: "load review thread",
+            message: "Failed to check whether the repository review session is hidden.",
+            cause,
+          }),
+      ),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (thread) =>
+            thread.archivedAt !== null
+              ? Effect.void
+              : makeCommandId("review-thread-hide").pipe(
+                  Effect.flatMap((commandId) =>
+                    dispatch({
+                      type: "thread.archive",
+                      commandId,
+                      threadId,
+                    }),
+                  ),
+                ),
+        }),
+      ),
+    );
+
   const selectNextProject: Effect.Effect<ProjectId | null, AgentDashboardReviewRunnerError> =
     Effect.gen(function* () {
       const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
@@ -377,6 +413,15 @@ const make = Effect.gen(function* () {
         createdAt: startedAt,
       });
 
+      // Repository review sessions are implementation details. Archive before
+      // starting the provider turn so they never participate in user-facing
+      // sidebar, agent-feed, or suggestion projections.
+      yield* dispatch({
+        type: "thread.archive",
+        commandId: yield* makeCommandId("review-thread-hide"),
+        threadId,
+      });
+
       const turnDispatch = dispatch({
         type: "thread.turn.start",
         commandId: yield* makeCommandId("review-turn-start"),
@@ -424,6 +469,7 @@ const make = Effect.gen(function* () {
     runReview,
     runRandomReview,
     selectNextProject,
+    hideReviewThread,
   } satisfies AgentDashboardReviewRunnerService;
 });
 

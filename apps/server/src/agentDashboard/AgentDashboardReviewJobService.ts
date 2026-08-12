@@ -17,7 +17,7 @@ import type {
   AgentDashboardAutomationRunStatus,
   AgentDashboardAutomationRunTrigger,
 } from "@t3tools/contracts";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId } from "@t3tools/contracts";
 
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
@@ -385,6 +385,28 @@ const make = Effect.gen(function* () {
     );
   }
 
+  // Older builds created repository reviews as ordinary visible chats. Hide
+  // every durable review session on startup so historical research does not
+  // leak back into the sidebar after an upgrade.
+  if (runner.hideReviewThread) {
+    yield* Effect.forEach(
+      recovered.flatMap((run) =>
+        run.kind === REVIEW_KIND && run.threadId !== null ? [run.threadId] : [],
+      ),
+      (threadId) =>
+        runner.hideReviewThread?.(threadId).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("T3 could not hide a historical repository review session", {
+              threadId,
+              cause,
+            }),
+          ),
+          Effect.ignore,
+        ) ?? Effect.void,
+      { concurrency: 4, discard: true },
+    );
+  }
+
   const listRuns = Ref.get(runsRef);
 
   const monitorAndIngest = (
@@ -473,7 +495,6 @@ const make = Effect.gen(function* () {
             jobId: String(review.threadId),
             runId: run.id,
             projectId: String(review.projectId),
-            threadId: String(review.threadId),
             repository: {
               name: review.projectName,
               path: review.workspaceRoot,

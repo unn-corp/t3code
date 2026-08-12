@@ -484,7 +484,6 @@ export const makeServerLayer = Layer.unwrap(
     const runtimeStateParked = yield* Deferred.make<void>();
     const tailscaleParked = yield* Deferred.make<void>();
     const cloudLinkParked = yield* Deferred.make<void>();
-    const routesReady = yield* Deferred.make<void>();
     const launcherLayer = ServiceLauncherClient.layer;
 
     yield* fixPath();
@@ -645,7 +644,6 @@ export const makeServerLayer = Layer.unwrap(
         [
           Deferred.await(runtimeStateParked),
           Deferred.await(cloudLinkParked),
-          Deferred.await(routesReady),
           ...(config.tailscaleServeEnabled ? [Deferred.await(tailscaleParked)] : []),
         ],
         { concurrency: "unbounded" },
@@ -665,10 +663,9 @@ export const makeServerLayer = Layer.unwrap(
     const securityCollectionLayer = AgentDashboardSecurityScheduler.layer.pipe(
       Layer.provide(runtimeServicesLive),
     );
-
     const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
       disableLogger: !config.logWebSocketEvents,
-    }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
+    });
     // Provide review orchestration after mergeAll so routes/ws can resolve the
     // shared job service, while the scheduler still starts with the server.
     const serverApplicationLayer = Layer.mergeAll(

@@ -14,6 +14,9 @@ import {
   buildNativeReviewSuggestionsFromSnapshot,
   buildSuggestionWorkPrompt,
   compareDashboardRecency,
+  githubRepositoryForIdentity,
+  suggestionWorkflowStatus,
+  suggestionWorktreeBaseBranch,
 } from "./agentDashboardPages";
 
 describe("agent dashboard ordering", () => {
@@ -166,6 +169,76 @@ describe("durable agent feed origins", () => {
 });
 
 describe("agent dashboard suggestion actions", () => {
+  it("groups suggestions by pending, active work, and linked issue", () => {
+    expect(
+      suggestionWorkflowStatus({
+        findingState: "open",
+        githubIssueUrl: null,
+        threadId: null,
+      }),
+    ).toBe("pending");
+    expect(
+      suggestionWorkflowStatus({
+        findingState: "in-progress",
+        githubIssueUrl: null,
+        threadId: null,
+      }),
+    ).toBe("in-progress");
+    expect(
+      suggestionWorkflowStatus({
+        githubIssueUrl: "https://github.com/acme/t3code/issues/42",
+        threadId: null,
+      }),
+    ).toBe("tracked");
+    expect(
+      suggestionWorkflowStatus({
+        githubIssueUrl: "https://github.com/acme/t3code/issues/42",
+        threadId: "thread-working",
+      }),
+    ).toBe("in-progress");
+  });
+
+  it("launches suggestion work only from main or master", () => {
+    expect(suggestionWorktreeBaseBranch({ defaultBranch: "main", branch: "feature" })).toBe("main");
+    expect(suggestionWorktreeBaseBranch({ defaultBranch: "origin/master", branch: null })).toBe(
+      "master",
+    );
+    expect(suggestionWorktreeBaseBranch({ defaultBranch: null, branch: "main" })).toBe("main");
+    expect(
+      suggestionWorktreeBaseBranch({ defaultBranch: "develop", branch: "feature" }),
+    ).toBeNull();
+  });
+
+  it("resolves a GitHub issue target only from a linked GitHub repository", () => {
+    expect(
+      githubRepositoryForIdentity({
+        canonicalKey: "github.com/acme/t3code",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://github.com/acme/t3code.git",
+        },
+        provider: "github",
+        owner: "acme",
+        name: "t3code",
+      }),
+    ).toBe("acme/t3code");
+    expect(
+      githubRepositoryForIdentity({
+        canonicalKey: "gitlab.com/acme/t3code",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://gitlab.com/acme/t3code.git",
+        },
+        provider: "gitlab",
+        owner: "acme",
+        name: "t3code",
+      }),
+    ).toBeNull();
+    expect(githubRepositoryForIdentity(null)).toBeNull();
+  });
+
   it("builds an implementation prompt from the research finding", () => {
     const prompt = buildSuggestionWorkPrompt({
       repositoryPath: "/workspace/t3code",
@@ -268,6 +341,67 @@ describe("agent dashboard suggestion actions", () => {
 
     expect(suggestions).toHaveLength(1);
     expect(suggestions[0]?.findingId).toBe("finding:abc");
+  });
+
+  it("does not treat a repository-review session as implementation work", () => {
+    const snapshot = {
+      repositories: [
+        {
+          projectId: ProjectId.make("project-1"),
+          title: "T3 Code",
+          workspaceRoot: "/workspace/t3code",
+        },
+      ],
+      automationRuns: [
+        {
+          id: "run-1",
+          kind: "repository-review",
+          threadId: ThreadId.make("research-thread"),
+        },
+      ],
+      findings: [
+        {
+          id: "finding:research",
+          kind: "review",
+          title: "A review finding",
+          summary: "Research found an implementation opportunity.",
+          severity: "medium",
+          confidence: "high",
+          category: "feature",
+          evidence: ["src/example.ts:10"],
+          repository: { projectId: ProjectId.make("project-1") },
+          repositoryPath: "/workspace/t3code",
+          disposition: {
+            state: "open",
+            updatedAt: "2026-08-09T12:00:00.000Z",
+            actor: null,
+            note: null,
+            snoozeUntil: null,
+            assignee: null,
+          },
+          provenance: {
+            source: "code_review",
+            sourceAt: "2026-08-09T12:00:00.000Z",
+            collectedAt: "2026-08-09T12:00:00.000Z",
+          },
+          firstSeenAt: "2026-08-09T12:00:00.000Z",
+          lastSeenAt: "2026-08-09T12:00:00.000Z",
+          occurrenceCount: 1,
+          lastRunId: "run-1",
+          thread: {
+            threadId: ThreadId.make("research-thread"),
+            linkedAt: "2026-08-09T12:00:00.000Z",
+          },
+          externalIssueUrl: null,
+        },
+      ],
+      reviewSuggestions: [],
+    } as unknown as AgentDashboardSnapshot;
+
+    const [suggestion] = buildNativeReviewSuggestionsFromSnapshot(snapshot, "environment-1");
+
+    expect(suggestion?.threadId).toBeNull();
+    expect(suggestionWorkflowStatus(suggestion!)).toBe("pending");
   });
 
   it("keeps native branch signals off the scheduled suggestions page", () => {
