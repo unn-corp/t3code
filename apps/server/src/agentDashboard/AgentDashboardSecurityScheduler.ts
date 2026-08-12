@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import { randomUUID } from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -120,7 +121,9 @@ const normalizeSchedule = (value: unknown, now = Date.now()): AgentDashboardSecu
 const writeAtomic = async (path: string, value: AgentDashboardSecuritySchedule): Promise<void> => {
   const directory = NodePath.dirname(path);
   await NodeFSP.mkdir(directory, { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
+  // Heartbeats and scan state can persist concurrently. A per-write name
+  // prevents one writer from renaming another writer's temporary file.
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await NodeFSP.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600,
