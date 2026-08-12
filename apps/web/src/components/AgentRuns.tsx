@@ -8,7 +8,10 @@ import {
   RotateCcwIcon,
 } from "lucide-react";
 
-import type { AgentDashboardAutomationRun, AgentDashboardRepositoryPolicy } from "@t3tools/contracts";
+import type {
+  AgentDashboardAutomationRun,
+  AgentDashboardRepositoryPolicy,
+} from "@t3tools/contracts";
 import { agentDashboardEnvironment, useAgentDashboardSnapshot } from "../state/agentDashboard";
 import { useAtomCommand } from "../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -116,17 +119,43 @@ export function AgentRuns() {
     >
       {health ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Card><CardPanel className="p-4"><p className="text-xs text-muted-foreground">Repositories</p><p className="mt-1 text-lg font-semibold">{health.repositoryCount}</p></CardPanel></Card>
-          <Card><CardPanel className="p-4"><p className="text-xs text-muted-foreground">Healthy</p><p className="mt-1 text-lg font-semibold text-success">{health.healthyRepositoryCount}</p></CardPanel></Card>
-          <Card><CardPanel className="p-4"><p className="text-xs text-muted-foreground">Attention</p><p className="mt-1 text-lg font-semibold text-warning">{health.attentionRepositoryCount}</p></CardPanel></Card>
-          <Card><CardPanel className="p-4"><p className="text-xs text-muted-foreground">Open findings</p><p className="mt-1 text-lg font-semibold">{health.openFindingCount}</p></CardPanel></Card>
+          <Card>
+            <CardPanel className="p-4">
+              <p className="text-xs text-muted-foreground">Repositories</p>
+              <p className="mt-1 text-lg font-semibold">{health.repositoryCount}</p>
+            </CardPanel>
+          </Card>
+          <Card>
+            <CardPanel className="p-4">
+              <p className="text-xs text-muted-foreground">Healthy</p>
+              <p className="mt-1 text-lg font-semibold text-success">
+                {health.healthyRepositoryCount}
+              </p>
+            </CardPanel>
+          </Card>
+          <Card>
+            <CardPanel className="p-4">
+              <p className="text-xs text-muted-foreground">Attention</p>
+              <p className="mt-1 text-lg font-semibold text-warning">
+                {health.attentionRepositoryCount}
+              </p>
+            </CardPanel>
+          </Card>
+          <Card>
+            <CardPanel className="p-4">
+              <p className="text-xs text-muted-foreground">Open findings</p>
+              <p className="mt-1 text-lg font-semibold">{health.openFindingCount}</p>
+            </CardPanel>
+          </Card>
         </div>
       ) : null}
 
       <Card>
         <CardHeader className="p-4 sm:p-5">
           <CardTitle className="text-base">Repository policy</CardTitle>
-          <CardDescription>Scheduling is deterministic and policy-driven. Disabled repositories are skipped.</CardDescription>
+          <CardDescription>
+            Scheduling is deterministic and policy-driven. Disabled repositories are skipped.
+          </CardDescription>
         </CardHeader>
         <CardPanel className="grid gap-2 border-t border-border/60 p-4 sm:p-5">
           {policies.map((policy) => {
@@ -135,11 +164,18 @@ export function AgentRuns() {
               (item) => String(item.repository.projectId) === id,
             );
             return (
-              <div className="flex flex-col gap-3 rounded-lg border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between" key={id}>
+              <div
+                className="flex flex-col gap-3 rounded-lg border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between"
+                key={id}
+              >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{id}</p>
                   <p className="mt-1 text-xs text-muted-foreground">{policyLabel(policy)}</p>
-                  {repositoryCoverage ? <p className="mt-1 text-xs text-muted-foreground">Coverage: {repositoryCoverage.status}</p> : null}
+                  {repositoryCoverage ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Coverage: {repositoryCoverage.status}
+                    </p>
+                  ) : null}
                 </div>
                 <Button
                   disabled={updatingPolicyId !== null}
@@ -166,10 +202,17 @@ export function AgentRuns() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <CardTitle className="text-base">{run.kind}</CardTitle>
-                      <Badge size="sm" variant={runVariant(run.status)}>{run.status}</Badge>
-                      <Badge size="sm" variant="outline">{run.trigger}</Badge>
+                      <Badge size="sm" variant={runVariant(run.status)}>
+                        {run.status}
+                      </Badge>
+                      <Badge size="sm" variant="outline">
+                        {run.trigger}
+                      </Badge>
                     </div>
-                    <CardDescription className="mt-1 truncate">Repository {String(run.repository.projectId)}{run.target ? `, ${run.target}` : ""}</CardDescription>
+                    <CardDescription className="mt-1 truncate">
+                      Repository {String(run.repository.projectId)}
+                      {run.target ? `, ${run.target}` : ""}
+                    </CardDescription>
                   </div>
                   {run.status === "failed" || run.status === "partial" ? (
                     <Button
@@ -178,7 +221,11 @@ export function AgentRuns() {
                       size="sm"
                       variant="outline"
                     >
-                      {retryingRunId === run.id ? <LoaderIcon className="animate-spin" /> : <RotateCcwIcon />}
+                      {retryingRunId === run.id ? (
+                        <LoaderIcon className="animate-spin" />
+                      ) : (
+                        <RotateCcwIcon />
+                      )}
                       Retry
                     </Button>
                   ) : null}
@@ -186,7 +233,10 @@ export function AgentRuns() {
               </CardHeader>
               <CardPanel className="flex flex-col gap-2 border-t border-border/60 p-4 text-xs text-muted-foreground sm:p-5">
                 <div className="flex flex-wrap gap-x-4 gap-y-2">
-                  <span className="inline-flex items-center gap-1.5"><Clock3Icon className="size-3.5" />{formatRelativeTimeLabel(run.updatedAt) || "Unknown time"}</span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <Clock3Icon className="size-3.5" />
+                    {formatRelativeTimeLabel(run.updatedAt) || "Unknown time"}
+                  </span>
                   <span>Model: {run.model ?? "Unmeasured"}</span>
                   <span>Findings: {run.findingCount}</span>
                   <span>Retries: {run.retryCount}</span>
@@ -200,9 +250,13 @@ export function AgentRuns() {
       ) : (
         <Empty className="min-h-56 border border-dashed border-border/70 bg-card">
           <EmptyHeader>
-            <EmptyMedia variant="icon"><Clock3Icon /></EmptyMedia>
+            <EmptyMedia variant="icon">
+              <Clock3Icon />
+            </EmptyMedia>
             <EmptyTitle>No automation runs yet</EmptyTitle>
-            <EmptyDescription>Run an investigation or wait for the scheduled review to create durable history.</EmptyDescription>
+            <EmptyDescription>
+              Run an investigation or wait for the scheduled review to create durable history.
+            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       )}

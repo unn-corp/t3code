@@ -1,4 +1,5 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import type { RuntimeMode } from "@t3tools/contracts";
 
 export const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
 
@@ -42,7 +43,25 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
 export const codexSessionAppServerArgs = (
   appServerArgs: ReadonlyArray<string> | undefined,
   launchArgs: string | undefined,
+  runtimeMode?: RuntimeMode,
 ) => {
   const launchAppServerArgs = codexAppServerArgs(launchArgs);
-  return appServerArgs ? [...launchAppServerArgs, ...appServerArgs] : launchAppServerArgs;
+  const configuredArgs = appServerArgs
+    ? [...launchAppServerArgs, ...appServerArgs]
+    : launchAppServerArgs;
+
+  // The per-thread protocol fields are the primary runtime contract, but the
+  // Codex app-server can also inherit restrictive approval/sandbox settings
+  // from CODEX_HOME or project config before a thread is opened. Force the
+  // automation contract at the process boundary as well so a full-access T3
+  // session cannot silently become an approval-prompting read-only session.
+  return runtimeMode === "full-access"
+    ? [
+        ...configuredArgs,
+        "-c",
+        'approval_policy="never"',
+        "-c",
+        'sandbox_mode="danger-full-access"',
+      ]
+    : configuredArgs;
 };

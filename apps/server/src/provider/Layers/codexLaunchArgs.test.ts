@@ -6,6 +6,7 @@ import {
   codexAppServerArgs,
   codexExecLaunchArgs,
   resolveCodexLaunchArgs,
+  codexSessionAppServerArgs,
 } from "./codexLaunchArgs.ts";
 
 describe("resolveCodexLaunchArgs", () => {
@@ -54,6 +55,33 @@ describe("codexExecLaunchArgs", () => {
   it("does not pair value-taking flags with adjacent flags", () => {
     NodeAssert.deepStrictEqual(codexExecLaunchArgs("--config --strict-config --enable --disable"), [
       "--strict-config",
+    ]);
+  });
+});
+
+describe("codexSessionAppServerArgs", () => {
+  it("pins full-access sessions to non-interactive, unrestricted Codex config", () => {
+    NodeAssert.deepStrictEqual(
+      codexSessionAppServerArgs(
+        ["-c", "mcp_servers.t3-code.url=http://127.0.0.1"],
+        "",
+        "full-access",
+      ),
+      [
+        "app-server",
+        "-c",
+        "mcp_servers.t3-code.url=http://127.0.0.1",
+        "-c",
+        'approval_policy="never"',
+        "-c",
+        'sandbox_mode="danger-full-access"',
+      ],
+    );
+  });
+
+  it("does not override restricted runtime modes", () => {
+    NodeAssert.deepStrictEqual(codexSessionAppServerArgs(undefined, "", "approval-required"), [
+      "app-server",
     ]);
   });
 });

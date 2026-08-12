@@ -337,9 +337,7 @@ const make = Effect.gen(function* () {
             Effect.asVoid,
           );
           return [next, next] as const;
-        }).pipe(
-          Effect.flatMap((next) => next.pipe(Effect.forkIn(scope), Effect.asVoid)),
-        ),
+        }).pipe(Effect.flatMap((next) => next.pipe(Effect.forkIn(scope), Effect.asVoid))),
       ),
       Effect.mapError(
         (cause) =>
@@ -376,7 +374,10 @@ const make = Effect.gen(function* () {
     );
   }
   yield* Ref.set(runsRef, recovered);
-  if (recovered.length !== loadInitial.length || recovered.some((run, index) => run.status !== loadInitial[index]?.status)) {
+  if (
+    recovered.length !== loadInitial.length ||
+    recovered.some((run, index) => run.status !== loadInitial[index]?.status)
+  ) {
     yield* Effect.forEach(
       recovered.filter((run, index) => run.status !== loadInitial[index]?.status),
       (run) => dashboardStore.recordAutomationRun(run).pipe(Effect.orElseSucceed(() => undefined)),

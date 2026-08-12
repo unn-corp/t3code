@@ -1,5 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ProjectId, type AgentDashboardRepositoryCoverage, type AgentDashboardRepositoryPolicy, type OrchestrationProjectShell } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type AgentDashboardRepositoryCoverage,
+  type AgentDashboardRepositoryPolicy,
+  type OrchestrationProjectShell,
+} from "@t3tools/contracts";
 
 import { selectNextRepository } from "./AgentDashboardReviewRunner.ts";
 

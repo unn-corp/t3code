@@ -264,7 +264,7 @@ it.effect("returns unavailable VCS state without scanning unprojected paths", ()
   }),
 );
 
-it.effect("derives newest-first feed, repository research, and native suggestions", () =>
+it.effect("derives feed and repository research without navigation suggestions", () =>
   Effect.gen(function* () {
     const snapshot = yield* loadAgentDashboardSnapshot({
       shellSnapshot: dashboardShellSnapshot,
@@ -285,11 +285,6 @@ it.effect("derives newest-first feed, repository research, and native suggestion
     assert.equal(snapshot.research[0]?.status, "dirty");
     assert.equal(snapshot.research[0]?.activeThreadCount, 1);
     assert.equal(snapshot.research[0]?.latestThread?.threadId, "thread-worktree");
-    assert.deepStrictEqual(
-      snapshot.suggestions.map((suggestion) => suggestion.kind),
-      ["sync-branch", "review-changes", "respond-to-thread", "review-plan"],
-    );
-    assert.equal(snapshot.suggestions[2]?.thread?.threadId, "thread-worktree");
-    assert.equal(snapshot.suggestions[3]?.thread?.threadId, "thread-root");
+    assert.deepStrictEqual(snapshot.suggestions, []);
   }),
 );

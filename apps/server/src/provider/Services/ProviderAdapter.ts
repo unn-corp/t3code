@@ -30,12 +30,6 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
-  /**
-   * Automated review must opt in explicitly. Missing is treated as unsupported
-   * by ProviderService so a provider can never silently fall back to a writable
-   * or network-capable runtime.
-   */
-  readonly automatedReview?: "supported" | "unsupported";
 }
 
 export interface ProviderThreadTurnSnapshot {

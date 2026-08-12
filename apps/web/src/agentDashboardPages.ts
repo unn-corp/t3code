@@ -906,6 +906,10 @@ export function buildNativeReviewSuggestionsFromSnapshot(
   environmentId: string,
 ): ReadonlyArray<NativeSuggestion> {
   const repositories = snapshot.repositories;
+  const isRepositoryReviewSuggestion = (suggestion: AgentDashboardReviewSuggestion): boolean =>
+    suggestion.source === "code_review" &&
+    suggestion.profile === "t3-random-codebase-review" &&
+    suggestion.jobId !== null;
   const legacySuggestionByFindingId = new Map(
     snapshot.reviewSuggestions.map(
       (suggestion) => [suggestion.id.replace(/^t3-review-/, "finding:"), suggestion] as const,
@@ -921,7 +925,12 @@ export function buildNativeReviewSuggestionsFromSnapshot(
   // runs. Native navigation suggestions and other collector domains belong on
   // their own dashboard pages.
   const canonicalSuggestions = snapshot.findings
-    .filter((finding) => finding.kind === "review")
+    .filter(
+      (finding) =>
+        finding.kind === "review" &&
+        finding.provenance.source === "code_review" &&
+        finding.lastRunId !== null,
+    )
     .map((finding) => {
       const repository = repositories.find(
         (candidate) => candidate.projectId === finding.repository.projectId,
@@ -969,6 +978,7 @@ export function buildNativeReviewSuggestionsFromSnapshot(
     canonicalSuggestions.map((suggestion) => `t3-review-${suggestion.id.replace(/^finding:/, "")}`),
   );
   const legacySuggestions = snapshot.reviewSuggestions
+    .filter(isRepositoryReviewSuggestion)
     .map(
       (suggestion) =>
         ({

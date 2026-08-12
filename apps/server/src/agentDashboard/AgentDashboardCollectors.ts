@@ -6,10 +6,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { promisify } from "node:util";
 
-import type {
-  AgentDashboardCollectorKind,
-  AgentDashboardCollectorState,
-} from "@t3tools/contracts";
+import type { AgentDashboardCollectorKind, AgentDashboardCollectorState } from "@t3tools/contracts";
 import type { OrchestrationProjectShell, ProjectId } from "@t3tools/contracts";
 
 import {
@@ -20,7 +17,8 @@ import {
 const execFile = promisify(NodeChildProcess.execFile);
 const MAX_FILES = 400;
 const MAX_FILE_BYTES = 1_000_000;
-const SECRET_PATTERN = /(?:AKIA[0-9A-Z]{16}|(?:api[_-]?key|secret|password|token)\s*[:=]\s*["'][^"']{8,})/i;
+const SECRET_PATTERN =
+  /(?:AKIA[0-9A-Z]{16}|(?:api[_-]?key|secret|password|token)\s*[:=]\s*["'][^"']{8,})/i;
 const IGNORED_DIRECTORIES = new Set([".git", "node_modules", ".t3", ".next", "dist", "build"]);
 
 export interface AgentDashboardCollectorInput {
@@ -52,8 +50,10 @@ const pathExists = async (path: string): Promise<boolean> =>
     () => false,
   );
 
-const projectMatches = (project: OrchestrationProjectShell, projectId: ProjectId | null | undefined) =>
-  projectId === null || projectId === undefined || String(project.id) === String(projectId);
+const projectMatches = (
+  project: OrchestrationProjectShell,
+  projectId: ProjectId | null | undefined,
+) => projectId === null || projectId === undefined || String(project.id) === String(projectId);
 
 const collectorState = (input: {
   readonly kind: AgentDashboardCollectorKind;
@@ -133,7 +133,10 @@ const walkFiles = async (root: string): Promise<ReadonlyArray<string>> => {
 const collectEngineering = async (
   project: OrchestrationProjectShell,
   observedAt: string,
-): Promise<{ findings: Array<AgentDashboardCanonicalFindingInput>; state: AgentDashboardCollectorState }> => {
+): Promise<{
+  findings: Array<AgentDashboardCanonicalFindingInput>;
+  state: AgentDashboardCollectorState;
+}> => {
   try {
     const status = await runGit(project.workspaceRoot, ["status", "--porcelain=v1"]);
     const branch = await runGit(project.workspaceRoot, ["branch", "--show-current"]);
@@ -144,23 +147,30 @@ const collectEngineering = async (
           kind: "engineering",
           project,
           title: "Working tree has uncommitted changes",
-          summary: "The engineering collector found local changes that are not represented by a commit.",
+          summary:
+            "The engineering collector found local changes that are not represented by a commit.",
           severity: "low",
           category: "vcs",
-          evidence: [`branch:${branch || "detached"}`, `${status.split(/\r?\n/).length} changed path(s)`],
+          evidence: [
+            `branch:${branch || "detached"}`,
+            `${status.split(/\r?\n/).length} changed path(s)`,
+          ],
           source: "local-git",
           observedAt,
         }),
       );
     }
-    const hasCiWorkflow = await pathExists(NodePath.join(project.workspaceRoot, ".github", "workflows"));
+    const hasCiWorkflow = await pathExists(
+      NodePath.join(project.workspaceRoot, ".github", "workflows"),
+    );
     if (!hasCiWorkflow) {
       findings.push(
         baseFinding({
           kind: "operational",
           project,
           title: "No repository CI workflow was detected",
-          summary: "The local collector could not find a GitHub Actions workflow, so CI and deployment health are not represented here.",
+          summary:
+            "The local collector could not find a GitHub Actions workflow, so CI and deployment health are not represented here.",
           severity: "medium",
           confidence: "medium",
           category: "ci",
@@ -177,7 +187,8 @@ const collectEngineering = async (
         project,
         status: "partial",
         source: "local-git",
-        message: "Local VCS checks completed. CI, deployment, and pull request checks were not executed.",
+        message:
+          "Local VCS checks completed. CI, deployment, and pull request checks were not executed.",
         observedAt,
       }),
     };
@@ -189,7 +200,8 @@ const collectEngineering = async (
         project,
         status: "unavailable",
         source: "local-git",
-        message: cause instanceof Error ? cause.message.slice(0, 500) : "Git status is unavailable.",
+        message:
+          cause instanceof Error ? cause.message.slice(0, 500) : "Git status is unavailable.",
         observedAt,
       }),
     };
@@ -199,7 +211,10 @@ const collectEngineering = async (
 const collectSecurity = async (
   project: OrchestrationProjectShell,
   observedAt: string,
-): Promise<{ findings: Array<AgentDashboardCanonicalFindingInput>; state: AgentDashboardCollectorState }> => {
+): Promise<{
+  findings: Array<AgentDashboardCanonicalFindingInput>;
+  state: AgentDashboardCollectorState;
+}> => {
   try {
     const findings: Array<AgentDashboardCanonicalFindingInput> = [];
     const files = await walkFiles(project.workspaceRoot);
@@ -217,7 +232,8 @@ const collectSecurity = async (
           kind: "security",
           project,
           title: "Possible credential in repository content",
-          summary: "A local pattern scan found a credential-shaped value. The value was not stored or emitted.",
+          summary:
+            "A local pattern scan found a credential-shaped value. The value was not stored or emitted.",
           severity: "high",
           confidence: "medium",
           category: "secrets",
@@ -235,14 +251,18 @@ const collectSecurity = async (
       await NodeFSP.access(packageManifest);
       const hasLockfile = await Promise.any(
         lockfiles.map((name) => NodeFSP.access(NodePath.join(project.workspaceRoot, name))),
-      ).then(() => true, () => false);
+      ).then(
+        () => true,
+        () => false,
+      );
       if (!hasLockfile) {
         findings.push(
           baseFinding({
             kind: "security",
             project,
             title: "JavaScript manifest has no lockfile",
-            summary: "Dependency resolution is not pinned by a repository lockfile, which weakens reproducibility and reviewability.",
+            summary:
+              "Dependency resolution is not pinned by a repository lockfile, which weakens reproducibility and reviewability.",
             severity: "medium",
             confidence: "high",
             category: "dependencies",
@@ -263,7 +283,9 @@ const collectSecurity = async (
         project,
         status: "available",
         source: "local-security-scan",
-        message: process.env.GITHUB_TOKEN ? null : "GitHub checks are unavailable without a configured credential; local checks were completed.",
+        message: process.env.GITHUB_TOKEN
+          ? null
+          : "GitHub checks are unavailable without a configured credential; local checks were completed.",
         observedAt,
       }),
     };
@@ -275,7 +297,10 @@ const collectSecurity = async (
         project,
         status: "unavailable",
         source: "local-security-scan",
-        message: cause instanceof Error ? cause.message.slice(0, 500) : "Security collection is unavailable.",
+        message:
+          cause instanceof Error
+            ? cause.message.slice(0, 500)
+            : "Security collection is unavailable.",
         observedAt,
       }),
     };
@@ -286,25 +311,36 @@ const collectResearch = async (
   stateDir: string,
   project: OrchestrationProjectShell,
   observedAt: string,
-): Promise<{ findings: Array<AgentDashboardCanonicalFindingInput>; state: AgentDashboardCollectorState }> => {
+): Promise<{
+  findings: Array<AgentDashboardCanonicalFindingInput>;
+  state: AgentDashboardCollectorState;
+}> => {
   const watchlistPath = NodePath.join(stateDir, "agent-dashboard", "research-watchlist.json");
   try {
     const raw = JSON.parse(await NodeFSP.readFile(watchlistPath, "utf8")) as unknown;
     const entries = Array.isArray(raw)
       ? raw
       : raw !== null && typeof raw === "object" && !Array.isArray(raw) && "items" in raw
-        ? (raw as { items?: unknown[] }).items ?? []
+        ? ((raw as { items?: unknown[] }).items ?? [])
         : [];
     const findings = entries
-      .filter((entry): entry is Record<string, unknown> => entry !== null && typeof entry === "object")
-      .filter((entry) => String(entry.repository ?? entry.projectId ?? "") === String(project.id) || String(entry.repository ?? "") === project.title)
+      .filter(
+        (entry): entry is Record<string, unknown> => entry !== null && typeof entry === "object",
+      )
+      .filter(
+        (entry) =>
+          String(entry.repository ?? entry.projectId ?? "") === String(project.id) ||
+          String(entry.repository ?? "") === project.title,
+      )
       .slice(0, 50)
       .map((entry) =>
         baseFinding({
           kind: "research",
           project,
           title: String(entry.title ?? "Research watch item").slice(0, 300),
-          summary: String(entry.summary ?? entry.abstract ?? "Research item collected from the local watchlist.").slice(0, 4_000),
+          summary: String(
+            entry.summary ?? entry.abstract ?? "Research item collected from the local watchlist.",
+          ).slice(0, 4_000),
           severity: "info",
           confidence: "low",
           category: String(entry.category ?? "watchlist").slice(0, 80),
@@ -325,7 +361,8 @@ const collectResearch = async (
       }),
     };
   } catch (cause) {
-    const code = cause !== null && typeof cause === "object" && "code" in cause ? String(cause.code) : "";
+    const code =
+      cause !== null && typeof cause === "object" && "code" in cause ? String(cause.code) : "";
     return {
       findings: [],
       state: collectorState({
@@ -333,7 +370,10 @@ const collectResearch = async (
         project,
         status: code === "ENOENT" ? "unavailable" : "partial",
         source: "local-research-watchlist",
-        message: code === "ENOENT" ? "No local research watchlist is configured." : "The local research watchlist could not be read.",
+        message:
+          code === "ENOENT"
+            ? "No local research watchlist is configured."
+            : "The local research watchlist could not be read.",
         observedAt,
       }),
     };
@@ -344,15 +384,22 @@ export const collectAgentDashboardData = async (
   input: AgentDashboardCollectorInput,
 ): Promise<AgentDashboardCollectorResult> => {
   const observedAt = input.observedAt ?? new Date().toISOString();
-  const selectedProjects = input.projects.filter((project) => projectMatches(project, input.projectId));
-  const stableProjects = (await Promise.all(
-    selectedProjects.map(async (project) => (await isStableRepositoryPath(project.workspaceRoot) ? project : null)),
-  )).filter((project): project is OrchestrationProjectShell => project !== null);
+  const selectedProjects = input.projects.filter((project) =>
+    projectMatches(project, input.projectId),
+  );
+  const stableProjects = (
+    await Promise.all(
+      selectedProjects.map(async (project) =>
+        (await isStableRepositoryPath(project.workspaceRoot)) ? project : null,
+      ),
+    )
+  ).filter((project): project is OrchestrationProjectShell => project !== null);
   const findings: Array<AgentDashboardCanonicalFindingInput> = [];
   const states: Array<AgentDashboardCollectorState> = [];
 
   for (const project of stableProjects) {
-    const collectors = input.kind === "all" ? ["research", "engineering", "security"] as const : [input.kind];
+    const collectors =
+      input.kind === "all" ? (["research", "engineering", "security"] as const) : [input.kind];
     for (const kind of collectors) {
       const result =
         kind === "research"

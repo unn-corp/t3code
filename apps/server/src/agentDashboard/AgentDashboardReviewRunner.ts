@@ -29,6 +29,10 @@ import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 const REVIEW_MODEL = "gpt-5.6-luna";
 const REVIEW_REASONING_EFFORT = "xhigh";
 
+/** Repository review agents are read-only by instruction but need autonomous
+ * process/filesystem access so the provider never pauses for approval. */
+export const REVIEW_RUNTIME_MODE = "full-access" as const;
+
 /** Logical automation kind recorded on durable runs. */
 export const REVIEW_KIND = "repository-review";
 
@@ -70,10 +74,7 @@ export interface AgentDashboardReviewRunnerService {
     options?: AgentDashboardReviewRunOptions,
   ) => Effect.Effect<AgentDashboardReviewRunResult, AgentDashboardReviewRunnerError>;
   /** Deterministically selects the next eligible repository for scheduled work. */
-  readonly selectNextProject?: Effect.Effect<
-    ProjectId | null,
-    AgentDashboardReviewRunnerError
-  >;
+  readonly selectNextProject?: Effect.Effect<ProjectId | null, AgentDashboardReviewRunnerError>;
   /** @deprecated Prefer runReview — kept as an alias for callers. */
   readonly runRandomReview: Effect.Effect<
     AgentDashboardReviewRunResult,
@@ -143,10 +144,15 @@ const riskWeight = (riskTier: AgentDashboardRepositoryPolicy["riskTier"]): numbe
 
 const matchesExclusion = (project: OrchestrationProjectShell, exclusions: ReadonlyArray<string>) =>
   exclusions.some((pattern) => {
-    const escaped = pattern.trim().replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+    const escaped = pattern
+      .trim()
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*");
     if (escaped.length === 0) return false;
-    return new RegExp(`^${escaped}$`, "i").test(project.title) ||
-      new RegExp(escaped, "i").test(project.workspaceRoot);
+    return (
+      new RegExp(`^${escaped}$`, "i").test(project.title) ||
+      new RegExp(escaped, "i").test(project.workspaceRoot)
+    );
   });
 
 export const selectNextRepository = (input: {
@@ -164,7 +170,10 @@ export const selectNextRepository = (input: {
     input.policies.map((item) => [String(item.repository.projectId), item]),
   );
   const candidates = input.projects
-    .filter((project) => !matchesExclusion(project, policyByProject.get(String(project.id))?.exclusions ?? []))
+    .filter(
+      (project) =>
+        !matchesExclusion(project, policyByProject.get(String(project.id))?.exclusions ?? []),
+    )
     .map((project) => {
       const policy = policyByProject.get(String(project.id));
       const effectivePolicy: AgentDashboardRepositoryPolicy = policy ?? {
@@ -183,11 +192,16 @@ export const selectNextRepository = (input: {
         updatedAt: new Date(input.nowMs).toISOString(),
       };
       const coverage = coverageByProject.get(String(project.id));
-      const nextDueMs = coverage?.nextDueAt ? Date.parse(coverage.nextDueAt) : Number.NEGATIVE_INFINITY;
-      const due = coverage === undefined || coverage.lastSucceededAt === null || nextDueMs <= input.nowMs;
+      const nextDueMs = coverage?.nextDueAt
+        ? Date.parse(coverage.nextDueAt)
+        : Number.NEGATIVE_INFINITY;
+      const due =
+        coverage === undefined || coverage.lastSucceededAt === null || nextDueMs <= input.nowMs;
       return { project, policy: effectivePolicy, coverage, due, nextDueMs };
     })
-    .filter((candidate) => candidate.policy.enabled && (input.allowNotDue === true || candidate.due))
+    .filter(
+      (candidate) => candidate.policy.enabled && (input.allowNotDue === true || candidate.due),
+    )
     .toSorted(
       (left, right) =>
         Number(right.due) - Number(left.due) ||
@@ -333,7 +347,10 @@ const make = Effect.gen(function* () {
       let project = explicitTarget;
       if (project === null) {
         const selectedId = yield* selectNextProject;
-        project = selectedId === null ? null : projects.find((candidate) => candidate.id === selectedId) ?? null;
+        project =
+          selectedId === null
+            ? null
+            : (projects.find((candidate) => candidate.id === selectedId) ?? null);
       }
       if (project === null) {
         return yield* new AgentDashboardReviewRunnerError({
@@ -353,7 +370,7 @@ const make = Effect.gen(function* () {
         projectId: project.id,
         title,
         modelSelection: REVIEW_MODEL_SELECTION,
-        runtimeMode: "automated-review",
+        runtimeMode: REVIEW_RUNTIME_MODE,
         interactionMode: "default",
         branch: null,
         worktreePath: null,
@@ -372,7 +389,7 @@ const make = Effect.gen(function* () {
         },
         modelSelection: REVIEW_MODEL_SELECTION,
         titleSeed: title,
-        runtimeMode: "automated-review",
+        runtimeMode: REVIEW_RUNTIME_MODE,
         interactionMode: "default",
         createdAt: startedAt,
       });
@@ -403,7 +420,11 @@ const make = Effect.gen(function* () {
 
   const runRandomReview = runReview();
 
-  return { runReview, runRandomReview, selectNextProject } satisfies AgentDashboardReviewRunnerService;
+  return {
+    runReview,
+    runRandomReview,
+    selectNextProject,
+  } satisfies AgentDashboardReviewRunnerService;
 });
 
 export const layer = Layer.effect(AgentDashboardReviewRunner, make);

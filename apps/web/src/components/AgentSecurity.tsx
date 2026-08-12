@@ -46,9 +46,11 @@ export function AgentSecurity() {
     () => dashboardSnapshot.data?.findings.filter((finding) => finding.kind === "security") ?? [],
     [dashboardSnapshot.data?.findings],
   );
-  const collectors = dashboardSnapshot.data?.collectorStates.filter(
-    (state) => state.kind === "security" || state.kind === "all",
-  ) ?? [];
+  const collectors =
+    dashboardSnapshot.data?.collectorStates.filter(
+      (state) => state.kind === "security" || state.kind === "all",
+    ) ?? [];
+  const securitySchedule = dashboardSnapshot.data?.securitySchedule;
 
   const apply = async (finding: AgentDashboardFinding, action: AgentDashboardDispositionAction) => {
     if (!dashboardSnapshot.environmentId || updatingId !== null) return;
@@ -105,20 +107,37 @@ export function AgentSecurity() {
       title="Security"
       description="Local-first security observations with explicit collector availability and reversible finding actions."
     >
-      {collectors.length > 0 ? (
+      {collectors.length > 0 || securitySchedule ? (
         <Card>
           <CardHeader className="p-4 sm:p-5">
             <CardTitle className="text-base">Collector health</CardTitle>
-            <CardDescription>Unavailable integrations stay visible instead of being reported as clean.</CardDescription>
+            <CardDescription>
+              Automatic local scans run every {securitySchedule?.intervalMinutes ?? 120} minutes.
+              {securitySchedule
+                ? ` Last run: ${securitySchedule.lastStatus}${
+                    securitySchedule.lastCompletedAt
+                      ? ` (${formatRelativeTimeLabel(securitySchedule.lastCompletedAt)})`
+                      : ""
+                  }.`
+                : ""}{" "}
+              Unavailable integrations stay visible instead of being reported as clean.
+            </CardDescription>
           </CardHeader>
           <CardPanel className="grid gap-2 border-t border-border/60 p-4 sm:p-5">
             {collectors.map((collector) => (
-              <div className="flex flex-col gap-1 rounded-lg border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between" key={collector.id}>
+              <div
+                className="flex flex-col gap-1 rounded-lg border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between"
+                key={collector.id}
+              >
                 <div>
                   <p className="text-sm font-medium">{collector.source}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{collector.message ?? "Collector completed."}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {collector.message ?? "Collector completed."}
+                  </p>
                 </div>
-                <Badge variant={collector.status === "available" ? "success" : "warning"}>{collector.status}</Badge>
+                <Badge variant={collector.status === "available" ? "success" : "warning"}>
+                  {collector.status}
+                </Badge>
               </div>
             ))}
           </CardPanel>
@@ -135,8 +154,12 @@ export function AgentSecurity() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <CardTitle className="text-base">{finding.title}</CardTitle>
-                      <Badge size="sm" variant={severityVariant(finding.severity)}>{finding.severity}</Badge>
-                      <Badge size="sm" variant={dispositionVariant(finding.disposition.state)}>{finding.disposition.state}</Badge>
+                      <Badge size="sm" variant={severityVariant(finding.severity)}>
+                        {finding.severity}
+                      </Badge>
+                      <Badge size="sm" variant={dispositionVariant(finding.disposition.state)}>
+                        {finding.disposition.state}
+                      </Badge>
                     </div>
                     <CardDescription className="mt-1">{finding.summary}</CardDescription>
                   </div>
@@ -146,24 +169,51 @@ export function AgentSecurity() {
                 <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
                   <span>Repository: {String(finding.repository.projectId)}</span>
                   <span>Source: {finding.provenance.source}</span>
-                  <span>Collected {formatRelativeTimeLabel(finding.provenance.collectedAt) || "Unknown time"}</span>
-                  <span>Seen {finding.occurrenceCount} time{finding.occurrenceCount === 1 ? "" : "s"}</span>
+                  <span>
+                    Collected{" "}
+                    {formatRelativeTimeLabel(finding.provenance.collectedAt) || "Unknown time"}
+                  </span>
+                  <span>
+                    Seen {finding.occurrenceCount} time{finding.occurrenceCount === 1 ? "" : "s"}
+                  </span>
                 </div>
                 <ul className="grid gap-1 text-sm text-foreground/80">
-                  {finding.evidence.map((evidence) => <li key={evidence}>{evidence}</li>)}
+                  {finding.evidence.map((evidence) => (
+                    <li key={evidence}>{evidence}</li>
+                  ))}
                 </ul>
                 <div className="flex flex-wrap gap-2">
-                  <Button disabled={updatingId !== null} onClick={() => void apply(finding, "acknowledge")} size="sm" variant="outline">
+                  <Button
+                    disabled={updatingId !== null}
+                    onClick={() => void apply(finding, "acknowledge")}
+                    size="sm"
+                    variant="outline"
+                  >
                     <CheckCircle2Icon /> Acknowledge
                   </Button>
-                  <Button disabled={updatingId !== null} onClick={() => void apply(finding, "snooze")} size="sm" variant="outline">
+                  <Button
+                    disabled={updatingId !== null}
+                    onClick={() => void apply(finding, "snooze")}
+                    size="sm"
+                    variant="outline"
+                  >
                     Snooze
                   </Button>
-                  <Button disabled={updatingId !== null} onClick={() => void apply(finding, "dismiss")} size="sm" variant="outline">
+                  <Button
+                    disabled={updatingId !== null}
+                    onClick={() => void apply(finding, "dismiss")}
+                    size="sm"
+                    variant="outline"
+                  >
                     Dismiss
                   </Button>
                   {finding.disposition.state !== "open" ? (
-                    <Button disabled={updatingId !== null} onClick={() => void apply(finding, "reopen")} size="sm" variant="ghost">
+                    <Button
+                      disabled={updatingId !== null}
+                      onClick={() => void apply(finding, "reopen")}
+                      size="sm"
+                      variant="ghost"
+                    >
                       Reopen
                     </Button>
                   ) : null}
@@ -175,9 +225,13 @@ export function AgentSecurity() {
       ) : (
         <Empty className="min-h-56 border border-dashed border-border/70 bg-card">
           <EmptyHeader>
-            <EmptyMedia variant="icon"><CheckCircle2Icon /></EmptyMedia>
+            <EmptyMedia variant="icon">
+              <CheckCircle2Icon />
+            </EmptyMedia>
             <EmptyTitle>No security findings</EmptyTitle>
-            <EmptyDescription>Run a local security scan to check the connected repositories.</EmptyDescription>
+            <EmptyDescription>
+              Run a local security scan to check the connected repositories.
+            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       )}

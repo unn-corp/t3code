@@ -643,6 +643,22 @@ export const AgentDashboardReviewSchedule = Schema.Struct({
 });
 export type AgentDashboardReviewSchedule = typeof AgentDashboardReviewSchedule.Type;
 
+/** Runtime status for the T3-owned recurring local security collector. */
+export const AgentDashboardSecuritySchedule = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  enabled: Schema.Boolean,
+  intervalMinutes: NonNegativeInt,
+  nextRunAt: IsoDateTime,
+  lastRunAt: Schema.NullOr(IsoDateTime),
+  lastCompletedAt: Schema.NullOr(IsoDateTime),
+  lastStatus: AgentDashboardReviewScheduleStatus,
+  lastError: Schema.NullOr(TrimmedNonEmptyString),
+  lastTarget: Schema.NullOr(TrimmedNonEmptyString),
+  heartbeatAt: IsoDateTime,
+  runCount: NonNegativeInt,
+});
+export type AgentDashboardSecuritySchedule = typeof AgentDashboardSecuritySchedule.Type;
+
 /** A deterministic, native-navigation suggestion derived from current state. */
 export const AgentDashboardSuggestion = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -682,6 +698,8 @@ export const AgentDashboardSnapshot = Schema.Struct({
   ),
   /** Status of the T3-owned two-hour repository review scheduler. */
   reviewSchedule: Schema.optionalKey(AgentDashboardReviewSchedule),
+  /** Status of the T3-owned recurring local security collector. */
+  securitySchedule: Schema.optionalKey(AgentDashboardSecuritySchedule),
   /** Canonical automation run history. Absent on older servers → empty. */
   automationRuns: Schema.Array(AgentDashboardAutomationRun).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),

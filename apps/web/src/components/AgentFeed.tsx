@@ -87,9 +87,10 @@ function safeFeedFileUrl(workspaceRoot: string, file: string): string | null {
   const segments = trimmed.replaceAll("\\", "/").split("/");
   if (segments.some((segment) => segment === "..")) return null;
   const base = workspaceRoot.trim().replaceAll("\\", "/").replace(/\/$/, "");
-  const target = trimmed.startsWith("/") || /^[A-Za-z]:\//.test(trimmed)
-    ? trimmed.replaceAll("\\", "/")
-    : `${base}/${trimmed.replace(/^\.\//, "")}`;
+  const target =
+    trimmed.startsWith("/") || /^[A-Za-z]:\//.test(trimmed)
+      ? trimmed.replaceAll("\\", "/")
+      : `${base}/${trimmed.replace(/^\.\//, "")}`;
   if (!base || (target !== base && !target.startsWith(`${base}/`))) return null;
   return encodeURI(target.startsWith("file://") ? target : `file://${target}`);
 }

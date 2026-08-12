@@ -3932,7 +3932,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
-      automatedReview: "unsupported",
     },
     startSession,
     sendTurn,

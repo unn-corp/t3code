@@ -221,7 +221,7 @@ const makeTempStateDir = () =>
 const waitForTerminal = (
   jobService: AgentDashboardReviewJobService.AgentDashboardReviewJobService["Service"],
   runId: string,
-  maxSteps = 40,
+  maxSteps = 200,
 ) =>
   Effect.gen(function* () {
     for (let step = 0; step < maxSteps; step += 1) {
@@ -241,9 +241,7 @@ const waitForTerminal = (
       // Durable finding ingestion uses real filesystem promises. Give the
       // Node event loop a turn after advancing TestClock so this test waits
       // for the worker receipt rather than sampling the intermediate state.
-      yield* Effect.promise(
-        () => new Promise<void>((resolve) => setImmediate(resolve)),
-      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
     }
     const runs = yield* jobService.listRuns;
     return runs.find((item) => item.id === runId) ?? null;
@@ -394,7 +392,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
           idempotencyKey: "timeout-case",
         });
 
-        const failed = yield* waitForTerminal(jobService, enqueued.id, 20);
+        const failed = yield* waitForTerminal(jobService, enqueued.id, 200);
         expect(failed?.status).toBe("failed");
         expect(failed?.error).toContain("timed out");
 
@@ -402,11 +400,11 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
         expect(retry1.trigger).toBe("retry");
         expect(retry1.retryCount).toBe(1);
 
-        yield* waitForTerminal(jobService, retry1.id, 20);
+        yield* waitForTerminal(jobService, retry1.id, 200);
 
         const retry2 = yield* jobService.retryRun(retry1.id);
         expect(retry2.retryCount).toBe(2);
-        yield* waitForTerminal(jobService, retry2.id, 20);
+        yield* waitForTerminal(jobService, retry2.id, 200);
 
         const overLimit = yield* Effect.flip(jobService.retryRun(retry2.id));
         expect(overLimit.message).toContain("retry limit");

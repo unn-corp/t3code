@@ -293,6 +293,80 @@ describe("agent dashboard suggestion actions", () => {
     expect(buildNativeReviewSuggestionsFromSnapshot(snapshot, "environment-1")).toEqual([]);
   });
 
+  it("only includes findings tied to an individual codebase review run", () => {
+    const snapshot = {
+      repositories: [
+        {
+          projectId: ProjectId.make("project-1"),
+          title: "T3 Code",
+          workspaceRoot: "/workspace/t3code",
+        },
+      ],
+      suggestions: [
+        {
+          id: "suggestion:sync-branch",
+          kind: "sync-branch",
+          status: "actionable",
+          action: "open-repository",
+          title: "Sync from remote",
+          summary: "The branch is behind its remote.",
+          updatedAt: "2026-08-09T12:00:00.000Z",
+          repository: { projectId: ProjectId.make("project-1") },
+          thread: null,
+        },
+      ],
+      findings: [
+        {
+          id: "finding:reconcile",
+          kind: "review",
+          provenance: { source: "vcs-reconciliation" },
+          lastRunId: "action-1",
+        },
+        {
+          id: "finding:security",
+          kind: "security",
+          provenance: { source: "security-collector" },
+          lastRunId: "scan-1",
+        },
+      ],
+      reviewSuggestions: [
+        {
+          id: "reconcile-suggestion",
+          profile: "vcs-reconciliation",
+          source: "code_review",
+          jobId: null,
+          title: "Review local changes",
+          repository: { name: "T3 Code", path: "/workspace/t3code", githubRepo: null },
+        },
+        {
+          id: "review-suggestion",
+          profile: "t3-random-codebase-review",
+          source: "code_review",
+          jobId: "run-1",
+          title: "Parser finding",
+          repository: { name: "T3 Code", path: "/workspace/t3code", githubRepo: null },
+          description: "A review finding.",
+          status: "pending",
+          createdAt: "2026-08-09T12:00:00.000Z",
+          expiresAt: null,
+          category: "bug",
+          impact: "high",
+          confidence: "high",
+          evidence: ["src/parser.ts:42"],
+          nextStep: "Fix the parser.",
+          report: "The parser drops the final item.",
+          githubIssue: { title: "Fix parser", body: "Fix parser", url: null, number: null },
+        },
+      ],
+    } as unknown as AgentDashboardSnapshot;
+
+    expect(
+      buildNativeReviewSuggestionsFromSnapshot(snapshot, "environment-1").map(
+        (suggestion) => suggestion.id,
+      ),
+    ).toEqual(["review-suggestion"]);
+  });
+
   it("keeps repository and canonical signals off the research findings page", () => {
     const snapshot = {
       repositories: [

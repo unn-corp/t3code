@@ -118,8 +118,6 @@ export const RuntimeMode = Schema.Literals([
   "approval-required",
   "auto-accept-edits",
   "auto",
-  /** Read-only, non-interactive profile reserved for automated repository review. */
-  "automated-review",
   "full-access",
 ]);
 export type RuntimeMode = typeof RuntimeMode.Type;

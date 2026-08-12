@@ -275,12 +275,6 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
         sandbox: "read-only",
         approvalsReviewer: "user",
       };
-    case "automated-review":
-      return {
-        approvalPolicy: "untrusted",
-        sandbox: "read-only",
-        approvalsReviewer: "user",
-      };
     case "auto-accept-edits":
       return {
         approvalPolicy: "on-request",
@@ -327,11 +321,6 @@ function runtimeModeToTurnSandboxPolicy(
     case "approval-required":
       return {
         type: "readOnly",
-      };
-    case "automated-review":
-      return {
-        type: "readOnly",
-        networkAccess: false,
       };
     case "auto-accept-edits":
     case "auto":
@@ -745,7 +734,11 @@ export const makeCodexSessionRuntime = (
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
     };
     const extendEnv = options.environment === undefined;
-    const appServerArgs = codexSessionAppServerArgs(options.appServerArgs, options.launchArgs);
+    const appServerArgs = codexSessionAppServerArgs(
+      options.appServerArgs,
+      options.launchArgs,
+      options.runtimeMode,
+    );
     const spawnCommand = yield* resolveSpawnCommand(options.binaryPath, appServerArgs, {
       env,
       extendEnv,
