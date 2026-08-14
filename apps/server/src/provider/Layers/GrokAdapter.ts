@@ -51,7 +51,7 @@ import {
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
-import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
+import { parsePermissionRequest, type AcpToolCallState } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   applyGrokAcpModelSelection,
@@ -117,6 +117,8 @@ interface GrokSessionContext {
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
   currentModelId: string | undefined;
+  /** Last emitted tool-call identity (id+status+title), used to drop content-only floods. */
+  lastToolCallEmitById: Map<string, string>;
   stopped: boolean;
 }
 
@@ -222,6 +224,79 @@ export function grokPromptSettlementBelongsToContext(input: {
     input.liveAcpSessionId === input.expectedAcpSessionId &&
     (input.liveActiveTurnId === input.turnId || input.liveSessionActiveTurnId === input.turnId)
   );
+}
+
+const GROK_TOOL_CALL_TEXT_LIMIT = 4096;
+
+function truncateTail(text: string | undefined, limit: number): string | undefined {
+  if (text === undefined) {
+    return undefined;
+  }
+  return text.length <= limit ? text : text.slice(-limit);
+}
+
+function boundGrokToolCallContent(value: unknown): unknown {
+  if (!Array.isArray(value)) {
+    return value;
+  }
+  return value.map((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return entry;
+    }
+    const record = entry as Record<string, unknown>;
+    if (
+      record.type !== "content" ||
+      typeof record.content !== "object" ||
+      record.content === null
+    ) {
+      return entry;
+    }
+    const nested = record.content as Record<string, unknown>;
+    if (nested.type !== "text" || typeof nested.text !== "string") {
+      return entry;
+    }
+    const text = truncateTail(nested.text, GROK_TOOL_CALL_TEXT_LIMIT);
+    return text === nested.text ? entry : { ...record, content: { ...nested, text } };
+  });
+}
+
+export function boundGrokToolCallState(toolCall: AcpToolCallState): AcpToolCallState {
+  const detail = truncateTail(toolCall.detail, GROK_TOOL_CALL_TEXT_LIMIT);
+  const rawOutput =
+    typeof toolCall.data.rawOutput === "string"
+      ? truncateTail(toolCall.data.rawOutput, GROK_TOOL_CALL_TEXT_LIMIT)
+      : toolCall.data.rawOutput;
+  return {
+    ...toolCall,
+    ...(detail !== undefined ? { detail } : {}),
+    data: {
+      ...toolCall.data,
+      ...(toolCall.data.content !== undefined
+        ? { content: boundGrokToolCallContent(toolCall.data.content) }
+        : {}),
+      ...(rawOutput !== undefined ? { rawOutput } : {}),
+    },
+  };
+}
+
+export function grokToolCallEmitKey(toolCall: AcpToolCallState): string {
+  return [
+    toolCall.toolCallId,
+    toolCall.status ?? "",
+    toolCall.kind ?? "",
+    toolCall.title ?? "",
+    toolCall.command ?? "",
+  ].join("\0");
+}
+
+export function shouldEmitGrokToolCallUpdate(
+  previousKey: string | undefined,
+  toolCall: AcpToolCallState,
+): boolean {
+  if (toolCall.status === "completed" || toolCall.status === "failed") {
+    return true;
+  }
+  return previousKey !== grokToolCallEmitKey(toolCall);
 }
 
 export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapterLiveOptions) {
@@ -778,6 +853,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
             currentModelId: boundModelId,
+            lastToolCallEmitById: new Map(),
             stopped: false,
           };
 
@@ -844,18 +920,30 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       "session/update",
                     );
                     return;
-                  case "ToolCallUpdated":
+                  case "ToolCallUpdated": {
+                    const toolCall = boundGrokToolCallState(event.toolCall);
+                    const emitKey = grokToolCallEmitKey(toolCall);
+                    if (
+                      !shouldEmitGrokToolCallUpdate(
+                        ctx.lastToolCallEmitById.get(toolCall.toolCallId),
+                        toolCall,
+                      )
+                    ) {
+                      return;
+                    }
+                    ctx.lastToolCallEmitById.set(toolCall.toolCallId, emitKey);
                     yield* offerRuntimeEvent(
                       makeAcpToolCallEvent({
                         stamp,
                         provider: PROVIDER,
                         threadId: ctx.threadId,
                         turnId: notificationTurnId,
-                        toolCall: event.toolCall,
+                        toolCall,
                         rawPayload: event.rawPayload,
                       }),
                     );
                     return;
+                  }
                   case "ContentDelta":
                     yield* offerRuntimeEvent(
                       makeAcpContentDeltaEvent({
@@ -1007,7 +1095,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               if (ctx.interruptedTurnIds.has(turnId)) {
                 yield* settlePromptInFlight(input.threadId, turnId, ctx.acpSessionId, {
                   completedStopReason: "cancelled",
-                  emitTurnCompletion: false,
                   settleAllPrompts: true,
                 });
                 return yield* new ProviderAdapterRequestError({

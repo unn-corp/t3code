@@ -26,7 +26,13 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
+import {
+  boundGrokToolCallState,
+  grokPromptSettlementBelongsToContext,
+  grokToolCallEmitKey,
+  makeGrokAdapter,
+  shouldEmitGrokToolCallUpdate,
+} from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -88,6 +94,33 @@ const grokAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeGrokAdapter>[1]) =>
   makeGrokAdapter(decodeGrokSettings({ binaryPath }), options).pipe(Effect.orDie);
+
+it("drops content-only Grok tool_call_update floods and keeps status changes", () => {
+  const pending = {
+    toolCallId: "call-1",
+    status: "inProgress" as const,
+    title: "run_terminal_command",
+    command: "npm test",
+    detail: "x".repeat(8000),
+    data: {
+      toolCallId: "call-1",
+      content: [{ type: "content", content: { type: "text", text: "y".repeat(8000) } }],
+      rawOutput: "z".repeat(8000),
+    },
+  };
+  const bounded = boundGrokToolCallState(pending);
+  assert.isAtMost(bounded.detail?.length ?? 0, 4096);
+  assert.equal(
+    (bounded.data.content as Array<{ content: { text: string } }>)[0]?.content.text.length,
+    4096,
+  );
+  assert.equal(typeof bounded.data.rawOutput, "string");
+  assert.isAtMost(String(bounded.data.rawOutput).length, 4096);
+
+  const key = grokToolCallEmitKey(bounded);
+  assert.isFalse(shouldEmitGrokToolCallUpdate(key, bounded));
+  assert.isTrue(shouldEmitGrokToolCallUpdate(key, { ...bounded, status: "completed" }));
+});
 
 it("requires a settlement to match the live Grok turn", () => {
   const staleTurnId = TurnId.make("stale-turn");
