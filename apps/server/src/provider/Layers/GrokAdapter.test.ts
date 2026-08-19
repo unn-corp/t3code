@@ -157,6 +157,23 @@ it("requires a settlement to match the live Grok turn", () => {
   );
 });
 
+it("never sends Grok allow_always because that option cancels the turn", () => {
+  const request = {
+    sessionId: "mock-session-1",
+    toolCall: { toolCallId: "call-1", title: "run_terminal_command" },
+    options: [
+      { optionId: "allow-once", name: "Allow once", kind: "allow_once" as const },
+      { optionId: "allow-always", name: "Always allow", kind: "allow_always" as const },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" as const },
+    ],
+  };
+
+  assert.equal(selectGrokPermissionOptionId(request, "accept"), "allow-once");
+  assert.equal(selectGrokPermissionOptionId(request, "acceptForSession"), "allow-once");
+  assert.equal(selectGrokPermissionOptionId(request, "reject"), "reject-once");
+  assert.equal(selectGrokAutoApprovedPermissionOption(request), "allow-once");
+});
+
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
