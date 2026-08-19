@@ -896,6 +896,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // disabled.
   const selectedProvider: ProviderDriverKind =
     selectedProviderEntry?.driverKind ?? requestedDriverKind;
+  const hideSessionAllow = selectedProvider === ProviderDriverKind.make("grok");
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
@@ -2970,6 +2971,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <ComposerPendingApprovalActions
                   requestId={activePendingApproval.requestId}
                   isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
+                  hideSessionAllow={hideSessionAllow}
                   onRespondToApproval={onRespondToApproval}
                 />
               </div>
@@ -3405,6 +3407,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <ComposerPendingApprovalActions
                 requestId={activePendingApproval.requestId}
                 isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
+                hideSessionAllow={hideSessionAllow}
                 onRespondToApproval={onRespondToApproval}
               />
             </div>

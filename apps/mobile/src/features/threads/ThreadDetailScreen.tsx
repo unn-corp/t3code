@@ -3,18 +3,19 @@ import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/thre
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { HeaderHeightContext } from "@react-navigation/elements";
-import type {
-  ApprovalRequestId,
-  EnvironmentId,
-  MessageId,
-  ModelSelection,
-  OrchestrationThreadShell,
-  ProviderApprovalDecision,
-  ProviderInteractionMode,
-  RuntimeMode,
-  ServerConfig as T3ServerConfig,
-  ThreadId,
-  UserInputQuestion,
+import {
+  type ApprovalRequestId,
+  type EnvironmentId,
+  type MessageId,
+  type ModelSelection,
+  type OrchestrationThreadShell,
+  type ProviderApprovalDecision,
+  ProviderDriverKind,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  type ServerConfig as T3ServerConfig,
+  type ThreadId,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import {
@@ -445,12 +446,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
-  const selectedProviderSkills = useMemo(
+  const selectedProvider = useMemo(
     () =>
-      props.serverConfig?.providers.find((provider) => provider.instanceId === selectedInstanceId)
-        ?.skills ?? [],
+      props.serverConfig?.providers.find(
+        (provider) => provider.instanceId === selectedInstanceId,
+      ) ?? null,
     [props.serverConfig, selectedInstanceId],
   );
+  const selectedProviderSkills = useMemo(() => selectedProvider?.skills ?? [], [selectedProvider]);
+  const hideSessionAllow = selectedProvider?.driver === ProviderDriverKind.make("grok");
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
@@ -686,6 +690,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     <PendingApprovalCard
                       approval={props.activePendingApproval}
                       respondingApprovalId={props.respondingApprovalId}
+                      hideSessionAllow={hideSessionAllow}
                       onRespond={props.onRespondToApproval}
                     />
                   ) : null}

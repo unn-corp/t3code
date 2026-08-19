@@ -5,6 +5,8 @@ import { Button } from "../ui/button";
 interface ComposerPendingApprovalActionsProps {
   requestId: ApprovalRequestId;
   isResponding: boolean;
+  /** Hidden on Grok: session-allow cancels the turn (pingdotgg/t3code#6502). */
+  hideSessionAllow?: boolean;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -14,6 +16,7 @@ interface ComposerPendingApprovalActionsProps {
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
+  hideSessionAllow = false,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
   return (
@@ -34,14 +37,16 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
       >
         Decline
       </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={isResponding}
-        onClick={() => void onRespondToApproval(requestId, "acceptForSession")}
-      >
-        Always allow this session
-      </Button>
+      {hideSessionAllow ? null : (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={isResponding}
+          onClick={() => void onRespondToApproval(requestId, "acceptForSession")}
+        >
+          Always allow this session
+        </Button>
+      )}
       <Button
         size="sm"
         variant="default"
