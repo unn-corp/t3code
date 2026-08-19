@@ -181,27 +181,28 @@ function parseGrokResume(raw: unknown): { sessionId: string } | undefined {
   return { sessionId: raw.sessionId.trim() };
 }
 
-function selectPermissionOptionId(
+function grokPermissionOptionKind(
+  decision: Exclude<ProviderApprovalDecision, "cancel">,
+): "allow_once" | "reject_once" {
+  // Grok's allow_always ("Always allow in this session") cancels the turn
+  // instead of continuing. See pingdotgg/t3code#6502. Map session-wide
+  // allow to allow_once so Auto / Always allow keep the agent running.
+  return decision === "reject" ? "reject_once" : "allow_once";
+}
+
+export function selectGrokPermissionOptionId(
   request: EffectAcpSchema.RequestPermissionRequest,
   decision: Exclude<ProviderApprovalDecision, "cancel">,
 ): string | undefined {
-  const kind =
-    decision === "acceptForSession"
-      ? "allow_always"
-      : decision === "accept"
-        ? "allow_once"
-        : "reject_once";
+  const kind = grokPermissionOptionKind(decision);
   const option = request.options.find((entry) => entry.kind === kind);
   return option?.optionId.trim() || undefined;
 }
 
-function selectAutoApprovedPermissionOption(
+export function selectGrokAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): string | undefined {
-  return (
-    selectPermissionOptionId(request, "acceptForSession") ??
-    selectPermissionOptionId(request, "accept")
-  );
+  return selectGrokPermissionOptionId(request, "accept");
 }
 
 function completedStopReasonFromPromptResponse(
@@ -650,6 +651,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
+            trustProject: true,
+            alwaysApprove: input.runtimeMode === "full-access",
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...(mcpSession
@@ -743,7 +746,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 Effect.gen(function* () {
                   yield* logNative(input.threadId, "session/request_permission", params);
                   if (input.runtimeMode === "full-access") {
-                    const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
+                    const autoApprovedOptionId = selectGrokAutoApprovedPermissionOption(params);
                     if (autoApprovedOptionId !== undefined) {
                       return {
                         outcome: {
@@ -791,7 +794,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     }),
                   );
                   const selectedOptionId =
-                    resolved === "cancel" ? undefined : selectPermissionOptionId(params, resolved);
+                    resolved === "cancel"
+                      ? undefined
+                      : selectGrokPermissionOptionId(params, resolved);
                   return {
                     outcome: selectedOptionId
                       ? {

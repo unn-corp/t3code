@@ -31,6 +31,8 @@ import {
   grokPromptSettlementBelongsToContext,
   grokToolCallEmitKey,
   makeGrokAdapter,
+  selectGrokAutoApprovedPermissionOption,
+  selectGrokPermissionOptionId,
   shouldEmitGrokToolCallUpdate,
 } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
