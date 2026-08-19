@@ -3224,16 +3224,47 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         })()`,
         true,
       );
+      const captureSnapshotImage = attemptPromise(
+        {
+          operation: "automationSnapshot.capturePage",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => wc.capturePage(),
+      ).pipe(
+        // capturePage needs a compositor surface and fails with UnknownVizError
+        // while a tab is not displayed. CDP captures in the renderer instead,
+        // so it remains available to background preview tabs.
+        Effect.catch(() =>
+          send("Page.captureScreenshot", { format: "png" }).pipe(
+            Effect.flatMap((result) => {
+              const data =
+                typeof result === "object" && result !== null && "data" in result
+                  ? result.data
+                  : undefined;
+              if (typeof data !== "string") {
+                return new PreviewOperationError({
+                  operation: "automationSnapshot.captureScreenshot",
+                  tabId,
+                  webContentsId: wc.id,
+                  cause: new Error("CDP did not return PNG screenshot data."),
+                });
+              }
+              return attempt(
+                {
+                  operation: "automationSnapshot.decodeScreenshot",
+                  tabId,
+                  webContentsId: wc.id,
+                },
+                () => nativeImage.createFromBuffer(Buffer.from(data, "base64")),
+              );
+            }),
+          ),
+        ),
+      );
       const [accessibility, sourceImage, diagnostics, timelines] = yield* Effect.all([
         send("Accessibility.getFullAXTree"),
-        attemptPromise(
-          {
-            operation: "automationSnapshot.capturePage",
-            tabId,
-            webContentsId: wc.id,
-          },
-          () => wc.capturePage(),
-        ),
+        captureSnapshotImage,
         Ref.get(diagnosticsRef),
         Ref.get(actionTimelineRef),
       ]);
