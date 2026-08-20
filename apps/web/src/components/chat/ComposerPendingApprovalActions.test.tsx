@@ -18,21 +18,22 @@ function renderActions(hideSessionAllow = false) {
 }
 
 describe("ComposerPendingApprovalActions", () => {
-  it("shows Always allow this session by default", () => {
+  it("states that the persistent approval lasts for this session", () => {
     const markup = renderActions();
 
+    expect(markup).toContain(">Cancel<");
     expect(markup).toContain("Always allow this session");
-    expect(markup).toContain("Approve once");
-    expect(markup).toContain("Decline");
-    expect(markup).toContain("Cancel turn");
+    expect(markup).not.toContain(">Always allow<");
+    expect(markup).toContain("h-5");
+    expect(markup).toContain("sm:text-[11px]");
+    expect(markup).not.toContain("sm:h-6");
   });
 
   it("hides Always allow this session when hideSessionAllow is set", () => {
     const markup = renderActions(true);
 
     expect(markup).not.toContain("Always allow this session");
-    expect(markup).toContain("Approve once");
+    expect(markup).toContain(">Cancel<");
     expect(markup).toContain("Decline");
-    expect(markup).toContain("Cancel turn");
   });
 });

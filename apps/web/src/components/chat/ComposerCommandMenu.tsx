@@ -1,14 +1,27 @@
 import {
+  resolveProviderSkillSourceKind,
+  type ProviderSkillSourceKind,
+} from "@t3tools/client-runtime/providerSkills";
+import {
   type ProjectEntry,
   type ProviderDriverKind,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { BotIcon, HistoryIcon } from "lucide-react";
+import {
+  BlocksIcon,
+  BotIcon,
+  FolderGit2Icon,
+  FolderIcon,
+  HistoryIcon,
+  PackageIcon,
+  SettingsIcon,
+  UserRoundIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
-import { formatProviderSkillInstallSource } from "~/providerSkillPresentation";
 import { cn } from "~/lib/utils";
 import {
   Command,
@@ -83,6 +96,34 @@ function SkillGlyph(props: { className?: string }) {
       <path d="m3.3 7 8.7 5 8.7-5" />
       <path d="M12 22V12" />
     </svg>
+  );
+}
+
+const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
+  app: BlocksIcon,
+  repo: FolderGit2Icon,
+  project: FolderIcon,
+  personal: UserRoundIcon,
+  system: SettingsIcon,
+  other: PackageIcon,
+};
+
+const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
+  app: "App",
+  repo: "Repo",
+  project: "Project",
+  personal: "Personal",
+  system: "System",
+  other: "Other",
+};
+
+function SkillSourceIcon(props: { kind: ProviderSkillSourceKind }) {
+  const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
+  return (
+    <>
+      <Icon aria-hidden="true" className="size-4 shrink-0 text-icon-muted" />
+      <span className="sr-only">{SKILL_SOURCE_LABEL_BY_KIND[props.kind]} skill</span>
+    </>
   );
 }
 
@@ -222,8 +263,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
-  const skillSourceLabel =
-    props.item.type === "skill" ? formatProviderSkillInstallSource(props.item.skill) : null;
+  const skillSourceKind =
+    props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
 
   return (
     <CommandItem
@@ -249,16 +290,13 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
+      ) : skillSourceKind ? (
+        <SkillSourceIcon kind={skillSourceKind} />
       ) : null}
       {props.item.type === "slash-command" ? (
         <BotIcon className="size-4 shrink-0 text-icon-muted" />
       ) : null}
       {props.item.type === "provider-slash-command" ? (
-        <span className="inline-flex size-4 shrink-0 items-center justify-center text-icon-muted">
-          <SkillGlyph className="size-3.5" />
-        </span>
-      ) : null}
-      {props.item.type === "skill" ? (
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-icon-muted">
           <SkillGlyph className="size-3.5" />
         </span>
@@ -286,8 +324,10 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           </span>
         </span>
       )}
-      {skillSourceLabel ? (
-        <span className="shrink-0 pl-2 text-secondary-label text-xs">{skillSourceLabel}</span>
+      {skillSourceKind ? (
+        <span className="shrink-0 pl-2 text-secondary-label text-xs">
+          {SKILL_SOURCE_LABEL_BY_KIND[skillSourceKind]}
+        </span>
       ) : null}
     </CommandItem>
   );
