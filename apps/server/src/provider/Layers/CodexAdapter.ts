@@ -1658,6 +1658,25 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const cwd = input.cwd ?? process.cwd();
+        const cwdExists = yield* fileSystem.exists(cwd);
+        if (!cwdExists) {
+          // Node/Effect spawn refuses a missing cwd and wraps that as
+          // "Failed to spawn Codex App Server". Recreate the project folder
+          // so a moved-or-deleted workspace can still start a session.
+          yield* fileSystem.makeDirectory(cwd, { recursive: true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterValidationError({
+                  provider: PROVIDER,
+                  operation: "startSession",
+                  issue: `Failed to create workspace directory: ${cwd}`,
+                  cause,
+                }),
+            ),
+          );
+        }
+
         const serviceTier =
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
@@ -1666,7 +1685,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
-          cwd: input.cwd ?? process.cwd(),
+          cwd,
           binaryPath: codexConfig.binaryPath,
           launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           ...(options?.environment ? { environment: options.environment } : {}),

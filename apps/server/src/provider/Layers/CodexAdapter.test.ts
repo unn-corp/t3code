@@ -263,6 +263,32 @@ validationLayer("CodexAdapterLive validation", (it) => {
       NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);
     }),
   );
+  it.effect("creates a missing session cwd before starting Codex", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const missingCwd = NodePath.join(
+        NodeOS.tmpdir(),
+        `t3-missing-codex-cwd-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      );
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-missing-cwd"),
+          cwd: missingCwd,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+      try {
+        NodeAssert.equal(result._tag, "Success");
+        NodeAssert.equal(NodeFS.existsSync(missingCwd), true);
+        NodeAssert.equal(NodeFS.statSync(missingCwd).isDirectory(), true);
+        NodeAssert.equal(validationRuntimeFactory.factory.mock.calls[0]?.[0]?.cwd, missingCwd);
+      } finally {
+        NodeFS.rmSync(missingCwd, { recursive: true, force: true });
+      }
+    }),
+  );
   it.effect("maps codex model options before starting a session", () =>
     Effect.gen(function* () {
       validationRuntimeFactory.factory.mockClear();

@@ -359,7 +359,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       Effect.mapError(
         (cause) =>
           new CodexErrors.CodexAppServerSpawnError({
-            command: `${input.binaryPath} app-server`,
+            command: `${input.binaryPath} app-server (cwd: ${input.cwd})`,
             cause,
           }),
       ),
