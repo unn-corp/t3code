@@ -5,6 +5,7 @@ import {
   DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
   previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
+  shouldAttachAutomationOverlay,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 
@@ -75,6 +76,38 @@ describe("preview automation open readiness", () => {
         viewport: { _tag: "freeform", width: 900, height: 600 },
       }),
     ).toBeNull();
+  });
+});
+
+describe("shouldAttachAutomationOverlay", () => {
+  it("attaches when the agent is presenting the preview to the user", () => {
+    expect(
+      shouldAttachAutomationOverlay({
+        presentToUser: true,
+        needsOverlay: false,
+        overlayAttached: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("attaches a missing overlay before interaction, even for background automation", () => {
+    expect(
+      shouldAttachAutomationOverlay({
+        presentToUser: false,
+        needsOverlay: true,
+        overlayAttached: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("leaves an already-attached overlay alone when the user did not ask to see it", () => {
+    expect(
+      shouldAttachAutomationOverlay({
+        presentToUser: false,
+        needsOverlay: true,
+        overlayAttached: true,
+      }),
+    ).toBe(false);
   });
 });
 

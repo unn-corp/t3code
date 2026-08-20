@@ -66,6 +66,7 @@ import {
 import {
   previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
+  shouldAttachAutomationOverlay,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 import {
@@ -345,12 +346,23 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         };
         const requireReadyTab = async () => {
           const bridge = previewBridge;
-          const readyTabId = tabId;
-          if (!bridge || !readyTabId) {
-            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-          }
           const readyState = readThreadPreviewState(threadRef);
+          const resolved = resolvePreviewAutomationTarget(readyState, tabId);
+          const readyTabId = resolved.tabId;
+          if (!bridge || !readyTabId) {
+            throw new PreviewAutomationTargetUnavailableError({
+              ...unavailableTarget,
+              tabId: readyTabId,
+            });
+          }
           const runtimeTabId = previewRuntimeTabId(threadRef, readyState.serverEpoch, readyTabId);
+          // Interaction (snapshot/click/type/evaluate) talks to the desktop
+          // webview. If the pane or mini player was closed, desktopByTabId is
+          // empty and waitForDesktopOverlay hangs until the tool timeout.
+          if (!readyState.desktopByTabId[readyTabId]) {
+            usePreviewMiniPlayerStore.getState().open(threadRef, readyTabId);
+            await waitForPreviewPresentation(runtimeTabId);
+          }
           await waitForDesktopOverlay(
             threadRef,
             request.requestId,
@@ -447,10 +459,19 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               input,
               (await resolveBrowserDefaults()).autoShowFloatingPreview,
             );
-            if (shouldPresentPreview) {
+            const latestState = readThreadPreviewState(threadRef);
+            const needsOverlay =
+              Boolean(activeSnapshot) && previewAutomationOpenNeedsOverlay(input, activeSnapshot);
+            if (
+              shouldAttachAutomationOverlay({
+                presentToUser: shouldPresentPreview,
+                needsOverlay,
+                overlayAttached: Boolean(latestState.desktopByTabId[activeTabId]),
+              })
+            ) {
               usePreviewMiniPlayerStore.getState().open(threadRef, activeTabId);
             }
-            if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
+            if (needsOverlay) {
               await waitForDesktopOverlay(
                 threadRef,
                 request.requestId,

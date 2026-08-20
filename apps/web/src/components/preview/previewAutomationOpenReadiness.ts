@@ -29,6 +29,19 @@ export function shouldOpenPreviewMiniPlayer(
   return input.open ?? input.show ?? autoShowFloatingPreview;
 }
 
+/**
+ * Automation talks to a desktop webview. If the user-facing preview is
+ * suppressed and the overlay is already attached, leave it. Otherwise attach
+ * the mini player so snapshot/click/type do not wait out the tool timeout.
+ */
+export function shouldAttachAutomationOverlay(options: {
+  readonly presentToUser: boolean;
+  readonly needsOverlay: boolean;
+  readonly overlayAttached: boolean;
+}): boolean {
+  return options.presentToUser || (options.needsOverlay && !options.overlayAttached);
+}
+
 export function previewAutomationOpenNeedsOverlay(
   input: PreviewAutomationOpenInput,
   snapshot: PreviewSessionSnapshot,
