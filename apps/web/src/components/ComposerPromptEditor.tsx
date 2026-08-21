@@ -62,6 +62,8 @@ import {
   collapseExpandedComposerCursor,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  isComposerEnterKey,
+  shouldDeferComposerEnterForIme,
 } from "~/composer-logic";
 import {
   selectionTouchesMentionBoundary,
@@ -947,6 +949,7 @@ function ComposerCommandKeyPlugin(props: {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
+    let compositionSessionActive = false;
     const handleCommand = (
       key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
       event: KeyboardEvent | null,
@@ -955,7 +958,7 @@ function ComposerCommandKeyPlugin(props: {
         return false;
       }
 
-      if (key === "Enter" && (event.isComposing || event.keyCode === 229)) {
+      if (key === "Enter" && shouldDeferComposerEnterForIme({ compositionSessionActive })) {
         event.stopPropagation();
         return true;
       }
@@ -989,11 +992,51 @@ function ComposerCommandKeyPlugin(props: {
       COMMAND_PRIORITY_HIGH,
     );
 
+    // Lexical ignores keydown while editor.isComposing() is true, so Enter
+    // never becomes KEY_ENTER_COMMAND. Linux/Wayland text-input can leave
+    // that flag stuck, or report key as Unidentified with code Enter.
+    const onNativeEnter = (event: KeyboardEvent) => {
+      if (!props.onCommandKeyDown || event.defaultPrevented) return;
+      if (
+        !isComposerEnterKey(event) ||
+        shouldDeferComposerEnterForIme({ compositionSessionActive })
+      ) {
+        return;
+      }
+      const lexicalWillSeeEnter =
+        !editor.isComposing() && (event.key === "Enter" || event.key === "NumpadEnter");
+      if (lexicalWillSeeEnter) return;
+      if (handleCommand("Enter", event)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    const onCompositionStart = () => {
+      compositionSessionActive = true;
+    };
+    const onCompositionEnd = () => {
+      compositionSessionActive = false;
+    };
+
+    const unregisterRootListener = editor.registerRootListener((rootElement, prevRootElement) => {
+      prevRootElement?.removeEventListener("keydown", onNativeEnter);
+      prevRootElement?.removeEventListener("compositionstart", onCompositionStart);
+      prevRootElement?.removeEventListener("compositionend", onCompositionEnd);
+      rootElement?.addEventListener("keydown", onNativeEnter);
+      rootElement?.addEventListener("compositionstart", onCompositionStart);
+      rootElement?.addEventListener("compositionend", onCompositionEnd);
+    });
+
     return () => {
       unregisterArrowDown();
       unregisterArrowUp();
       unregisterEnter();
       unregisterTab();
+      const activeRoot = editor.getRootElement();
+      activeRoot?.removeEventListener("keydown", onNativeEnter);
+      activeRoot?.removeEventListener("compositionstart", onCompositionStart);
+      activeRoot?.removeEventListener("compositionend", onCompositionEnd);
+      unregisterRootListener();
     };
   }, [editor, props]);
 

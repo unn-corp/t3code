@@ -6,8 +6,10 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  isComposerEnterKey,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  shouldDeferComposerEnterForIme,
   shouldSubmitComposerOnEnter,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
@@ -23,6 +25,22 @@ describe("shouldSubmitComposerOnEnter", () => {
 
   it("inserts a newline for Shift+Enter", () => {
     expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: true })).toBe(false);
+  });
+});
+
+describe("shouldDeferComposerEnterForIme", () => {
+  it("defers only while a composition session is active", () => {
+    expect(shouldDeferComposerEnterForIme({ compositionSessionActive: true })).toBe(true);
+    expect(shouldDeferComposerEnterForIme({ compositionSessionActive: false })).toBe(false);
+  });
+});
+
+describe("isComposerEnterKey", () => {
+  it("matches Enter by key or code", () => {
+    expect(isComposerEnterKey({ key: "Enter" })).toBe(true);
+    expect(isComposerEnterKey({ key: "NumpadEnter" })).toBe(true);
+    expect(isComposerEnterKey({ key: "Unidentified", code: "Enter" })).toBe(true);
+    expect(isComposerEnterKey({ key: "a", code: "KeyA" })).toBe(false);
   });
 });
 

@@ -273,6 +273,11 @@ export function cloneComposerImageForRetry(
   }
 }
 
+/** Copy a composer send-context list. Missing values become [] so send cannot throw. */
+export function snapshotComposerSendList<T>(items: ReadonlyArray<T> | null | undefined): T[] {
+  return items == null ? [] : [...items];
+}
+
 export function deriveComposerSendState(options: {
   prompt: string;
   imageCount: number;

@@ -31,6 +31,7 @@ import {
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
+  snapshotComposerSendList,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -221,6 +222,20 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("snapshotComposerSendList", () => {
+  it("returns an empty array when send context omitted the list", () => {
+    expect(snapshotComposerSendList(undefined)).toEqual([]);
+    expect(snapshotComposerSendList(null)).toEqual([]);
+  });
+
+  it("copies a present list", () => {
+    const items = [{ id: "a" }];
+    const snapshot = snapshotComposerSendList(items);
+    expect(snapshot).toEqual(items);
+    expect(snapshot).not.toBe(items);
   });
 });
 

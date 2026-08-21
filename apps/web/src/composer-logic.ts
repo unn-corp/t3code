@@ -18,6 +18,28 @@ export function shouldSubmitComposerOnEnter(input: {
   return !input.isMobileViewport && !input.shiftKey;
 }
 
+export function isComposerEnterKey(event: { key: string; code?: string }): boolean {
+  return (
+    event.key === "Enter" ||
+    event.key === "NumpadEnter" ||
+    event.code === "Enter" ||
+    event.code === "NumpadEnter"
+  );
+}
+
+/**
+ * True when Enter is committing an IME candidate, not sending.
+ *
+ * Chromium on Linux/Wayland often sets `event.isComposing` and `keyCode`
+ * 229 on ordinary Enter in contenteditable, with no compositionstart.
+ * Only a composition session we actually observed should block send.
+ */
+export function shouldDeferComposerEnterForIme(input: {
+  compositionSessionActive: boolean;
+}): boolean {
+  return input.compositionSessionActive;
+}
+
 const isInlineTokenSegment = (
   segment:
     | { type: "text"; text: string }
