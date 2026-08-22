@@ -39,6 +39,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [PWA Web Push](./internals/pwa-web-push.md)
 - [Remote preview viewing](./internals/preview-remote-viewing.md)
 - [CI gates](./internals/ci.md)
+- [Engineering work artifacts](./internals/work-artifacts.md)
 
 ### Runbooks
 
