@@ -48,6 +48,8 @@ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityRes
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import {
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
@@ -345,6 +347,8 @@ describe("ProviderCommandReactor", () => {
 
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -352,6 +356,8 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(SqlitePersistenceMemory),
     );
     const projectionSnapshotLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
@@ -2477,7 +2483,52 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
     expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
+      turnId: "turn-1",
     });
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("ready");
+    expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
+  it("unblocks a starting session when Stop has no provider turn to cancel", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-starting"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "starting",
+          providerName: "grok",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-starting"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("ready");
+    expect(thread?.session?.activeTurnId).toBeNull();
   });
 
   it("starts a fresh session when only projected session state exists", async () => {

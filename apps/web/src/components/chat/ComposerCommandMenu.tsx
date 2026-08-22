@@ -1,14 +1,27 @@
 import {
+  resolveProviderSkillSourceKind,
+  type ProviderSkillSourceKind,
+} from "@t3tools/client-runtime/providerSkills";
+import {
   type ProjectEntry,
   type ProviderDriverKind,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { BotIcon, HistoryIcon } from "lucide-react";
+import {
+  BlocksIcon,
+  BotIcon,
+  FolderGit2Icon,
+  FolderIcon,
+  HistoryIcon,
+  PackageIcon,
+  SettingsIcon,
+  UserRoundIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
-import { formatProviderSkillInstallSource } from "~/providerSkillPresentation";
 import { cn } from "~/lib/utils";
 import {
   Command,
@@ -86,6 +99,34 @@ function SkillGlyph(props: { className?: string }) {
   );
 }
 
+const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
+  app: BlocksIcon,
+  repo: FolderGit2Icon,
+  project: FolderIcon,
+  personal: UserRoundIcon,
+  system: SettingsIcon,
+  other: PackageIcon,
+};
+
+const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
+  app: "App",
+  repo: "Repo",
+  project: "Project",
+  personal: "Personal",
+  system: "System",
+  other: "Other",
+};
+
+function SkillSourceIcon(props: { kind: ProviderSkillSourceKind }) {
+  const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
+  return (
+    <>
+      <Icon aria-hidden="true" className="size-4 shrink-0 text-icon-muted" />
+      <span className="sr-only">{SKILL_SOURCE_LABEL_BY_KIND[props.kind]} skill</span>
+    </>
+  );
+}
+
 export function groupCommandItems(
   items: ComposerCommandItem[],
   triggerKind: ComposerTriggerKind | null,
@@ -157,16 +198,16 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
     >
       <div
         ref={listRef}
-        className="dropdown-glass relative w-full overflow-hidden rounded-[20px] **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
+        className="dropdown-glass relative w-full overflow-hidden rounded-[20px] shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4 dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]"
       >
         {props.items.length > 0 ? (
-          <CommandList className="max-h-72">
+          <CommandList className="max-h-72 not-empty:py-3">
             {groups.map((group, groupIndex) => (
               <div key={group.id}>
                 {groupIndex > 0 ? <CommandSeparator className="my-0.5" /> : null}
                 <CommandGroup>
                   {group.label ? (
-                    <CommandGroupLabel className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
+                    <CommandGroupLabel className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-label">
                       {group.label}
                     </CommandGroupLabel>
                   ) : null}
@@ -188,10 +229,10 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           <div className="px-5 py-3.5">
             {props.triggerKind === "skill" ? (
               <CommandGroup>
-                <CommandGroupLabel className="px-0 pt-0 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
+                <CommandGroupLabel className="px-0 pt-0 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-label">
                   Skills
                 </CommandGroupLabel>
-                <p className="text-muted-foreground/70 text-xs">
+                <p className="text-secondary-label text-xs">
                   {props.isLoading
                     ? "Searching workspace skills..."
                     : (props.emptyStateText ??
@@ -199,7 +240,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                 </p>
               </CommandGroup>
             ) : (
-              <p className="text-muted-foreground/70 text-xs">
+              <p className="text-secondary-label text-xs">
                 {props.isLoading
                   ? "Searching workspace files..."
                   : (props.emptyStateText ??
@@ -222,8 +263,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
-  const skillSourceLabel =
-    props.item.type === "skill" ? formatProviderSkillInstallSource(props.item.skill) : null;
+  const skillSourceKind =
+    props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
 
   return (
     <CommandItem
@@ -249,17 +290,14 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
+      ) : skillSourceKind ? (
+        <SkillSourceIcon kind={skillSourceKind} />
       ) : null}
       {props.item.type === "slash-command" ? (
-        <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
+        <BotIcon className="size-4 shrink-0 text-icon-muted" />
       ) : null}
       {props.item.type === "provider-slash-command" ? (
-        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
-          <SkillGlyph className="size-3.5" />
-        </span>
-      ) : null}
-      {props.item.type === "skill" ? (
-        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
+        <span className="inline-flex size-4 shrink-0 items-center justify-center text-icon-muted">
           <SkillGlyph className="size-3.5" />
         </span>
       ) : null}
@@ -276,20 +314,20 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "codex-session" ? (
         <span className="flex min-w-0 flex-1 items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate">{props.item.label}</span>
-          <span className="shrink-0 text-muted-foreground/70 text-xs">
-            {props.item.description}
-          </span>
+          <span className="shrink-0 text-secondary-label text-xs">{props.item.description}</span>
         </span>
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-2">
           <span className="shrink-0">{props.item.label}</span>
-          <span className="min-w-0 flex-1 truncate text-muted-foreground/70 text-xs">
+          <span className="min-w-0 flex-1 truncate text-secondary-label text-xs">
             {props.item.description}
           </span>
         </span>
       )}
-      {skillSourceLabel ? (
-        <span className="shrink-0 pl-2 text-muted-foreground/70 text-xs">{skillSourceLabel}</span>
+      {skillSourceKind ? (
+        <span className="shrink-0 pl-2 text-secondary-label text-xs">
+          {SKILL_SOURCE_LABEL_BY_KIND[skillSourceKind]}
+        </span>
       ) : null}
     </CommandItem>
   );

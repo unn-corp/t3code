@@ -27,16 +27,35 @@ interface GrokAcpRuntimeInput extends Omit<
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly grokSettings: GrokAcpRuntimeGrokSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly trustProject?: boolean;
+  readonly alwaysApprove?: boolean;
+}
+
+export interface GrokAcpSpawnOptions {
+  /** Trust the cwd for project hooks, MCP, and LSP. Default false (probes). */
+  readonly trustProject?: boolean;
+  /** `grok agent --always-approve`: skip interactive tool prompts. Hooks still run. */
+  readonly alwaysApprove?: boolean;
 }
 
 export function buildGrokAcpSpawnInput(
   grokSettings: GrokAcpRuntimeGrokSettings | null | undefined,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  spawnOptions?: GrokAcpSpawnOptions,
 ): AcpSessionRuntime.AcpSpawnInput {
+  const args: Array<string> = [];
+  if (spawnOptions?.trustProject) {
+    args.push("--trust");
+  }
+  args.push("agent");
+  if (spawnOptions?.alwaysApprove) {
+    args.push("--always-approve");
+  }
+  args.push("stdio");
   return {
     command: grokSettings?.binaryPath || "grok",
-    args: ["agent", "stdio"],
+    args,
     cwd,
     env: {
       ...environment,
@@ -62,7 +81,10 @@ export const makeGrokAcpRuntime = (
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
-        spawn: buildGrokAcpSpawnInput(input.grokSettings, input.cwd, input.environment),
+        spawn: buildGrokAcpSpawnInput(input.grokSettings, input.cwd, input.environment, {
+          ...(input.trustProject ? { trustProject: true } : {}),
+          ...(input.alwaysApprove ? { alwaysApprove: true } : {}),
+        }),
         authMethodId: resolveGrokAuthMethodId(input.environment),
       }).pipe(
         Layer.provide(

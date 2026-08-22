@@ -33,6 +33,22 @@ describe("buildGrokAcpSpawnInput", () => {
       },
     });
   });
+
+  it("trusts the project and auto-approves tools for interactive sessions", () => {
+    const spawn = buildGrokAcpSpawnInput(
+      { binaryPath: "/usr/local/bin/grok" },
+      "/tmp/project",
+      undefined,
+      { trustProject: true, alwaysApprove: true },
+    );
+
+    expect(spawn.args).toEqual(["--trust", "agent", "--always-approve", "stdio"]);
+  });
+
+  it("leaves probes untrusted so SessionStart hooks do not fire on health checks", () => {
+    const spawn = buildGrokAcpSpawnInput({ binaryPath: "grok" }, "/tmp/project");
+    expect(spawn.args).toEqual(["agent", "stdio"]);
+  });
 });
 
 describe("applyGrokAcpModelSelection", () => {

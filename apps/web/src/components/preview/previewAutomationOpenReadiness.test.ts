@@ -5,6 +5,7 @@ import {
   DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
   previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
+  shouldAttachAutomationOverlay,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 
@@ -75,5 +76,52 @@ describe("preview automation open readiness", () => {
         viewport: { _tag: "freeform", width: 900, height: 600 },
       }),
     ).toBeNull();
+  });
+});
+
+describe("shouldAttachAutomationOverlay", () => {
+  it("attaches when the agent is presenting the preview to the user", () => {
+    expect(
+      shouldAttachAutomationOverlay({
+        presentToUser: true,
+        needsOverlay: false,
+        overlayAttached: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("attaches a missing overlay before interaction, even for background automation", () => {
+    expect(
+      shouldAttachAutomationOverlay({
+        presentToUser: false,
+        needsOverlay: true,
+        overlayAttached: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("leaves an already-attached overlay alone when the user did not ask to see it", () => {
+    expect(
+      shouldAttachAutomationOverlay({
+        presentToUser: false,
+        needsOverlay: true,
+        overlayAttached: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldOpenPreviewMiniPlayer with the floating-preview preference", () => {
+  it("honours the preference when the agent said nothing either way", () => {
+    // `preview_open` no longer arrives with `open` pre-filled, so an agent
+    // that omitted it leaves the decision to the user's setting.
+    expect(shouldOpenPreviewMiniPlayer({}, false)).toBe(false);
+    expect(shouldOpenPreviewMiniPlayer({}, true)).toBe(true);
+  });
+
+  it("lets an explicit request outrank the preference in both directions", () => {
+    expect(shouldOpenPreviewMiniPlayer({ open: true }, false)).toBe(true);
+    expect(shouldOpenPreviewMiniPlayer({ open: false }, true)).toBe(false);
+    expect(shouldOpenPreviewMiniPlayer({ show: true }, false)).toBe(true);
   });
 });

@@ -39,6 +39,7 @@ import {
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
 import { forkParked, ServerActivation } from "../../serverActivation.ts";
+import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -91,7 +92,6 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-const DEFAULT_THREAD_TITLE = "New thread";
 const MAX_REGENERATION_ATTACHMENTS = 4;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
 const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
@@ -225,18 +225,6 @@ export function providerErrorLabelFromInstanceHint(input: {
   return providerErrorLabel(
     input.instanceId ?? input.modelSelectionInstanceId ?? input.sessionProvider,
   );
-}
-
-function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
-  const trimmedCurrentTitle = currentTitle.trim();
-  if (trimmedCurrentTitle === DEFAULT_THREAD_TITLE) {
-    return true;
-  }
-
-  const trimmedTitleSeed = titleSeed?.trim();
-  return trimmedTitleSeed !== undefined && trimmedTitleSeed.length > 0
-    ? trimmedCurrentTitle === trimmedTitleSeed
-    : false;
 }
 
 function findProviderAdapterRequestError(
@@ -626,6 +614,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(thread.title ? { title: thread.title } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
@@ -1184,6 +1173,40 @@ const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
   });
 
+  const releaseStuckSessionAfterInterrupt = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+  }) {
+    const thread = yield* resolveThread(input.threadId);
+    const session = thread?.session;
+    if (!session || (session.status !== "starting" && session.status !== "running")) {
+      return;
+    }
+    const nextSession = {
+      threadId: input.threadId,
+      providerName: session.providerName,
+      ...(session.providerInstanceId !== undefined
+        ? { providerInstanceId: session.providerInstanceId }
+        : {}),
+      runtimeMode: session.runtimeMode,
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: input.createdAt,
+    } satisfies Omit<OrchestrationSession, "status">;
+    // `interrupted` is what deletes a leaked pending turn-start. `ready` is
+    // what lets the composer accept a new prompt after Stop.
+    yield* setThreadSession({
+      threadId: input.threadId,
+      session: { ...nextSession, status: "interrupted" },
+      createdAt: input.createdAt,
+    });
+    yield* setThreadSession({
+      threadId: input.threadId,
+      session: { ...nextSession, status: "ready" },
+      createdAt: input.createdAt,
+    });
+  });
+
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-interrupt-requested" }>,
   ) {
@@ -1203,8 +1226,29 @@ const make = Effect.gen(function* () {
       });
     }
 
-    // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    const turnId = event.payload.turnId ?? thread.session?.activeTurnId ?? undefined;
+    yield* providerService
+      .interruptTurn({
+        threadId: event.payload.threadId,
+        ...(turnId !== undefined ? { turnId } : {}),
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.turn.interrupt.failed",
+            summary: "Provider turn interrupt failed",
+            detail: Cause.pretty(cause),
+            turnId: turnId ?? null,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+      );
+
+    yield* releaseStuckSessionAfterInterrupt({
+      threadId: event.payload.threadId,
+      createdAt: event.payload.createdAt,
+    });
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (

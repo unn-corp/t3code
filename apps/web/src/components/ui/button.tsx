@@ -17,21 +17,31 @@ const buttonVariants = cva(
     variants: {
       /*
        * Touch gets a larger control than a cursor does, on top of the hit area
-       * the base class already provides. The hit area alone made controls
-       * reachable while still looking desktop-scaled, which on a phone reads as
-       * cramped even where the tap lands. The sm: pair keeps a tablet from
-       * inheriting phone sizing at desktop widths.
+       * the base class already provides, because the hit area alone left
+       * controls looking desktop-scaled even where taps landed.
+       *
+       * Only the text sizes grow. Icon variants are deliberately left alone:
+       * they fill dense toolbars, and the cover screen measures 360 CSS px
+       * (1080 physical at 3.0x), where the chat header already reserves 64px
+       * for the panel toggles. Widening every icon there buys legibility on a
+       * row that has no room to pay for it.
        */
       size: {
+        compact:
+          "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-xs before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         default: "h-9 px-[calc(--spacing(3)-1px)] pointer-coarse:h-11 sm:h-8 sm:pointer-coarse:h-9",
-        icon: "size-9 pointer-coarse:size-11 sm:size-8 sm:pointer-coarse:size-9",
-        "icon-lg": "size-10 pointer-coarse:size-12 sm:size-9 sm:pointer-coarse:size-10",
-        "icon-sm": "size-8 pointer-coarse:size-10 sm:size-7 sm:pointer-coarse:size-8",
+        icon: "size-9 sm:size-8",
+        "icon-lg": "size-10 sm:size-9",
+        "icon-micro":
+          "size-5 rounded-sm p-0 before:rounded-[calc(var(--radius-sm)-1px)] [&_svg:not([class*='size-'])]:size-3",
+        "icon-sm": "size-8 sm:size-7",
         "icon-xl":
           "size-11 sm:size-10 [&_svg:not([class*='size-'])]:size-5 sm:[&_svg:not([class*='size-'])]:size-4.5",
         "icon-xs":
           "size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-10 px-[calc(--spacing(3.5)-1px)] sm:h-9",
+        micro:
+          "h-5 gap-1 rounded-sm px-[calc(--spacing(1.5)-1px)] text-[11px] before:rounded-[calc(var(--radius-sm)-1px)] sm:text-[11px] [&_svg:not([class*='size-'])]:size-3 sm:[&_svg:not([class*='size-'])]:size-3",
         sm: "h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] pointer-coarse:h-10 sm:h-7 sm:pointer-coarse:h-8",
         xl: "h-11 px-[calc(--spacing(4)-1px)] text-lg sm:h-10 sm:text-base [&_svg:not([class*='size-'])]:size-5 sm:[&_svg:not([class*='size-'])]:size-4.5",
         xs: "h-7 gap-1 px-[calc(--spacing(2)-1px)] text-sm sm:h-6 sm:text-xs [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5",
@@ -45,6 +55,10 @@ const buttonVariants = cva(
           "border-input bg-popover not-dark:bg-clip-padding text-destructive-foreground shadow-xs/5 not-disabled:not-active:not-data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:bg-input/32 dark:not-disabled:before:shadow-[0_-1px_--theme(--color-white/2%)] dark:not-disabled:not-active:not-data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)] [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:border-destructive/32 [:hover,[data-pressed]]:bg-destructive/4",
         ghost:
           "[--control-icon-color:var(--muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent",
+        "ghost-muted":
+          "[--control-icon-color:var(--muted-foreground)] border-transparent text-muted-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-foreground",
+        glass:
+          "surface-glass [--control-icon-color:var(--muted-foreground)] border-border/60 text-foreground shadow-sm [:hover,[data-pressed]]:border-border",
         link: "border-transparent underline-offset-4 [:hover,[data-pressed]]:underline",
         outline:
           "[--control-icon-color:var(--muted-foreground)] border-input bg-popover not-dark:bg-clip-padding text-foreground shadow-xs/5 not-disabled:not-active:not-data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:bg-input/32 dark:not-disabled:before:shadow-[0_-1px_--theme(--color-white/2%)] dark:not-disabled:not-active:not-data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)] [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:bg-accent/50 dark:[:hover,[data-pressed]]:bg-input/64",

@@ -27,6 +27,7 @@ import {
   FILL_PREVIEW_VIEWPORT,
   PreviewSessionLookupError,
   type PreviewSessionSnapshot,
+  type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import {
   isPreviewUrlNormalizationError,
@@ -180,6 +181,7 @@ const buildLoadingSnapshot = (input: {
   readonly tabId: string;
   readonly url: string;
   readonly title: string;
+  readonly viewport: PreviewViewportSetting;
   readonly updatedAt: string;
 }): PreviewSessionSnapshot => ({
   threadId: input.threadId,
@@ -187,13 +189,14 @@ const buildLoadingSnapshot = (input: {
   navStatus: { _tag: "Loading", url: input.url, title: input.title },
   canGoBack: false,
   canGoForward: false,
-  viewport: FILL_PREVIEW_VIEWPORT,
+  viewport: input.viewport,
   updatedAt: input.updatedAt,
 });
 
 const buildIdleSnapshot = (input: {
   readonly threadId: string;
   readonly tabId: string;
+  readonly viewport: PreviewViewportSetting;
   readonly updatedAt: string;
 }): PreviewSessionSnapshot => ({
   threadId: input.threadId,
@@ -201,7 +204,7 @@ const buildIdleSnapshot = (input: {
   navStatus: { _tag: "Idle" },
   canGoBack: false,
   canGoForward: false,
-  viewport: FILL_PREVIEW_VIEWPORT,
+  viewport: input.viewport,
   updatedAt: input.updatedAt,
 });
 
@@ -274,15 +277,20 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     function* (input) {
       const tabId = newPreviewTabId();
       const updatedAt = yield* currentIsoTimestamp;
+      // Clients with a configured default send the viewport up front so the
+      // session is born at the right size; older clients omit it and keep the
+      // historical fill-panel behaviour.
+      const viewport = input.viewport ?? FILL_PREVIEW_VIEWPORT;
       const snapshot = input.url
         ? buildLoadingSnapshot({
             threadId: input.threadId,
             tabId,
             url: yield* normalizeUrl(input.url),
             title: "",
+            viewport,
             updatedAt,
           })
-        : buildIdleSnapshot({ threadId: input.threadId, tabId, updatedAt });
+        : buildIdleSnapshot({ threadId: input.threadId, tabId, viewport, updatedAt });
       yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
         Effect.gen(function* () {
           const revision = state.revision + 1;

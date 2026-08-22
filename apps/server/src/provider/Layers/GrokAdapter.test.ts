@@ -26,7 +26,15 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
+import {
+  boundGrokToolCallState,
+  grokPromptSettlementBelongsToContext,
+  grokToolCallEmitKey,
+  makeGrokAdapter,
+  selectGrokAutoApprovedPermissionOption,
+  selectGrokPermissionOptionId,
+  shouldEmitGrokToolCallUpdate,
+} from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -89,6 +97,33 @@ const grokAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeGrokAdapter>[1]) =>
   makeGrokAdapter(decodeGrokSettings({ binaryPath }), options).pipe(Effect.orDie);
 
+it("drops content-only Grok tool_call_update floods and keeps status changes", () => {
+  const pending = {
+    toolCallId: "call-1",
+    status: "inProgress" as const,
+    title: "run_terminal_command",
+    command: "npm test",
+    detail: "x".repeat(8000),
+    data: {
+      toolCallId: "call-1",
+      content: [{ type: "content", content: { type: "text", text: "y".repeat(8000) } }],
+      rawOutput: "z".repeat(8000),
+    },
+  };
+  const bounded = boundGrokToolCallState(pending);
+  assert.isAtMost(bounded.detail?.length ?? 0, 4096);
+  assert.equal(
+    (bounded.data.content as Array<{ content: { text: string } }>)[0]?.content.text.length,
+    4096,
+  );
+  assert.equal(typeof bounded.data.rawOutput, "string");
+  assert.isAtMost(String(bounded.data.rawOutput).length, 4096);
+
+  const key = grokToolCallEmitKey(bounded);
+  assert.isFalse(shouldEmitGrokToolCallUpdate(key, bounded));
+  assert.isTrue(shouldEmitGrokToolCallUpdate(key, { ...bounded, status: "completed" }));
+});
+
 it("requires a settlement to match the live Grok turn", () => {
   const staleTurnId = TurnId.make("stale-turn");
   const replacementTurnId = TurnId.make("replacement-turn");
@@ -120,6 +155,23 @@ it("requires a settlement to match the live Grok turn", () => {
       turnId: staleTurnId,
     }),
   );
+});
+
+it("never sends Grok allow_always because that option cancels the turn", () => {
+  const request = {
+    sessionId: "mock-session-1",
+    toolCall: { toolCallId: "call-1", title: "run_terminal_command" },
+    options: [
+      { optionId: "allow-once", name: "Allow once", kind: "allow_once" as const },
+      { optionId: "allow-always", name: "Always allow", kind: "allow_always" as const },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" as const },
+    ],
+  };
+
+  assert.equal(selectGrokPermissionOptionId(request, "accept"), "allow-once");
+  assert.equal(selectGrokPermissionOptionId(request, "acceptForSession"), "allow-once");
+  assert.equal(selectGrokPermissionOptionId(request, "reject"), "reject-once");
+  assert.equal(selectGrokAutoApprovedPermissionOption(request), "allow-once");
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
@@ -1196,5 +1248,72 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);
     }),
+  );
+
+  // Production calls startSession from a request fiber that finishes as soon as
+  // the session exists. `Effect.forkChild` made the notification consumer a
+  // child of that fiber, and Effect interrupts a fiber's children when it
+  // completes, so the consumer died on return and every later session/update
+  // was dropped: the thread sat on "Working" forever while the provider
+  // streamed its whole turn. Every other test here calls startSession directly
+  // from the test fiber, which never completes, so the consumer survived and
+  // the bug stayed invisible. Running it in a fiber that finishes is what
+  // reproduces production.
+  it.effect("keeps consuming notifications after the startSession fiber completes", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-consumer-outlives-start-session");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed" && String(event.threadId) === String(threadId)
+              ? Deferred.succeed(turnCompleted, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      const startSessionFiber = yield* adapter
+        .startSession({
+          threadId,
+          provider: ProviderDriverKind.make("grok"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(startSessionFiber).pipe(Effect.timeout("10 seconds"));
+
+      // Forked, and the assertion waits on the projected event rather than on
+      // sendTurn: with the consumer dead the turn never settles, so awaiting it
+      // directly would hang until the suite timeout instead of failing here.
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "hello grok", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(turnCompleted).pipe(Effect.timeout("10 seconds"));
+      yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("10 seconds"));
+
+      const delta = runtimeEvents.find(
+        (event) => event.type === "content.delta" && String(event.threadId) === String(threadId),
+      );
+      assert.isDefined(
+        delta,
+        "no content.delta was projected after the startSession fiber completed",
+      );
+      if (delta?.type === "content.delta") {
+        assert.equal(delta.payload.delta, "hello from mock");
+      }
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+      // Live clock so the timeouts above are real: under the default test clock
+      // they wait on virtual time that never advances, and a regression would
+      // hang until the suite timeout instead of failing here.
+    }).pipe(TestClock.withLive),
   );
 });

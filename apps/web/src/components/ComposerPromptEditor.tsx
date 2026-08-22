@@ -62,6 +62,8 @@ import {
   collapseExpandedComposerCursor,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  isComposerEnterKey,
+  shouldDeferComposerEnterForIme,
 } from "~/composer-logic";
 import {
   selectionTouchesMentionBoundary,
@@ -74,6 +76,7 @@ import {
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {
+  COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
   COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
@@ -81,7 +84,7 @@ import {
 } from "./composerInlineChip";
 import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
-import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
+import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
 
@@ -191,7 +194,7 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "composer-inline-chip relative inline-flex align-middle leading-none";
+    dom.className = COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME;
     return dom;
   }
 
@@ -329,7 +332,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "composer-inline-chip relative inline-flex align-middle leading-none";
+    dom.className = COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME;
     return dom;
   }
 
@@ -400,7 +403,7 @@ class ComposerTerminalContextNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "composer-inline-chip relative inline-flex align-middle leading-none";
+    dom.className = COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME;
     return dom;
   }
 
@@ -946,6 +949,7 @@ function ComposerCommandKeyPlugin(props: {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
+    let compositionSessionActive = false;
     const handleCommand = (
       key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
       event: KeyboardEvent | null,
@@ -954,7 +958,7 @@ function ComposerCommandKeyPlugin(props: {
         return false;
       }
 
-      if (key === "Enter" && (event.isComposing || event.keyCode === 229)) {
+      if (key === "Enter" && shouldDeferComposerEnterForIme({ compositionSessionActive })) {
         event.stopPropagation();
         return true;
       }
@@ -988,11 +992,51 @@ function ComposerCommandKeyPlugin(props: {
       COMMAND_PRIORITY_HIGH,
     );
 
+    // Lexical ignores keydown while editor.isComposing() is true, so Enter
+    // never becomes KEY_ENTER_COMMAND. Linux/Wayland text-input can leave
+    // that flag stuck, or report key as Unidentified with code Enter.
+    const onNativeEnter = (event: KeyboardEvent) => {
+      if (!props.onCommandKeyDown || event.defaultPrevented) return;
+      if (
+        !isComposerEnterKey(event) ||
+        shouldDeferComposerEnterForIme({ compositionSessionActive })
+      ) {
+        return;
+      }
+      const lexicalWillSeeEnter =
+        !editor.isComposing() && (event.key === "Enter" || event.key === "NumpadEnter");
+      if (lexicalWillSeeEnter) return;
+      if (handleCommand("Enter", event)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    const onCompositionStart = () => {
+      compositionSessionActive = true;
+    };
+    const onCompositionEnd = () => {
+      compositionSessionActive = false;
+    };
+
+    const unregisterRootListener = editor.registerRootListener((rootElement, prevRootElement) => {
+      prevRootElement?.removeEventListener("keydown", onNativeEnter);
+      prevRootElement?.removeEventListener("compositionstart", onCompositionStart);
+      prevRootElement?.removeEventListener("compositionend", onCompositionEnd);
+      rootElement?.addEventListener("keydown", onNativeEnter);
+      rootElement?.addEventListener("compositionstart", onCompositionStart);
+      rootElement?.addEventListener("compositionend", onCompositionEnd);
+    });
+
     return () => {
       unregisterArrowDown();
       unregisterArrowUp();
       unregisterEnter();
       unregisterTab();
+      const activeRoot = editor.getRootElement();
+      activeRoot?.removeEventListener("keydown", onNativeEnter);
+      activeRoot?.removeEventListener("compositionstart", onCompositionStart);
+      activeRoot?.removeEventListener("compositionend", onCompositionEnd);
+      unregisterRootListener();
     };
   }, [editor, props]);
 
@@ -1785,13 +1829,12 @@ function ComposerPromptEditorInner({
 
   return (
     <ComposerTerminalContextActionsContext value={terminalContextActions}>
-      <div className="composer-editor-surface relative">
+      <div className="relative [font-family:var(--font-composer,var(--font-sans))] [font-size:var(--font-size-prompt,0.875rem)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]">
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
               className={cn(
-                // The size comes from .composer-editor-surface so Settings -> Appearance
-                // can drive it; keep everything else here.
+                // The wrapper owns the appearance preference; keep everything else here.
                 "block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
                 className,
               )}
@@ -1803,7 +1846,7 @@ function ComposerPromptEditorInner({
           }
           placeholder={
             terminalContexts.length > 0 ? null : (
-              <div className="pointer-events-none absolute inset-0 leading-relaxed text-muted-foreground/35">
+              <div className="pointer-events-none absolute inset-0 leading-relaxed text-placeholder">
                 {placeholder}
               </div>
             )

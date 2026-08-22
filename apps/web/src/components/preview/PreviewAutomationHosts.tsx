@@ -40,6 +40,7 @@ import {
 } from "~/browser/browserRecording";
 import { resolveBrowserRecordingStopTarget } from "~/browser/browserRecordingScope";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
+import { browserDefaultOpenViewport, resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { runBrowserViewportMutation } from "~/browser/browserViewportActions";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isElectron } from "~/env";
@@ -65,6 +66,7 @@ import {
 import {
   previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
+  shouldAttachAutomationOverlay,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 import {
@@ -344,12 +346,23 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         };
         const requireReadyTab = async () => {
           const bridge = previewBridge;
-          const readyTabId = tabId;
-          if (!bridge || !readyTabId) {
-            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-          }
           const readyState = readThreadPreviewState(threadRef);
+          const resolved = resolvePreviewAutomationTarget(readyState, tabId);
+          const readyTabId = resolved.tabId;
+          if (!bridge || !readyTabId) {
+            throw new PreviewAutomationTargetUnavailableError({
+              ...unavailableTarget,
+              tabId: readyTabId,
+            });
+          }
           const runtimeTabId = previewRuntimeTabId(threadRef, readyState.serverEpoch, readyTabId);
+          // Interaction (snapshot/click/type/evaluate) talks to the desktop
+          // webview. If the pane or mini player was closed, desktopByTabId is
+          // empty and waitForDesktopOverlay hangs until the tool timeout.
+          if (!readyState.desktopByTabId[readyTabId]) {
+            usePreviewMiniPlayerStore.getState().open(threadRef, readyTabId);
+            await waitForPreviewPresentation(runtimeTabId);
+          }
           await waitForDesktopOverlay(
             threadRef,
             request.requestId,
@@ -391,6 +404,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 input: {
                   threadId: request.threadId,
                   ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
+                  // An agent that didn't state a size gets the user's
+                  // configured default, same as a hand-opened tab.
+                  viewport: browserDefaultOpenViewport(await resolveBrowserDefaults()),
                 },
               });
               if (result._tag === "Failure") {
@@ -439,11 +455,23 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 updatePreviewServerSnapshot(threadRef, resizeResult.value);
               }
             }
-            const shouldPresentPreview = shouldOpenPreviewMiniPlayer(input);
-            if (shouldPresentPreview) {
+            const shouldPresentPreview = shouldOpenPreviewMiniPlayer(
+              input,
+              (await resolveBrowserDefaults()).autoShowFloatingPreview,
+            );
+            const latestState = readThreadPreviewState(threadRef);
+            const needsOverlay =
+              Boolean(activeSnapshot) && previewAutomationOpenNeedsOverlay(input, activeSnapshot);
+            if (
+              shouldAttachAutomationOverlay({
+                presentToUser: shouldPresentPreview,
+                needsOverlay,
+                overlayAttached: Boolean(latestState.desktopByTabId[activeTabId]),
+              })
+            ) {
               usePreviewMiniPlayerStore.getState().open(threadRef, activeTabId);
             }
-            if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
+            if (needsOverlay) {
               await waitForDesktopOverlay(
                 threadRef,
                 request.requestId,

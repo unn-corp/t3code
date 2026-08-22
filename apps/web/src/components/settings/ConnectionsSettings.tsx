@@ -4,7 +4,6 @@ import {
   QrCodeIcon,
   RefreshCwIcon,
   TerminalIcon,
-  TriangleAlertIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { type ReactNode, memo, useCallback, useId, useMemo, useState } from "react";
@@ -693,8 +692,13 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
           </div>
-          <p className="text-xs text-muted-foreground" title={expiresAbsolute}>
-            {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
+          <p className="text-xs text-muted-foreground">
+            <Tooltip>
+              <TooltipTrigger render={<span />}>
+                {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{expiresAbsolute}</TooltipPopup>
+            </Tooltip>
             <span aria-hidden> · </span>
             <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
           </p>
@@ -841,12 +845,18 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               </div>
             ) : null}
             <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5">
-              <code
-                title={qrPairingUrl}
-                className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
-              >
-                {qrPairingUrl}
-              </code>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+                      {qrPairingUrl}
+                    </code>
+                  }
+                />
+                <TooltipPopup side="top" className="max-w-80 break-all">
+                  {qrPairingUrl}
+                </TooltipPopup>
+              </Tooltip>
               <Button
                 size="xs"
                 variant="ghost"
@@ -1235,12 +1245,18 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
             {endpoint.label}
           </h3>
           {shouldShowEndpointUrl ? (
-            <p
-              className="min-w-0 truncate text-xs leading-5 text-muted-foreground"
-              title={endpoint.httpBaseUrl}
-            >
-              {endpoint.httpBaseUrl}
-            </p>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <p className="min-w-0 truncate text-xs leading-5 text-muted-foreground">
+                    {endpoint.httpBaseUrl}
+                  </p>
+                }
+              />
+              <TooltipPopup side="top" className="max-w-80">
+                {endpoint.httpBaseUrl}
+              </TooltipPopup>
+            </Tooltip>
           ) : null}
           {!isAvailable ? (
             <span className="shrink-0 rounded-md border border-border/70 px-1 py-0.5 text-[10px] text-muted-foreground">
@@ -1426,17 +1442,25 @@ function SavedBackendListRow({
           ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="max-w-md">
-              <ServerUpdateProgress
-                fromVersion={serverUpdateState.fromVersion}
-                state={serverUpdateState}
-              />
+              <ServerUpdateProgress state={serverUpdateState} />
             </div>
           ) : versionMismatch ? (
-            <p className="flex items-center gap-1 text-warning text-xs">
-              <TriangleAlertIcon className="size-3.5 shrink-0" />
-              Version drift: client {versionMismatch.clientVersion}, server{" "}
-              {versionMismatch.serverVersion}.
-            </p>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="w-fit cursor-help rounded-sm text-left text-muted-foreground text-xs"
+                  >
+                    Server update available
+                  </button>
+                }
+              />
+              <TooltipPopup side="top">
+                {versionMismatch.serverVersion} <span aria-hidden="true">→</span>{" "}
+                {versionMismatch.clientVersion}
+              </TooltipPopup>
+            </Tooltip>
           ) : null}
           {environment.connection.error && !resumingServerUpdate ? (
             <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
@@ -1461,7 +1485,7 @@ function SavedBackendListRow({
               serverLabel={`${environment.label} server`}
               selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
               targetVersion={versionMismatch.clientVersion}
-              label={serverUpdateState.status === "failed" ? "Retry update" : "Update server"}
+              label={serverUpdateState.status === "failed" ? "Retry" : "Update"}
             />
           ) : null}
           {isWslEnvironment ? (
@@ -1643,23 +1667,25 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 
   return (
     <>
-      <SettingsRow
-        title="T3 Connect"
-        description={
-          managedTunnelActive
-            ? "This environment is available to your other devices through T3 Connect."
-            : "Make this environment available to your other devices through T3 Connect."
-        }
-        status={operationError ?? primaryCloudLinkState.error}
-        control={
-          <CloudLinkSwitch
-            checked={managedTunnelActive}
-            disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
-            disabledReason={disabledReason}
-            onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
-          />
-        }
-      />
+      {window.desktopBridge ? (
+        <SettingsRow
+          title="T3 Connect"
+          description={
+            managedTunnelActive
+              ? "This environment is available to your other devices through T3 Connect."
+              : "Make this environment available to your other devices through T3 Connect."
+          }
+          status={operationError ?? primaryCloudLinkState.error}
+          control={
+            <CloudLinkSwitch
+              checked={managedTunnelActive}
+              disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
+              disabledReason={disabledReason}
+              onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
+            />
+          }
+        />
+      ) : null}
       <SettingsRow
         title="Publish agent activity"
         description="Send activity from this environment to your mobile clients for push notifications and Live Activities. Works without a T3 Connect tunnel."
@@ -2998,21 +3024,25 @@ export function ConnectionsSettings() {
                     ? "Update failed"
                     : primaryServerUpdateState.status === "running"
                       ? "Updating server"
-                      : "Version drift"
+                      : "Server update available"
                 }
                 description={
                   primaryServerUpdateState.status !== "idle" ? (
-                    <ServerUpdateProgress
-                      fromVersion={primaryServerUpdateState.fromVersion}
-                      state={primaryServerUpdateState}
-                    />
+                    <ServerUpdateProgress state={primaryServerUpdateState} />
                   ) : primaryVersionMismatch ? (
-                    <span className="flex items-center gap-1 text-warning">
-                      <TriangleAlertIcon className="size-3.5 shrink-0" />
-                      Client {primaryVersionMismatch.clientVersion}, server{" "}
-                      {primaryVersionMismatch.serverVersion}. Sync them if RPC calls or reconnects
-                      fail.
-                    </span>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button type="button" className="w-fit cursor-help rounded-sm text-left">
+                            Update to match this client.
+                          </button>
+                        }
+                      />
+                      <TooltipPopup side="top">
+                        {primaryVersionMismatch.serverVersion} <span aria-hidden="true">→</span>{" "}
+                        {primaryVersionMismatch.clientVersion}
+                      </TooltipPopup>
+                    </Tooltip>
                   ) : null
                 }
                 control={
@@ -3024,9 +3054,7 @@ export function ConnectionsSettings() {
                       serverLabel={primaryEnvironment?.label ?? "this server"}
                       selfUpdate={resolveServerSelfUpdateCapability(primaryServerConfig)}
                       targetVersion={primaryVersionMismatch.clientVersion}
-                      {...(primaryServerUpdateState.status === "failed"
-                        ? { label: "Retry update" }
-                        : {})}
+                      label={primaryServerUpdateState.status === "failed" ? "Retry" : "Update"}
                     />
                   ) : undefined
                 }
@@ -3302,12 +3330,20 @@ export function ConnectionsSettings() {
                 ) : null}
                 <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
                   <p className="text-xs font-medium text-muted-foreground">HTTPS endpoint</p>
-                  <p
-                    className="mt-1 truncate text-sm text-foreground"
-                    title={pendingTailscaleServeBaseUrl ?? undefined}
-                  >
-                    {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
-                  </p>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <p className="mt-1 truncate text-sm text-foreground">
+                          {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
+                        </p>
+                      }
+                    />
+                    {pendingTailscaleServeBaseUrl ? (
+                      <TooltipPopup side="top" className="max-w-80">
+                        {pendingTailscaleServeBaseUrl}
+                      </TooltipPopup>
+                    ) : null}
+                  </Tooltip>
                 </div>
               </DialogPanel>
               <DialogFooter>
