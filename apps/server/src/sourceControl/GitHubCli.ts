@@ -6,6 +6,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
+  type SourceControlProjectPullRequest,
+  type SourceControlPullRequestMergeMethod,
   TrimmedNonEmptyString,
   type SourceControlRepositoryVisibility,
   type VcsError,
@@ -16,6 +18,7 @@ import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
 } from "./gitHubPullRequests.ts";
+import { decodeGitHubProjectPullRequestListJson } from "./gitHubProjectPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -231,6 +234,18 @@ export class GitHubCli extends Context.Service<
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
+    readonly listProjectPullRequests: (input: {
+      readonly cwd: string;
+      readonly limit?: number;
+    }) => Effect.Effect<ReadonlyArray<SourceControlProjectPullRequest>, GitHubCliError>;
+
+    readonly mergePullRequest: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly expectedHeadOid: string;
+      readonly method: SourceControlPullRequestMergeMethod;
+    }) => Effect.Effect<void, GitHubCliError>;
+
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
@@ -380,6 +395,51 @@ export const make = Effect.gen(function* () {
               ),
         ),
       ),
+    listProjectPullRequests: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "list",
+          "--state",
+          "open",
+          "--limit",
+          String(input.limit ?? 50),
+          "--json",
+          "number,title,url,baseRefName,headRefName,headRefOid,isDraft,mergeStateStatus,reviewDecision,statusCheckRollup,author,updatedAt",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed([])
+            : Effect.sync(() => decodeGitHubProjectPullRequestListJson(raw)).pipe(
+                Effect.flatMap((decoded) =>
+                  Result.isSuccess(decoded)
+                    ? Effect.succeed(decoded.success)
+                    : Effect.fail(
+                        new GitHubPullRequestListDecodeError({
+                          command: "gh",
+                          cwd: input.cwd,
+                          cause: decoded.failure,
+                        }),
+                      ),
+                ),
+              ),
+        ),
+      ),
+    mergePullRequest: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "merge",
+          String(input.number),
+          `--${input.method}`,
+          "--match-head-commit",
+          input.expectedHeadOid,
+        ],
+      }).pipe(Effect.asVoid),
     getPullRequest: (input) =>
       execute({
         cwd: input.cwd,

@@ -13,7 +13,6 @@ import * as ServerConfig from "./config.ts";
 import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
-import * as AgentDashboardSecurityScheduler from "./agentDashboard/AgentDashboardSecurityScheduler.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
@@ -313,6 +312,7 @@ const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
 
 const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitHubCli.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
 );
 
@@ -505,9 +505,6 @@ export const makeServerLayer = Layer.unwrap(
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
     const activationLayer = Layer.succeed(ServerActivation, awaitActivation);
-    const runtimeStateParked = yield* Deferred.make<void>();
-    const tailscaleParked = yield* Deferred.make<void>();
-    const cloudLinkParked = yield* Deferred.make<void>();
     const launcherLayer = ServiceLauncherClient.layer;
 
     yield* fixPath();
@@ -522,7 +519,6 @@ export const makeServerLayer = Layer.unwrap(
     const runtimeStateLayer = Layer.effectDiscard(
       Effect.acquireRelease(
         Effect.gen(function* () {
-          yield* Deferred.succeed(runtimeStateParked, undefined).pipe(Effect.orDie);
           yield* awaitActivation;
           const server = yield* HttpServer.HttpServer;
           const address = server.address;
@@ -555,7 +551,6 @@ export const makeServerLayer = Layer.unwrap(
       ? Layer.effectDiscard(
           Effect.acquireRelease(
             Effect.gen(function* () {
-              yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
               yield* awaitActivation;
               const server = yield* HttpServer.HttpServer;
               const address = server.address;
@@ -607,7 +602,6 @@ export const makeServerLayer = Layer.unwrap(
     const cloudDesiredLinkReconcileLayer = Layer.effectDiscard(
       Effect.gen(function* () {
         if (!hasCloudPublicConfig) {
-          yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
           return;
         }
         const releaseManagedTunnel = releaseManagedTunnelOnShutdown().pipe(
@@ -670,34 +664,22 @@ export const makeServerLayer = Layer.unwrap(
             );
           }),
         );
-        yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
       }),
     );
 
     const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
       abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),
-      awaitAuxiliaryParked: Effect.all(
-        [
-          Deferred.await(runtimeStateParked),
-          Deferred.await(cloudLinkParked),
-          ...(config.tailscaleServeEnabled ? [Deferred.await(tailscaleParked)] : []),
-        ],
-        { concurrency: "unbounded" },
-      ).pipe(Effect.asVoid),
     }).pipe(Layer.provideMerge(RuntimeDependenciesLive), Layer.provide(launcherLayer));
 
-    // Review jobs and the two-hour scheduler share one server-scoped job service
-    // so manual clicks and schedule ticks enqueue through the same lifecycle.
+    // The portfolio scheduler and manual reviews share one server-scoped job
+    // service so every deep review uses the same lifecycle and idempotency rules.
     // Keep this stack beside the server application (not RuntimeDependencies) so
     // it is acquired once and never once per websocket connection.
     const reviewOrchestrationLayer = AgentDashboardReviewScheduler.layer.pipe(
       Layer.provideMerge(
         AgentDashboardReviewJobService.layer.pipe(Layer.provide(AgentDashboardReviewRunner.layer)),
       ),
-      Layer.provide(runtimeServicesLive),
-    );
-    const securityCollectionLayer = AgentDashboardSecurityScheduler.layer.pipe(
       Layer.provide(runtimeServicesLive),
     );
     const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
@@ -711,10 +693,7 @@ export const makeServerLayer = Layer.unwrap(
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
-    ).pipe(
-      Layer.provideMerge(reviewOrchestrationLayer),
-      Layer.provideMerge(securityCollectionLayer),
-    );
+    ).pipe(Layer.provideMerge(reviewOrchestrationLayer));
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),

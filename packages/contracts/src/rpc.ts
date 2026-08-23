@@ -12,6 +12,7 @@ import {
   AgentDashboardFindingActionInput,
   AgentDashboardLinkFindingThreadInput,
   AgentDashboardRepositoryPolicyInput,
+  AgentDashboardResearchWatchItemInput,
   AgentDashboardRetryRunInput,
   AgentDashboardReviewSuggestionIdInput,
   AgentDashboardReviewSuggestionActionInput,
@@ -212,8 +213,12 @@ import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
+  SourceControlMergeProjectPullRequestInput,
+  SourceControlMergeProjectPullRequestResult,
   SourceControlPublishRepositoryInput,
   SourceControlPublishRepositoryResult,
+  SourceControlProjectPullRequestsInput,
+  SourceControlProjectPullRequestsResult,
   SourceControlRepositoryError,
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
@@ -233,6 +238,9 @@ export const WS_METHODS = {
   agentDashboardLinkFindingThread: "agentDashboard.linkFindingThread",
   agentDashboardUpdateRepositoryPolicy: "agentDashboard.updateRepositoryPolicy",
   agentDashboardCollect: "agentDashboard.collect",
+  agentDashboardAddResearchWatchItem: "agentDashboard.addResearchWatchItem",
+  agentDashboardListProjectPullRequests: "agentDashboard.listProjectPullRequests",
+  agentDashboardMergeProjectPullRequest: "agentDashboard.mergeProjectPullRequest",
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
@@ -445,12 +453,47 @@ export const WsAgentDashboardCollectRpc = Rpc.make(WS_METHODS.agentDashboardColl
   error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
 });
 
+export const WsAgentDashboardAddResearchWatchItemRpc = Rpc.make(
+  WS_METHODS.agentDashboardAddResearchWatchItem,
+  {
+    payload: AgentDashboardResearchWatchItemInput,
+    success: AgentDashboardMutationResult,
+    error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsAgentDashboardCreateGithubIssueRpc = Rpc.make(
   WS_METHODS.agentDashboardCreateGithubIssue,
   {
     payload: AgentDashboardReviewSuggestionIdInput,
     success: AgentDashboardMutationResult,
     error: Schema.Union([AgentDashboardError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsAgentDashboardListProjectPullRequestsRpc = Rpc.make(
+  WS_METHODS.agentDashboardListProjectPullRequests,
+  {
+    payload: SourceControlProjectPullRequestsInput,
+    success: SourceControlProjectPullRequestsResult,
+    error: Schema.Union([
+      SourceControlRepositoryError,
+      AgentDashboardError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+
+export const WsAgentDashboardMergeProjectPullRequestRpc = Rpc.make(
+  WS_METHODS.agentDashboardMergeProjectPullRequest,
+  {
+    payload: SourceControlMergeProjectPullRequestInput,
+    success: SourceControlMergeProjectPullRequestResult,
+    error: Schema.Union([
+      SourceControlRepositoryError,
+      AgentDashboardError,
+      EnvironmentAuthorizationError,
+    ]),
   },
 );
 
@@ -1165,10 +1208,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentDashboardRunInvestigationRpc,
   WsAgentDashboardRetryRunRpc,
   WsAgentDashboardCreateGithubIssueRpc,
+  WsAgentDashboardListProjectPullRequestsRpc,
+  WsAgentDashboardMergeProjectPullRequestRpc,
   WsAgentDashboardApplyFindingActionRpc,
   WsAgentDashboardLinkFindingThreadRpc,
   WsAgentDashboardUpdateRepositoryPolicyRpc,
   WsAgentDashboardCollectRpc,
+  WsAgentDashboardAddResearchWatchItemRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

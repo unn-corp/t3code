@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalDate:off - retention fixtures need wall-clock-relative timestamps.
 // @effect-diagnostics preferSchemaOverJson:off - These tests inspect the compatibility store's raw JSON document.
 // oxlint-disable t3code/no-manual-effect-runtime-in-tests -- These compatibility-store cases intentionally combine Node filesystem fixtures with the store's public Effect service.
 import * as NodeChildProcess from "node:child_process";
@@ -39,7 +40,7 @@ it.effect("imports the legacy feed when the T3 target already exists but is empt
     const legacyDirectory = NodePath.join(homeDir, ".local", "share", "agent-widget");
     const legacyCard = {
       id: 42,
-      ts: 1_786_000_000,
+      ts: 1_900_000_000,
       agent: "hermes",
       title: "Legacy update",
       text: "Still visible after the T3 store was initialized.",
@@ -107,6 +108,81 @@ it.effect("preserves feed origin metadata for project and chat navigation", () =
         threadId: "thread-1",
       });
       expect((await Effect.runPromise(store.readFeed))[0]?.origin).toEqual(appended.origin);
+    } finally {
+      await NodeFSP.rm(stateDir, { recursive: true, force: true });
+    }
+  }),
+);
+
+it.effect("prunes feed cards and owned images after two days", () =>
+  Effect.promise(async () => {
+    const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-feed-retention-"));
+    const dashboardDir = NodePath.join(stateDir, "agent-dashboard");
+    const assetsDir = NodePath.join(dashboardDir, "assets");
+    const expiredImage = NodePath.join(assetsDir, "1.png");
+    try {
+      await NodeFSP.mkdir(assetsDir, { recursive: true });
+      await NodeFSP.writeFile(expiredImage, Uint8Array.from([0x89, 0x50, 0x4e, 0x47]));
+      await NodeFSP.writeFile(
+        NodePath.join(dashboardDir, "feed.jsonl"),
+        [
+          JSON.stringify({
+            id: 1,
+            ts: 1,
+            agent: "old-agent",
+            title: "Expired",
+            image_file: expiredImage,
+          }),
+          JSON.stringify({ id: 2, ts: 1_900_000_000, agent: "new-agent", title: "Current" }),
+        ].join("\n") + "\n",
+      );
+      await NodeFSP.writeFile(NodePath.join(dashboardDir, "feed.legacy-cursor"), "999999999\n");
+
+      const feed = await Effect.runPromise(AgentDashboardStore.getStore(stateDir).readFeed);
+
+      expect(feed.map((card) => card.id)).toEqual([2]);
+      expect(
+        await NodeFSP.readFile(NodePath.join(dashboardDir, "feed.jsonl"), "utf8"),
+      ).not.toContain('"id":1');
+      await expect(NodeFSP.access(expiredImage)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await NodeFSP.rm(stateDir, { recursive: true, force: true });
+    }
+  }),
+);
+
+it.effect("creates and updates repository research watch items", () =>
+  Effect.promise(async () => {
+    const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-research-watch-"));
+    try {
+      const store = AgentDashboardStore.getStore(stateDir);
+      const input = {
+        projectId: ProjectId.make("project-one"),
+        title: "Track compiler research",
+        summary: "Watch for techniques that apply to this repository.",
+        url: "https://example.com/research",
+        category: "performance",
+      } as const;
+
+      expect(await Effect.runPromise(store.upsertResearchWatchItem(input))).toBe(true);
+      expect(
+        await Effect.runPromise(
+          store.upsertResearchWatchItem({ ...input, summary: "Updated research scope." }),
+        ),
+      ).toBe(true);
+
+      const document = JSON.parse(
+        await NodeFSP.readFile(
+          NodePath.join(stateDir, "agent-dashboard", "research-watchlist.json"),
+          "utf8",
+        ),
+      ) as { items: Array<Record<string, unknown>> };
+      expect(document.items).toHaveLength(1);
+      expect(document.items[0]).toMatchObject({
+        projectId: "project-one",
+        title: "Track compiler research",
+        summary: "Updated research scope.",
+      });
     } finally {
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
     }
@@ -227,6 +303,7 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
         },
         findings: [
           {
+            type: "bug",
             title: "The parser drops the final record",
             category: "bug",
             summary: "A line-oriented parser never flushes its final buffered record.",
@@ -281,6 +358,7 @@ it.effect("deduplicates canonical findings across runs and preserves disposition
         },
         findings: [
           {
+            type: "bug",
             title: "The parser drops the final record",
             category: "bug",
             summary: "A line-oriented parser never flushes its final buffered record.",
@@ -340,6 +418,92 @@ it.effect("deduplicates canonical findings across runs and preserves disposition
   }),
 );
 
+it.effect("migrates legacy canonical findings into the persisted product taxonomy", () =>
+  Effect.promise(async () => {
+    const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-finding-type-"));
+    try {
+      const store = AgentDashboardStore.getStore(stateDir);
+      await Effect.runPromise(
+        store.appendFindings([
+          {
+            type: "security",
+            kind: "security",
+            title: "Unpinned dependency graph",
+            summary: "The project manifest does not have a lockfile.",
+            category: "dependencies",
+            repository: { projectId: "project-1" },
+            source: "local-security-scan",
+          },
+        ]),
+      );
+      const findingsPath = NodePath.join(stateDir, "agent-dashboard", "findings.json");
+      const persisted = await NodeFSP.readFile(findingsPath, "utf8");
+      await NodeFSP.writeFile(findingsPath, persisted.replace(/\s*"type": "security",/, ""));
+
+      expect((await Effect.runPromise(store.readFindings))[0]?.type).toBe("security");
+    } finally {
+      await NodeFSP.rm(stateDir, { recursive: true, force: true });
+    }
+  }),
+);
+
+it.effect("builds a GitHub issue draft from an actionable canonical research finding", () =>
+  Effect.promise(async () => {
+    const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-research-draft-"));
+    try {
+      const store = AgentDashboardStore.getStore(stateDir);
+      await Effect.runPromise(
+        store.appendFindings([
+          {
+            kind: "research",
+            title: "Adopt receipt-driven session activation",
+            summary: "Polling delays session adoption and adds repeated projection reads.",
+            confidence: "high",
+            evidence: ["src/review.ts:42 polls every 250ms"],
+            repository: { projectId: "project-1" },
+            repositoryPath: "/workspace/t3code",
+            source: "repository-research",
+            actionability: {
+              readiness: "ready",
+              proposal: "Replace the polling loop with a session-start receipt.",
+              expectedValue: "Remove polling latency and redundant reads.",
+              targets: [
+                {
+                  path: "src/review.ts",
+                  symbol: "runReview",
+                  evidence: "The session loop polls projection state.",
+                },
+              ],
+              validationPlan: ["Run the focused review runner tests."],
+              sources: [
+                {
+                  title: "Receipt lifecycle documentation",
+                  url: "https://example.com/receipts",
+                  kind: "documentation",
+                },
+              ],
+            },
+          },
+        ]),
+      );
+
+      const [finding] = await Effect.runPromise(store.readFindings);
+      expect(finding?.actionability?.readiness).toBe("ready");
+      expect(AgentDashboardStore.buildCanonicalGithubIssueDraft(finding!).body).toContain(
+        "## Code targets\n- `src/review.ts` (runReview): The session loop polls projection state.",
+      );
+      expect(AgentDashboardStore.buildCanonicalGithubIssueDraft(finding!).body).toContain(
+        "## Validation\n- Run the focused review runner tests.",
+      );
+      expect(AgentDashboardStore.buildCanonicalGithubIssueDraft(finding!).body).toContain(
+        "[Receipt lifecycle documentation](https://example.com/receipts) (documentation)",
+      );
+    } finally {
+      await NodeFSP.rm(stateDir, { recursive: true, force: true });
+    }
+  }),
+);
+
 it.effect("links a finding to its working chat and records the transition", () =>
   Effect.promise(async () => {
     const stateDir = await NodeFSP.mkdtemp(
@@ -357,6 +521,7 @@ it.effect("links a finding to its working chat and records the transition", () =
           repository: { name: "repository", path: repositoryPath },
           findings: [
             {
+              type: "bug",
               title: "The parser drops the final record",
               category: "bug",
               summary: "A line-oriented parser never flushes its final buffered record.",
@@ -413,6 +578,39 @@ it.effect("links a finding to its working chat and records the transition", () =
         ),
       ).toBe("noop");
       expect(await Effect.runPromise(store.readExternalActions)).toHaveLength(1);
+
+      expect(
+        await Effect.runPromise(
+          store.applyFindingAction({
+            id: finding!.id,
+            action: "complete",
+            note: "Implementation and focused validation completed.",
+          }),
+        ),
+      ).toBe("applied");
+      expect((await Effect.runPromise(store.readFindings))[0]?.disposition).toMatchObject({
+        state: "done",
+        note: "Implementation and focused validation completed.",
+      });
+      expect(
+        await Effect.runPromise(
+          store.applyFindingAction({
+            id: finding!.id,
+            action: "complete",
+            note: "Implementation and focused validation completed.",
+          }),
+        ),
+      ).toBe("noop");
+
+      expect(
+        await Effect.runPromise(
+          store.applyFindingAction({
+            id: finding!.id,
+            action: "reopen",
+          }),
+        ),
+      ).toBe("applied");
+      expect((await Effect.runPromise(store.readFindings))[0]?.disposition.state).toBe("open");
     } finally {
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
     }
@@ -523,7 +721,7 @@ it.effect("idempotently ingests new legacy cards without clobbering local data",
         legacyPath,
         `${JSON.stringify({
           id: 1,
-          ts: 10,
+          ts: 1_900_000_000,
           agent: "hermes",
           title: "First",
           text: "legacy-one",
@@ -548,14 +746,14 @@ it.effect("idempotently ingests new legacy cards without clobbering local data",
         legacyPath,
         `${JSON.stringify({
           id: 1,
-          ts: 10,
+          ts: 1_900_000_000,
           agent: "hermes",
           title: "First rewritten",
           text: "should not replace existing id",
           level: "warn",
         })}\n${JSON.stringify({
           id: 7,
-          ts: 20,
+          ts: 1_900_000_001,
           agent: "hermes",
           title: "Second",
           text: "legacy-two",

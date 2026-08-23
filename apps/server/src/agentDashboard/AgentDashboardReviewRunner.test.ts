@@ -1,12 +1,30 @@
+// @effect-diagnostics nodeBuiltinImport:off - This integration fixture resolves the repository root before providing Effect services.
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProjectId,
+  type OrchestrationCommand,
   type AgentDashboardRepositoryCoverage,
   type AgentDashboardRepositoryPolicy,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
-import { selectNextRepository } from "./AgentDashboardReviewRunner.ts";
+import * as ServerConfig from "../config.ts";
+import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import {
+  AgentDashboardReviewRunner,
+  layer,
+  selectNextRepository,
+} from "./AgentDashboardReviewRunner.ts";
 
 const NOW = Date.parse("2026-08-10T00:00:00.000Z");
 
@@ -103,3 +121,78 @@ describe("selectNextRepository", () => {
     expect(selectNextRepository({ ...input, allowNotDue: true })).toBe(ProjectId.make("future"));
   });
 });
+
+it.effect("starts the provider turn before snoozing the internal review thread", () =>
+  Effect.gen(function* () {
+    const target = {
+      ...project("review-target", "Review target"),
+      workspaceRoot: NodePath.resolve(import.meta.dirname, "../../../.."),
+    };
+    const commands = yield* Ref.make<Array<OrchestrationCommand>>([]);
+    const projection = {
+      getCommandReadModel: () => Effect.die("unused"),
+      getSnapshot: () => Effect.die("unused"),
+      getShellSnapshot: () =>
+        Effect.succeed({
+          snapshotSequence: 0,
+          projects: [target],
+          threads: [],
+          updatedAt: "2026-08-10T00:00:00.000Z",
+        }),
+      getArchivedShellSnapshot: () => Effect.die("unused"),
+      getSnapshotSequence: () => Effect.die("unused"),
+      getCounts: () => Effect.die("unused"),
+      getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+      getProjectShellById: () => Effect.succeed(Option.none()),
+      getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+      getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+      getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+      getThreadShellById: () =>
+        Effect.succeed(
+          Option.some({
+            session: { status: "running" },
+          } as never),
+        ),
+      getThreadDetailById: () => Effect.succeed(Option.none()),
+      getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+      searchThreads: () => Effect.succeed({ matches: [] }),
+    } satisfies ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
+    const orchestration = {
+      dispatch: (command: OrchestrationCommand) =>
+        Ref.updateAndGet(commands, (current) => [...current, command]).pipe(
+          Effect.map((current) => ({ sequence: current.length })),
+        ),
+      readEvents: () => Stream.empty,
+      streamDomainEvents: Stream.empty,
+      latestSequence: Effect.succeed(0),
+    } satisfies OrchestrationEngine.OrchestrationEngineService["Service"];
+    const startup = {
+      awaitCommandReady: Effect.void,
+      markHttpListening: Effect.void,
+      enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) => effect,
+    } satisfies ServerRuntimeStartup.ServerRuntimeStartup["Service"];
+
+    yield* Effect.gen(function* () {
+      const runner = yield* AgentDashboardReviewRunner;
+      yield* runner.runReview({ projectId: target.id });
+    }).pipe(
+      Effect.provide(
+        layer.pipe(
+          Layer.provide(Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, projection)),
+          Layer.provide(
+            Layer.succeed(OrchestrationEngine.OrchestrationEngineService, orchestration),
+          ),
+          Layer.provide(Layer.succeed(ServerRuntimeStartup.ServerRuntimeStartup, startup)),
+          Layer.provide(ServerConfig.layerTest(process.cwd(), "t3-review-runner-test")),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+
+    expect((yield* Ref.get(commands)).map((command) => command.type)).toEqual([
+      "thread.create",
+      "thread.turn.start",
+      "thread.snooze",
+    ]);
+  }),
+);

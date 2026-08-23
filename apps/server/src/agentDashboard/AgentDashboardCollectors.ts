@@ -1,10 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off - collectors intentionally run at the local filesystem boundary.
 // @effect-diagnostics globalDate:off - collector output is persisted as ISO timestamps.
 import * as NodeChildProcess from "node:child_process";
-import type { Dirent } from "node:fs";
+import type * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { promisify } from "node:util";
+import * as NodeUtil from "node:util";
 
 import type { AgentDashboardCollectorKind, AgentDashboardCollectorState } from "@t3tools/contracts";
 import type { OrchestrationProjectShell, ProjectId } from "@t3tools/contracts";
@@ -14,7 +14,7 @@ import {
   type AgentDashboardCanonicalFindingInput,
 } from "./AgentDashboardStore.ts";
 
-const execFile = promisify(NodeChildProcess.execFile);
+const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const MAX_FILES = 400;
 const MAX_FILE_BYTES = 1_000_000;
 const SECRET_PATTERN =
@@ -73,6 +73,7 @@ const collectorState = (input: {
 });
 
 const baseFinding = (input: {
+  readonly type: NonNullable<AgentDashboardCanonicalFindingInput["type"]>;
   readonly kind: AgentDashboardCanonicalFindingInput["kind"];
   readonly project: OrchestrationProjectShell;
   readonly title: string;
@@ -84,6 +85,7 @@ const baseFinding = (input: {
   readonly source: string;
   readonly observedAt: string;
 }): AgentDashboardCanonicalFindingInput => ({
+  type: input.type,
   kind: input.kind,
   title: input.title,
   summary: input.summary,
@@ -102,7 +104,7 @@ const walkFiles = async (root: string): Promise<ReadonlyArray<string>> => {
   const result: Array<string> = [];
   const visit = async (directory: string): Promise<void> => {
     if (result.length >= MAX_FILES) return;
-    let entries: Array<Dirent>;
+    let entries: Array<NodeFS.Dirent>;
     try {
       entries = await NodeFSP.readdir(directory, { withFileTypes: true });
     } catch {
@@ -144,6 +146,7 @@ const collectEngineering = async (
     if (status.length > 0) {
       findings.push(
         baseFinding({
+          type: "improvement",
           kind: "engineering",
           project,
           title: "Working tree has uncommitted changes",
@@ -166,6 +169,7 @@ const collectEngineering = async (
     if (!hasCiWorkflow) {
       findings.push(
         baseFinding({
+          type: "operations",
           kind: "operational",
           project,
           title: "No repository CI workflow was detected",
@@ -229,6 +233,7 @@ const collectSecurity = async (
       const relative = NodePath.relative(project.workspaceRoot, file);
       findings.push(
         baseFinding({
+          type: "security",
           kind: "security",
           project,
           title: "Possible credential in repository content",
@@ -258,6 +263,7 @@ const collectSecurity = async (
       if (!hasLockfile) {
         findings.push(
           baseFinding({
+            type: "security",
             kind: "security",
             project,
             title: "JavaScript manifest has no lockfile",
@@ -335,6 +341,7 @@ const collectResearch = async (
       .slice(0, 50)
       .map((entry) =>
         baseFinding({
+          type: "research",
           kind: "research",
           project,
           title: String(entry.title ?? "Research watch item").slice(0, 300),
@@ -410,6 +417,26 @@ export const collectAgentDashboardData = async (
       findings.push(...result.findings);
       states.push(result.state);
     }
+  }
+
+  const unavailableResearchStates = states.filter(
+    (state) => state.kind === "research" && state.status === "unavailable",
+  );
+  if (unavailableResearchStates.length > 1) {
+    const retained = states.filter(
+      (state) => !(state.kind === "research" && state.status === "unavailable"),
+    );
+    retained.push(
+      collectorState({
+        kind: "research",
+        project: null,
+        status: "unavailable",
+        source: "local-research-watchlist",
+        message: "No local research watchlist is configured.",
+        observedAt,
+      }),
+    );
+    states.splice(0, states.length, ...retained);
   }
 
   if (stableProjects.length === 0) {

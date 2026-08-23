@@ -147,13 +147,23 @@ export const parseReviewMetadata = (text: string): ParsedReviewMetadata => {
     const findings = rawFindings
       .map(asObject)
       .filter((finding): finding is JsonObject => finding !== null)
-      .slice(0, 3)
+      .slice(0, 6)
       .map((finding) => {
         const title = stringValue(finding.title) ?? "";
         const summary = stringValue(finding.summary) ?? title;
         const markdown = stringValue(finding.markdown);
+        const rawType = stringValue(finding.type);
+        const type =
+          rawType === "bug" ||
+          rawType === "security" ||
+          rawType === "research" ||
+          rawType === "improvement" ||
+          rawType === "operations"
+            ? rawType
+            : "review";
         return {
           title,
+          type,
           category: stringValue(finding.category) ?? "insight",
           summary,
           impact: stringValue(finding.impact) ?? "",
@@ -409,6 +419,23 @@ const make = Effect.gen(function* () {
 
   const listRuns = Ref.get(runsRef);
 
+  const hideReviewSession = (
+    run: AgentDashboardAutomationRun,
+    review: AgentDashboardReviewRunResult,
+  ) =>
+    runner.hideReviewThread
+      ? runner.hideReviewThread(review.threadId).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("T3 could not hide a completed repository review session", {
+              runId: run.id,
+              threadId: review.threadId,
+              cause,
+            }),
+          ),
+          Effect.ignore,
+        )
+      : Effect.void;
+
   const monitorAndIngest = (
     run: AgentDashboardAutomationRun,
     review: AgentDashboardReviewRunResult,
@@ -529,6 +556,7 @@ const make = Effect.gen(function* () {
         updatedAt: completedAt,
         completedAt,
       };
+      yield* hideReviewSession(run, review);
       return yield* persist(terminal).pipe(Effect.orElseSucceed(() => terminal));
     }).pipe(
       Effect.catchCause((cause) =>
@@ -549,6 +577,7 @@ const make = Effect.gen(function* () {
             threadId: review.threadId,
             cause,
           });
+          yield* hideReviewSession(run, review);
           return yield* persist(failed).pipe(Effect.orElseSucceed(() => failed));
         }),
       ),

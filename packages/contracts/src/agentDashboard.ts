@@ -342,6 +342,17 @@ export type AgentDashboardFindingSeverity = typeof AgentDashboardFindingSeverity
 export const AgentDashboardFindingConfidence = Schema.Literals(["low", "medium", "high"]);
 export type AgentDashboardFindingConfidence = typeof AgentDashboardFindingConfidence.Type;
 
+/** Stable product taxonomy shared by producers, persistence, filters, and automation. */
+export const AgentDashboardFindingType = Schema.Literals([
+  "bug",
+  "security",
+  "research",
+  "improvement",
+  "review",
+  "operations",
+]);
+export type AgentDashboardFindingType = typeof AgentDashboardFindingType.Type;
+
 export const AgentDashboardFindingKind = Schema.Literals([
   "review",
   "research",
@@ -366,7 +377,8 @@ export type AgentDashboardProvenance = typeof AgentDashboardProvenance.Type;
 /**
  * Reversible lifecycle for a finding. `reopen` is a transition back to `open`,
  * not a durable state. Existing review-suggestion statuses (pending/accepted/
- * dismissed/blocked) map onto open/acknowledged/dismissed/blocked.
+ * dismissed/blocked) map onto open/acknowledged/dismissed/blocked. `done`
+ * records completed work and remains reversible through `reopen`.
  */
 export const AgentDashboardDispositionState = Schema.Literals([
   "open",
@@ -374,6 +386,7 @@ export const AgentDashboardDispositionState = Schema.Literals([
   "acknowledged",
   "snoozed",
   "assigned",
+  "done",
   "dismissed",
   "blocked",
 ]);
@@ -393,6 +406,7 @@ export const AgentDashboardDispositionAction = Schema.Literals([
   "acknowledge",
   "snooze",
   "assign",
+  "complete",
   "dismiss",
   "block",
   "reopen",
@@ -408,6 +422,34 @@ export const AgentDashboardDispositionActionInput = Schema.Struct({
 });
 export type AgentDashboardDispositionActionInput = typeof AgentDashboardDispositionActionInput.Type;
 
+export const AgentDashboardFindingReadiness = Schema.Literals(["needs-research", "ready"]);
+export type AgentDashboardFindingReadiness = typeof AgentDashboardFindingReadiness.Type;
+
+export const AgentDashboardFindingTarget = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  symbol: Schema.NullOr(TrimmedNonEmptyString),
+  evidence: TrimmedNonEmptyString,
+});
+export type AgentDashboardFindingTarget = typeof AgentDashboardFindingTarget.Type;
+
+export const AgentDashboardFindingSource = Schema.Struct({
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  kind: TrimmedNonEmptyString,
+});
+export type AgentDashboardFindingSource = typeof AgentDashboardFindingSource.Type;
+
+/** Concrete repository adoption plan required before research can start implementation work. */
+export const AgentDashboardFindingActionability = Schema.Struct({
+  readiness: AgentDashboardFindingReadiness,
+  proposal: TrimmedNonEmptyString,
+  expectedValue: TrimmedNonEmptyString,
+  targets: Schema.Array(AgentDashboardFindingTarget),
+  validationPlan: Schema.Array(TrimmedNonEmptyString),
+  sources: Schema.Array(AgentDashboardFindingSource),
+});
+export type AgentDashboardFindingActionability = typeof AgentDashboardFindingActionability.Type;
+
 /**
  * Canonical finding. `fingerprint` is the stable cross-run identity and MUST
  * NOT incorporate jobId or runId so the same issue collapses across retries.
@@ -415,6 +457,7 @@ export type AgentDashboardDispositionActionInput = typeof AgentDashboardDisposit
 export const AgentDashboardFinding = Schema.Struct({
   id: TrimmedNonEmptyString,
   fingerprint: TrimmedNonEmptyString,
+  type: AgentDashboardFindingType.pipe(Schema.withDecodingDefault(Effect.succeed("review"))),
   kind: AgentDashboardFindingKind,
   title: TrimmedNonEmptyString,
   summary: TrimmedNonEmptyString,
@@ -433,6 +476,9 @@ export const AgentDashboardFinding = Schema.Struct({
   lastRunId: Schema.NullOr(TrimmedNonEmptyString),
   thread: Schema.NullOr(AgentDashboardThreadRef),
   externalIssueUrl: Schema.NullOr(TrimmedNonEmptyString),
+  actionability: Schema.NullOr(AgentDashboardFindingActionability).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type AgentDashboardFinding = typeof AgentDashboardFinding.Type;
 
@@ -484,6 +530,7 @@ export type AgentDashboardRepositoryCoverage = typeof AgentDashboardRepositoryCo
 
 export const AgentDashboardExternalActionKind = Schema.Literals([
   "create-github-issue",
+  "merge-pull-request",
   "open-thread",
   "run-investigation",
   "assign",
@@ -546,6 +593,8 @@ export const AgentDashboardPortfolioHealth = Schema.Struct({
   repositoryCount: NonNegativeInt,
   healthyRepositoryCount: NonNegativeInt,
   attentionRepositoryCount: NonNegativeInt,
+  /** Repositories that have never completed a successful review cycle. */
+  unassessedRepositoryCount: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   staleRepositoryCount: NonNegativeInt,
   openFindingCount: NonNegativeInt,
   criticalFindingCount: NonNegativeInt,
@@ -619,7 +668,7 @@ export type AgentDashboardSuggestionStatus = typeof AgentDashboardSuggestionStat
 export const AgentDashboardSuggestionAction = Schema.Literals(["open-repository", "open-thread"]);
 export type AgentDashboardSuggestionAction = typeof AgentDashboardSuggestionAction.Type;
 
-/** Runtime status for the T3-owned recurring repository review. */
+/** Runtime status for the consolidated T3 findings portfolio cycle. */
 export const AgentDashboardReviewScheduleStatus = Schema.Literals([
   "idle",
   "running",
@@ -640,6 +689,19 @@ export const AgentDashboardReviewSchedule = Schema.Struct({
   lastTarget: Schema.NullOr(TrimmedNonEmptyString),
   heartbeatAt: IsoDateTime,
   runCount: NonNegativeInt,
+  /** Finding classes the most recent portfolio cycle attempted to cover. */
+  lastCoveredTypes: Schema.Array(AgentDashboardFindingType).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Finding classes successfully completed by the most recent portfolio cycle. */
+  lastSuccessfulTypes: Schema.Array(AgentDashboardFindingType).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  lastFindingCount: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  lastReviewRunId: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  lastUnavailableCollectorCount: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
 });
 export type AgentDashboardReviewSchedule = typeof AgentDashboardReviewSchedule.Type;
 
@@ -696,8 +758,10 @@ export const AgentDashboardSnapshot = Schema.Struct({
   reviewSuggestions: Schema.Array(AgentDashboardReviewSuggestion).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  /** Status of the T3-owned two-hour repository review scheduler. */
+  /** Deprecated compatibility alias for `findingsSchedule`. */
   reviewSchedule: Schema.optionalKey(AgentDashboardReviewSchedule),
+  /** Consolidated portfolio schedule. `reviewSchedule` remains as a compatibility alias. */
+  findingsSchedule: Schema.optionalKey(AgentDashboardReviewSchedule),
   /** Status of the T3-owned recurring local security collector. */
   securitySchedule: Schema.optionalKey(AgentDashboardSecuritySchedule),
   /** Canonical automation run history. Absent on older servers → empty. */
@@ -756,6 +820,16 @@ export const AgentDashboardCollectInput = Schema.Struct({
   projectId: Schema.optional(Schema.NullOr(ProjectId)),
 });
 export type AgentDashboardCollectInput = typeof AgentDashboardCollectInput.Type;
+
+/** A user-managed research source collected for one repository. */
+export const AgentDashboardResearchWatchItemInput = Schema.Struct({
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  summary: TrimmedNonEmptyString,
+  url: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  category: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type AgentDashboardResearchWatchItemInput = typeof AgentDashboardResearchWatchItemInput.Type;
 
 export class AgentDashboardError extends Schema.TaggedErrorClass<AgentDashboardError>()(
   "AgentDashboardError",

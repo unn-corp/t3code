@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 export const SourceControlProviderKind = Schema.Literals([
@@ -35,6 +35,91 @@ export const ChangeRequest = Schema.Struct({
   headRepositoryOwnerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type ChangeRequest = typeof ChangeRequest.Type;
+
+export const SourceControlPullRequestCheckStatus = Schema.Literals([
+  "passing",
+  "pending",
+  "failing",
+  "unknown",
+]);
+export type SourceControlPullRequestCheckStatus = typeof SourceControlPullRequestCheckStatus.Type;
+
+export const SourceControlPullRequestReviewDecision = Schema.Literals([
+  "approved",
+  "changes-requested",
+  "review-required",
+  "none",
+]);
+export type SourceControlPullRequestReviewDecision =
+  typeof SourceControlPullRequestReviewDecision.Type;
+
+export const SourceControlPullRequestMergeState = Schema.Literals([
+  "ready",
+  "blocked",
+  "conflicting",
+  "unknown",
+]);
+export type SourceControlPullRequestMergeState = typeof SourceControlPullRequestMergeState.Type;
+
+const GitHubHeadOid = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(40),
+  Schema.isPattern(/^[0-9a-f]{40}$/iu),
+);
+
+/** Review and merge signals for an open pull request in a registered project. */
+export const SourceControlProjectPullRequest = Schema.Struct({
+  number: PositiveInt,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  baseRefName: TrimmedNonEmptyString,
+  headRefName: TrimmedNonEmptyString,
+  headRefOid: GitHubHeadOid,
+  authorLogin: Schema.NullOr(TrimmedNonEmptyString),
+  isDraft: Schema.Boolean,
+  mergeState: SourceControlPullRequestMergeState,
+  reviewDecision: SourceControlPullRequestReviewDecision,
+  checkStatus: SourceControlPullRequestCheckStatus,
+  canMerge: Schema.Boolean,
+  mergeBlockedReason: Schema.NullOr(TrimmedNonEmptyString),
+  updatedAt: IsoDateTime,
+});
+export type SourceControlProjectPullRequest = typeof SourceControlProjectPullRequest.Type;
+
+export const SourceControlProjectPullRequestsInput = Schema.Struct({
+  projectId: ProjectId,
+});
+export type SourceControlProjectPullRequestsInput =
+  typeof SourceControlProjectPullRequestsInput.Type;
+
+export const SourceControlProjectPullRequestsResult = Schema.Struct({
+  projectId: ProjectId,
+  provider: Schema.Literal("github"),
+  repository: TrimmedNonEmptyString,
+  pullRequests: Schema.Array(SourceControlProjectPullRequest),
+});
+export type SourceControlProjectPullRequestsResult =
+  typeof SourceControlProjectPullRequestsResult.Type;
+
+export const SourceControlPullRequestMergeMethod = Schema.Literals(["squash", "merge", "rebase"]);
+export type SourceControlPullRequestMergeMethod = typeof SourceControlPullRequestMergeMethod.Type;
+
+export const SourceControlMergeProjectPullRequestInput = Schema.Struct({
+  projectId: ProjectId,
+  number: PositiveInt,
+  expectedHeadOid: GitHubHeadOid,
+  method: SourceControlPullRequestMergeMethod,
+});
+export type SourceControlMergeProjectPullRequestInput =
+  typeof SourceControlMergeProjectPullRequestInput.Type;
+
+export const SourceControlMergeProjectPullRequestResult = Schema.Struct({
+  projectId: ProjectId,
+  number: PositiveInt,
+  method: SourceControlPullRequestMergeMethod,
+  submitted: Schema.Boolean,
+});
+export type SourceControlMergeProjectPullRequestResult =
+  typeof SourceControlMergeProjectPullRequestResult.Type;
 
 export const SourceControlRepositoryCloneUrls = Schema.Struct({
   nameWithOwner: TrimmedNonEmptyString,

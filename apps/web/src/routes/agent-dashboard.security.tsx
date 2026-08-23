@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
-
-import { AgentSecurity } from "../components/AgentSecurity";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/agent-dashboard/security")({
-  component: AgentSecurity,
+  beforeLoad: () => {
+    throw redirect({ to: "/agent-dashboard/findings", replace: true });
+  },
 });

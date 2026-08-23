@@ -7,11 +7,54 @@ import {
   AgentDashboardMutationResult,
   AgentDashboardSnapshot,
 } from "./agentDashboard.ts";
+import {
+  SourceControlMergeProjectPullRequestInput,
+  SourceControlProjectPullRequestsResult,
+} from "./sourceControl.ts";
 
 const decodeSnapshot = Schema.decodeUnknownSync(AgentDashboardSnapshot);
 const decodeMutationResult = Schema.decodeUnknownSync(AgentDashboardMutationResult);
 const decodeFinding = Schema.decodeUnknownSync(AgentDashboardFinding);
 const decodeDispositionAction = Schema.decodeUnknownSync(AgentDashboardDispositionActionInput);
+const decodeProjectPullRequests = Schema.decodeUnknownSync(SourceControlProjectPullRequestsResult);
+const decodePullRequestMerge = Schema.decodeUnknownSync(SourceControlMergeProjectPullRequestInput);
+
+describe("Agent Dashboard pull requests", () => {
+  it("decodes project-scoped review and merge signals", () => {
+    const result = decodeProjectPullRequests({
+      projectId: "project-1",
+      provider: "github",
+      repository: "pingdotgg/t3code",
+      pullRequests: [
+        {
+          number: 42,
+          title: "Add project PR workspace",
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          baseRefName: "main",
+          headRefName: "feature/pr-workspace",
+          headRefOid: "abcdef123456abcdef123456abcdef123456abcd",
+          authorLogin: "octocat",
+          isDraft: false,
+          mergeState: "ready",
+          reviewDecision: "approved",
+          checkStatus: "passing",
+          canMerge: true,
+          mergeBlockedReason: null,
+          updatedAt: "2026-08-22T12:00:00.000Z",
+        },
+      ],
+    });
+    expect(result.pullRequests[0]?.canMerge).toBe(true);
+
+    const merge = decodePullRequestMerge({
+      projectId: "project-1",
+      number: 42,
+      expectedHeadOid: "abcdef123456abcdef123456abcdef123456abcd",
+      method: "squash",
+    });
+    expect(merge.expectedHeadOid).toBe("abcdef123456abcdef123456abcdef123456abcd");
+  });
+});
 
 describe("AgentDashboardSnapshot", () => {
   it("decodes repository status, worktrees, and agent associations", () => {
@@ -283,6 +326,26 @@ describe("AgentDashboardSnapshot", () => {
           lastRunId: "run-1",
           thread: { projectId: "project-1", threadId: "thread-review-1" },
           externalIssueUrl: null,
+          actionability: {
+            readiness: "ready",
+            proposal: "Add focused error-path coverage.",
+            expectedValue: "Prevent regressions in failed requests.",
+            targets: [
+              {
+                path: "src/foo.ts",
+                symbol: "handleError",
+                evidence: "The error branch has no assertion.",
+              },
+            ],
+            validationPlan: ["Run the focused foo unit tests."],
+            sources: [
+              {
+                title: "Upstream error-handling guidance",
+                url: "https://example.com/error-handling",
+                kind: "documentation",
+              },
+            ],
+          },
         },
       ],
       repositoryPolicies: [
@@ -341,7 +404,10 @@ describe("AgentDashboardSnapshot", () => {
     expect(snapshot.findings[0]?.fingerprint).not.toContain("job-abc");
     expect(snapshot.findings[0]?.fingerprint).not.toContain("run-1");
     expect(snapshot.findings[0]?.disposition.state).toBe("open");
+    expect(snapshot.findings[0]?.type).toBe("review");
     expect(snapshot.findings[0]?.provenance.collectedAt).toBe("2026-08-10T11:59:30.000Z");
+    expect(snapshot.findings[0]?.actionability?.readiness).toBe("ready");
+    expect(snapshot.findings[0]?.actionability?.targets[0]?.path).toBe("src/foo.ts");
     expect(snapshot.repositoryPolicies[0]?.cadenceMinutes).toBe(120);
     expect(snapshot.repositoryCoverage[0]?.status).toBe("due");
     expect(snapshot.externalActions[0]?.kind).toBe("create-github-issue");
@@ -497,6 +563,13 @@ describe("AgentDashboardFinding fingerprint", () => {
 
 describe("AgentDashboardDispositionActionInput", () => {
   it("decodes reversible disposition actions", () => {
+    expect(
+      decodeDispositionAction({
+        id: "finding-1",
+        action: "complete",
+      }),
+    ).toMatchObject({ action: "complete" });
+
     expect(
       decodeDispositionAction({
         id: "finding-1",

@@ -18,6 +18,7 @@ import type {
   AgentDashboardFindingConfidence,
   AgentDashboardFindingKind,
   AgentDashboardFindingSeverity,
+  AgentDashboardFindingType,
   AgentDashboardFeedAction,
   AgentDashboardFeedCard,
   AgentDashboardFeedOrigin,
@@ -25,6 +26,7 @@ import type {
   AgentDashboardLinkFindingThreadInput,
   AgentDashboardRepositoryCoverage,
   AgentDashboardRepositoryPolicy,
+  AgentDashboardResearchWatchItemInput,
   AgentDashboardResearchFinding,
   AgentDashboardReviewSuggestion,
 } from "@t3tools/contracts";
@@ -41,6 +43,7 @@ import {
 import * as ServerConfig from "../config.ts";
 
 const MAX_FEED_CARDS = 200;
+const AGENT_FEED_RETENTION_SECONDS = 2 * 24 * 60 * 60;
 const MAX_RESEARCH_FINDINGS = 500;
 const MAX_TEXT = 8_000;
 const MAX_FEED_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -74,6 +77,7 @@ export interface AgentDashboardFeedImage {
 
 export interface AgentDashboardReviewFindingInput {
   readonly title: string;
+  readonly type: AgentDashboardFindingType;
   readonly category: string;
   readonly summary: string;
   readonly impact: string;
@@ -99,6 +103,7 @@ export interface AgentDashboardReviewIngestInput {
 }
 
 export interface AgentDashboardCanonicalFindingInput {
+  readonly type?: AgentDashboardFindingType | undefined;
   readonly kind: AgentDashboardFindingKind;
   readonly title: string;
   readonly summary: string;
@@ -114,7 +119,51 @@ export interface AgentDashboardCanonicalFindingInput {
   readonly runId?: string | null | undefined;
   readonly threadId?: string | null | undefined;
   readonly externalIssueUrl?: string | null | undefined;
+  readonly actionability?: AgentDashboardFinding["actionability"] | undefined;
 }
+
+export const buildCanonicalGithubIssueDraft = (
+  finding: AgentDashboardFinding,
+): { readonly title: string; readonly body: string } => {
+  const actionability = finding.actionability;
+  const sections = [
+    "## Finding",
+    finding.summary,
+    ...(finding.evidence.length > 0
+      ? ["", "## Evidence", ...finding.evidence.map((item) => `- ${item}`)]
+      : []),
+    ...(actionability
+      ? [
+          "",
+          "## Proposed work",
+          actionability.proposal,
+          "",
+          "## Expected value",
+          actionability.expectedValue,
+          ...(actionability.targets.length > 0
+            ? [
+                "",
+                "## Code targets",
+                ...actionability.targets.map(
+                  (target) =>
+                    `- \`${target.path}\`${target.symbol ? ` (${target.symbol})` : ""}: ${target.evidence}`,
+                ),
+              ]
+            : []),
+          ...(actionability.validationPlan.length > 0
+            ? ["", "## Validation", ...actionability.validationPlan.map((item) => `- ${item}`)]
+            : []),
+        ]
+      : []),
+    "",
+    "## Source",
+    `${finding.provenance.source}${finding.provenance.sourceAt ? ` (${finding.provenance.sourceAt})` : ""}`,
+    ...(actionability?.sources.length
+      ? actionability.sources.map((source) => `- [${source.title}](${source.url}) (${source.kind})`)
+      : []),
+  ];
+  return { title: finding.title, body: sections.join("\n") };
+};
 
 export type AgentDashboardStoreMutationOutcome = "applied" | "noop" | "not-found";
 
@@ -132,6 +181,9 @@ export interface AgentDashboardStoreService {
     ReadonlyArray<AgentDashboardResearchFinding>,
     AgentDashboardStoreError
   >;
+  readonly upsertResearchWatchItem: (
+    input: AgentDashboardResearchWatchItemInput,
+  ) => Effect.Effect<boolean, AgentDashboardStoreError>;
   readonly readReviewSuggestions: Effect.Effect<
     ReadonlyArray<AgentDashboardReviewSuggestion>,
     AgentDashboardStoreError
@@ -143,7 +195,10 @@ export interface AgentDashboardStoreService {
     id: string,
     action: "dismiss" | "block",
   ) => Effect.Effect<boolean, AgentDashboardStoreError>;
-  readonly createGithubIssue: (id: string) => Effect.Effect<boolean, AgentDashboardStoreError>;
+  readonly createGithubIssue: (
+    id: string,
+    githubRepository?: string | null,
+  ) => Effect.Effect<boolean, AgentDashboardStoreError>;
   readonly readFindings: Effect.Effect<
     ReadonlyArray<AgentDashboardFinding>,
     AgentDashboardStoreError
@@ -578,6 +633,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
   const feedLegacyCursorPath = NodePath.join(directory, "feed.legacy-cursor");
   const assetsDir = NodePath.join(directory, "assets");
   const researchPath = NodePath.join(directory, "research_findings.jsonl");
+  const researchWatchlistPath = NodePath.join(directory, "research-watchlist.json");
   const suggestionsPath = NodePath.join(directory, "suggestions.json");
   const findingsPath = NodePath.join(directory, "findings.json");
   const policiesPath = NodePath.join(directory, "repository-policies.json");
@@ -769,6 +825,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       await NodeFSP.mkdir(assetsDir, { recursive: true });
       // Continuous, idempotent legacy ingestion replaces the one-shot empty-feed copy.
       await ingestLegacyFeed();
+      await pruneExpiredFeed();
       await ensureOwnedFeedImages();
       for (const [target, legacy] of [
         [researchPath, legacyResearchPath],
@@ -802,6 +859,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         // Continuous legacy ingestion: no-ops (no state writes) when the legacy
         // feed signature is unchanged, so repeated pure reads keep stable mtimes.
         await ingestLegacyFeed();
+        await pruneExpiredFeed();
         return await task();
       },
       catch: (cause) => new AgentDashboardStoreError({ operation, cause }),
@@ -834,9 +892,65 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     );
   };
 
+  const findingType = (
+    input: Pick<AgentDashboardCanonicalFindingInput, "category" | "kind" | "type">,
+  ): AgentDashboardFindingType => {
+    if (input.type) return input.type;
+    const category = input.category?.trim().toLocaleLowerCase() ?? "";
+    if (input.kind === "security") return "security";
+    if (input.kind === "research") return "research";
+    if (["bug", "defect", "error", "regression"].includes(category)) return "bug";
+    if (input.kind === "operational") return "operations";
+    if (
+      input.kind === "engineering" ||
+      ["feature", "gap", "improvement", "performance", "quality", "maintainability"].includes(
+        category,
+      )
+    ) {
+      return "improvement";
+    }
+    return "review";
+  };
+
+  const persistedFindingType = (value: unknown): AgentDashboardFindingType | undefined => {
+    switch (value) {
+      case "bug":
+      case "security":
+      case "research":
+      case "improvement":
+      case "review":
+      case "operations":
+        return value;
+      default:
+        return undefined;
+    }
+  };
+
+  const persistedFindingKind = (value: unknown): AgentDashboardFindingKind => {
+    switch (value) {
+      case "review":
+      case "research":
+      case "security":
+      case "engineering":
+      case "operational":
+        return value;
+      default:
+        return "review";
+    }
+  };
+
   const decodeFinding = (value: unknown): AgentDashboardFinding | null => {
     try {
-      return Schema.decodeUnknownSync(AgentDashboardFindingSchema)(value);
+      const raw = asObject(value);
+      if (!raw) return null;
+      return Schema.decodeUnknownSync(AgentDashboardFindingSchema)({
+        ...raw,
+        type: findingType({
+          type: persistedFindingType(raw.type),
+          kind: persistedFindingKind(raw.kind),
+          category: text(raw.category, 80),
+        }),
+      });
     } catch {
       return null;
     }
@@ -929,6 +1043,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       const next: AgentDashboardFinding = {
         id,
         fingerprint,
+        type: findingType(input),
         kind: input.kind,
         title,
         summary: input.summary.trim().slice(0, 4_000) || title,
@@ -962,6 +1077,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
             }
           : (previous?.thread ?? null),
         externalIssueUrl: input.externalIssueUrl?.trim() || previous?.externalIssueUrl || null,
+        actionability: input.actionability ?? previous?.actionability ?? null,
       };
       byFingerprint.set(fingerprint, next);
       changed += 1;
@@ -1011,9 +1127,48 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
   };
 
   const readFeedRaw = async (): Promise<Array<JsonObject>> => jsonLines(feedPath);
+
+  const feedTimestampSeconds = (card: JsonObject, fallback: number): number => {
+    const value = card.ts;
+    return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  };
+
+  const removeDroppedFeedAssets = async (
+    previous: ReadonlyArray<JsonObject>,
+    kept: ReadonlyArray<JsonObject>,
+  ): Promise<void> => {
+    const keptImages = new Set(
+      kept
+        .map((card) => text(card.image_file, 2_000))
+        .filter((path): path is string => path !== null),
+    );
+    for (const card of previous) {
+      const imagePath = text(card.image_file, 2_000);
+      if (!imagePath || keptImages.has(imagePath)) continue;
+      const owned = await resolveOwnedImagePath(imagePath);
+      if (owned) await NodeFSP.rm(owned, { force: true });
+    }
+  };
+
   const persistFeed = async (cards: ReadonlyArray<JsonObject>): Promise<void> => {
-    const kept = cards.slice(-MAX_FEED_CARDS);
-    await writeAtomic(feedPath, `${kept.map((card) => JSON.stringify(card)).join("\n")}\n`);
+    const nowSeconds = Date.now() / 1000;
+    const cutoff = nowSeconds - AGENT_FEED_RETENTION_SECONDS;
+    const kept = cards
+      .filter((card) => feedTimestampSeconds(card, nowSeconds) >= cutoff)
+      .slice(-MAX_FEED_CARDS);
+    const previous = await readFeedRaw();
+    await removeDroppedFeedAssets(previous, kept);
+    await writeAtomic(
+      feedPath,
+      kept.length === 0 ? "" : `${kept.map((card) => JSON.stringify(card)).join("\n")}\n`,
+    );
+  };
+
+  const pruneExpiredFeed = async (): Promise<void> => {
+    const cards = await readFeedRaw();
+    const cutoff = Date.now() / 1000 - AGENT_FEED_RETENTION_SECONDS;
+    if (cards.every((card) => feedTimestampSeconds(card, cutoff) >= cutoff)) return;
+    await persistFeed(cards);
   };
 
   const readFeed = run("read feed", async () => {
@@ -1074,6 +1229,41 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         throw cause;
       }
     });
+
+  const upsertResearchWatchItem = (input: AgentDashboardResearchWatchItemInput) =>
+    run("save research watch item", () =>
+      withMutation(async () => {
+        const items = await readDocumentArray(researchWatchlistPath, "items");
+        const projectId = String(input.projectId);
+        const title = String(input.title).trim().slice(0, 300);
+        const summary = String(input.summary).trim().slice(0, 4_000);
+        const key = `${projectId}:${title.toLocaleLowerCase()}`;
+        const previousIndex = items.findIndex((item) => {
+          const repository = text(item.projectId ?? item.repository, 200);
+          const itemTitle = text(item.title, 300);
+          return repository !== null && itemTitle !== null
+            ? `${repository}:${itemTitle.toLocaleLowerCase()}` === key
+            : false;
+        });
+        const previous = previousIndex >= 0 ? items[previousIndex] : null;
+        const next: JsonObject = {
+          ...previous,
+          projectId,
+          title,
+          summary,
+          url: input.url?.trim() || null,
+          category: input.category?.trim() || "watchlist",
+          updatedAt: new Date().toISOString(),
+        };
+        const changed = previous === null || JSON.stringify(previous) !== JSON.stringify(next);
+        if (!changed) return false;
+        const updated = [...items];
+        if (previousIndex >= 0) updated[previousIndex] = next;
+        else updated.push(next);
+        await writeDocumentArray(researchWatchlistPath, "items", updated);
+        return true;
+      }),
+    );
 
   const readResearchFindings = run("read research findings", async () => {
     const target = await jsonLines(researchPath);
@@ -1143,10 +1333,11 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         let changed = 0;
         const canonicalInputs: Array<AgentDashboardCanonicalFindingInput> = [];
         const migratedDispositions = new Map<string, "acknowledged" | "dismissed" | "blocked">();
-        for (const finding of input.findings.slice(0, 3)) {
+        for (const finding of input.findings.slice(0, 6)) {
           const title = finding.title.trim().slice(0, 300);
           if (!title) continue;
           const canonicalInput: AgentDashboardCanonicalFindingInput = {
+            type: finding.type,
             kind: "review",
             title,
             summary: finding.summary,
@@ -1284,30 +1475,46 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     await writeDocumentArray(externalActionsPath, "actions", next);
   };
 
-  const createGithubIssue = (id: string) =>
+  const createGithubIssue = (id: string, resolvedGithubRepository: string | null = null) =>
     run("create GitHub issue", () =>
       withMutation(async () => {
-        const target = await readReviewSuggestionRaw();
-        const record = target.find((candidate) => text(candidate.id, 100) === id);
-        if (!record || record.source !== "code_review") {
+        const reviewSuggestions = await readReviewSuggestionRaw();
+        const record = reviewSuggestions.find((candidate) => text(candidate.id, 100) === id);
+        const canonicalFindings = await readCanonicalFindingsRaw();
+        const canonical = canonicalFindings.find(
+          (finding) => finding.id === id || finding.id === id.replace(/^t3-review-/, "finding:"),
+        );
+        if ((!record || record.source !== "code_review") && !canonical) {
           throw new Error("Suggestion not found.");
         }
-        if (String(record.status ?? "pending") !== "pending") {
+        if (record && String(record.status ?? "pending") !== "pending") {
           throw new Error("Suggestion is no longer pending.");
         }
+        if (
+          !record &&
+          canonical &&
+          (canonical.disposition.state === "done" ||
+            canonical.disposition.state === "dismissed" ||
+            canonical.disposition.state === "blocked")
+        ) {
+          throw new Error("Finding is no longer actionable.");
+        }
 
-        const issue = asObject(record.github_issue) ?? {};
-        const existingUrl = text(issue.url, 2_000);
+        const issue = asObject(record?.github_issue) ?? {};
+        const existingUrl = text(issue.url, 2_000) ?? canonical?.externalIssueUrl ?? null;
         if (existingUrl) return true;
 
-        const repository = asObject(record.repository) ?? {};
-        const githubRepository = text(repository.github_repo, 250);
+        const repository = asObject(record?.repository) ?? {};
+        const githubRepository = text(repository.github_repo, 250) ?? resolvedGithubRepository;
         if (!githubRepository || !GITHUB_REPOSITORY_PATTERN.test(githubRepository)) {
           throw new Error("This finding does not have a GitHub repository configured.");
         }
 
-        const title = text(issue.title, 300) ?? text(record.title, 300);
-        const body = text(issue.body, 16_000) ?? text(record.report, 16_000);
+        const canonicalDraft = canonical ? buildCanonicalGithubIssueDraft(canonical) : null;
+        const title =
+          text(issue.title, 300) ?? text(record?.title, 300) ?? canonicalDraft?.title ?? null;
+        const body =
+          text(issue.body, 16_000) ?? text(record?.report, 16_000) ?? canonicalDraft?.body ?? null;
         if (!title || !body) throw new Error("This finding does not contain an issue draft.");
 
         const result = await runExecutable(
@@ -1345,21 +1552,23 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           throw new Error("GitHub returned an invalid issue response.");
         }
 
-        record.github_issue = {
-          ...issue,
-          title,
-          body,
-          url,
-          number,
-        };
-        await writeAtomic(
-          suggestionsPath,
-          JSON.stringify({ suggestions: target, updated_at: new Date().toISOString() }, null, 2),
-        );
-        const canonicalFindings = await readCanonicalFindingsRaw();
-        const canonical = canonicalFindings.find(
-          (finding) => finding.id === id || finding.id === id.replace(/^t3-review-/, "finding:"),
-        );
+        if (record) {
+          record.github_issue = {
+            ...issue,
+            title,
+            body,
+            url,
+            number,
+          };
+          await writeAtomic(
+            suggestionsPath,
+            JSON.stringify(
+              { suggestions: reviewSuggestions, updated_at: new Date().toISOString() },
+              null,
+              2,
+            ),
+          );
+        }
         if (canonical) {
           await writeDocumentArray(
             findingsPath,
@@ -1415,6 +1624,8 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
               return "snoozed" as const;
             case "assign":
               return "assigned" as const;
+            case "complete":
+              return "done" as const;
             case "dismiss":
               return "dismissed" as const;
             case "block":
@@ -1672,6 +1883,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     clearFeed,
     readFeedImage,
     readResearchFindings,
+    upsertResearchWatchItem,
     readReviewSuggestions,
     appendReviewSuggestions,
     reviewSuggestion,

@@ -2,6 +2,7 @@
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -45,6 +46,9 @@ export const REVIEW_MODEL_SELECTION: ModelSelection = {
 };
 
 export const REVIEW_INTERVAL_MINUTES = 120;
+const REVIEW_SNOOZE_MINUTES = 31;
+const REVIEW_SESSION_POLL_INTERVAL = Duration.millis(250);
+const REVIEW_SESSION_POLL_ATTEMPTS = 120;
 
 export interface AgentDashboardReviewRunResult {
   readonly projectId: ProjectId;
@@ -104,12 +108,14 @@ const REVIEW_PROMPT = (project: OrchestrationProjectShell): string =>
     "Work only in the selected main checkout. Do not create, select, or depend on a linked Git worktree.",
     "First inspect and follow its top-level AGENTS.md, CLAUDE.md, .cursorrules, and README.md, then inspect the relevant source, tests, configuration, and recent history.",
     "Do not modify files, create files, commit, install dependencies, run destructive commands, or use network access.",
-    "Look for high-signal findings in three categories: a confirmed bug with file and line evidence, a logically valuable feature expansion, or a bigger-picture architectural or product gap.",
+    "Evaluate every finding class: confirmed bugs, security weaknesses, repository-relevant research opportunities, implementation improvements, operational risks, and general review observations.",
+    "Classify each result with exactly one type: bug, security, research, improvement, operations, or review.",
+    "Research findings must name the repository decision to investigate, why it matters here, concrete code targets, a validation plan, and authoritative source material to consult. Security findings must describe the attack or failure path and remediation, not merely recommend a generic audit.",
     "Separate confirmed findings from hypotheses. Check the repository's recent review context in this run before deciding whether a finding is materially distinct; do not restate the same title and evidence twice.",
     "",
     "Emit one machine-readable line first, exactly in this shape, with valid single-line JSON:",
-    'T3_REVIEW_METADATA: {"findings":[{"title":"...","category":"bug|feature|gap","summary":"...","impact":"...","confidence":"high|medium|low","evidence":["path:line and concrete evidence"],"next_step":"...","github_issue_title":"...","github_issue_body":"complete preformatted Markdown issue body","markdown":"optional Markdown finding"}]}',
-    "Include at most three findings. Escape newlines inside github_issue_body and keep every JSON value on that one line.",
+    'T3_REVIEW_METADATA: {"findings":[{"title":"...","type":"bug|security|research|improvement|operations|review","category":"specific subsystem or concern","summary":"...","impact":"...","confidence":"high|medium|low","evidence":["path:line and concrete evidence"],"next_step":"...","github_issue_title":"...","github_issue_body":"complete preformatted Markdown issue body","markdown":"optional Markdown finding"}]}',
+    "Include at most six findings. Do not force one finding per type when evidence does not support it. Escape newlines inside github_issue_body and keep every JSON value on that one line.",
     "Then write the human-readable report beginning with a Markdown heading named Random Codebase Review.",
     "The report should explain each finding with exact paths and line references, evidence, impact, confidence, and a concrete next step.",
     "The GitHub issue title and body must be ready to publish without additional agent editing.",
@@ -413,15 +419,6 @@ const make = Effect.gen(function* () {
         createdAt: startedAt,
       });
 
-      // Repository review sessions are implementation details. Archive before
-      // starting the provider turn so they never participate in user-facing
-      // sidebar, agent-feed, or suggestion projections.
-      yield* dispatch({
-        type: "thread.archive",
-        commandId: yield* makeCommandId("review-thread-hide"),
-        threadId,
-      });
-
       const turnDispatch = dispatch({
         type: "thread.turn.start",
         commandId: yield* makeCommandId("review-turn-start"),
@@ -451,6 +448,43 @@ const make = Effect.gen(function* () {
             return yield* cause;
           }),
         ),
+      );
+
+      // A review must stay queryable while its provider is working, so it
+      // cannot be archived before ingestion. Snooze it as soon as the provider
+      // adopts the turn instead, keeping the internal chat out of the inbox
+      // without preventing runtime events from reaching the projector.
+      yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < REVIEW_SESSION_POLL_ATTEMPTS; attempt += 1) {
+          const thread = yield* projectionSnapshotQuery.getThreadShellById(threadId);
+          if (
+            Option.isSome(thread) &&
+            (thread.value.session?.status === "starting" ||
+              thread.value.session?.status === "running")
+          ) {
+            const now = yield* DateTime.now;
+            yield* dispatch({
+              type: "thread.snooze",
+              commandId: yield* makeCommandId("review-thread-snooze"),
+              threadId,
+              snoozedUntil: DateTime.formatIso(
+                DateTime.add(now, { minutes: REVIEW_SNOOZE_MINUTES }),
+              ),
+            });
+            return;
+          }
+          if (attempt + 1 < REVIEW_SESSION_POLL_ATTEMPTS) {
+            yield* Effect.sleep(REVIEW_SESSION_POLL_INTERVAL);
+          }
+        }
+      }).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("T3 could not snooze an internal repository review session", {
+            threadId,
+            cause,
+          }),
+        ),
+        Effect.ignore,
       );
 
       return {

@@ -6,12 +6,15 @@ import {
   AlertCircleIcon,
   BotIcon,
   CheckCircle2Icon,
+  ClockIcon,
+  EyeIcon,
   ExternalLinkIcon,
   FlaskConicalIcon,
   GithubIcon,
   LightbulbIcon,
   LoaderIcon,
   RefreshCwIcon,
+  RotateCcwIcon,
   XIcon,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -19,8 +22,10 @@ import { useCallback, useMemo, useState } from "react";
 import {
   buildSuggestionWorkPrompt,
   buildNativeReviewSuggestionsFromSnapshot,
+  findDashboardProject,
   githubRepositoryForIdentity,
   suggestionWorkflowStatus,
+  suggestionWorkModelSelection,
   suggestionWorktreeBaseBranch,
   type NativeSuggestion,
   type SuggestionWorkflowStatus,
@@ -67,6 +72,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import ChatMarkdown from "./ChatMarkdown";
 import { AgentDashboardPageShell } from "./AgentDashboardPageShell";
+import { AgentFindingActions } from "./AgentFindingActions";
 
 const SUGGESTIONS_DISMISSED_STORAGE_KEY = "t3.agent-dashboard.suggestions.dismissed";
 const SUGGESTIONS_BLOCKED_STORAGE_KEY = "t3.agent-dashboard.suggestions.blocked";
@@ -91,7 +97,7 @@ type SuggestionActionError =
       readonly threadId: ThreadId;
     };
 
-const SUGGESTION_STATUS_ORDER = ["pending", "in-progress", "tracked"] as const;
+const SUGGESTION_STATUS_ORDER = ["pending", "in-progress", "tracked", "done"] as const;
 
 const SUGGESTION_STATUS_COPY = {
   pending: {
@@ -105,6 +111,10 @@ const SUGGESTION_STATUS_COPY = {
   tracked: {
     description: "Saved as GitHub issues for follow-up.",
     label: "Tracked",
+  },
+  done: {
+    description: "Completed and available to reopen if more work is needed.",
+    label: "Done",
   },
 } as const satisfies Record<
   SuggestionWorkflowStatus,
@@ -156,27 +166,6 @@ function normalizeRepositoryPath(path: string): string {
   return normalized.length > 0 ? normalized : "/";
 }
 
-function findSuggestionProject(
-  projects: ReadonlyArray<EnvironmentProject>,
-  suggestion: NativeSuggestion,
-  environmentId: string,
-): EnvironmentProject | null {
-  const repositoryPath = normalizeRepositoryPath(suggestion.repositoryPath);
-  const pathMatch = projects.find(
-    (project) =>
-      project.environmentId === environmentId &&
-      repositoryPath.length > 0 &&
-      normalizeRepositoryPath(project.workspaceRoot) === repositoryPath,
-  );
-  return (
-    pathMatch ??
-    projects.find(
-      (project) => project.environmentId === environmentId && project.id === suggestion.projectId,
-    ) ??
-    null
-  );
-}
-
 function suggestionIcon(
   kind:
     | "needs-input"
@@ -210,6 +199,7 @@ const SUGGESTION_STATUS_CARD_CLASS = {
   pending: "border-l-4 border-l-warning/60",
   "in-progress": "border-info/40 border-l-4 border-l-info/70 bg-info/4",
   tracked: "border-success/40 border-l-4 border-l-success/70 bg-success/4",
+  done: "border-success/40 border-l-4 border-l-success/70 bg-success/4",
 } as const satisfies Record<SuggestionWorkflowStatus, string>;
 
 function suggestionStatusIcon(status: SuggestionWorkflowStatus) {
@@ -220,6 +210,8 @@ function suggestionStatusIcon(status: SuggestionWorkflowStatus) {
       return <BotIcon className="size-4 text-info" />;
     case "tracked":
       return <GithubIcon className="size-4 text-success" />;
+    case "done":
+      return <CheckCircle2Icon className="size-4 text-success" />;
   }
 }
 
@@ -230,6 +222,8 @@ function suggestionStatusBadgeVariant(status: SuggestionWorkflowStatus) {
     case "in-progress":
       return "info" as const;
     case "tracked":
+      return "success" as const;
+    case "done":
       return "success" as const;
   }
 }
@@ -343,7 +337,11 @@ export function AgentSuggestions() {
           ? dashboardSnapshot.environmentId
           : suggestion.environmentId;
       const project = environmentId
-        ? findSuggestionProject(projects, suggestion, environmentId)
+        ? findDashboardProject(
+            projects,
+            { projectId: suggestion.projectId, repositoryPath: suggestion.repositoryPath },
+            environmentId,
+          )
         : null;
       const repository = dashboardRepositoryForSuggestion(suggestion);
       return (
@@ -465,6 +463,8 @@ export function AgentSuggestions() {
 
   const snooze = (suggestion: NativeSuggestion) =>
     void applyCanonicalDisposition(suggestion, "snooze");
+  const complete = (suggestion: NativeSuggestion) =>
+    void applyCanonicalDisposition(suggestion, "complete");
   const reopen = (suggestion: NativeSuggestion) =>
     void applyCanonicalDisposition(suggestion, "reopen");
 
@@ -695,7 +695,11 @@ export function AgentSuggestions() {
         return;
       }
 
-      const project = findSuggestionProject(projects, suggestion, environmentId);
+      const project = findDashboardProject(
+        projects,
+        { projectId: suggestion.projectId, repositoryPath: suggestion.repositoryPath },
+        environmentId,
+      );
       if (!project) {
         showStartFailure(
           "Add this repository to T3 Code first",
@@ -709,19 +713,20 @@ export function AgentSuggestions() {
       if (!baseBranch) {
         showStartFailure(
           "Primary branch not found",
-          "T3 could not identify main or master for this repository. Refresh repository data and try again.",
+          "T3 could not identify this repository's default branch. Refresh repository data and try again.",
         );
         return;
       }
 
-      const modelSelection = resolveAppModelSelectionState(settings, serverProviders);
-      if (modelSelection.model.trim().length === 0) {
+      const availableModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+      if (availableModelSelection.model.trim().length === 0) {
         showStartFailure(
           "Enable an agent provider first",
           "Choose and authenticate a provider before starting suggestion work.",
         );
         return;
       }
+      const modelSelection = suggestionWorkModelSelection(availableModelSelection);
 
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
@@ -889,6 +894,7 @@ export function AgentSuggestions() {
                 <div className="grid gap-3">
                   {group.suggestions.map((suggestion) => {
                     const workflowStatus = suggestionWorkflowStatus(suggestion);
+                    const hasGithubRepository = githubRepositoryForSuggestion(suggestion) !== null;
                     const suggestionActionError =
                       actionError?.suggestionId === suggestion.id ? actionError : null;
                     return (
@@ -980,80 +986,70 @@ export function AgentSuggestions() {
                               {formatRelativeTimeLabel(suggestion.updatedAt) || "Unknown time"}
                             </span>
                           </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              className="shrink-0"
-                              disabled={startingSuggestionId !== null}
-                              onClick={() => void startSuggestionWork(suggestion)}
-                              size="sm"
-                            >
-                              {startingSuggestionId === suggestion.id ? (
-                                <LoaderIcon className="animate-spin" />
-                              ) : suggestion.threadId ? (
-                                <ExternalLinkIcon />
-                              ) : (
-                                <BotIcon />
-                              )}
-                              {startingSuggestionId === suggestion.id
-                                ? "Starting work"
-                                : suggestion.threadId
-                                  ? "Open work"
-                                  : "Start work"}
-                            </Button>
-                            {githubRepositoryForSuggestion(suggestion) ? (
-                              <Button
-                                className="shrink-0"
-                                disabled={creatingIssueId !== null}
-                                onClick={() => void createGithubIssueForSuggestion(suggestion)}
-                                size="sm"
-                                variant="outline"
-                              >
-                                {creatingIssueId === suggestion.id ? (
-                                  <LoaderIcon className="animate-spin" />
-                                ) : suggestion.githubIssueUrl ? (
-                                  <ExternalLinkIcon />
-                                ) : (
-                                  <GithubIcon />
-                                )}
-                                {creatingIssueId === suggestion.id
-                                  ? "Creating issue"
-                                  : suggestion.githubIssueUrl
-                                    ? githubIssueLabel(suggestion.githubIssueUrl)
-                                    : "Create GitHub issue"}
-                              </Button>
-                            ) : null}
-                            <Button
-                              className="shrink-0"
-                              onClick={() => setSelectedSuggestionId(suggestion.id)}
-                              size="sm"
-                              variant="outline"
-                            >
-                              View finding
-                            </Button>
-                            {suggestion.findingId && workflowStatus === "pending" ? (
-                              <Button
-                                disabled={updatingFindingId !== null}
-                                onClick={() => snooze(suggestion)}
-                                size="sm"
-                                variant="ghost"
-                              >
-                                Snooze
-                              </Button>
-                            ) : null}
-                            {suggestion.findingId &&
-                            (suggestion.findingState === "snoozed" ||
-                              suggestion.findingState === "acknowledged" ||
-                              suggestion.findingState === "assigned") ? (
-                              <Button
-                                disabled={updatingFindingId !== null}
-                                onClick={() => reopen(suggestion)}
-                                size="sm"
-                                variant="ghost"
-                              >
-                                Reopen
-                              </Button>
-                            ) : null}
-                          </div>
+                          <AgentFindingActions
+                            actions={[
+                              {
+                                id: "work",
+                                label: suggestion.threadId ? "Open work" : "Start work",
+                                pendingLabel: "Starting work",
+                                icon: suggestion.threadId ? ExternalLinkIcon : BotIcon,
+                                onSelect: () => void startSuggestionWork(suggestion),
+                                pending: startingSuggestionId === suggestion.id,
+                                disabled: startingSuggestionId !== null,
+                              },
+                              hasGithubRepository && {
+                                id: "issue",
+                                label: suggestion.githubIssueUrl
+                                  ? githubIssueLabel(suggestion.githubIssueUrl)
+                                  : "Create GitHub issue",
+                                pendingLabel: "Creating issue",
+                                icon: suggestion.githubIssueUrl ? ExternalLinkIcon : GithubIcon,
+                                onSelect: () => void createGithubIssueForSuggestion(suggestion),
+                                pending: creatingIssueId === suggestion.id,
+                                disabled: creatingIssueId !== null,
+                                variant: "outline",
+                              },
+                              {
+                                id: "view",
+                                label: "View finding",
+                                icon: EyeIcon,
+                                onSelect: () => setSelectedSuggestionId(suggestion.id),
+                                variant: "outline",
+                              },
+                              suggestion.findingId &&
+                                workflowStatus !== "done" && {
+                                  id: "done",
+                                  label: "Done",
+                                  pendingLabel: "Saving",
+                                  icon: CheckCircle2Icon,
+                                  onSelect: () => complete(suggestion),
+                                  pending: updatingFindingId === suggestion.findingId,
+                                  disabled: updatingFindingId !== null,
+                                  variant: "outline",
+                                },
+                              suggestion.findingId &&
+                                workflowStatus === "pending" && {
+                                  id: "snooze",
+                                  label: "Snooze",
+                                  icon: ClockIcon,
+                                  onSelect: () => snooze(suggestion),
+                                  disabled: updatingFindingId !== null,
+                                  variant: "ghost",
+                                },
+                              suggestion.findingId &&
+                                (suggestion.findingState === "snoozed" ||
+                                  suggestion.findingState === "acknowledged" ||
+                                  suggestion.findingState === "assigned" ||
+                                  suggestion.findingState === "done") && {
+                                  id: "reopen",
+                                  label: "Reopen",
+                                  icon: RotateCcwIcon,
+                                  onSelect: () => reopen(suggestion),
+                                  disabled: updatingFindingId !== null,
+                                  variant: "ghost",
+                                },
+                            ]}
+                          />
                         </CardPanel>
                       </Card>
                     );
@@ -1188,74 +1184,76 @@ export function AgentSuggestions() {
               ) : null}
             </DialogPanel>
             <DialogFooter>
-              {selectedSuggestion.findingId ? (
-                <>
-                  <Button
-                    disabled={updatingFindingId !== null}
-                    onClick={() => snooze(selectedSuggestion)}
-                    variant="ghost"
-                  >
-                    Snooze
-                  </Button>
-                  {selectedSuggestion.findingState !== "open" ? (
-                    <Button
-                      disabled={updatingFindingId !== null}
-                      onClick={() => reopen(selectedSuggestion)}
-                      variant="ghost"
-                    >
-                      Reopen
-                    </Button>
-                  ) : null}
-                </>
-              ) : null}
-              <Button onClick={() => void block(selectedSuggestion.id)} variant="ghost">
-                Block
-              </Button>
-              <Button onClick={() => void dismiss(selectedSuggestion.id)} variant="outline">
-                Dismiss
-              </Button>
-              {githubRepositoryForSuggestion(selectedSuggestion) &&
-              selectedSuggestion.githubIssueUrl ? (
-                <Button
-                  onClick={() => void openGithubIssue(selectedSuggestion.githubIssueUrl!)}
-                  variant="outline"
-                >
-                  <ExternalLinkIcon />
-                  {githubIssueLabel(selectedSuggestion.githubIssueUrl)}
-                </Button>
-              ) : githubRepositoryForSuggestion(selectedSuggestion) ? (
-                <Button
-                  disabled={creatingIssueId !== null}
-                  onClick={() => void createGithubIssueForSuggestion(selectedSuggestion)}
-                  variant="outline"
-                >
-                  {creatingIssueId === selectedSuggestion.id ? (
-                    <LoaderIcon className="animate-spin" />
-                  ) : (
-                    <GithubIcon />
-                  )}
-                  {creatingIssueId === selectedSuggestion.id
-                    ? "Creating issue"
-                    : "Create GitHub issue"}
-                </Button>
-              ) : null}
-              <Button
-                disabled={startingSuggestionId !== null}
-                onClick={() => void startSuggestionWork(selectedSuggestion)}
-              >
-                {startingSuggestionId === selectedSuggestion.id ? (
-                  <LoaderIcon className="animate-spin" />
-                ) : selectedSuggestion.threadId ? (
-                  <ExternalLinkIcon />
-                ) : (
-                  <BotIcon />
-                )}
-                {startingSuggestionId === selectedSuggestion.id
-                  ? "Starting work"
-                  : selectedSuggestion.threadId
-                    ? "Open work"
-                    : "Start work"}
-              </Button>
+              <AgentFindingActions
+                actions={[
+                  {
+                    id: "work",
+                    label: selectedSuggestion.threadId ? "Open work" : "Start work",
+                    pendingLabel: "Starting work",
+                    icon: selectedSuggestion.threadId ? ExternalLinkIcon : BotIcon,
+                    onSelect: () => void startSuggestionWork(selectedSuggestion),
+                    pending: startingSuggestionId === selectedSuggestion.id,
+                    disabled: startingSuggestionId !== null,
+                  },
+                  githubRepositoryForSuggestion(selectedSuggestion) !== null && {
+                    id: "issue",
+                    label: selectedSuggestion.githubIssueUrl
+                      ? githubIssueLabel(selectedSuggestion.githubIssueUrl)
+                      : "Create GitHub issue",
+                    pendingLabel: "Creating issue",
+                    icon: selectedSuggestion.githubIssueUrl ? ExternalLinkIcon : GithubIcon,
+                    onSelect: () => void createGithubIssueForSuggestion(selectedSuggestion),
+                    pending: creatingIssueId === selectedSuggestion.id,
+                    disabled: creatingIssueId !== null,
+                    variant: "outline",
+                  },
+                  selectedSuggestion.findingId &&
+                    selectedSuggestion.findingState !== "done" && {
+                      id: "done",
+                      label: "Done",
+                      pendingLabel: "Saving",
+                      icon: CheckCircle2Icon,
+                      onSelect: () => complete(selectedSuggestion),
+                      pending: updatingFindingId === selectedSuggestion.findingId,
+                      disabled: updatingFindingId !== null,
+                      variant: "outline",
+                    },
+                  selectedSuggestion.findingId &&
+                    selectedSuggestion.findingState !== "done" && {
+                      id: "snooze",
+                      label: "Snooze",
+                      icon: ClockIcon,
+                      onSelect: () => snooze(selectedSuggestion),
+                      disabled: updatingFindingId !== null,
+                      variant: "ghost",
+                    },
+                  selectedSuggestion.findingId &&
+                    selectedSuggestion.findingState !== "open" && {
+                      id: "reopen",
+                      label: "Reopen",
+                      icon: RotateCcwIcon,
+                      onSelect: () => reopen(selectedSuggestion),
+                      disabled: updatingFindingId !== null,
+                      variant: "ghost",
+                    },
+                  {
+                    id: "block",
+                    label: "Block",
+                    icon: AlertCircleIcon,
+                    onSelect: () => void block(selectedSuggestion.id),
+                    variant: "ghost",
+                  },
+                  {
+                    id: "dismiss",
+                    label: "Dismiss",
+                    icon: XIcon,
+                    onSelect: () => void dismiss(selectedSuggestion.id),
+                    variant: "outline",
+                  },
+                ]}
+                className="justify-end"
+                size="default"
+              />
             </DialogFooter>
           </DialogPopup>
         ) : null}

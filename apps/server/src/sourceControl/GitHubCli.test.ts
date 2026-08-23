@@ -31,6 +31,35 @@ afterEach(() => {
 });
 
 describe("GitHubCli.layer", () => {
+  it.effect("merges only the reviewed pull request head commit", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      const gh = yield* GitHubCli.GitHubCli;
+
+      yield* gh.mergePullRequest({
+        cwd: "/repo",
+        number: 42,
+        expectedHeadOid: "abcdef123456abcdef123456abcdef123456abcd",
+        method: "squash",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "pr",
+          "merge",
+          "42",
+          "--squash",
+          "--match-head-commit",
+          "abcdef123456abcdef123456abcdef123456abcd",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it("does not classify a missing cwd as an unavailable gh executable", () => {
     const context = { command: "gh", cwd: "/repo" } as const;
     const missingCwd = new VcsProcessSpawnError({

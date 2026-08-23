@@ -34,7 +34,7 @@ const THREAD_ID = ThreadId.make("thread-review-1");
 const ASSISTANT_ID = MessageId.make("assistant-review-1");
 
 const sampleFindingMetadata = [
-  'T3_REVIEW_METADATA: {"findings":[{"title":"Parser bug","category":"bug","summary":"Drops the last item","impact":"Import loss","confidence":"high","evidence":["src/parser.ts:42"],"next_step":"Flush before return","github_issue_title":"Fix parser flush","github_issue_body":"## Problem"}]}',
+  'T3_REVIEW_METADATA: {"findings":[{"title":"Parser bug","type":"bug","category":"parser","summary":"Drops the last item","impact":"Import loss","confidence":"high","evidence":["src/parser.ts:42"],"next_step":"Flush before return","github_issue_title":"Fix parser flush","github_issue_body":"## Problem"}]}',
   "# Random Codebase Review",
 ].join("\n");
 
@@ -55,7 +55,8 @@ describe("parseReviewMetadata", () => {
       findings: [
         {
           title: "Parser bug",
-          category: "bug",
+          type: "bug",
+          category: "parser",
           summary: "Drops the last item",
           impact: "Import loss",
           confidence: "high",
@@ -276,6 +277,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
 
       const turnComplete = yield* Ref.make(false);
       const dispatchCount = yield* Ref.make(0);
+      const hiddenThreadCount = yield* Ref.make(0);
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
@@ -290,12 +292,13 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
         yield* Effect.yieldNow;
 
         yield* Ref.set(turnComplete, true);
-        const terminal = yield* waitForTerminal(jobService, enqueued.id);
+        const terminal = yield* waitForTerminal(jobService, enqueued.id, 1_000);
         expect(terminal?.status).toBe("succeeded");
         expect(terminal?.findingCount).toBe(1);
         expect(terminal?.threadId).toEqual(THREAD_ID);
         expect(terminal?.error).toBeNull();
         expect(yield* Ref.get(dispatchCount)).toBe(1);
+        expect(yield* Ref.get(hiddenThreadCount)).toBe(1);
         const findings = yield* AgentDashboardStore.getStore(NodePath.join(baseDir, "userdata"))
           .readFindings;
         expect(findings).toHaveLength(1);
@@ -312,6 +315,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
                     workspaceRoot,
                   }),
                 ),
+              hideReviewThread: () => Ref.update(hiddenThreadCount, (count) => count + 1),
               runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot }),
             },
             getThreadDetailById: () =>

@@ -1,5 +1,9 @@
 import { useMemo, useState } from "react";
 import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
   CheckCircle2Icon,
   CircleAlertIcon,
   Clock3Icon,
@@ -14,11 +18,13 @@ import type {
 } from "@t3tools/contracts";
 import { agentDashboardEnvironment, useAgentDashboardSnapshot } from "../state/agentDashboard";
 import { useAtomCommand } from "../state/use-atom-command";
-import { formatRelativeTimeLabel } from "../timestampFormat";
+import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timestampFormat";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardDescription, CardHeader, CardPanel, CardTitle } from "./ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { AgentDashboardPageShell } from "./AgentDashboardPageShell";
 
 function runVariant(status: AgentDashboardAutomationRun["status"]) {
@@ -57,6 +63,22 @@ function policyLabel(policy: AgentDashboardRepositoryPolicy): string {
   return `${policy.cadenceMinutes} min cadence, priority ${policy.priority}, ${policy.riskTier} risk`;
 }
 
+function runDuration(run: AgentDashboardAutomationRun): string {
+  const started = Date.parse(run.startedAt ?? run.createdAt);
+  const ended = Date.parse(run.completedAt ?? run.updatedAt);
+  if (!Number.isFinite(started) || !Number.isFinite(ended) || ended < started) return "Unknown";
+  const seconds = Math.round((ended - started) / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function runStage(status: AgentDashboardAutomationRun["status"]): number {
+  if (status === "queued") return 0;
+  if (status === "running") return 1;
+  if (status === "ingesting") return 2;
+  return 3;
+}
+
 export function AgentRuns() {
   const dashboardSnapshot = useAgentDashboardSnapshot();
   const retryRun = useAtomCommand(agentDashboardEnvironment.retryRun, { reportFailure: false });
@@ -65,6 +87,8 @@ export function AgentRuns() {
   });
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [updatingPolicyId, setUpdatingPolicyId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [projectFilter, setProjectFilter] = useState("all");
   const runs = useMemo(
     () => dashboardSnapshot.data?.automationRuns ?? [],
     [dashboardSnapshot.data?.automationRuns],
@@ -72,6 +96,35 @@ export function AgentRuns() {
   const policies = dashboardSnapshot.data?.repositoryPolicies ?? [];
   const coverage = dashboardSnapshot.data?.repositoryCoverage ?? [];
   const health = dashboardSnapshot.data?.portfolioHealth;
+  const repositoryNames = useMemo(
+    () =>
+      new Map(
+        (dashboardSnapshot.data?.repositories ?? []).map((repository) => [
+          String(repository.projectId),
+          repository.title,
+        ]),
+      ),
+    [dashboardSnapshot.data?.repositories],
+  );
+  const visibleRuns = useMemo(
+    () =>
+      runs.filter(
+        (run) =>
+          (statusFilter === "all" || run.status === statusFilter) &&
+          (projectFilter === "all" || String(run.repository.projectId) === projectFilter),
+      ),
+    [projectFilter, runs, statusFilter],
+  );
+
+  const showFailure = (title: string, error: unknown) => {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title,
+        description: error instanceof Error ? error.message : "Try again after refreshing.",
+      }),
+    );
+  };
 
   const retry = async (run: AgentDashboardAutomationRun) => {
     if (!dashboardSnapshot.environmentId || retryingRunId !== null) return;
@@ -81,7 +134,19 @@ export function AgentRuns() {
         environmentId: dashboardSnapshot.environmentId,
         input: { id: run.id },
       });
-      if (result._tag === "Success") await dashboardSnapshot.refresh();
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result))
+          showFailure("Run could not be retried", squashAtomCommandFailure(result));
+        return;
+      }
+      await dashboardSnapshot.refresh();
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: "Retry queued",
+          description: `A new run was started for ${repositoryNames.get(String(run.repository.projectId)) ?? "the repository"}.`,
+        }),
+      );
     } finally {
       setRetryingRunId(null);
     }
@@ -95,7 +160,38 @@ export function AgentRuns() {
         environmentId: dashboardSnapshot.environmentId,
         input: { ...policy, enabled: !policy.enabled, updatedAt: new Date().toISOString() },
       });
-      if (result._tag === "Success") await dashboardSnapshot.refresh();
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result))
+          showFailure("Policy could not be updated", squashAtomCommandFailure(result));
+        return;
+      }
+      await dashboardSnapshot.refresh();
+    } finally {
+      setUpdatingPolicyId(null);
+    }
+  };
+
+  const changePolicy = async (
+    policy: AgentDashboardRepositoryPolicy,
+    patch: Partial<
+      Pick<AgentDashboardRepositoryPolicy, "cadenceMinutes" | "priority" | "riskTier">
+    >,
+  ) => {
+    if (!dashboardSnapshot.environmentId || updatingPolicyId !== null) return;
+    const id = String(policy.repository.projectId);
+    setUpdatingPolicyId(id);
+    try {
+      const result = await updatePolicy({
+        environmentId: dashboardSnapshot.environmentId,
+        input: { ...policy, ...patch, updatedAt: new Date().toISOString() },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          showFailure("Policy could not be updated", squashAtomCommandFailure(result));
+        }
+        return;
+      }
+      await dashboardSnapshot.refresh();
     } finally {
       setUpdatingPolicyId(null);
     }
@@ -118,11 +214,17 @@ export function AgentRuns() {
       description="Durable automation history, repository freshness, policy, retries, and failure state."
     >
       {health ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <Card>
             <CardPanel className="p-4">
               <p className="text-xs text-muted-foreground">Repositories</p>
               <p className="mt-1 text-lg font-semibold">{health.repositoryCount}</p>
+            </CardPanel>
+          </Card>
+          <Card>
+            <CardPanel className="p-4">
+              <p className="text-xs text-muted-foreground">Unassessed</p>
+              <p className="mt-1 text-lg font-semibold">{health.unassessedRepositoryCount}</p>
             </CardPanel>
           </Card>
           <Card>
@@ -169,32 +271,117 @@ export function AgentRuns() {
                 key={id}
               >
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{id}</p>
+                  <p className="truncate text-sm font-medium">{repositoryNames.get(id) ?? id}</p>
                   <p className="mt-1 text-xs text-muted-foreground">{policyLabel(policy)}</p>
                   {repositoryCoverage ? (
                     <p className="mt-1 text-xs text-muted-foreground">
                       Coverage: {repositoryCoverage.status}
+                      {repositoryCoverage.nextDueAt
+                        ? `, next ${formatRelativeTimeUntilLabel(repositoryCoverage.nextDueAt)}`
+                        : ""}
                     </p>
                   ) : null}
                 </div>
-                <Button
-                  disabled={updatingPolicyId !== null}
-                  onClick={() => void togglePolicy(policy)}
-                  size="sm"
-                  variant={policy.enabled ? "outline" : "ghost"}
-                >
-                  {updatingPolicyId === id ? <LoaderIcon className="animate-spin" /> : null}
-                  {policy.enabled ? "Enabled" : "Disabled"}
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select
+                    disabled={updatingPolicyId !== null}
+                    value={String(policy.cadenceMinutes)}
+                    onValueChange={(value) => {
+                      if (value) void changePolicy(policy, { cadenceMinutes: Number(value) });
+                    }}
+                  >
+                    <SelectTrigger
+                      aria-label={`Review cadence for ${repositoryNames.get(id) ?? id}`}
+                      className="w-32"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup alignItemWithTrigger={false}>
+                      <SelectItem value="60">Hourly</SelectItem>
+                      <SelectItem value="120">Every 2 hours</SelectItem>
+                      <SelectItem value="360">Every 6 hours</SelectItem>
+                      <SelectItem value="1440">Daily</SelectItem>
+                    </SelectPopup>
+                  </Select>
+                  <Select
+                    disabled={updatingPolicyId !== null}
+                    value={policy.riskTier}
+                    onValueChange={(value) => {
+                      if (
+                        value === "low" ||
+                        value === "medium" ||
+                        value === "high" ||
+                        value === "critical"
+                      ) {
+                        void changePolicy(policy, { riskTier: value });
+                      }
+                    }}
+                  >
+                    <SelectTrigger
+                      aria-label={`Risk tier for ${repositoryNames.get(id) ?? id}`}
+                      className="w-28"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup alignItemWithTrigger={false}>
+                      <SelectItem value="low">Low risk</SelectItem>
+                      <SelectItem value="medium">Medium risk</SelectItem>
+                      <SelectItem value="high">High risk</SelectItem>
+                      <SelectItem value="critical">Critical risk</SelectItem>
+                    </SelectPopup>
+                  </Select>
+                  <Button
+                    disabled={updatingPolicyId !== null}
+                    onClick={() => void togglePolicy(policy)}
+                    size="sm"
+                    variant={policy.enabled ? "outline" : "ghost"}
+                  >
+                    {updatingPolicyId === id ? <LoaderIcon className="animate-spin" /> : null}
+                    {policy.enabled ? "Pause reviews" : "Resume reviews"}
+                  </Button>
+                </div>
               </div>
             );
           })}
         </CardPanel>
       </Card>
 
-      {runs.length > 0 ? (
+      <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+        <Select value={projectFilter} onValueChange={(value) => value && setProjectFilter(value)}>
+          <SelectTrigger aria-label="Filter runs by repository" className="w-full sm:w-56">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup alignItemWithTrigger={false}>
+            <SelectItem value="all">All repositories</SelectItem>
+            {[...repositoryNames.entries()]
+              .toSorted((left, right) => left[1].localeCompare(right[1]))
+              .map(([id, name]) => (
+                <SelectItem key={id} value={id}>
+                  {name}
+                </SelectItem>
+              ))}
+          </SelectPopup>
+        </Select>
+        <Select value={statusFilter} onValueChange={(value) => value && setStatusFilter(value)}>
+          <SelectTrigger aria-label="Filter runs by status" className="w-full sm:w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup alignItemWithTrigger={false}>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="queued">Queued</SelectItem>
+            <SelectItem value="running">Running</SelectItem>
+            <SelectItem value="ingesting">Ingesting</SelectItem>
+            <SelectItem value="succeeded">Succeeded</SelectItem>
+            <SelectItem value="partial">Partial</SelectItem>
+            <SelectItem value="failed">Failed</SelectItem>
+            <SelectItem value="cancelled">Cancelled</SelectItem>
+          </SelectPopup>
+        </Select>
+      </div>
+
+      {visibleRuns.length > 0 ? (
         <div className="grid gap-3">
-          {runs.map((run) => (
+          {visibleRuns.map((run) => (
             <Card key={run.id}>
               <CardHeader className="gap-3 p-4 sm:p-5">
                 <div className="flex min-w-0 items-start gap-3">
@@ -210,7 +397,8 @@ export function AgentRuns() {
                       </Badge>
                     </div>
                     <CardDescription className="mt-1 truncate">
-                      Repository {String(run.repository.projectId)}
+                      {repositoryNames.get(String(run.repository.projectId)) ??
+                        String(run.repository.projectId)}
                       {run.target ? `, ${run.target}` : ""}
                     </CardDescription>
                   </div>
@@ -232,6 +420,16 @@ export function AgentRuns() {
                 </div>
               </CardHeader>
               <CardPanel className="flex flex-col gap-2 border-t border-border/60 p-4 text-xs text-muted-foreground sm:p-5">
+                <div className="grid grid-cols-4 gap-1" aria-label={`Run stage: ${run.status}`}>
+                  {["Queued", "Running", "Ingesting", "Complete"].map((label, index) => (
+                    <div key={label}>
+                      <div
+                        className={`h-1.5 rounded-full ${index <= runStage(run.status) ? "bg-primary" : "bg-muted"}`}
+                      />
+                      <span className="mt-1 block text-[10px]">{label}</span>
+                    </div>
+                  ))}
+                </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-2">
                   <span className="inline-flex items-center gap-1.5">
                     <Clock3Icon className="size-3.5" />
@@ -241,6 +439,7 @@ export function AgentRuns() {
                   <span>Findings: {run.findingCount}</span>
                   <span>Retries: {run.retryCount}</span>
                   <span>Cost: {run.costUnits === null ? "Unmeasured" : run.costUnits}</span>
+                  <span>Duration: {runDuration(run)}</span>
                 </div>
                 {run.error ? <p className="text-destructive">{run.error}</p> : null}
               </CardPanel>

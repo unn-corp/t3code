@@ -1,5 +1,9 @@
 import { useNavigate } from "@tanstack/react-router";
 import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
   BotIcon,
   CheckCircle2Icon,
   CircleAlertIcon,
@@ -36,6 +40,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./
 import { Input } from "./ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { AgentDashboardPageShell } from "./AgentDashboardPageShell";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 
 const FEED_DISMISSED_STORAGE_KEY = "t3.agent-dashboard.feed.dismissed";
 
@@ -289,23 +294,42 @@ export function AgentFeed() {
 
   const counts = useMemo(
     () => ({
-      updates: records.length,
-      agents: new Set(records.map((record) => record.provider)).size,
-      attention: records.filter((record) => record.level === "warn" || record.level === "error")
-        .length,
-      success: records.filter((record) => record.level === "success").length,
+      updates: visibleRecords.length,
+      activeAgents: new Set(
+        visibleRecords
+          .filter((record) => record.state === "running" || record.state === "needs-input")
+          .map((record) => record.threadId || record.id),
+      ).size,
+      waiting: visibleRecords.filter((record) => record.state === "needs-input").length,
+      attention: visibleRecords.filter(
+        (record) => record.level === "warn" || record.level === "error",
+      ).length,
     }),
-    [records],
+    [visibleRecords],
   );
 
-  const dismiss = (id: string) => {
+  const dismiss = async (id: string) => {
     const durableCard = records.find((record) => record.id === id)?.durableCard;
     if (durableCard && dashboardSnapshot.environmentId) {
-      void dismissFeedCard({
+      const result = await dismissFeedCard({
         environmentId: dashboardSnapshot.environmentId,
         input: { id: durableCard.id },
-      }).then(() => dashboardSnapshot.refresh());
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Feed item could not be dismissed",
+              description: error instanceof Error ? error.message : "Refresh and try again.",
+            }),
+          );
+        }
+        return;
+      }
       setDismissedIds((current) => new Set([...current, id]));
+      await dashboardSnapshot.refresh();
       return;
     }
     setDismissedIds((current) => {
@@ -318,15 +342,58 @@ export function AgentFeed() {
       }
       return next;
     });
+    toastManager.add(
+      stackedThreadToast({
+        type: "info",
+        title: "Feed item hidden",
+        description: "You can restore it now if that was accidental.",
+        timeout: 6_000,
+        actionProps: {
+          children: "Undo",
+          onClick: () => {
+            setDismissedIds((current) => {
+              const next = new Set(current);
+              next.delete(id);
+              try {
+                window.localStorage.setItem(FEED_DISMISSED_STORAGE_KEY, JSON.stringify([...next]));
+              } catch {
+                // Keep the in-memory undo when storage is unavailable.
+              }
+              return next;
+            });
+          },
+        },
+      }),
+    );
   };
 
-  const dismissAll = () => {
+  const dismissAll = async () => {
     if (dashboardSnapshot.data !== null && dashboardSnapshot.environmentId) {
-      void clearFeed({
+      const localApi = readLocalApi();
+      if (localApi) {
+        const confirmed = await localApi.dialogs.confirm(
+          "Clear all durable Agent Feed items? This cannot be undone. Items also expire automatically after two days.",
+        );
+        if (!confirmed) return;
+      }
+      const result = await clearFeed({
         environmentId: dashboardSnapshot.environmentId,
         input: {},
-      }).then(() => dashboardSnapshot.refresh());
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Feed could not be cleared",
+              description: "Refresh and try again.",
+            }),
+          );
+        }
+        return;
+      }
       setDismissedIds(new Set(records.map((record) => record.id)));
+      await dashboardSnapshot.refresh();
       return;
     }
     const next = new Set(dismissedIds);
@@ -360,7 +427,7 @@ export function AgentFeed() {
         </Button>
       }
       title="Agent Feed"
-      description="A live, native view of the agents currently known to T3 Code, ordered with the most recent activity first."
+      description="Recent agent activity, decisions, and attention signals. Durable feed items expire automatically after two days."
     >
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Card>
@@ -376,8 +443,8 @@ export function AgentFeed() {
           <CardPanel className="flex items-center gap-3 p-4">
             <BotIcon className="size-4 text-muted-foreground" />
             <div>
-              <p className="text-xs text-muted-foreground">Agents</p>
-              <p className="mt-1 text-lg font-semibold">{counts.agents}</p>
+              <p className="text-xs text-muted-foreground">Active agents</p>
+              <p className="mt-1 text-lg font-semibold">{counts.activeAgents}</p>
             </div>
           </CardPanel>
         </Card>
@@ -389,8 +456,8 @@ export function AgentFeed() {
               <CheckCircle2Icon className="size-4 text-success" />
             )}
             <div>
-              <p className="text-xs text-muted-foreground">Attention</p>
-              <p className="mt-1 text-lg font-semibold">{counts.attention}</p>
+              <p className="text-xs text-muted-foreground">Waiting on you</p>
+              <p className="mt-1 text-lg font-semibold">{counts.waiting}</p>
             </div>
           </CardPanel>
         </Card>
@@ -398,8 +465,8 @@ export function AgentFeed() {
           <CardPanel className="flex items-center gap-3 p-4">
             <CheckCircle2Icon className="size-4 text-success" />
             <div>
-              <p className="text-xs text-muted-foreground">Success</p>
-              <p className="mt-1 text-lg font-semibold">{counts.success}</p>
+              <p className="text-xs text-muted-foreground">Attention</p>
+              <p className="mt-1 text-lg font-semibold">{counts.attention}</p>
             </div>
           </CardPanel>
         </Card>
@@ -439,7 +506,12 @@ export function AgentFeed() {
             ))}
           </SelectPopup>
         </Select>
-        <Button disabled={records.length === 0} onClick={dismissAll} size="sm" variant="ghost">
+        <Button
+          disabled={records.length === 0}
+          onClick={() => void dismissAll()}
+          size="sm"
+          variant="ghost"
+        >
           <XIcon />
           Clear view
         </Button>

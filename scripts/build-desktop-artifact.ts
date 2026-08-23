@@ -2700,9 +2700,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
     const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
+    const webBuildEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      APP_VERSION: appVersion,
+    };
     yield* runCommand(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: repoRoot,
+        env: webBuildEnv,
         shell: spawnCommand.shell,
       }),
       { label: "vp run build:desktop", verbose: options.verbose },

@@ -33,6 +33,7 @@ import { Route as AgentDashboardSuggestionsRouteImport } from './routes/agent-da
 import { Route as AgentDashboardSecurityRouteImport } from './routes/agent-dashboard.security'
 import { Route as AgentDashboardRunsRouteImport } from './routes/agent-dashboard.runs'
 import { Route as AgentDashboardResearchRouteImport } from './routes/agent-dashboard.research'
+import { Route as AgentDashboardFindingsRouteImport } from './routes/agent-dashboard.findings'
 import { Route as AgentDashboardFeedRouteImport } from './routes/agent-dashboard.feed'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
@@ -158,6 +159,11 @@ const AgentDashboardResearchRoute = AgentDashboardResearchRouteImport.update({
   path: '/research',
   getParentRoute: () => AgentDashboardRoute,
 } as any)
+const AgentDashboardFindingsRoute = AgentDashboardFindingsRouteImport.update({
+  id: '/findings',
+  path: '/findings',
+  getParentRoute: () => AgentDashboardRoute,
+} as any)
 const AgentDashboardFeedRoute = AgentDashboardFeedRouteImport.update({
   id: '/feed',
   path: '/feed',
@@ -190,6 +196,7 @@ export interface FileRoutesByFullPath {
   '/usage': typeof UsageRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/agent-dashboard/feed': typeof AgentDashboardFeedRoute
+  '/agent-dashboard/findings': typeof AgentDashboardFindingsRoute
   '/agent-dashboard/research': typeof AgentDashboardResearchRoute
   '/agent-dashboard/runs': typeof AgentDashboardRunsRoute
   '/agent-dashboard/security': typeof AgentDashboardSecurityRoute
@@ -217,6 +224,7 @@ export interface FileRoutesByTo {
   '/usage': typeof UsageRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/agent-dashboard/feed': typeof AgentDashboardFeedRoute
+  '/agent-dashboard/findings': typeof AgentDashboardFindingsRoute
   '/agent-dashboard/research': typeof AgentDashboardResearchRoute
   '/agent-dashboard/runs': typeof AgentDashboardRunsRoute
   '/agent-dashboard/security': typeof AgentDashboardSecurityRoute
@@ -248,6 +256,7 @@ export interface FileRoutesById {
   '/usage': typeof UsageRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/agent-dashboard/feed': typeof AgentDashboardFeedRoute
+  '/agent-dashboard/findings': typeof AgentDashboardFindingsRoute
   '/agent-dashboard/research': typeof AgentDashboardResearchRoute
   '/agent-dashboard/runs': typeof AgentDashboardRunsRoute
   '/agent-dashboard/security': typeof AgentDashboardSecurityRoute
@@ -280,6 +289,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/pull-requests'
     | '/agent-dashboard/feed'
+    | '/agent-dashboard/findings'
     | '/agent-dashboard/research'
     | '/agent-dashboard/runs'
     | '/agent-dashboard/security'
@@ -307,6 +317,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/pull-requests'
     | '/agent-dashboard/feed'
+    | '/agent-dashboard/findings'
     | '/agent-dashboard/research'
     | '/agent-dashboard/runs'
     | '/agent-dashboard/security'
@@ -337,6 +348,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/_chat/pull-requests'
     | '/agent-dashboard/feed'
+    | '/agent-dashboard/findings'
     | '/agent-dashboard/research'
     | '/agent-dashboard/runs'
     | '/agent-dashboard/security'
@@ -540,6 +552,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentDashboardResearchRouteImport
       parentRoute: typeof AgentDashboardRoute
     }
+    '/agent-dashboard/findings': {
+      id: '/agent-dashboard/findings'
+      path: '/findings'
+      fullPath: '/agent-dashboard/findings'
+      preLoaderRoute: typeof AgentDashboardFindingsRouteImport
+      parentRoute: typeof AgentDashboardRoute
+    }
     '/agent-dashboard/feed': {
       id: '/agent-dashboard/feed'
       path: '/feed'
@@ -589,6 +608,7 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface AgentDashboardRouteChildren {
   AgentDashboardFeedRoute: typeof AgentDashboardFeedRoute
+  AgentDashboardFindingsRoute: typeof AgentDashboardFindingsRoute
   AgentDashboardResearchRoute: typeof AgentDashboardResearchRoute
   AgentDashboardRunsRoute: typeof AgentDashboardRunsRoute
   AgentDashboardSecurityRoute: typeof AgentDashboardSecurityRoute
@@ -598,6 +618,7 @@ interface AgentDashboardRouteChildren {
 
 const AgentDashboardRouteChildren: AgentDashboardRouteChildren = {
   AgentDashboardFeedRoute: AgentDashboardFeedRoute,
+  AgentDashboardFindingsRoute: AgentDashboardFindingsRoute,
   AgentDashboardResearchRoute: AgentDashboardResearchRoute,
   AgentDashboardRunsRoute: AgentDashboardRunsRoute,
   AgentDashboardSecurityRoute: AgentDashboardSecurityRoute,
