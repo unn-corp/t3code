@@ -79,13 +79,14 @@ export function buildAgentDashboardFindingPrompt(
           "## Delivery",
           "- Commit the validated implementation on the current worktree branch.",
           "- Push only the current implementation branch.",
-          `- Open one pull request targeting \`${intent.baseBranch}\`.`,
+          `- Open one draft pull request targeting \`${intent.baseBranch}\`; with GitHub CLI, use \`gh pr create --draft\`.`,
+          "- Leave the pull request in draft until a user explicitly marks it ready for review.",
           `- Do not push directly to or merge \`${intent.baseBranch}\`.`,
           `- In the pull request body, include finding ID \`${finding.id}\`, the implementation summary, and validation results.`,
           "- If credentials, branch protection, or failing validation prevents delivery, leave the branch and worktree intact and report the exact blocker.",
           "",
           "## Completion",
-          "After implementation and validation succeed and the pull request is open, include the pull request URL in your final response and mark this finding as Done in T3 Code.",
+          "After implementation and validation succeed and the draft pull request is open, include the pull request URL in your final response and mark this finding as Done in T3 Code.",
         ]),
   ].join("\n");
 }

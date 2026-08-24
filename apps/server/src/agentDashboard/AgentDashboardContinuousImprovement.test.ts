@@ -12,11 +12,35 @@ import {
   CONTINUOUS_IMPROVEMENT_RUN_KIND,
   createContinuousImprovementRun,
   evaluateImplementationWatchdog,
+  findImplementationPullRequest,
   hasActiveFindingImplementation,
   isFindingEligibleForContinuousImprovement,
   selectContinuousImprovementFinding,
   transitionContinuousImprovementRun,
 } from "./AgentDashboardContinuousImprovement.ts";
+
+it("finds the pull request after an implementation agent renames its branch", () => {
+  const pullRequest = findImplementationPullRequest({
+    pullRequests: [
+      { number: 201, headRefName: "t3code/optimize-cursor-search-counts" },
+      { number: 200, headRefName: "t3code/other-work" },
+    ],
+    launchBranch: "t3code/ddaab7c1",
+    currentBranch: "t3code/optimize-cursor-search-counts",
+  });
+
+  expect(pullRequest?.number).toBe(201);
+});
+
+it("falls back to the launch branch while the projected branch is unavailable", () => {
+  const pullRequest = findImplementationPullRequest({
+    pullRequests: [{ number: 200, headRefName: "t3code/e966c90d" }],
+    launchBranch: "t3code/e966c90d",
+    currentBranch: null,
+  });
+
+  expect(pullRequest?.number).toBe(200);
+});
 
 const project = (id: string): OrchestrationProjectShell => ({
   id: ProjectId.make(id),

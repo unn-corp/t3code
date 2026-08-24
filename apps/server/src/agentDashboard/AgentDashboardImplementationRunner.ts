@@ -34,7 +34,10 @@ export interface AgentDashboardImplementationRunResult {
   readonly worktreePath: string;
 }
 
-export type AgentDashboardImplementationNudgeReason = "stalled" | "missing-pull-request";
+export type AgentDashboardImplementationNudgeReason =
+  | "stalled"
+  | "missing-pull-request"
+  | "pull-request-not-draft";
 
 export const buildAgentDashboardImplementationNudgePrompt = (input: {
   readonly reason: AgentDashboardImplementationNudgeReason;
@@ -47,6 +50,8 @@ export const buildAgentDashboardImplementationNudgePrompt = (input: {
         return "T3 has not observed meaningful progress from this work session recently.";
       case "missing-pull-request":
         return "Your latest turn finished, but T3 could not find a pull request for this worktree branch.";
+      case "pull-request-not-draft":
+        return "T3 found the pull request for this worktree branch, but it is ready for review instead of draft.";
       default: {
         const exhaustive: never = input.reason;
         throw new Error(`Unhandled implementation nudge reason: ${String(exhaustive)}`);
@@ -54,10 +59,15 @@ export const buildAgentDashboardImplementationNudgePrompt = (input: {
     }
   })();
 
+  const requiredAction =
+    input.reason === "pull-request-not-draft"
+      ? "Convert the existing pull request to draft. With GitHub CLI, use gh pr ready --undo. Do not create another pull request."
+      : "Continue the assigned finding until it is fully complete. Finish the required code changes, run focused validation, commit the result, push the branch, and open the pull request as a draft. With GitHub CLI, use gh pr create --draft and leave it in draft until a user explicitly marks it ready for review.";
+
   return [
     `Automated progress check ${input.attempt} of ${input.maxAttempts}.`,
     progressContext,
-    "Continue the assigned finding until it is fully complete. Finish the required code changes, run focused validation, commit the result, push the branch, and open the pull request.",
+    requiredAction,
     "If you are truly blocked, clearly report the blocker and the exact user action needed instead of silently stopping.",
   ].join("\n\n");
 };
@@ -90,6 +100,11 @@ export interface AgentDashboardImplementationRunnerService {
     readonly attempt: number;
     readonly maxAttempts: number;
   }) => Effect.Effect<void, AgentDashboardImplementationRunnerError>;
+  readonly settleCompletedFinding: (input: {
+    readonly finding: AgentDashboardFinding;
+    readonly result: AgentDashboardImplementationRunResult;
+    readonly runId: string;
+  }) => Effect.Effect<void, AgentDashboardImplementationRunnerError>;
 }
 
 export class AgentDashboardImplementationRunner extends Context.Service<
@@ -116,6 +131,26 @@ export const implementationBaseTargetFromRefs = (
 
 export const defaultBranchFromRefs = (result: VcsListRefsResult): string | null =>
   implementationBaseTargetFromRefs(result, null)?.branch ?? null;
+
+export const buildCompletedImplementationCleanupCommands = (input: {
+  readonly threadId: ThreadId;
+  readonly settleCommandId: CommandId;
+  readonly stopCommandId: CommandId;
+  readonly createdAt: string;
+}) => ({
+  settle: {
+    type: "thread.settle" as const,
+    commandId: input.settleCommandId,
+    threadId: input.threadId,
+  },
+  stop: {
+    type: "thread.session.stop" as const,
+    commandId: input.stopCommandId,
+    threadId: input.threadId,
+    createdAt: input.createdAt,
+    onlyIfSettled: true,
+  },
+});
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -445,7 +480,50 @@ const make = Effect.gen(function* () {
         );
     });
 
-  return { runFinding, nudgeFinding } satisfies AgentDashboardImplementationRunnerService;
+  const settleCompletedFinding: AgentDashboardImplementationRunnerService["settleCompletedFinding"] =
+    (input) =>
+      Effect.gen(function* () {
+        const createdAt = DateTime.formatIso(yield* DateTime.now);
+        const commands = buildCompletedImplementationCleanupCommands({
+          threadId: input.result.threadId,
+          settleCommandId: yield* commandId("thread-settle"),
+          stopCommandId: yield* commandId("session-stop"),
+          createdAt,
+        });
+
+        yield* dispatch(commands.settle);
+        yield* dispatch(commands.stop);
+
+        yield* store
+          .appendExternalAction({
+            id: `action:continuous-improvement-finished:${yield* randomUuid}`,
+            kind: "other",
+            status: "succeeded",
+            actor: "continuous-improvement",
+            targetId: input.result.threadId,
+            targetUrl: null,
+            findingId: input.finding.id,
+            runId: input.runId,
+            result: `Completed implementation session stopped after pull request delivery from ${input.result.branch}.`,
+            occurredAt: createdAt,
+          })
+          .pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("Continuous improvement completion audit could not be persisted", {
+                findingId: input.finding.id,
+                threadId: input.result.threadId,
+                cause,
+              }),
+            ),
+            Effect.ignore,
+          );
+      });
+
+  return {
+    runFinding,
+    nudgeFinding,
+    settleCompletedFinding,
+  } satisfies AgentDashboardImplementationRunnerService;
 });
 
 export const layer = Layer.effect(AgentDashboardImplementationRunner, make);

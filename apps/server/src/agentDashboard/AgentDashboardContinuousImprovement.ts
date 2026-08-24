@@ -124,6 +124,18 @@ export const evaluateImplementationWatchdog = (input: {
   return { kind: "nudge", attempt: cappedNudgeCount + 1 };
 };
 
+export const findImplementationPullRequest = <
+  PullRequest extends { readonly headRefName: string },
+>(input: {
+  readonly pullRequests: ReadonlyArray<PullRequest>;
+  readonly launchBranch: string;
+  readonly currentBranch: string | null;
+}): PullRequest | undefined =>
+  (input.currentBranch
+    ? input.pullRequests.find((candidate) => candidate.headRefName === input.currentBranch)
+    : undefined) ??
+  input.pullRequests.find((candidate) => candidate.headRefName === input.launchBranch);
+
 export const createContinuousImprovementRun = (input: {
   readonly id: string;
   readonly finding: AgentDashboardFinding;
@@ -446,9 +458,11 @@ const make = Effect.gen(function* () {
             );
             return;
           }
-          const pullRequest = pullRequestExit.value.find(
-            (candidate) => candidate.headRefName === input.result.branch,
-          );
+          const pullRequest = findImplementationPullRequest({
+            pullRequests: pullRequestExit.value,
+            launchBranch: input.result.branch,
+            currentBranch: thread?.branch ?? null,
+          });
           if (!pullRequest) {
             if (nudgeCount < MAX_IMPLEMENTATION_NUDGES) {
               const nudged = yield* sendNudge("missing-pull-request");
@@ -461,6 +475,23 @@ const make = Effect.gen(function* () {
               transitionContinuousImprovementRun(input.run, {
                 state: "needs-attention",
                 error: `The agent finished without opening a pull request from ${input.result.branch} after ${MAX_IMPLEMENTATION_NUDGES} automated progress checks. Open the work session to review the result or retry it.`,
+                at: completedAt,
+              }),
+            );
+            return;
+          }
+          if (!pullRequest.isDraft) {
+            if (nudgeCount < MAX_IMPLEMENTATION_NUDGES) {
+              const nudged = yield* sendNudge("pull-request-not-draft");
+              if (!nudged) return;
+              lastNudgedCompletedTurnId = completedTurnId;
+              if (poll + 1 < maxPolls) yield* Effect.sleep(IMPLEMENTATION_MONITOR_INTERVAL);
+              continue;
+            }
+            yield* persistRun(
+              transitionContinuousImprovementRun(input.run, {
+                state: "needs-attention",
+                error: `The agent opened pull request #${pullRequest.number} as ready for review and did not convert it to draft after ${MAX_IMPLEMENTATION_NUDGES} automated progress checks. Open the work session or pull request to review it.`,
                 at: completedAt,
               }),
             );
@@ -482,10 +513,29 @@ const make = Effect.gen(function* () {
               targetUrl: pullRequest.url,
               findingId: input.finding.id,
               runId: input.run.id,
-              result: `Pull request #${pullRequest.number} opened from ${input.result.branch} into ${pullRequest.baseRefName}.`,
+              result: `Pull request #${pullRequest.number} opened from ${pullRequest.headRefName} into ${pullRequest.baseRefName}.`,
               occurredAt: completedAt,
             })
             .pipe(Effect.ignore);
+          yield* runner
+            .settleCompletedFinding({
+              finding: input.finding,
+              result: { ...input.result, branch: pullRequest.headRefName },
+              runId: input.run.id,
+            })
+            .pipe(
+              Effect.tapError((cause) =>
+                Effect.logWarning(
+                  "Continuous improvement could not stop the completed implementation session",
+                  {
+                    findingId: input.finding.id,
+                    threadId: input.result.threadId,
+                    cause,
+                  },
+                ),
+              ),
+              Effect.ignore,
+            );
           return;
         }
         if (turnState === "error" && !hasBackgroundWork) {
