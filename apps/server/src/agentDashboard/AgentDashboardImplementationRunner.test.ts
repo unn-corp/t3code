@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import type { VcsListRefsResult } from "@t3tools/contracts";
 
 import {
+  buildAgentDashboardImplementationNudgePrompt,
   defaultBranchFromRefs,
   implementationBaseTargetFromRefs,
 } from "./AgentDashboardImplementationRunner.ts";
@@ -32,4 +33,17 @@ it("prefers the default branch's configured tracking remote over origin", () => 
     branch: "main",
     remoteName: "ssh-origin",
   });
+});
+
+it("builds a bounded progress prompt that requires the pull request handoff", () => {
+  const prompt = buildAgentDashboardImplementationNudgePrompt({
+    reason: "missing-pull-request",
+    attempt: 2,
+    maxAttempts: 3,
+  });
+
+  expect(prompt).toContain("Automated progress check 2 of 3");
+  expect(prompt).toContain("could not find a pull request");
+  expect(prompt).toContain("commit the result, push the branch, and open the pull request");
+  expect(prompt).toContain("clearly report the blocker");
 });

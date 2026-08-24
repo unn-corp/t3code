@@ -11,6 +11,7 @@ import {
 import {
   CONTINUOUS_IMPROVEMENT_RUN_KIND,
   createContinuousImprovementRun,
+  evaluateImplementationWatchdog,
   hasActiveFindingImplementation,
   isFindingEligibleForContinuousImprovement,
   selectContinuousImprovementFinding,
@@ -154,7 +155,79 @@ it("recognizes a running finding-linked implementation thread", () => {
   } as OrchestrationThreadShell;
 
   expect(hasActiveFindingImplementation([linked], [running])).toBe(true);
+  expect(
+    hasActiveFindingImplementation(
+      [linked],
+      [
+        {
+          id: ThreadId.make("thread-1"),
+          backgroundLiveness: "working",
+        } as OrchestrationThreadShell,
+      ],
+    ),
+  ).toBe(true);
   expect(hasActiveFindingImplementation([linked], [])).toBe(false);
+});
+
+describe("evaluateImplementationWatchdog", () => {
+  const minute = 60_000;
+
+  it("waits for ten minutes of inactivity before the first nudge", () => {
+    expect(
+      evaluateImplementationWatchdog({
+        nowMs: 9 * minute,
+        lastActivityAtMs: 0,
+        lastNudgeAtMs: null,
+        nudgeCount: 0,
+      }),
+    ).toEqual({ kind: "wait" });
+    expect(
+      evaluateImplementationWatchdog({
+        nowMs: 10 * minute,
+        lastActivityAtMs: 0,
+        lastNudgeAtMs: null,
+        nudgeCount: 0,
+      }),
+    ).toEqual({ kind: "nudge", attempt: 1 });
+  });
+
+  it("backs subsequent nudges off and resets the clock when activity resumes", () => {
+    expect(
+      evaluateImplementationWatchdog({
+        nowMs: 29 * minute,
+        lastActivityAtMs: 15 * minute,
+        lastNudgeAtMs: 10 * minute,
+        nudgeCount: 1,
+      }),
+    ).toEqual({ kind: "wait" });
+    expect(
+      evaluateImplementationWatchdog({
+        nowMs: 35 * minute,
+        lastActivityAtMs: 15 * minute,
+        lastNudgeAtMs: 10 * minute,
+        nudgeCount: 1,
+      }),
+    ).toEqual({ kind: "nudge", attempt: 2 });
+  });
+
+  it("surfaces an inactive run after the third nudge's final grace period", () => {
+    expect(
+      evaluateImplementationWatchdog({
+        nowMs: 69 * minute,
+        lastActivityAtMs: 30 * minute,
+        lastNudgeAtMs: 30 * minute,
+        nudgeCount: 3,
+      }),
+    ).toEqual({ kind: "wait" });
+    expect(
+      evaluateImplementationWatchdog({
+        nowMs: 70 * minute,
+        lastActivityAtMs: 30 * minute,
+        lastNudgeAtMs: 30 * minute,
+        nudgeCount: 3,
+      }),
+    ).toEqual({ kind: "exhausted" });
+  });
 });
 
 it("records the durable continuous improvement lifecycle through a verified pull request", () => {

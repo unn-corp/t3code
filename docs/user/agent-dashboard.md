@@ -49,6 +49,8 @@ Open **Settings**, then **Automation**, and turn on **Continuous Improvement Mod
 
 Continuous improvement uses the same guarded implementation brief as **Start work**. It refreshes `origin` when available, creates an isolated `t3/*` worktree from the repository's detected default branch, runs the project setup script, and asks the implementation agent to validate, commit, push its branch, and open one pull request against that default branch. It never pushes to the default branch or merges the pull request.
 
+T3 also watches the linked work session for progress. If the agent remains inactive, T3 sends up to three progress checks with increasing wait times. If a turn finishes without the expected pull request, T3 asks the same agent to finish the delivery handoff. Runs that still do not progress are moved to **Needs attention**. Approval and user-input requests are surfaced immediately instead of receiving an automated response.
+
 T3 starts at most one finding-linked implementation agent at a time across the portfolio. It skips dismissed, blocked, snoozed, completed, unqualified, already-linked, repository-disabled, and policy-held findings. Higher severity and confidence are selected first, with older findings breaking ties. If launch setup fails, T3 releases the finding for a later retry and applies a cooldown so it does not create a retry storm.
 
 ## Other dashboard views

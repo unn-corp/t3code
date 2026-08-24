@@ -34,6 +34,34 @@ export interface AgentDashboardImplementationRunResult {
   readonly worktreePath: string;
 }
 
+export type AgentDashboardImplementationNudgeReason = "stalled" | "missing-pull-request";
+
+export const buildAgentDashboardImplementationNudgePrompt = (input: {
+  readonly reason: AgentDashboardImplementationNudgeReason;
+  readonly attempt: number;
+  readonly maxAttempts: number;
+}): string => {
+  const progressContext = (() => {
+    switch (input.reason) {
+      case "stalled":
+        return "T3 has not observed meaningful progress from this work session recently.";
+      case "missing-pull-request":
+        return "Your latest turn finished, but T3 could not find a pull request for this worktree branch.";
+      default: {
+        const exhaustive: never = input.reason;
+        throw new Error(`Unhandled implementation nudge reason: ${String(exhaustive)}`);
+      }
+    }
+  })();
+
+  return [
+    `Automated progress check ${input.attempt} of ${input.maxAttempts}.`,
+    progressContext,
+    "Continue the assigned finding until it is fully complete. Finish the required code changes, run focused validation, commit the result, push the branch, and open the pull request.",
+    "If you are truly blocked, clearly report the blocker and the exact user action needed instead of silently stopping.",
+  ].join("\n\n");
+};
+
 export class AgentDashboardImplementationRunnerError extends Schema.TaggedErrorClass<AgentDashboardImplementationRunnerError>()(
   "AgentDashboardImplementationRunnerError",
   {
@@ -53,6 +81,15 @@ export interface AgentDashboardImplementationRunnerService {
     AgentDashboardImplementationRunResult | null,
     AgentDashboardImplementationRunnerError
   >;
+  readonly nudgeFinding: (input: {
+    readonly finding: AgentDashboardFinding;
+    readonly result: AgentDashboardImplementationRunResult;
+    readonly modelSelection: ModelSelection;
+    readonly runId: string;
+    readonly reason: AgentDashboardImplementationNudgeReason;
+    readonly attempt: number;
+    readonly maxAttempts: number;
+  }) => Effect.Effect<void, AgentDashboardImplementationRunnerError>;
 }
 
 export class AgentDashboardImplementationRunner extends Context.Service<
@@ -364,7 +401,51 @@ const make = Effect.gen(function* () {
       );
     });
 
-  return { runFinding } satisfies AgentDashboardImplementationRunnerService;
+  const nudgeFinding: AgentDashboardImplementationRunnerService["nudgeFinding"] = (input) =>
+    Effect.gen(function* () {
+      const createdAt = DateTime.formatIso(yield* DateTime.now);
+      yield* dispatch({
+        type: "thread.turn.start",
+        commandId: yield* commandId("turn-nudge"),
+        threadId: input.result.threadId,
+        message: {
+          messageId: MessageId.make(yield* randomUuid),
+          role: "user",
+          text: buildAgentDashboardImplementationNudgePrompt(input),
+          attachments: [],
+        },
+        modelSelection: input.modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt,
+      });
+
+      yield* store
+        .appendExternalAction({
+          id: `action:continuous-improvement-nudge:${yield* randomUuid}`,
+          kind: "other",
+          status: "succeeded",
+          actor: "continuous-improvement",
+          targetId: input.result.threadId,
+          targetUrl: null,
+          findingId: input.finding.id,
+          runId: input.runId,
+          result: `Progress check ${input.attempt} of ${input.maxAttempts} sent to ${input.result.branch}.`,
+          occurredAt: createdAt,
+        })
+        .pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("Continuous improvement nudge audit could not be persisted", {
+              findingId: input.finding.id,
+              threadId: input.result.threadId,
+              cause,
+            }),
+          ),
+          Effect.ignore,
+        );
+    });
+
+  return { runFinding, nudgeFinding } satisfies AgentDashboardImplementationRunnerService;
 });
 
 export const layer = Layer.effect(AgentDashboardImplementationRunner, make);

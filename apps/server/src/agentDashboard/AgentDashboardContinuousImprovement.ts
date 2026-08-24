@@ -39,6 +39,12 @@ const POLL_INTERVAL = Duration.seconds(15);
 const FAILURE_BACKOFF = Duration.minutes(5);
 const IMPLEMENTATION_MONITOR_INTERVAL = Duration.seconds(10);
 const IMPLEMENTATION_MONITOR_TIMEOUT = Duration.hours(6);
+const IMPLEMENTATION_NUDGE_DELAYS = [
+  Duration.minutes(10),
+  Duration.minutes(20),
+  Duration.minutes(40),
+] as const;
+const MAX_IMPLEMENTATION_NUDGES = IMPLEMENTATION_NUDGE_DELAYS.length;
 const MAX_IMPLEMENTATION_RETRIES = 3;
 
 export const CONTINUOUS_IMPROVEMENT_RUN_KIND = "continuous-improvement";
@@ -92,6 +98,30 @@ const riskWeight = { low: 1, medium: 2, high: 3, critical: 4 } as const;
 const modelLabel = (selection: ContinuousImprovementSettings["modelSelection"]): string => {
   const effort = selection.options?.find((option) => option.id === "reasoningEffort");
   return effort ? `${selection.model}/${String(effort.value)}` : selection.model;
+};
+
+export type ImplementationWatchdogDecision =
+  | { readonly kind: "wait" }
+  | { readonly kind: "nudge"; readonly attempt: number }
+  | { readonly kind: "exhausted" };
+
+export const evaluateImplementationWatchdog = (input: {
+  readonly nowMs: number;
+  readonly lastActivityAtMs: number;
+  readonly lastNudgeAtMs: number | null;
+  readonly nudgeCount: number;
+}): ImplementationWatchdogDecision => {
+  const cappedNudgeCount = Math.max(0, input.nudgeCount);
+  const lastProgressAtMs = Math.max(
+    input.lastActivityAtMs,
+    input.lastNudgeAtMs ?? Number.NEGATIVE_INFINITY,
+  );
+  const delayIndex = Math.min(cappedNudgeCount, MAX_IMPLEMENTATION_NUDGES - 1);
+  const delay = IMPLEMENTATION_NUDGE_DELAYS[delayIndex] ?? IMPLEMENTATION_NUDGE_DELAYS[0];
+  const delayMs = Duration.toMillis(delay);
+  if (input.nowMs - lastProgressAtMs < delayMs) return { kind: "wait" };
+  if (cappedNudgeCount >= MAX_IMPLEMENTATION_NUDGES) return { kind: "exhausted" };
+  return { kind: "nudge", attempt: cappedNudgeCount + 1 };
 };
 
 export const createContinuousImprovementRun = (input: {
@@ -247,7 +277,8 @@ export const hasActiveFindingImplementation = (
     return (
       thread?.session?.status === "starting" ||
       thread?.session?.status === "running" ||
-      thread?.latestTurn?.state === "running"
+      thread?.latestTurn?.state === "running" ||
+      thread?.backgroundLiveness != null
     );
   });
 };
@@ -284,8 +315,48 @@ const make = Effect.gen(function* () {
     readonly result: AgentDashboardImplementationRunResult;
     readonly project: OrchestrationProjectShell;
     readonly finding: AgentDashboardFinding;
+    readonly automationSettings: ContinuousImprovementSettings;
   }): Effect.Effect<void> =>
     Effect.gen(function* () {
+      let nudgeCount = 0;
+      let lastNudgeAtMs: number | null = null;
+      let lastNudgedCompletedTurnId: string | null = null;
+      const sendNudge = (reason: "stalled" | "missing-pull-request") =>
+        Effect.gen(function* () {
+          const attempt = nudgeCount + 1;
+          const nudgeResult = yield* Effect.result(
+            runner.nudgeFinding({
+              finding: input.finding,
+              result: input.result,
+              modelSelection: input.automationSettings.modelSelection,
+              runId: input.run.id,
+              reason,
+              attempt,
+              maxAttempts: MAX_IMPLEMENTATION_NUDGES,
+            }),
+          );
+          if (Result.isFailure(nudgeResult)) {
+            const failedAt = yield* nowIso;
+            yield* persistRun(
+              transitionContinuousImprovementRun(input.run, {
+                state: "needs-attention",
+                error: `T3 could not send an automated progress check to the implementation agent: ${nudgeResult.failure.message}`,
+                at: failedAt,
+              }),
+            );
+            return false;
+          }
+          nudgeCount = attempt;
+          lastNudgeAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+          yield* Effect.logInfo("Continuous Improvement Mode nudged an implementation agent", {
+            runId: input.run.id,
+            threadId: input.result.threadId,
+            attempt,
+            reason,
+          });
+          return true;
+        });
+
       const maxPolls = Math.max(
         1,
         Math.ceil(
@@ -297,7 +368,51 @@ const make = Effect.gen(function* () {
         const shell = yield* projection.getShellSnapshot();
         const thread = shell.threads.find((candidate) => candidate.id === input.result.threadId);
         const turnState = thread?.latestTurn?.state ?? null;
-        if (turnState === "completed") {
+        const hasBackgroundWork = thread?.backgroundLiveness != null;
+        if (thread?.hasPendingApprovals === true || thread?.hasPendingUserInput === true) {
+          const blockedAt = yield* nowIso;
+          yield* persistRun(
+            transitionContinuousImprovementRun(input.run, {
+              state: "needs-attention",
+              error:
+                thread.hasPendingApprovals === true
+                  ? "The implementation agent is waiting for approval. Open the work session to review the request."
+                  : "The implementation agent is waiting for user input. Open the work session to answer it.",
+              at: blockedAt,
+            }),
+          );
+          return;
+        }
+        if (turnState === "completed" && !hasBackgroundWork) {
+          const completedTurnId = String(thread?.latestTurn?.turnId ?? "");
+          if (completedTurnId === lastNudgedCompletedTurnId) {
+            const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+            const parsedThreadUpdatedAt = Date.parse(thread?.updatedAt ?? input.run.updatedAt);
+            const parsedRunStartedAt = Date.parse(input.run.startedAt ?? input.run.createdAt);
+            const decision = evaluateImplementationWatchdog({
+              nowMs,
+              lastActivityAtMs: Number.isFinite(parsedThreadUpdatedAt)
+                ? parsedThreadUpdatedAt
+                : parsedRunStartedAt,
+              lastNudgeAtMs,
+              nudgeCount,
+            });
+            if (decision.kind === "wait") {
+              if (poll + 1 < maxPolls) yield* Effect.sleep(IMPLEMENTATION_MONITOR_INTERVAL);
+              continue;
+            }
+            if (decision.kind === "exhausted") {
+              const stalledAt = yield* nowIso;
+              yield* persistRun(
+                transitionContinuousImprovementRun(input.run, {
+                  state: "needs-attention",
+                  error: `The implementation agent did not resume after ${MAX_IMPLEMENTATION_NUDGES} automated progress checks. Open the work session to inspect its current state.`,
+                  at: stalledAt,
+                }),
+              );
+              return;
+            }
+          }
           const completedAt = yield* nowIso;
           const repository = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
             input.project.repositoryIdentity?.locator.remoteUrl ?? null,
@@ -335,10 +450,17 @@ const make = Effect.gen(function* () {
             (candidate) => candidate.headRefName === input.result.branch,
           );
           if (!pullRequest) {
+            if (nudgeCount < MAX_IMPLEMENTATION_NUDGES) {
+              const nudged = yield* sendNudge("missing-pull-request");
+              if (!nudged) return;
+              lastNudgedCompletedTurnId = completedTurnId;
+              if (poll + 1 < maxPolls) yield* Effect.sleep(IMPLEMENTATION_MONITOR_INTERVAL);
+              continue;
+            }
             yield* persistRun(
               transitionContinuousImprovementRun(input.run, {
                 state: "needs-attention",
-                error: `The agent finished without opening a pull request from ${input.result.branch}. Open the work session to review the result or retry it.`,
+                error: `The agent finished without opening a pull request from ${input.result.branch} after ${MAX_IMPLEMENTATION_NUDGES} automated progress checks. Open the work session to review the result or retry it.`,
                 at: completedAt,
               }),
             );
@@ -366,7 +488,7 @@ const make = Effect.gen(function* () {
             .pipe(Effect.ignore);
           return;
         }
-        if (turnState === "error") {
+        if (turnState === "error" && !hasBackgroundWork) {
           const failedAt = yield* nowIso;
           yield* persistRun(
             transitionContinuousImprovementRun(input.run, {
@@ -378,7 +500,7 @@ const make = Effect.gen(function* () {
           );
           return;
         }
-        if (turnState === "interrupted") {
+        if (turnState === "interrupted" && !hasBackgroundWork) {
           const stoppedAt = yield* nowIso;
           yield* persistRun(
             transitionContinuousImprovementRun(input.run, {
@@ -388,6 +510,38 @@ const make = Effect.gen(function* () {
             }),
           );
           return;
+        }
+        const implementationIsActive =
+          turnState === "running" ||
+          thread?.session?.status === "starting" ||
+          thread?.session?.status === "running" ||
+          hasBackgroundWork;
+        if (thread && implementationIsActive) {
+          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+          const parsedThreadUpdatedAt = Date.parse(thread.updatedAt);
+          const parsedRunStartedAt = Date.parse(input.run.startedAt ?? input.run.createdAt);
+          const decision = evaluateImplementationWatchdog({
+            nowMs,
+            lastActivityAtMs: Number.isFinite(parsedThreadUpdatedAt)
+              ? parsedThreadUpdatedAt
+              : parsedRunStartedAt,
+            lastNudgeAtMs,
+            nudgeCount,
+          });
+          if (decision.kind === "nudge") {
+            const nudged = yield* sendNudge("stalled");
+            if (!nudged) return;
+          } else if (decision.kind === "exhausted") {
+            const stalledAt = yield* nowIso;
+            yield* persistRun(
+              transitionContinuousImprovementRun(input.run, {
+                state: "needs-attention",
+                error: `The implementation agent remained inactive after ${MAX_IMPLEMENTATION_NUDGES} automated progress checks. Open the work session to inspect its current state.`,
+                at: stalledAt,
+              }),
+            );
+            return;
+          }
         }
         if (poll + 1 < maxPolls) yield* Effect.sleep(IMPLEMENTATION_MONITOR_INTERVAL);
       }
@@ -471,6 +625,7 @@ const make = Effect.gen(function* () {
         result: launchResult.success,
         project: input.project,
         finding: input.finding,
+        automationSettings: input.automationSettings,
       }).pipe(Effect.forkIn(scope));
       return launchResult.success;
     });
@@ -748,5 +903,7 @@ export const __testing = {
   FAILURE_BACKOFF,
   IMPLEMENTATION_MONITOR_INTERVAL,
   IMPLEMENTATION_MONITOR_TIMEOUT,
+  IMPLEMENTATION_NUDGE_DELAYS,
+  MAX_IMPLEMENTATION_NUDGES,
   MAX_IMPLEMENTATION_RETRIES,
 };
