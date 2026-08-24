@@ -284,6 +284,11 @@ const runtimeModeConfig: Record<
     description: "Supported providers approve routine actions; others still ask.",
     icon: SparklesIcon,
   },
+  "automated-review": {
+    label: "Read-only automation",
+    description: "Run autonomous inspections without file or network writes.",
+    icon: LockIcon,
+  },
   "full-access": {
     label: "Full access",
     description: "Allow commands and edits without prompts.",

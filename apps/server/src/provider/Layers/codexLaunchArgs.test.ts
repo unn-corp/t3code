@@ -79,6 +79,13 @@ describe("codexSessionAppServerArgs", () => {
     );
   });
 
+  it("pins automated reviews to non-interactive, read-only Codex config", () => {
+    NodeAssert.deepStrictEqual(
+      codexSessionAppServerArgs(undefined, undefined, "automated-review"),
+      ["app-server", "-c", 'approval_policy="never"', "-c", 'sandbox_mode="read-only"'],
+    );
+  });
+
   it("does not override restricted runtime modes", () => {
     NodeAssert.deepStrictEqual(codexSessionAppServerArgs(undefined, "", "approval-required"), [
       "app-server",

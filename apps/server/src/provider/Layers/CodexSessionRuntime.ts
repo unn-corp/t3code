@@ -288,6 +288,12 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
         sandbox: "workspace-write",
         approvalsReviewer: "auto_review",
       };
+    case "automated-review":
+      return {
+        approvalPolicy: "never",
+        sandbox: "read-only",
+        approvalsReviewer: "user",
+      };
     case "full-access":
     default:
       return {
@@ -298,7 +304,7 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
-function buildThreadStartParams(input: {
+export function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
@@ -320,8 +326,10 @@ function runtimeModeToTurnSandboxPolicy(
 ): EffectCodexSchema.V2TurnStartParams__SandboxPolicy {
   switch (input) {
     case "approval-required":
+    case "automated-review":
       return {
         type: "readOnly",
+        ...(input === "automated-review" ? { networkAccess: false } : {}),
       };
     case "auto-accept-edits":
     case "auto":

@@ -559,6 +559,7 @@ const make = Effect.gen(function* () {
         const reviewExit = yield* Effect.exit(
           runner.runReview({
             projectId: run.repository.projectId,
+            trigger: run.trigger,
           }),
         );
 

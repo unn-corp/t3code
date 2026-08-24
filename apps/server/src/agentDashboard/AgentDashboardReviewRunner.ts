@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type AgentDashboardAutomationRunTrigger,
   type ModelSelection,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
@@ -29,9 +30,8 @@ import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 const REVIEW_MODEL = "gpt-5.6-luna";
 const REVIEW_REASONING_EFFORT = "xhigh";
 
-/** Repository review agents are read-only by instruction but need autonomous
- * process/filesystem access so the provider never pauses for approval. */
-export const REVIEW_RUNTIME_MODE = "full-access" as const;
+/** The provider-enforced posture for unattended repository reviews. */
+export const REVIEW_RUNTIME_MODE = "automated-review" as const;
 
 /** Logical automation kind recorded on durable runs. */
 export const REVIEW_KIND = "repository-review";
@@ -57,6 +57,15 @@ export interface AgentDashboardReviewRunResult {
 export interface AgentDashboardReviewRunOptions {
   /** When set to a real project id, review that project; otherwise pick one stable project. */
   readonly projectId?: ProjectId | null | undefined;
+  /** The trigger controls whether selection may use a future-due fallback. */
+  readonly trigger?: AgentDashboardAutomationRunTrigger | undefined;
+}
+
+export const shouldAllowNotDueSelection = (trigger?: AgentDashboardAutomationRunTrigger): boolean =>
+  trigger !== "scheduled";
+
+export interface AgentDashboardReviewSelectionOptions {
+  readonly allowNotDue?: boolean;
 }
 
 export class AgentDashboardReviewRunnerError extends Schema.TaggedErrorClass<AgentDashboardReviewRunnerError>()(
@@ -74,7 +83,9 @@ export interface AgentDashboardReviewRunnerService {
     options?: AgentDashboardReviewRunOptions,
   ) => Effect.Effect<AgentDashboardReviewRunResult, AgentDashboardReviewRunnerError>;
   /** Deterministically selects the next eligible repository for scheduled work. */
-  readonly selectNextProject?: Effect.Effect<ProjectId | null, AgentDashboardReviewRunnerError>;
+  readonly selectNextProject?: (
+    options?: AgentDashboardReviewSelectionOptions,
+  ) => Effect.Effect<ProjectId | null, AgentDashboardReviewRunnerError>;
   /** @deprecated Prefer runReview — kept as an alias for callers. */
   readonly runRandomReview: Effect.Effect<
     AgentDashboardReviewRunResult,
@@ -268,7 +279,9 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const selectNextProject: Effect.Effect<ProjectId | null, AgentDashboardReviewRunnerError> =
+  const selectNextProject = (
+    options: AgentDashboardReviewSelectionOptions = { allowNotDue: true },
+  ): Effect.Effect<ProjectId | null, AgentDashboardReviewRunnerError> =>
     Effect.gen(function* () {
       const shellSnapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
         Effect.mapError(
@@ -307,7 +320,7 @@ const make = Effect.gen(function* () {
         policies,
         coverage,
         nowMs: DateTime.toEpochMillis(now),
-        allowNotDue: true,
+        allowNotDue: options.allowNotDue === true,
       });
     });
 
@@ -346,7 +359,9 @@ const make = Effect.gen(function* () {
 
       let project = explicitTarget;
       if (project === null) {
-        const selectedId = yield* selectNextProject;
+        const selectedId = yield* selectNextProject({
+          allowNotDue: shouldAllowNotDueSelection(options.trigger),
+        });
         project =
           selectedId === null
             ? null

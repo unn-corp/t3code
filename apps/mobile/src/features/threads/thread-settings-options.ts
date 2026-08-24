@@ -30,6 +30,11 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
     description: "Supported providers approve routine actions; others still ask.",
   },
   {
+    mode: "automated-review",
+    label: "Read-only automation",
+    description: "Run autonomous inspections without file or network writes.",
+  },
+  {
     mode: "full-access",
     label: "Full access",
     description: "Allow commands and edits without prompts.",

@@ -6,7 +6,7 @@ import {
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
 
-import { selectNextRepository } from "./AgentDashboardReviewRunner.ts";
+import { selectNextRepository, shouldAllowNotDueSelection } from "./AgentDashboardReviewRunner.ts";
 
 const NOW = Date.parse("2026-08-10T00:00:00.000Z");
 
@@ -58,6 +58,13 @@ const coverage = (
 });
 
 describe("selectNextRepository", () => {
+  it("only permits future-due fallback for non-scheduled triggers", () => {
+    expect(shouldAllowNotDueSelection("scheduled")).toBe(false);
+    expect(shouldAllowNotDueSelection("manual")).toBe(true);
+    expect(shouldAllowNotDueSelection("retry")).toBe(true);
+    expect(shouldAllowNotDueSelection()).toBe(true);
+  });
+
   it("chooses overdue repositories before priority and risk tie-breakers", () => {
     const selected = selectNextRepository({
       nowMs: NOW,
