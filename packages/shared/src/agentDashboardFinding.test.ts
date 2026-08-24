@@ -1,7 +1,10 @@
 import { expect, it } from "@effect/vitest";
 import { ProjectId, type AgentDashboardFinding } from "@t3tools/contracts";
 
-import { buildAgentDashboardFindingPrompt } from "./agentDashboardFinding.ts";
+import {
+  buildAgentDashboardFindingPrompt,
+  parseAgentDashboardStaleOutcome,
+} from "./agentDashboardFinding.ts";
 
 const finding = {
   id: "finding-draft-delivery",
@@ -55,4 +58,31 @@ it("requires implementation agents to open pull requests as drafts", () => {
     "Leave the pull request in draft until a user explicitly marks it ready",
   );
   expect(prompt).toContain("the draft pull request is open");
+});
+
+it("gives stale findings a structured completion path without repository delivery", () => {
+  const prompt = buildAgentDashboardFindingPrompt(
+    {
+      finding,
+      type: finding.type,
+      projectName: "Draft Delivery",
+      repositoryPath: "/workspace/project-draft-delivery",
+    },
+    { kind: "implement", baseBranch: "main" },
+  );
+
+  expect(prompt).toContain("T3_FINDING_OUTCOME: stale");
+  expect(prompt).toContain("T3_FINDING_REASON: <one-line reason>");
+  expect(prompt).toContain("do not commit, push, or open a pull request");
+  expect(prompt).toContain("T3 will dismiss the finding automatically");
+});
+
+it("parses only an explicit stale outcome with a reason", () => {
+  expect(
+    parseAgentDashboardStaleOutcome(
+      "The code was removed upstream.\n\nT3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: The affected module no longer exists.",
+    ),
+  ).toEqual({ reason: "The affected module no longer exists." });
+  expect(parseAgentDashboardStaleOutcome("The finding may be stale or invalid.")).toBeNull();
+  expect(parseAgentDashboardStaleOutcome("T3_FINDING_OUTCOME: stale")).toBeNull();
 });

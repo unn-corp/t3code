@@ -11,6 +11,25 @@ export type AgentDashboardFindingPromptIntent =
   | { readonly kind: "research" }
   | { readonly kind: "implement"; readonly baseBranch: string };
 
+const STALE_OUTCOME_MARKER = "T3_FINDING_OUTCOME: stale";
+const STALE_REASON_PREFIX = "T3_FINDING_REASON:";
+
+export interface AgentDashboardStaleOutcome {
+  readonly reason: string;
+}
+
+/** Parse the explicit completion signal emitted when an implementation finding no longer applies. */
+export function parseAgentDashboardStaleOutcome(text: string): AgentDashboardStaleOutcome | null {
+  const lines = text.split(/\r?\n/).map((line) => line.trim());
+  const outcomeIndex = lines.findIndex((line) => line === STALE_OUTCOME_MARKER);
+  if (outcomeIndex < 0) return null;
+  const reasonLine = lines
+    .slice(outcomeIndex + 1)
+    .find((line) => line.startsWith(STALE_REASON_PREFIX));
+  const reason = reasonLine?.slice(STALE_REASON_PREFIX.length).trim() ?? "";
+  return reason.length > 0 ? { reason: reason.slice(0, 1_000) } : null;
+}
+
 /** One delivery brief shared by manual and continuous finding launches. */
 export function buildAgentDashboardFindingPrompt(
   input: AgentDashboardFindingPromptInput,
@@ -74,7 +93,14 @@ export function buildAgentDashboardFindingPrompt(
           "- Verify the finding against the current repository before editing.",
           "- Implement the smallest change that resolves the finding.",
           "- Run focused validation and directly affected tests.",
-          "- If the finding is stale or invalid, explain why and do not make speculative changes.",
+          "- If the finding is stale or invalid, do not make speculative changes and follow the stale completion path below.",
+          "",
+          "## Stale completion",
+          "- If current repository evidence confirms the finding is stale or invalid, do not edit implementation code or T3 state files, and do not commit, push, or open a pull request.",
+          "- End the final response with these two lines, replacing the placeholder with a concise reason:",
+          STALE_OUTCOME_MARKER,
+          `${STALE_REASON_PREFIX} <one-line reason>`,
+          "- T3 will dismiss the finding automatically after reading that outcome.",
           "",
           "## Delivery",
           "- Commit the validated implementation on the current worktree branch.",
@@ -86,7 +112,7 @@ export function buildAgentDashboardFindingPrompt(
           "- If credentials, branch protection, or failing validation prevents delivery, leave the branch and worktree intact and report the exact blocker.",
           "",
           "## Completion",
-          "After implementation and validation succeed and the draft pull request is open, include the pull request URL in your final response and mark this finding as Done in T3 Code.",
+          "If the finding is current, after implementation and validation succeed and the draft pull request is open, include the pull request URL in your final response and mark this finding as Done in T3 Code.",
         ]),
   ].join("\n");
 }

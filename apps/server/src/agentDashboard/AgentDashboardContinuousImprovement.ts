@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
@@ -17,9 +18,11 @@ import type {
   AgentDashboardFinding,
   AgentDashboardRepositoryPolicy,
   ContinuousImprovementSettings,
+  OrchestrationMessage,
   OrchestrationProjectShell,
   OrchestrationThreadShell,
 } from "@t3tools/contracts";
+import { parseAgentDashboardStaleOutcome } from "@t3tools/shared/agentDashboardFinding";
 import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
 
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
@@ -27,6 +30,7 @@ import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import {
   AgentDashboardImplementationRunner,
   AgentDashboardImplementationRunnerError,
+  type AgentDashboardImplementationNudgeReason,
   type AgentDashboardImplementationRunResult,
 } from "./AgentDashboardImplementationRunner.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -136,6 +140,17 @@ export const findImplementationPullRequest = <
     : undefined) ??
   input.pullRequests.find((candidate) => candidate.headRefName === input.launchBranch);
 
+export const findImplementationStaleOutcome = (input: {
+  readonly assistantMessageId: string | null;
+  readonly messages: ReadonlyArray<Pick<OrchestrationMessage, "id" | "role" | "text">>;
+}): ReturnType<typeof parseAgentDashboardStaleOutcome> => {
+  if (input.assistantMessageId === null) return null;
+  const message = input.messages.find(
+    (candidate) => candidate.id === input.assistantMessageId && candidate.role === "assistant",
+  );
+  return message ? parseAgentDashboardStaleOutcome(message.text) : null;
+};
+
 export const createContinuousImprovementRun = (input: {
   readonly id: string;
   readonly finding: AgentDashboardFinding;
@@ -170,6 +185,7 @@ type ContinuousImprovementRunTransition =
       readonly at: string;
     }
   | { readonly state: "pr-opened"; readonly at: string }
+  | { readonly state: "finding-dismissed"; readonly at: string }
   | { readonly state: "needs-attention"; readonly error: string; readonly at: string }
   | { readonly state: "failed"; readonly error: string; readonly at: string }
   | { readonly state: "stopped"; readonly error: string | null; readonly at: string };
@@ -191,6 +207,7 @@ export const transitionContinuousImprovementRun = (
         completedAt: null,
       };
     case "pr-opened":
+    case "finding-dismissed":
       return {
         ...run,
         status: "succeeded",
@@ -333,7 +350,7 @@ const make = Effect.gen(function* () {
       let nudgeCount = 0;
       let lastNudgeAtMs: number | null = null;
       let lastNudgedCompletedTurnId: string | null = null;
-      const sendNudge = (reason: "stalled" | "missing-pull-request") =>
+      const sendNudge = (reason: AgentDashboardImplementationNudgeReason) =>
         Effect.gen(function* () {
           const attempt = nudgeCount + 1;
           const nudgeResult = yield* Effect.result(
@@ -426,6 +443,92 @@ const make = Effect.gen(function* () {
             }
           }
           const completedAt = yield* nowIso;
+          const threadDetailResult = yield* Effect.result(
+            projection.getThreadDetailById(input.result.threadId),
+          );
+          if (Result.isFailure(threadDetailResult)) {
+            yield* Effect.logWarning(
+              "Continuous improvement could not inspect the completed agent response",
+              {
+                runId: input.run.id,
+                threadId: input.result.threadId,
+                cause: threadDetailResult.failure,
+              },
+            );
+            if (poll + 1 < maxPolls) yield* Effect.sleep(IMPLEMENTATION_MONITOR_INTERVAL);
+            continue;
+          }
+          const threadDetail = Option.getOrNull(threadDetailResult.success);
+          if (threadDetail === null) {
+            if (poll + 1 < maxPolls) yield* Effect.sleep(IMPLEMENTATION_MONITOR_INTERVAL);
+            continue;
+          }
+          const staleOutcome = findImplementationStaleOutcome({
+            assistantMessageId: threadDetail.latestTurn?.assistantMessageId ?? null,
+            messages: threadDetail.messages,
+          });
+          if (staleOutcome !== null) {
+            const dismissalResult = yield* Effect.result(
+              store.applyFindingAction({
+                id: input.finding.id,
+                action: "dismiss",
+                note: `Automatic implementation agent confirmed this finding is stale: ${staleOutcome.reason}`,
+              }),
+            );
+            if (Result.isFailure(dismissalResult) || dismissalResult.success === "not-found") {
+              yield* persistRun(
+                transitionContinuousImprovementRun(input.run, {
+                  state: "needs-attention",
+                  error: Result.isFailure(dismissalResult)
+                    ? "The agent confirmed the finding was stale, but T3 could not dismiss it automatically."
+                    : "The agent confirmed the finding was stale, but T3 could no longer find it to dismiss.",
+                  at: completedAt,
+                }),
+              );
+              return;
+            }
+            yield* persistRun(
+              transitionContinuousImprovementRun(input.run, {
+                state: "finding-dismissed",
+                at: completedAt,
+              }),
+            );
+            yield* store
+              .appendExternalAction({
+                id: `action:continuous-improvement-stale:${yield* crypto.randomUUIDv4}`,
+                kind: "other",
+                status: "succeeded",
+                actor: "continuous-improvement",
+                targetId: input.finding.id,
+                targetUrl: null,
+                findingId: input.finding.id,
+                runId: input.run.id,
+                result: `Finding dismissed after the implementation agent confirmed it was stale: ${staleOutcome.reason}`,
+                occurredAt: completedAt,
+              })
+              .pipe(Effect.ignore);
+            yield* runner
+              .settleCompletedFinding({
+                finding: input.finding,
+                result: input.result,
+                runId: input.run.id,
+                outcome: { kind: "finding-stale", reason: staleOutcome.reason },
+              })
+              .pipe(
+                Effect.tapError((cause) =>
+                  Effect.logWarning(
+                    "Continuous improvement could not stop the stale-finding session",
+                    {
+                      findingId: input.finding.id,
+                      threadId: input.result.threadId,
+                      cause,
+                    },
+                  ),
+                ),
+                Effect.ignore,
+              );
+            return;
+          }
           const repository = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
             input.project.repositoryIdentity?.locator.remoteUrl ?? null,
           );
@@ -522,6 +625,7 @@ const make = Effect.gen(function* () {
               finding: input.finding,
               result: { ...input.result, branch: pullRequest.headRefName },
               runId: input.run.id,
+              outcome: { kind: "pull-request-delivered" },
             })
             .pipe(
               Effect.tapError((cause) =>

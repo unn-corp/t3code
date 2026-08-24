@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  MessageId,
   ProjectId,
   ThreadId,
   type AgentDashboardFinding,
@@ -12,6 +13,7 @@ import {
   CONTINUOUS_IMPROVEMENT_RUN_KIND,
   createContinuousImprovementRun,
   evaluateImplementationWatchdog,
+  findImplementationStaleOutcome,
   findImplementationPullRequest,
   hasActiveFindingImplementation,
   isFindingEligibleForContinuousImprovement,
@@ -40,6 +42,44 @@ it("falls back to the launch branch while the projected branch is unavailable", 
   });
 
   expect(pullRequest?.number).toBe(200);
+});
+
+it("uses only the completed turn's assistant message when detecting a stale finding", () => {
+  expect(
+    findImplementationStaleOutcome({
+      assistantMessageId: MessageId.make("message-current"),
+      messages: [
+        {
+          id: MessageId.make("message-old"),
+          role: "assistant",
+          text: "T3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: An old conclusion.",
+        },
+        {
+          id: MessageId.make("message-current"),
+          role: "assistant",
+          text: "T3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: The API was already removed.",
+        },
+      ],
+    }),
+  ).toEqual({ reason: "The API was already removed." });
+
+  expect(
+    findImplementationStaleOutcome({
+      assistantMessageId: MessageId.make("message-current"),
+      messages: [
+        {
+          id: MessageId.make("message-old"),
+          role: "assistant",
+          text: "T3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: An old conclusion.",
+        },
+        {
+          id: MessageId.make("message-current"),
+          role: "assistant",
+          text: "Draft PR: https://example.test/pr/1",
+        },
+      ],
+    }),
+  ).toBeNull();
 });
 
 const project = (id: string): OrchestrationProjectShell => ({
@@ -296,6 +336,15 @@ it("records the durable continuous improvement lifecycle through a verified pull
   expect(opened).toMatchObject({
     status: "succeeded",
     completedAt: "2026-08-23T12:04:00.000Z",
+  });
+
+  const dismissed = transitionContinuousImprovementRun(working, {
+    state: "finding-dismissed",
+    at: "2026-08-23T12:03:00.000Z",
+  });
+  expect(dismissed).toMatchObject({
+    status: "succeeded",
+    completedAt: "2026-08-23T12:03:00.000Z",
   });
 });
 

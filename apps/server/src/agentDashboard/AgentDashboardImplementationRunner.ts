@@ -104,6 +104,9 @@ export interface AgentDashboardImplementationRunnerService {
     readonly finding: AgentDashboardFinding;
     readonly result: AgentDashboardImplementationRunResult;
     readonly runId: string;
+    readonly outcome:
+      | { readonly kind: "pull-request-delivered" }
+      | { readonly kind: "finding-stale"; readonly reason: string };
   }) => Effect.Effect<void, AgentDashboardImplementationRunnerError>;
 }
 
@@ -484,6 +487,10 @@ const make = Effect.gen(function* () {
     (input) =>
       Effect.gen(function* () {
         const createdAt = DateTime.formatIso(yield* DateTime.now);
+        const auditResult =
+          input.outcome.kind === "pull-request-delivered"
+            ? `Completed implementation session stopped after pull request delivery from ${input.result.branch}.`
+            : `Completed implementation session stopped after the agent confirmed the finding was stale: ${input.outcome.reason}`;
         const commands = buildCompletedImplementationCleanupCommands({
           threadId: input.result.threadId,
           settleCommandId: yield* commandId("thread-settle"),
@@ -504,7 +511,7 @@ const make = Effect.gen(function* () {
             targetUrl: null,
             findingId: input.finding.id,
             runId: input.runId,
-            result: `Completed implementation session stopped after pull request delivery from ${input.result.branch}.`,
+            result: auditResult,
             occurredAt: createdAt,
           })
           .pipe(
