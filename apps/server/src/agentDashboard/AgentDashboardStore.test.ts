@@ -331,6 +331,39 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
           body: "## Problem\nThe parser drops the final record.",
         },
       });
+      const [finding] = await Effect.runPromise(store.readFindings);
+      expect(finding?.actionability).toMatchObject({
+        readiness: "ready",
+        proposal: "Flush the buffer before returning and add an end-of-input test.",
+        expectedValue: "The last item silently disappears from imports.",
+      });
+
+      const findingsPath = NodePath.join(stateDir, "agent-dashboard", "findings.json");
+      const persisted = JSON.parse(await NodeFSP.readFile(findingsPath, "utf8")) as {
+        findings: Array<{ actionability: unknown }>;
+      };
+      persisted.findings[0]!.actionability = null;
+      await NodeFSP.writeFile(findingsPath, JSON.stringify(persisted, null, 2));
+
+      const [legacyFinding] = await Effect.runPromise(store.readFindings);
+      expect(legacyFinding?.actionability).toMatchObject({
+        readiness: "ready",
+        proposal: "Flush the buffer before returning and add an end-of-input test.",
+        expectedValue: "The last item silently disappears from imports.",
+      });
+      expect(
+        await Effect.runPromise(
+          store.claimFindingThread({
+            id: legacyFinding!.id,
+            projectId: ProjectId.make("project-1"),
+            threadId: ThreadId.make("thread-legacy-implementation"),
+          }),
+        ),
+      ).toBe("applied");
+      expect((await Effect.runPromise(store.readFindings))[0]).toMatchObject({
+        actionability: { readiness: "ready" },
+        thread: { threadId: "thread-legacy-implementation" },
+      });
     } finally {
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
     }
@@ -418,6 +451,86 @@ it.effect("deduplicates canonical findings across runs and preserves disposition
   }),
 );
 
+it.effect("qualifies open collector signals and archives verified false positives", () =>
+  Effect.promise(async () => {
+    const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-qualifications-"));
+    try {
+      const store = AgentDashboardStore.getStore(stateDir);
+      await Effect.runPromise(
+        store.appendFindings([
+          {
+            kind: "operational",
+            type: "operations",
+            title: "No CI workflow",
+            summary: "The repository has no workflow.",
+            evidence: [".github/workflows is missing"],
+            repository: { projectId: "project-1" },
+            source: "local-engineering-scan",
+          },
+          {
+            kind: "security",
+            type: "security",
+            title: "Possible credential",
+            summary: "A credential-shaped fixture was found.",
+            evidence: ["src/example.test.ts:redacted"],
+            repository: { projectId: "project-1" },
+            source: "local-secret-scan",
+          },
+        ]),
+      );
+      const findings = await Effect.runPromise(store.readFindings);
+      const ci = findings.find((finding) => finding.title === "No CI workflow");
+      const secret = findings.find((finding) => finding.title === "Possible credential");
+
+      expect(
+        await Effect.runPromise(
+          store.applyFindingQualifications([
+            {
+              id: ci!.id,
+              outcome: "ready",
+              proposal: "Add a focused pull-request workflow.",
+              expectedValue: "Catch regressions before merge.",
+              targets: [
+                {
+                  path: ".github/workflows/checks.yml",
+                  symbol: null,
+                  evidence: "The workflow directory is absent.",
+                },
+              ],
+              validationPlan: ["Validate the workflow syntax."],
+              sources: [],
+              riskTier: "low",
+              estimatedEffort: "small",
+              reason: "The repository already exposes a deterministic test command.",
+            },
+            {
+              id: secret!.id,
+              outcome: "dismiss",
+              reason: "The value is an intentionally inert test fixture.",
+            },
+          ]),
+        ),
+      ).toBe(2);
+
+      const qualified = await Effect.runPromise(store.readFindings);
+      expect(qualified.find((finding) => finding.id === ci!.id)?.actionability).toMatchObject({
+        readiness: "ready",
+        riskTier: "low",
+        estimatedEffort: "small",
+        qualifiedBy: "repository-review",
+        qualifiedOccurrenceCount: 1,
+      });
+      expect(qualified.find((finding) => finding.id === secret!.id)?.disposition).toMatchObject({
+        state: "dismissed",
+        actor: "repository-review",
+        note: "The value is an intentionally inert test fixture.",
+      });
+    } finally {
+      await NodeFSP.rm(stateDir, { recursive: true, force: true });
+    }
+  }),
+);
+
 it.effect("migrates legacy canonical findings into the persisted product taxonomy", () =>
   Effect.promise(async () => {
     const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-finding-type-"));
@@ -482,6 +595,12 @@ it.effect("builds a GitHub issue draft from an actionable canonical research fin
                   kind: "documentation",
                 },
               ],
+              riskTier: "medium",
+              estimatedEffort: "medium",
+              qualificationReason: "The change is bounded and locally testable.",
+              qualifiedAt: "2026-08-09T12:05:00.000Z",
+              qualifiedBy: "repository-review",
+              qualifiedOccurrenceCount: 1,
             },
           },
         ]),
@@ -611,6 +730,63 @@ it.effect("links a finding to its working chat and records the transition", () =
         ),
       ).toBe("applied");
       expect((await Effect.runPromise(store.readFindings))[0]?.disposition.state).toBe("open");
+    } finally {
+      await NodeFSP.rm(stateDir, { recursive: true, force: true });
+    }
+  }),
+);
+
+it.effect("atomically claims and releases a ready finding for continuous implementation", () =>
+  Effect.promise(async () => {
+    const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-finding-claim-"));
+    try {
+      const store = AgentDashboardStore.getStore(stateDir);
+      await Effect.runPromise(
+        store.appendFindings([
+          {
+            kind: "review",
+            title: "Remove a repeated projection query",
+            summary: "The same projection is loaded twice.",
+            repository: { projectId: "project-1" },
+            source: "review",
+            actionability: {
+              readiness: "ready",
+              proposal: "Reuse the first projection result.",
+              expectedValue: "Avoid redundant work.",
+              targets: [],
+              validationPlan: ["Run the focused store test."],
+              sources: [],
+              riskTier: "medium",
+              estimatedEffort: "small",
+              qualificationReason: "The redundant query is confirmed and locally testable.",
+              qualifiedAt: "2026-08-09T12:05:00.000Z",
+              qualifiedBy: "repository-review",
+              qualifiedOccurrenceCount: 1,
+            },
+          },
+        ]),
+      );
+      const [finding] = await Effect.runPromise(store.readFindings);
+      const first = {
+        id: finding!.id,
+        projectId: ProjectId.make("project-1"),
+        threadId: ThreadId.make("thread-first"),
+      };
+      expect(await Effect.runPromise(store.claimFindingThread(first))).toBe("applied");
+      expect(
+        await Effect.runPromise(
+          store.claimFindingThread({ ...first, threadId: ThreadId.make("thread-second") }),
+        ),
+      ).toBe("noop");
+      expect((await Effect.runPromise(store.readFindings))[0]).toMatchObject({
+        thread: { threadId: "thread-first" },
+        disposition: { state: "in-progress", actor: "continuous-improvement" },
+      });
+      expect(await Effect.runPromise(store.releaseFindingThread(first))).toBe("applied");
+      expect((await Effect.runPromise(store.readFindings))[0]).toMatchObject({
+        thread: null,
+        disposition: { state: "open", actor: "continuous-improvement" },
+      });
     } finally {
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
     }

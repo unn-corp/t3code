@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as AgentDashboardReviewJobService from "./AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewScheduler from "./AgentDashboardReviewScheduler.ts";
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
@@ -152,6 +153,7 @@ describe("AgentDashboardReviewScheduler portfolio collection", () => {
           Layer.provide(reviewJobs),
           Layer.provide(makeProjection(project)),
           Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provide(ServerSettings.layerTest()),
           Layer.provideMerge(NodeServices.layer),
         );
 

@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -75,6 +76,7 @@ import {
 } from "./agentDashboard/AgentDashboardSnapshot.ts";
 import * as AgentDashboardStore from "./agentDashboard/AgentDashboardStore.ts";
 import * as AgentDashboardCollectors from "./agentDashboard/AgentDashboardCollectors.ts";
+import * as AgentDashboardContinuousImprovement from "./agentDashboard/AgentDashboardContinuousImprovement.ts";
 import * as AgentDashboardRunHistory from "./agentDashboard/AgentDashboardRunHistory.ts";
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
@@ -476,6 +478,11 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const dashboardStore = AgentDashboardStore.getStore(config.stateDir);
       const reviewJobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+      const runtimeContext = yield* Effect.context<never>();
+      const continuousImprovement = Context.getOption(
+        runtimeContext,
+        AgentDashboardContinuousImprovement.AgentDashboardContinuousImprovement,
+      );
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -1529,22 +1536,48 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentDashboardRetryRun,
             Effect.gen(function* () {
-              const retried = yield* reviewJobService.retryRun(input.id);
+              const existing = (yield* AgentDashboardRunHistory.readPersistedRuns(
+                config.stateDir,
+              )).find((run) => run.id === input.id);
+              const retried =
+                existing?.kind ===
+                AgentDashboardContinuousImprovement.CONTINUOUS_IMPROVEMENT_RUN_KIND
+                  ? Option.isSome(continuousImprovement)
+                    ? yield* continuousImprovement.value.retryRun(input.id)
+                    : yield* new AgentDashboardError({
+                        message: "Continuous Improvement retry is unavailable.",
+                      })
+                  : yield* reviewJobService.retryRun(input.id);
+              if (retried === null) {
+                return {
+                  ok: false as const,
+                  outcome: "noop" as const,
+                  message: "The finding was claimed before the retry could start.",
+                  targetId: input.id,
+                  targetUrl: null,
+                };
+              }
+              const retriedId = "id" in retried ? retried.id : String(retried.threadId);
+              const retryCount = "retryCount" in retried ? retried.retryCount : null;
+              const occurredAt =
+                "createdAt" in retried
+                  ? retried.createdAt
+                  : DateTime.formatIso(yield* DateTime.now);
               yield* dashboardStore
                 .appendExternalAction({
-                  id: `action:retry-run:${retried.id}`,
+                  id: `action:retry-run:${retriedId}`,
                   kind: "run-investigation",
                   status: "succeeded",
                   actor: "dashboard",
-                  targetId: retried.id,
+                  targetId: retriedId,
                   targetUrl: null,
                   findingId: null,
-                  runId: retried.id,
-                  result: `retry-${retried.retryCount}`,
-                  occurredAt: retried.createdAt,
+                  runId: retriedId,
+                  result: retryCount === null ? "implementation-retry" : `retry-${retryCount}`,
+                  occurredAt,
                 })
                 .pipe(Effect.orElseSucceed(() => undefined));
-              return appliedMutation(retried.id);
+              return appliedMutation(retriedId);
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -1624,6 +1657,7 @@ const makeWsRpcLayer = (
               }
               const pullRequests = yield* sourceControlRepositories.listProjectPullRequests({
                 cwd: project.value.workspaceRoot,
+                repository,
                 limit: 50,
               });
               return {
@@ -1663,6 +1697,7 @@ const makeWsRpcLayer = (
               }
               yield* sourceControlRepositories.mergeProjectPullRequest({
                 cwd: project.value.workspaceRoot,
+                repository,
                 number: input.number,
                 expectedHeadOid: input.expectedHeadOid,
                 method: input.method,

@@ -2,6 +2,7 @@
 import { it } from "@effect/vitest";
 import {
   ProjectId,
+  ProviderInstanceId,
   type AgentDashboardAutomationRun,
   type AgentDashboardReviewSchedule,
 } from "@t3tools/contracts";
@@ -66,6 +67,49 @@ it("makes a failed T3 review due immediately after restart", () => {
     nextRunAt: "2026-08-10T00:00:00.000Z",
     lastError: "Repository review output was missing structured findings metadata.",
   });
+});
+
+it("applies qualification enablement and cadence changes to the next run", () => {
+  const now = Date.parse("2026-08-10T00:00:00.000Z");
+  const disabled = {
+    ...AgentDashboardReviewScheduler.__testing.defaultSchedule(now),
+    enabled: false,
+    nextRunAt: "2026-08-10T04:00:00.000Z",
+  };
+
+  expect(
+    AgentDashboardReviewScheduler.__testing.syncScheduleSettings(
+      disabled,
+      {
+        enabled: true,
+        intervalMinutes: 30,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-luna",
+        },
+      },
+      now,
+    ),
+  ).toMatchObject({
+    enabled: true,
+    intervalMinutes: 30,
+    nextRunAt: "2026-08-10T00:00:00.000Z",
+  });
+
+  expect(
+    AgentDashboardReviewScheduler.__testing.syncScheduleSettings(
+      { ...disabled, enabled: true },
+      {
+        enabled: true,
+        intervalMinutes: 30,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-luna",
+        },
+      },
+      now,
+    ).nextRunAt,
+  ).toBe("2026-08-10T00:30:00.000Z");
 });
 
 it("counts a queued deep review exactly once when it completes", () => {
@@ -209,6 +253,12 @@ it.effect("parses the native metadata contract", () =>
         confidence: "high",
         evidence: ["src/parser.ts:42"],
         nextStep: "Flush before return",
+        targets: [],
+        validationPlan: [],
+        sources: [],
+        automationRisk: "medium",
+        estimatedEffort: "medium",
+        qualificationReason: null,
         githubIssueTitle: "Fix parser flush",
         githubIssueBody: "## Problem",
       },

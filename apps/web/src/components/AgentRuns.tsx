@@ -79,6 +79,30 @@ function runStage(status: AgentDashboardAutomationRun["status"]): number {
   return 3;
 }
 
+function runTitle(run: AgentDashboardAutomationRun): string {
+  return run.kind === "continuous-improvement" ? "Continuous improvement" : run.kind;
+}
+
+function runStatusLabel(run: AgentDashboardAutomationRun): string {
+  if (run.kind !== "continuous-improvement") return run.status;
+  switch (run.status) {
+    case "queued":
+      return "Starting";
+    case "running":
+      return "Working";
+    case "ingesting":
+      return "Checking pull request";
+    case "succeeded":
+      return "PR opened";
+    case "partial":
+      return "Needs attention";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Stopped";
+  }
+}
+
 export function AgentRuns() {
   const dashboardSnapshot = useAgentDashboardSnapshot();
   const retryRun = useAtomCommand(agentDashboardEnvironment.retryRun, { reportFailure: false });
@@ -388,9 +412,9 @@ export function AgentRuns() {
                   {statusIcon(run.status)}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <CardTitle className="text-base">{run.kind}</CardTitle>
+                      <CardTitle className="text-base">{runTitle(run)}</CardTitle>
                       <Badge size="sm" variant={runVariant(run.status)}>
-                        {run.status}
+                        {runStatusLabel(run)}
                       </Badge>
                       <Badge size="sm" variant="outline">
                         {run.trigger}
@@ -454,7 +478,7 @@ export function AgentRuns() {
             </EmptyMedia>
             <EmptyTitle>No automation runs yet</EmptyTitle>
             <EmptyDescription>
-              Run an investigation or wait for the scheduled review to create durable history.
+              Run an investigation or wait for scheduled automation to create durable history.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

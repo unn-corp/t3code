@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   VcsProcessExitError,
@@ -34,13 +35,14 @@ const baseInput = {
 
 const captureProcessResult = (
   result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  input: VcsProcess.VcsProcessInput = baseInput,
 ) =>
   VcsProcess.make.pipe(
     Effect.provideService(
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
     ),
-    Effect.flatMap((service) => service.run(baseInput)),
+    Effect.flatMap((service) => service.run(input)),
     Effect.flip,
   );
 
@@ -180,6 +182,38 @@ describe("VcsProcess.run", () => {
         failureKind: "rate-limited",
       });
       expect(error.message).not.toContain(providerStderr);
+    }).pipe(provideLive),
+  );
+
+  it.effect("classifies inaccessible GitHub repositories without retaining provider stderr", () =>
+    Effect.gen(function* () {
+      const providerStderr =
+        "GraphQL: Could not resolve to a Repository with the name 'OneDayDance/motion-by-degrees'. (repository)";
+      const error = yield* captureProcessResult(
+        Effect.succeed({
+          stdout: "",
+          stderr: providerStderr,
+          code: ChildProcessSpawner.ExitCode(1),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+        {
+          operation: "test.repository-access",
+          command: "gh",
+          args: ["pr", "list", "--repo", "OneDayDance/motion-by-degrees"],
+          cwd: "/repo",
+        },
+      );
+
+      expect(error).toMatchObject({
+        detail: "GitHub repository not found or inaccessible.",
+        failureKind: "repository-not-found",
+      });
+      expect(error.message).not.toContain(providerStderr);
+      expect(error.message).not.toContain("OneDayDance/motion-by-degrees");
     }).pipe(provideLive),
   );
 

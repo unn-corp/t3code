@@ -13,6 +13,9 @@ import * as ServerConfig from "./config.ts";
 import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
+import * as AgentDashboardRunHistory from "./agentDashboard/AgentDashboardRunHistory.ts";
+import * as AgentDashboardImplementationRunner from "./agentDashboard/AgentDashboardImplementationRunner.ts";
+import * as AgentDashboardContinuousImprovement from "./agentDashboard/AgentDashboardContinuousImprovement.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
@@ -676,11 +679,27 @@ export const makeServerLayer = Layer.unwrap(
     // service so every deep review uses the same lifecycle and idempotency rules.
     // Keep this stack beside the server application (not RuntimeDependencies) so
     // it is acquired once and never once per websocket connection.
-    const reviewOrchestrationLayer = AgentDashboardReviewScheduler.layer.pipe(
-      Layer.provideMerge(
-        AgentDashboardReviewJobService.layer.pipe(Layer.provide(AgentDashboardReviewRunner.layer)),
-      ),
+    const automationRunHistoryLayer = AgentDashboardRunHistory.layer.pipe(
       Layer.provide(runtimeServicesLive),
+    );
+    const reviewJobLayer = AgentDashboardReviewJobService.layerWithoutDefaults.pipe(
+      Layer.provide(AgentDashboardReviewRunner.layer),
+      Layer.provide(automationRunHistoryLayer),
+      Layer.provide(runtimeServicesLive),
+    );
+    const reviewOrchestrationLayer = AgentDashboardReviewScheduler.layer.pipe(
+      Layer.provideMerge(reviewJobLayer),
+      Layer.provide(runtimeServicesLive),
+    );
+    const continuousImprovementLayer = AgentDashboardContinuousImprovement.layer.pipe(
+      Layer.provide(AgentDashboardImplementationRunner.layer),
+      Layer.provide(automationRunHistoryLayer),
+      Layer.provide(runtimeServicesLive),
+    );
+    const dashboardAutomationLayer = Layer.mergeAll(
+      automationRunHistoryLayer,
+      reviewOrchestrationLayer,
+      continuousImprovementLayer,
     );
     const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
       disableLogger: !config.logWebSocketEvents,
@@ -693,7 +712,7 @@ export const makeServerLayer = Layer.unwrap(
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
-    ).pipe(Layer.provideMerge(reviewOrchestrationLayer));
+    ).pipe(Layer.provideMerge(dashboardAutomationLayer));
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),

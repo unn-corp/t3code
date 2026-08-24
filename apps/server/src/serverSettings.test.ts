@@ -205,6 +205,37 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists nested automation model selections as complete values", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const reviewSelection = createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.6-sol",
+        [{ id: "reasoningEffort", value: "high" }],
+      );
+      const implementationSelection = createModelSelection(
+        ProviderInstanceId.make("codex"),
+        DEFAULT_SERVER_SETTINGS.continuousImprovement.modelSelection.model,
+        [{ id: "reasoningEffort", value: "low" }],
+      );
+
+      yield* serverSettings.updateSettings({
+        repositoryReview: { modelSelection: reviewSelection },
+        continuousImprovement: { modelSelection: implementationSelection },
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const persisted: unknown = JSON.parse(raw);
+      assert.deepInclude(persisted, {
+        repositoryReview: { modelSelection: reviewSelection },
+        continuousImprovement: { modelSelection: implementationSelection },
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("buffers changes after a subscription is acquired but before it is consumed", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -95,7 +95,7 @@ const isActiveStatus = (status: AgentDashboardAutomationRunStatus): boolean =>
 export const recoverInterruptedRuns = (
   runs: ReadonlyArray<AgentDashboardAutomationRun>,
   nowIso: string,
-  error = "T3 restarted before the repository review completed.",
+  error = "T3 restarted before the automation run completed.",
 ): ReadonlyArray<AgentDashboardAutomationRun> =>
   runs.map((run) =>
     isActiveStatus(run.status)

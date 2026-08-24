@@ -17,10 +17,19 @@ import {
   type ModelSelection,
   type RepositoryIdentity,
   type SourceControlProjectPullRequest,
+  type ThreadTurnStartBootstrap,
 } from "@t3tools/contracts";
+import { buildAgentDashboardFindingPrompt } from "@t3tools/shared/agentDashboardFinding";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
 const GITHUB_REPOSITORY_PART = /^[A-Za-z0-9_.-]+$/;
+
+export function resolveDashboardProjectOptionLabel(
+  options: ReadonlyArray<readonly [projectId: string, projectName: string]>,
+  projectId: string,
+): string {
+  return options.find(([candidateId]) => candidateId === projectId)?.[1] ?? "Choose a repository";
+}
 
 function validGithubRepository(owner: string | undefined, name: string | undefined): string | null {
   const normalizedOwner = owner?.trim();
@@ -231,12 +240,29 @@ export interface DashboardFindingGroup {
 export interface DashboardFindingFilters {
   readonly query: string;
   readonly projectId: string;
-  readonly status: "actionable" | "all" | DashboardFindingStatus;
+  readonly status:
+    | "pipeline"
+    | "ready-to-act"
+    | "needs-qualification"
+    | "policy-review"
+    | "resolved"
+    | "all"
+    | DashboardFindingStatus;
   readonly type: "all" | DashboardFindingType;
   readonly severity?: "all" | AgentDashboardFinding["severity"];
+  readonly maxRiskTier?: "low" | "medium" | "high" | "critical";
+  readonly minimumConfidence?: "low" | "medium" | "high";
 }
 
 export type DashboardFindingSort = "priority" | "recent";
+export type DashboardFindingPipelineStage =
+  | "candidate"
+  | "needs-qualification"
+  | "ready"
+  | "policy-review"
+  | "implementing"
+  | "paused"
+  | "resolved";
 
 const FINDING_SEVERITY_ORDER = {
   critical: 0,
@@ -326,6 +352,43 @@ export function buildDashboardFindingRecords(
   );
 }
 
+export function dashboardFindingPipelineStage(
+  record: DashboardFindingRecord,
+  guardrails: {
+    readonly maxRiskTier: "low" | "medium" | "high" | "critical";
+    readonly minimumConfidence: "low" | "medium" | "high";
+  } = { maxRiskTier: "medium", minimumConfidence: "medium" },
+): DashboardFindingPipelineStage {
+  if (record.status === "done" || record.status === "archived") return "resolved";
+  if (record.status === "in-progress") return "implementing";
+  if (record.status === "snoozed") return "paused";
+  if (record.finding.actionability?.readiness === "ready") {
+    const riskWeight = { low: 1, medium: 2, high: 3, critical: 4 } as const;
+    const confidenceWeight = { low: 1, medium: 2, high: 3 } as const;
+    return riskWeight[record.finding.actionability.riskTier] <=
+      riskWeight[guardrails.maxRiskTier] &&
+      confidenceWeight[record.finding.confidence] >= confidenceWeight[guardrails.minimumConfidence]
+      ? "ready"
+      : "policy-review";
+  }
+  if (record.finding.actionability?.readiness === "needs-research") {
+    return "needs-qualification";
+  }
+  return "candidate";
+}
+
+export function dashboardFindingQualificationReason(record: DashboardFindingRecord): string {
+  const actionability = record.finding.actionability;
+  if (actionability?.qualificationReason) return actionability.qualificationReason;
+  if (record.finding.provenance.source === "local-secret-scan") {
+    return "T3 must verify whether the redacted value is a real credential and whether remediation requires external rotation.";
+  }
+  if (record.finding.provenance.source === "local-git") {
+    return "Working-tree state is repository health. T3 will not turn local edits into an unattended implementation.";
+  }
+  return "A read-only qualification pass has not produced a bounded implementation plan yet.";
+}
+
 export function filterDashboardFindingRecords(
   records: ReadonlyArray<DashboardFindingRecord>,
   filters: DashboardFindingFilters,
@@ -341,11 +404,37 @@ export function filterDashboardFindingRecords(
     ) {
       return false;
     }
-    if (
-      filters.status === "actionable"
-        ? record.status !== "open" && record.status !== "in-progress"
-        : filters.status !== "all" && record.status !== filters.status
-    ) {
+    const statusMatches = (() => {
+      switch (filters.status) {
+        case "pipeline":
+          return record.status !== "done" && record.status !== "archived";
+        case "ready-to-act":
+          return (
+            record.status === "open" &&
+            dashboardFindingPipelineStage(record, {
+              maxRiskTier: filters.maxRiskTier ?? "medium",
+              minimumConfidence: filters.minimumConfidence ?? "medium",
+            }) === "ready"
+          );
+        case "needs-qualification":
+          return record.status === "open" && record.finding.actionability?.readiness !== "ready";
+        case "policy-review":
+          return (
+            record.status === "open" &&
+            dashboardFindingPipelineStage(record, {
+              maxRiskTier: filters.maxRiskTier ?? "medium",
+              minimumConfidence: filters.minimumConfidence ?? "medium",
+            }) === "policy-review"
+          );
+        case "resolved":
+          return record.status === "done" || record.status === "archived";
+        case "all":
+          return true;
+        default:
+          return record.status === filters.status;
+      }
+    })();
+    if (!statusMatches) {
       return false;
     }
     if (!needle) return true;
@@ -358,6 +447,8 @@ export function filterDashboardFindingRecords(
       record.finding.summary,
       record.finding.category ?? "",
       record.finding.provenance.source,
+      record.finding.actionability?.proposal ?? "",
+      record.finding.actionability?.qualificationReason ?? "",
       ...record.finding.evidence,
     ]
       .join(" ")
@@ -393,72 +484,23 @@ export function groupDashboardFindingRecords(
   );
 }
 
+type DashboardFindingPromptIntent =
+  | { readonly kind: "research" }
+  | { readonly kind: "implement"; readonly baseBranch: string };
+
 export function buildDashboardFindingPrompt(
   record: DashboardFindingRecord,
-  intent: "research" | "implement",
+  intent: DashboardFindingPromptIntent,
 ): string {
-  const { finding } = record;
-  const evidence = finding.evidence.map((item) => `- ${item}`).join("\n");
-  const targets =
-    finding.actionability?.targets
-      .map(
-        (target) =>
-          `- \`${target.path}\`${target.symbol ? ` (${target.symbol})` : ""}: ${target.evidence}`,
-      )
-      .join("\n") ?? "No verified code targets have been recorded yet.";
-  const validation =
-    finding.actionability?.validationPlan.map((item) => `- ${item}`).join("\n") ??
-    "Define and run focused validation for the affected behavior.";
-
-  return [
-    intent === "research"
-      ? "Research and qualify the repository finding below without implementing it yet."
-      : "Verify and implement the repository finding below.",
-    "",
-    `Repository: \`${record.repositoryPath || record.projectName}\``,
-    `Finding ID: \`${finding.id}\``,
-    `Type: ${record.type}`,
-    `Severity: ${finding.severity}`,
-    `Confidence: ${finding.confidence}`,
-    "",
-    "## Finding",
-    finding.title,
-    "",
-    finding.summary,
-    "",
-    "## Evidence",
-    evidence || "No additional evidence was recorded.",
-    "",
-    "## Proposed work",
-    finding.actionability?.proposal ?? "Determine the smallest appropriate repository change.",
-    "",
-    "## Expected value",
-    finding.actionability?.expectedValue ?? "Confirm the impact before making speculative edits.",
-    "",
-    "## Code targets",
-    targets,
-    "",
-    "## Validation plan",
-    validation,
-    "",
-    "## Requirements",
-    ...(intent === "research"
-      ? [
-          "- Inspect the current repository and primary sources before judging applicability.",
-          "- Record a bounded proposal, concrete code targets, expected value, and focused validation plan.",
-          "- Clearly conclude whether the finding is ready to implement or should be archived.",
-          "- Do not modify implementation code during this research pass.",
-        ]
-      : [
-          "- Verify the finding against the current repository before editing.",
-          "- Implement the smallest change that resolves the finding.",
-          "- Run focused validation and directly affected tests.",
-          "- If the finding is stale or invalid, explain why and do not make speculative changes.",
-          "",
-          "## Completion",
-          "After implementation and validation succeed, mark this finding as Done in T3 Code.",
-        ]),
-  ].join("\n");
+  return buildAgentDashboardFindingPrompt(
+    {
+      finding: record.finding,
+      type: record.type,
+      projectName: record.projectName,
+      repositoryPath: record.repositoryPath,
+    },
+    intent,
+  );
 }
 
 export function buildDashboardFindingQuestionPrompt(
@@ -469,7 +511,7 @@ export function buildDashboardFindingQuestionPrompt(
     "Answer the user's question about this repository finding.",
     "Inspect the current repository when useful. Do not modify code unless the user explicitly asks you to.",
     "",
-    buildDashboardFindingPrompt(record, "research"),
+    buildDashboardFindingPrompt(record, { kind: "research" }),
     "",
     "## User question",
     question.trim(),
@@ -589,6 +631,22 @@ export function suggestionWorktreeBaseBranch(
     normalizeReportedDefaultBranch(vcs?.defaultBranch) ??
     normalizeConventionalPrimaryBranch(vcs?.branch)
   );
+}
+
+export function buildDashboardFindingWorktreeBootstrap(input: {
+  readonly projectCwd: string;
+  readonly baseBranch: string;
+  readonly branch: string;
+}) {
+  return {
+    prepareWorktree: {
+      projectCwd: input.projectCwd,
+      baseBranch: input.baseBranch,
+      branch: input.branch,
+      startFromOrigin: true,
+    },
+    runSetupScript: true,
+  } satisfies Pick<ThreadTurnStartBootstrap, "prepareWorktree" | "runSetupScript">;
 }
 
 /** Suggestion implementation work always uses Luna with Max reasoning. */

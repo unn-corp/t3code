@@ -19,6 +19,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
 import * as AgentDashboardReviewJobService from "./AgentDashboardReviewJobService.ts";
@@ -62,8 +63,51 @@ describe("parseReviewMetadata", () => {
           confidence: "high",
           evidence: ["src/parser.ts:42"],
           nextStep: "Flush before return",
+          targets: [],
+          validationPlan: [],
+          sources: [],
+          automationRisk: "medium",
+          estimatedEffort: "medium",
+          qualificationReason: null,
           githubIssueTitle: "Fix parser flush",
           githubIssueBody: "## Problem",
+        },
+      ],
+      qualifications: [],
+    });
+  });
+
+  it("parses qualification decisions for existing collector findings", () => {
+    expect(
+      AgentDashboardReviewJobService.parseReviewMetadata(
+        'T3_REVIEW_METADATA: {"findings":[],"qualifications":[{"finding_id":"finding:ci","outcome":"ready","proposal":"Add CI checks.","expected_value":"Catch regressions.","targets":[{"path":".github/workflows/checks.yml","symbol":null,"evidence":"No workflow exists."}],"validation_plan":["Validate workflow syntax."],"sources":[],"automation_risk":"low","estimated_effort":"small","reason":"The repository exposes a deterministic test command."},{"finding_id":"finding:fixture","outcome":"dismiss","reason":"This is an inert test fixture."}]}',
+      ),
+    ).toEqual({
+      kind: "parsed",
+      findings: [],
+      qualifications: [
+        {
+          id: "finding:ci",
+          outcome: "ready",
+          proposal: "Add CI checks.",
+          expectedValue: "Catch regressions.",
+          targets: [
+            {
+              path: ".github/workflows/checks.yml",
+              symbol: null,
+              evidence: "No workflow exists.",
+            },
+          ],
+          validationPlan: ["Validate workflow syntax."],
+          sources: [],
+          riskTier: "low",
+          estimatedEffort: "small",
+          reason: "The repository exposes a deterministic test command.",
+        },
+        {
+          id: "finding:fixture",
+          outcome: "dismiss",
+          reason: "This is an inert test fixture.",
         },
       ],
     });
@@ -78,7 +122,7 @@ describe("parseReviewMetadata", () => {
     });
     expect(
       AgentDashboardReviewJobService.parseReviewMetadata('T3_REVIEW_METADATA: {"findings":[]}'),
-    ).toEqual({ kind: "parsed", findings: [] });
+    ).toEqual({ kind: "parsed", findings: [], qualifications: [] });
     expect(
       AgentDashboardReviewJobService.parseReviewMetadata("T3_REVIEW_METADATA: {not-json"),
     ).toMatchObject({ kind: "parse-failure" });
@@ -137,7 +181,7 @@ describe("decideTerminalOutcome", () => {
       }),
     ).toMatchObject({
       status: "partial",
-      error: "Repository review completed with zero usable findings.",
+      error: "Repository review completed with zero usable findings or qualifications.",
       shouldPersistFindings: false,
     });
   });
@@ -263,6 +307,7 @@ const jobServiceLayer = (input: {
       }),
     ),
     Layer.provide(AgentDashboardRunHistory.layer),
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(process.cwd(), input.baseDir)),
     Layer.provideMerge(TestClock.layer()),
     Layer.provideMerge(NodeServices.layer),

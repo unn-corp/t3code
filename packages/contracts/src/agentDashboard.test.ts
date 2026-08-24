@@ -408,6 +408,14 @@ describe("AgentDashboardSnapshot", () => {
     expect(snapshot.findings[0]?.provenance.collectedAt).toBe("2026-08-10T11:59:30.000Z");
     expect(snapshot.findings[0]?.actionability?.readiness).toBe("ready");
     expect(snapshot.findings[0]?.actionability?.targets[0]?.path).toBe("src/foo.ts");
+    expect(snapshot.findings[0]?.actionability).toMatchObject({
+      riskTier: "medium",
+      estimatedEffort: "medium",
+      qualificationReason: null,
+      qualifiedAt: null,
+      qualifiedBy: null,
+      qualifiedOccurrenceCount: 0,
+    });
     expect(snapshot.repositoryPolicies[0]?.cadenceMinutes).toBe(120);
     expect(snapshot.repositoryCoverage[0]?.status).toBe("due");
     expect(snapshot.externalActions[0]?.kind).toBe("create-github-issue");

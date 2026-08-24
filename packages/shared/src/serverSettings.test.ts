@@ -63,6 +63,41 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("updates automation models without changing the continuous opt-in", () => {
+    const implementationModel = createModelSelection(
+      ProviderInstanceId.make("codex_work"),
+      "gpt-5.6-sol",
+      [{ id: "reasoningEffort", value: "high" }],
+    );
+    const reviewModel = createModelSelection(
+      ProviderInstanceId.make("claude_research"),
+      "claude-opus-4-1",
+      [{ id: "reasoningEffort", value: "max" }],
+    );
+
+    const next = applyServerSettingsPatch(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        continuousImprovement: {
+          ...DEFAULT_SERVER_SETTINGS.continuousImprovement,
+          enabled: true,
+        },
+      },
+      {
+        continuousImprovement: { modelSelection: implementationModel },
+        repositoryReview: { modelSelection: reviewModel },
+      },
+    );
+
+    expect(next.continuousImprovement).toEqual({
+      enabled: true,
+      maxRiskTier: "medium",
+      minimumConfidence: "medium",
+      modelSelection: implementationModel,
+    });
+    expect(next.repositoryReview.modelSelection).toEqual(reviewModel);
+  });
+
   it("replaces text generation selection when provider/model are provided", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,

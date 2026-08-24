@@ -1,11 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off - This integration fixture resolves the repository root before providing Effect services.
 import * as NodePath from "node:path";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProjectId,
+  ProviderInstanceId,
   type OrchestrationCommand,
+  type AgentDashboardFinding,
   type AgentDashboardRepositoryCoverage,
   type AgentDashboardRepositoryPolicy,
   type OrchestrationProjectShell,
@@ -20,9 +24,12 @@ import * as ServerConfig from "../config.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   AgentDashboardReviewRunner,
+  buildReviewPrompt,
   layer,
+  selectQualificationCandidates,
   selectNextRepository,
 } from "./AgentDashboardReviewRunner.ts";
 
@@ -75,6 +82,45 @@ const coverage = (
   ...overrides,
 });
 
+const finding = (
+  id: string,
+  overrides: Partial<AgentDashboardFinding> = {},
+): AgentDashboardFinding => ({
+  id,
+  fingerprint: id,
+  type: "improvement",
+  kind: "engineering",
+  title: id,
+  summary: "A collector signal needs qualification.",
+  severity: "medium",
+  confidence: "medium",
+  category: "quality",
+  evidence: ["src/example.ts:1"],
+  repository: { projectId: ProjectId.make("alpha") },
+  repositoryPath: "/workspace/alpha",
+  disposition: {
+    state: "open",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    actor: null,
+    note: null,
+    snoozeUntil: null,
+    assignee: null,
+  },
+  provenance: {
+    source: "local-engineering-scan",
+    sourceAt: "2026-08-01T00:00:00.000Z",
+    collectedAt: "2026-08-01T00:00:00.000Z",
+  },
+  firstSeenAt: "2026-08-01T00:00:00.000Z",
+  lastSeenAt: "2026-08-01T00:00:00.000Z",
+  occurrenceCount: 1,
+  lastRunId: null,
+  thread: null,
+  externalIssueUrl: null,
+  actionability: null,
+  ...overrides,
+});
+
 describe("selectNextRepository", () => {
   it("chooses overdue repositories before priority and risk tie-breakers", () => {
     const selected = selectNextRepository({
@@ -122,8 +168,58 @@ describe("selectNextRepository", () => {
   });
 });
 
+describe("qualification candidates", () => {
+  it("selects open unqualified and stale changed needs-research findings only", () => {
+    const needsResearch = {
+      readiness: "needs-research" as const,
+      proposal: "Confirm the repository-specific behavior.",
+      expectedValue: "Avoid speculative implementation.",
+      targets: [],
+      validationPlan: [],
+      sources: [],
+      riskTier: "medium" as const,
+      estimatedEffort: "medium" as const,
+      qualificationReason: "More evidence is required.",
+      qualifiedAt: "2026-08-01T00:00:00.000Z",
+      qualifiedBy: "repository-review",
+      qualifiedOccurrenceCount: 1,
+    };
+    const selected = selectQualificationCandidates(
+      [
+        finding("candidate"),
+        finding("changed", { occurrenceCount: 2, actionability: needsResearch }),
+        finding("changed-recently", {
+          occurrenceCount: 2,
+          actionability: { ...needsResearch, qualifiedAt: "2026-08-09T00:00:00.000Z" },
+        }),
+        finding("unchanged", { actionability: needsResearch }),
+        finding("done", {
+          disposition: { ...finding("base").disposition, state: "done" },
+        }),
+        finding("other-project", {
+          repository: { projectId: ProjectId.make("beta") },
+        }),
+      ],
+      ProjectId.make("alpha"),
+      NOW,
+    );
+
+    expect(selected.map((item) => item.id)).toEqual(["candidate", "changed"]);
+  });
+
+  it("includes candidate context and qualification output in the review brief", () => {
+    const prompt = buildReviewPrompt(project("alpha"), [finding("finding:candidate")]);
+    expect(prompt).toContain('"finding_id":"finding:candidate"');
+    expect(prompt).toContain('"outcome":"ready|needs-research|dismiss"');
+    expect(prompt).toContain("Dirty working-tree state is repository health");
+  });
+});
+
 it.effect("starts the provider turn before snoozing the internal review thread", () =>
   Effect.gen(function* () {
+    const stateDir = yield* Effect.promise(() =>
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-review-runner-test-")),
+    );
     const target = {
       ...project("review-target", "Review target"),
       workspaceRoot: NodePath.resolve(import.meta.dirname, "../../../.."),
@@ -171,6 +267,11 @@ it.effect("starts the provider turn before snoozing the internal review thread",
       markHttpListening: Effect.void,
       enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) => effect,
     } satisfies ServerRuntimeStartup.ServerRuntimeStartup["Service"];
+    const reviewModelSelection = {
+      instanceId: ProviderInstanceId.make("codex_work"),
+      model: "gpt-5.6-sol",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    } as const;
 
     yield* Effect.gen(function* () {
       const runner = yield* AgentDashboardReviewRunner;
@@ -183,16 +284,25 @@ it.effect("starts the provider turn before snoozing the internal review thread",
             Layer.succeed(OrchestrationEngine.OrchestrationEngineService, orchestration),
           ),
           Layer.provide(Layer.succeed(ServerRuntimeStartup.ServerRuntimeStartup, startup)),
-          Layer.provide(ServerConfig.layerTest(process.cwd(), "t3-review-runner-test")),
+          Layer.provide(
+            ServerSettings.layerTest({
+              repositoryReview: { modelSelection: reviewModelSelection },
+            }),
+          ),
+          Layer.provide(ServerConfig.layerTest(process.cwd(), stateDir)),
           Layer.provideMerge(NodeServices.layer),
         ),
       ),
     );
 
-    expect((yield* Ref.get(commands)).map((command) => command.type)).toEqual([
+    const dispatchedCommands = yield* Ref.get(commands);
+    expect(dispatchedCommands.map((command) => command.type)).toEqual([
       "thread.create",
       "thread.turn.start",
       "thread.snooze",
     ]);
+    expect(dispatchedCommands[0]).toMatchObject({ modelSelection: reviewModelSelection });
+    expect(dispatchedCommands[1]).toMatchObject({ modelSelection: reviewModelSelection });
+    yield* Effect.promise(() => NodeFSP.rm(stateDir, { recursive: true, force: true }));
   }),
 );

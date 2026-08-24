@@ -19,6 +19,7 @@ import {
   decodeGitHubPullRequestListJson,
 } from "./gitHubPullRequests.ts";
 import { decodeGitHubProjectPullRequestListJson } from "./gitHubProjectPullRequests.ts";
+import { type GitHubAuthStatusAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -73,6 +74,19 @@ export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitH
 ) {
   get detail(): string {
     return "Pull request not found. Check the PR number or URL and try again.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+export class GitHubRepositoryAccessError extends Schema.TaggedErrorClass<GitHubRepositoryAccessError>()(
+  "GitHubRepositoryAccessError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "No authenticated GitHub account can access this repository. Sign in with an account that has access, then refresh.";
   }
 
   override get message(): string {
@@ -156,6 +170,7 @@ export const GitHubCliError = Schema.Union([
   GitHubCliAuthenticationError,
   GitHubCliRateLimitError,
   GitHubPullRequestNotFoundError,
+  GitHubRepositoryAccessError,
   GitHubCliCommandError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
@@ -192,6 +207,9 @@ export function fromVcsError(
     }
     if (error.failureKind === "not-found") {
       return new GitHubPullRequestNotFoundError({ ...context, cause: error });
+    }
+    if (error.failureKind === "repository-not-found") {
+      return new GitHubRepositoryAccessError({ ...context, cause: error });
     }
   }
 
@@ -236,11 +254,13 @@ export class GitHubCli extends Context.Service<
 
     readonly listProjectPullRequests: (input: {
       readonly cwd: string;
+      readonly repository: string;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<SourceControlProjectPullRequest>, GitHubCliError>;
 
     readonly mergePullRequest: (input: {
       readonly cwd: string;
+      readonly repository: string;
       readonly number: number;
       readonly expectedHeadOid: string;
       readonly method: SourceControlPullRequestMergeMethod;
@@ -341,7 +361,11 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
-  const execute: GitHubCli["Service"]["execute"] = (input) =>
+  type ExecuteInput = Parameters<GitHubCli["Service"]["execute"]>[0] & {
+    readonly env?: NodeJS.ProcessEnv;
+  };
+
+  const executeWithEnvironment = (input: ExecuteInput) =>
     process
       .run({
         operation: "GitHubCli.execute",
@@ -350,9 +374,98 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+        ...(input.env !== undefined ? { env: input.env } : {}),
         ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+
+  const execute: GitHubCli["Service"]["execute"] = executeWithEnvironment;
+
+  const orderFallbackAccounts = (
+    accounts: ReadonlyArray<GitHubAuthStatusAccount>,
+    host: string,
+    repository: string,
+  ): ReadonlyArray<GitHubAuthStatusAccount> => {
+    const repositoryOwner = repository.split("/", 1)[0]?.toLowerCase() ?? "";
+    return accounts
+      .filter((account) => account.host === host && account.authenticated && !account.active)
+      .toSorted((left, right) => {
+        const leftMatchesOwner = left.account.toLowerCase() === repositoryOwner;
+        const rightMatchesOwner = right.account.toLowerCase() === repositoryOwner;
+        return Number(rightMatchesOwner) - Number(leftMatchesOwner);
+      });
+  };
+
+  const executeForRepository = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly args: ReadonlyArray<string>;
+  }): Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError> => {
+    const host = "github.com";
+    const repositoryArgs = [...input.args, "--repo", input.repository];
+    const executeTarget = (env?: NodeJS.ProcessEnv) =>
+      executeWithEnvironment({
+        cwd: input.cwd,
+        args: repositoryArgs,
+        ...(env !== undefined ? { env } : {}),
+      });
+
+    return executeTarget().pipe(
+      Effect.catchTag("GitHubRepositoryAccessError", (repositoryAccessError) =>
+        execute({
+          cwd: input.cwd,
+          args: ["auth", "status", "--hostname", host, "--json", "hosts"],
+        }).pipe(
+          Effect.map((result) =>
+            orderFallbackAccounts(
+              parseGitHubAuthStatus(result.stdout).accounts,
+              host,
+              input.repository,
+            ),
+          ),
+          Effect.flatMap((accounts) => {
+            const tryAccount = (
+              index: number,
+            ): Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError> => {
+              const account = accounts[index];
+              if (account === undefined) {
+                return Effect.fail(repositoryAccessError);
+              }
+
+              return Effect.result(
+                execute({
+                  cwd: input.cwd,
+                  args: ["auth", "token", "--hostname", host, "--user", account.account],
+                }),
+              ).pipe(
+                Effect.flatMap((tokenResult) => {
+                  if (!Result.isSuccess(tokenResult)) {
+                    return tryAccount(index + 1);
+                  }
+
+                  const token = tokenResult.success.stdout.trim();
+                  if (token.length === 0) {
+                    return tryAccount(index + 1);
+                  }
+
+                  return Effect.result(executeTarget({ GH_HOST: host, GH_TOKEN: token })).pipe(
+                    Effect.flatMap((targetResult) =>
+                      Result.isSuccess(targetResult)
+                        ? Effect.succeed(targetResult.success)
+                        : tryAccount(index + 1),
+                    ),
+                  );
+                }),
+              );
+            };
+
+            return tryAccount(0);
+          }),
+          Effect.mapError(() => repositoryAccessError),
+        ),
+      ),
+    );
+  };
 
   return GitHubCli.of({
     execute,
@@ -396,8 +509,9 @@ export const make = Effect.gen(function* () {
         ),
       ),
     listProjectPullRequests: (input) =>
-      execute({
+      executeForRepository({
         cwd: input.cwd,
+        repository: input.repository,
         args: [
           "pr",
           "list",
@@ -429,8 +543,9 @@ export const make = Effect.gen(function* () {
         ),
       ),
     mergePullRequest: (input) =>
-      execute({
+      executeForRepository({
         cwd: input.cwd,
+        repository: input.repository,
         args: [
           "pr",
           "merge",

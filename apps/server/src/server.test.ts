@@ -4659,6 +4659,7 @@ it.layer(routerSeamLayer)("server router seam", (it) => {
       const projectId = ProjectId.make("project-pr-workspace");
       const mergeCalls: Array<{
         readonly cwd: string;
+        readonly repository: string;
         readonly number: number;
         readonly expectedHeadOid: string;
         readonly method: "squash" | "merge" | "rebase";
@@ -4712,7 +4713,11 @@ it.layer(routerSeamLayer)("server router seam", (it) => {
           },
           sourceControlRepositoryService: {
             listProjectPullRequests: (input) => {
-              assert.deepStrictEqual(input, { cwd: "/workspace/t3code", limit: 50 });
+              assert.deepStrictEqual(input, {
+                cwd: "/workspace/t3code",
+                repository: "pingdotgg/t3code",
+                limit: 50,
+              });
               return Effect.succeed([pullRequest]);
             },
             mergeProjectPullRequest: (input) =>
@@ -4746,6 +4751,7 @@ it.layer(routerSeamLayer)("server router seam", (it) => {
       assert.deepStrictEqual(mergeCalls, [
         {
           cwd: "/workspace/t3code",
+          repository: "pingdotgg/t3code",
           number: 42,
           expectedHeadOid: "abcdef123456abcdef123456abcdef123456abcd",
           method: "squash",

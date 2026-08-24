@@ -439,6 +439,12 @@ export const AgentDashboardFindingSource = Schema.Struct({
 });
 export type AgentDashboardFindingSource = typeof AgentDashboardFindingSource.Type;
 
+export const AgentDashboardRiskTier = Schema.Literals(["low", "medium", "high", "critical"]);
+export type AgentDashboardRiskTier = typeof AgentDashboardRiskTier.Type;
+
+export const AgentDashboardFindingEffort = Schema.Literals(["small", "medium", "large"]);
+export type AgentDashboardFindingEffort = typeof AgentDashboardFindingEffort.Type;
+
 /** Concrete repository adoption plan required before research can start implementation work. */
 export const AgentDashboardFindingActionability = Schema.Struct({
   readiness: AgentDashboardFindingReadiness,
@@ -447,6 +453,21 @@ export const AgentDashboardFindingActionability = Schema.Struct({
   targets: Schema.Array(AgentDashboardFindingTarget),
   validationPlan: Schema.Array(TrimmedNonEmptyString),
   sources: Schema.Array(AgentDashboardFindingSource),
+  /** Estimated implementation risk, independent from finding severity. */
+  riskTier: AgentDashboardRiskTier.pipe(Schema.withDecodingDefault(Effect.succeed("medium"))),
+  estimatedEffort: AgentDashboardFindingEffort.pipe(
+    Schema.withDecodingDefault(Effect.succeed("medium")),
+  ),
+  /** Human-readable qualification result shown whenever work is not ready. */
+  qualificationReason: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  qualifiedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  qualifiedBy: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Occurrence count observed by the qualifier, used to re-open changed signals. */
+  qualifiedOccurrenceCount: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
 });
 export type AgentDashboardFindingActionability = typeof AgentDashboardFindingActionability.Type;
 
@@ -481,9 +502,6 @@ export const AgentDashboardFinding = Schema.Struct({
   ),
 });
 export type AgentDashboardFinding = typeof AgentDashboardFinding.Type;
-
-export const AgentDashboardRiskTier = Schema.Literals(["low", "medium", "high", "critical"]);
-export type AgentDashboardRiskTier = typeof AgentDashboardRiskTier.Type;
 
 /** Per-repository scheduling and runtime policy (consumed by ADW-06). */
 export const AgentDashboardRepositoryPolicy = Schema.Struct({

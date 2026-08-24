@@ -80,6 +80,14 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
   }
 
   if (
+    command === "gh" &&
+    (normalized.includes("could not resolve to a repository with the name") ||
+      normalized.includes("github repository not found"))
+  ) {
+    return "repository-not-found";
+  }
+
+  if (
     (command === "gh" &&
       (normalized.includes("could not resolve to a pullrequest") ||
         normalized.includes("repository.pullrequest") ||

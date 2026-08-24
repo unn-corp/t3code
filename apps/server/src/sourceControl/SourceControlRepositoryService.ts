@@ -41,6 +41,7 @@ export class SourceControlRepositoryService extends Context.Service<
     ) => Effect.Effect<SourceControlPublishRepositoryResult, SourceControlRepositoryError>;
     readonly listProjectPullRequests: (input: {
       readonly cwd: string;
+      readonly repository: string;
       readonly limit?: number;
     }) => Effect.Effect<
       ReadonlyArray<SourceControlProjectPullRequest>,
@@ -48,6 +49,7 @@ export class SourceControlRepositoryService extends Context.Service<
     >;
     readonly mergeProjectPullRequest: (input: {
       readonly cwd: string;
+      readonly repository: string;
       readonly number: number;
       readonly expectedHeadOid: string;
       readonly method: SourceControlPullRequestMergeMethod;

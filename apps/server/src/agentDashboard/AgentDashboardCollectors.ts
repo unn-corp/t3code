@@ -19,7 +19,39 @@ const MAX_FILES = 400;
 const MAX_FILE_BYTES = 1_000_000;
 const SECRET_PATTERN =
   /(?:AKIA[0-9A-Z]{16}|(?:api[_-]?key|secret|password|token)\s*[:=]\s*["'][^"']{8,})/i;
+// Firebase web API keys identify the Firebase project and are intentionally
+// embedded in browser bundles. They are not authentication credentials; access
+// is controlled by Firebase Security Rules and Google API key restrictions.
+const FIREBASE_PUBLIC_API_KEY_PATTERN =
+  /(["']?apiKey["']?\s*[:=]\s*["'])AIza[0-9A-Za-z_-]{20,}(["'])/gi;
+const FIREBASE_SDK_MARKER_PATTERN =
+  /\bfirebaseConfig\b|\binitializeApp\s*\(|\bfrom\s+["']firebase\//i;
+const FIREBASE_CONFIG_FIELD_PATTERN =
+  /\b(?:authDomain|projectId|storageBucket|messagingSenderId|appId)\b\s*[:=]/gi;
+const FIREBASE_CONTEXT_WINDOW = 800;
 const IGNORED_DIRECTORIES = new Set([".git", "node_modules", ".t3", ".next", "dist", "build"]);
+
+const isFirebaseClientConfigContext = (contents: string): boolean => {
+  const fieldCount = contents.match(FIREBASE_CONFIG_FIELD_PATTERN)?.length ?? 0;
+  return fieldCount >= 2 || (fieldCount >= 1 && FIREBASE_SDK_MARKER_PATTERN.test(contents));
+};
+
+const containsPossibleCredential = (contents: string): boolean => {
+  const scanContents = contents.replace(
+    FIREBASE_PUBLIC_API_KEY_PATTERN,
+    (match: string, prefix: string, suffix: string, offset: number, fullContents: string) => {
+      const contextStart = Math.max(0, offset - FIREBASE_CONTEXT_WINDOW);
+      const contextEnd = Math.min(
+        fullContents.length,
+        offset + match.length + FIREBASE_CONTEXT_WINDOW,
+      );
+      return isFirebaseClientConfigContext(fullContents.slice(contextStart, contextEnd))
+        ? `${prefix}x${suffix}`
+        : match;
+    },
+  );
+  return SECRET_PATTERN.test(scanContents);
+};
 
 export interface AgentDashboardCollectorInput {
   readonly stateDir: string;
@@ -229,7 +261,7 @@ const collectSecurity = async (
       } catch {
         continue;
       }
-      if (!SECRET_PATTERN.test(contents)) continue;
+      if (!containsPossibleCredential(contents)) continue;
       const relative = NodePath.relative(project.workspaceRoot, file);
       findings.push(
         baseFinding({

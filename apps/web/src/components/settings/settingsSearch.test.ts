@@ -90,4 +90,27 @@ describe("searchSettings", () => {
       targetId: "appearance",
     });
   });
+
+  it("routes unattended work to the Automation section", () => {
+    expect(searchSettings("continuous improvement")[0]).toMatchObject({
+      id: "continuous-improvement",
+      to: "/settings/automation",
+    });
+    expect(searchSettings("qualification model")[0]).toMatchObject({
+      id: "repository-review-model",
+      to: "/settings/automation",
+    });
+    expect(searchSettings("qualification cadence")[0]).toMatchObject({
+      id: "repository-review-interval",
+      to: "/settings/automation",
+    });
+    expect(searchSettings("maximum automation risk")[0]).toMatchObject({
+      id: "continuous-improvement-max-risk",
+      to: "/settings/automation",
+    });
+    expect(searchSettings("background activity")[0]).toMatchObject({
+      id: "background-activity",
+      to: "/settings/automation",
+    });
+  });
 });

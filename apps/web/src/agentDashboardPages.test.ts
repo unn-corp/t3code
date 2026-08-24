@@ -13,6 +13,7 @@ import {
   buildNativeAgentFeedFromDurableCards,
   buildDashboardFindingPrompt,
   buildDashboardFindingQuestionPrompt,
+  buildDashboardFindingWorktreeBootstrap,
   buildDashboardPullRequestCombinationPrompt,
   buildDashboardFindingRecords,
   buildNativeResearchRecordsFromCanonicalFindings,
@@ -21,12 +22,14 @@ import {
   buildResearchFindingPrompt,
   buildSuggestionWorkPrompt,
   compareDashboardRecency,
+  dashboardFindingPipelineStage,
   dashboardFindingStatus,
   dashboardFindingType,
   defaultDashboardPullRequestCombinationTitle,
   filterDashboardFindingRecords,
   groupDashboardFindingRecords,
   githubRepositoryForIdentity,
+  resolveDashboardProjectOptionLabel,
   suggestionWorkflowStatus,
   suggestionWorkModelSelection,
   suggestionWorktreeBaseBranch,
@@ -75,6 +78,20 @@ describe("unified dashboard findings", () => {
     expect(dashboardFindingType(finding({ type: "bug" }))).toBe("bug");
     expect(dashboardFindingType(finding({ type: "improvement" }))).toBe("improvement");
     expect(dashboardFindingType(finding({ type: "operations" }))).toBe("operations");
+  });
+
+  it("resolves a selected repository ID to its visible label", () => {
+    const options = [
+      ["45bba84e-2416-4fc2-8e15-3707adbdcd3", "T3 Code"],
+      ["project-2", "Arcwright AI"],
+    ] as const;
+
+    expect(resolveDashboardProjectOptionLabel(options, "45bba84e-2416-4fc2-8e15-3707adbdcd3")).toBe(
+      "T3 Code",
+    );
+    expect(resolveDashboardProjectOptionLabel(options, "missing-project")).toBe(
+      "Choose a repository",
+    );
   });
 
   it("treats linked and assigned findings as in progress", () => {
@@ -141,6 +158,20 @@ describe("unified dashboard findings", () => {
           repository: { projectId: ProjectId.make("project-2") },
           repositoryPath: "/workspace/relay",
           title: "Vulnerable dependency",
+          actionability: {
+            readiness: "ready",
+            proposal: "Upgrade the vulnerable dependency.",
+            expectedValue: "Remove the known vulnerability.",
+            targets: [],
+            validationPlan: ["Run the dependency audit."],
+            sources: [],
+            riskTier: "medium",
+            estimatedEffort: "medium",
+            qualificationReason: null,
+            qualifiedAt: null,
+            qualifiedBy: null,
+            qualifiedOccurrenceCount: 0,
+          },
         }),
         finding({
           id: "finding:done",
@@ -152,7 +183,7 @@ describe("unified dashboard findings", () => {
     const visible = filterDashboardFindingRecords(records, {
       query: "dependency",
       projectId: "all",
-      status: "actionable",
+      status: "ready-to-act",
       type: "security",
     });
 
@@ -161,6 +192,117 @@ describe("unified dashboard findings", () => {
       "Relay",
       "T3 Code",
     ]);
+  });
+
+  it("only treats open findings with a qualified plan as ready to act", () => {
+    const readyPlan = {
+      readiness: "ready" as const,
+      proposal: "Apply the focused repository change.",
+      expectedValue: "Resolve the verified finding.",
+      targets: [],
+      validationPlan: ["Run the focused regression test."],
+      sources: [],
+      riskTier: "medium" as const,
+      estimatedEffort: "medium" as const,
+      qualificationReason: "The change is bounded and locally testable.",
+      qualifiedAt: "2026-08-09T12:05:00.000Z",
+      qualifiedBy: "repository-review" as const,
+      qualifiedOccurrenceCount: 1,
+    };
+    const snapshot = {
+      repositories: [],
+      findings: [
+        finding({ id: "finding:ready", actionability: readyPlan }),
+        finding({
+          id: "finding:needs-research",
+          type: "research",
+          kind: "research",
+          actionability: { ...readyPlan, readiness: "needs-research" },
+        }),
+        finding({ id: "finding:unqualified", actionability: null }),
+        finding({
+          id: "finding:in-progress",
+          disposition: { ...finding({}).disposition, state: "in-progress" },
+          actionability: readyPlan,
+        }),
+      ],
+    } as unknown as AgentDashboardSnapshot;
+
+    expect(
+      filterDashboardFindingRecords(buildDashboardFindingRecords(snapshot), {
+        query: "",
+        projectId: "all",
+        status: "ready-to-act",
+        type: "all",
+      }).map((record) => record.id),
+    ).toEqual(["finding:ready"]);
+  });
+
+  it("separates qualification, automation, approval, delivery, and resolved stages", () => {
+    const readyPlan = {
+      readiness: "ready" as const,
+      proposal: "Apply the bounded change.",
+      expectedValue: "Improve the verified behavior.",
+      targets: [
+        {
+          path: "src/example.ts",
+          symbol: null,
+          evidence: "The bounded behavior is implemented here.",
+        },
+      ],
+      validationPlan: ["Run the focused test."],
+      sources: [],
+      riskTier: "high" as const,
+      estimatedEffort: "small" as const,
+      qualificationReason: "The change is locally verifiable.",
+      qualifiedAt: "2026-08-09T12:05:00.000Z",
+      qualifiedBy: "repository-review" as const,
+      qualifiedOccurrenceCount: 1,
+    };
+    const snapshot = {
+      repositories: [],
+      findings: [
+        finding({ id: "finding:candidate" }),
+        finding({ id: "finding:approval", actionability: readyPlan }),
+        finding({
+          id: "finding:delivery",
+          actionability: { ...readyPlan, riskTier: "medium" },
+          disposition: { ...finding({}).disposition, state: "in-progress" },
+        }),
+        finding({
+          id: "finding:resolved",
+          disposition: { ...finding({}).disposition, state: "done" },
+        }),
+      ],
+    } as unknown as AgentDashboardSnapshot;
+    const records = buildDashboardFindingRecords(snapshot);
+    const guardrails = { maxRiskTier: "medium" as const, minimumConfidence: "medium" as const };
+
+    const recordsById = new Map(records.map((record) => [record.id, record]));
+    expect(dashboardFindingPipelineStage(recordsById.get("finding:candidate")!, guardrails)).toBe(
+      "candidate",
+    );
+    expect(dashboardFindingPipelineStage(recordsById.get("finding:approval")!, guardrails)).toBe(
+      "policy-review",
+    );
+    expect(
+      filterDashboardFindingRecords(records, {
+        query: "",
+        projectId: "all",
+        status: "policy-review",
+        type: "all",
+        ...guardrails,
+      }).map((record) => record.id),
+    ).toEqual(["finding:approval"]);
+    expect(
+      filterDashboardFindingRecords(records, {
+        query: "",
+        projectId: "all",
+        status: "resolved",
+        type: "all",
+        ...guardrails,
+      }).map((record) => record.id),
+    ).toEqual(["finding:resolved"]);
   });
 
   it("builds separate research and implementation briefs", () => {
@@ -176,15 +318,37 @@ describe("unified dashboard findings", () => {
     } as unknown as AgentDashboardSnapshot;
     const [record] = buildDashboardFindingRecords(snapshot);
 
-    expect(buildDashboardFindingPrompt(record!, "research")).toContain(
+    expect(buildDashboardFindingPrompt(record!, { kind: "research" })).toContain(
       "Do not modify implementation code during this research pass.",
     );
-    expect(buildDashboardFindingPrompt(record!, "implement")).toContain(
-      "mark this finding as Done in T3 Code",
-    );
+    const implementationPrompt = buildDashboardFindingPrompt(record!, {
+      kind: "implement",
+      baseBranch: "main",
+    });
+    expect(implementationPrompt).toContain("Open one pull request targeting `main`");
+    expect(implementationPrompt).toContain("Do not push directly to or merge `main`");
+    expect(implementationPrompt).toContain("include the pull request URL");
     expect(buildDashboardFindingQuestionPrompt(record!, "Does this apply here?")).toContain(
       "## User question\nDoes this apply here?",
     );
+  });
+
+  it("starts implementation work from the latest remote default branch", () => {
+    expect(
+      buildDashboardFindingWorktreeBootstrap({
+        projectCwd: "/workspace/t3code",
+        baseBranch: "main",
+        branch: "t3/1234abcd",
+      }),
+    ).toEqual({
+      prepareWorktree: {
+        projectCwd: "/workspace/t3code",
+        baseBranch: "main",
+        branch: "t3/1234abcd",
+        startFromOrigin: true,
+      },
+      runSetupScript: true,
+    });
   });
 
   it("prioritizes actionable severity and supports severity filtering", () => {
@@ -958,6 +1122,12 @@ describe("agent dashboard suggestion actions", () => {
           ],
           validationPlan: ["Run the focused scanner benchmark."],
           sources: [],
+          riskTier: "medium",
+          estimatedEffort: "medium",
+          qualificationReason: "The target and validation plan are repository-grounded.",
+          qualifiedAt: "2026-08-09T12:05:00.000Z",
+          qualifiedBy: "repository-review",
+          qualifiedOccurrenceCount: 1,
         },
       },
     } as const;

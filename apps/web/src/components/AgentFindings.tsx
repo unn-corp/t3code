@@ -6,6 +6,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { ProjectId } from "@t3tools/contracts";
 import type {
+  AgentDashboardAutomationRun,
   AgentDashboardDispositionAction,
   AgentDashboardDispositionActionInput,
   AgentDashboardFinding,
@@ -20,6 +21,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   BotIcon,
   BugIcon,
+  CircleAlertIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   ClockIcon,
@@ -27,6 +29,7 @@ import {
   FileSearchIcon,
   FlaskConicalIcon,
   FolderGit2Icon,
+  GitPullRequestIcon,
   GithubIcon,
   LightbulbIcon,
   LoaderIcon,
@@ -47,16 +50,21 @@ import {
   DASHBOARD_FINDING_TYPES,
   buildDashboardFindingPrompt,
   buildDashboardFindingQuestionPrompt,
+  buildDashboardFindingWorktreeBootstrap,
   buildDashboardPullRequestCombinationPrompt,
   buildDashboardFindingRecords,
+  dashboardFindingPipelineStage,
+  dashboardFindingQualificationReason,
   filterDashboardFindingRecords,
   findDashboardProject,
   githubRepositoryForIdentity,
   groupDashboardFindingRecords,
+  resolveDashboardProjectOptionLabel,
   sortDashboardFindingRecords,
   suggestionWorkModelSelection,
   suggestionWorktreeBaseBranch,
   type DashboardFindingRecord,
+  type DashboardFindingPipelineStage,
   type DashboardFindingStatus,
   type DashboardFindingSort,
   type DashboardFindingType,
@@ -103,12 +111,23 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Textarea } from "./ui/textarea";
 
-type FindingStatusFilter = "actionable" | "all" | DashboardFindingStatus;
+type FindingStatusFilter =
+  | "pipeline"
+  | "ready-to-act"
+  | "needs-qualification"
+  | "policy-review"
+  | "resolved"
+  | "all"
+  | DashboardFindingStatus;
 type FindingIntent = "research" | "implement";
 
 function parseFindingStatusFilter(value: string): FindingStatusFilter {
   switch (value) {
-    case "actionable":
+    case "pipeline":
+    case "ready-to-act":
+    case "needs-qualification":
+    case "policy-review":
+    case "resolved":
     case "all":
     case "open":
     case "in-progress":
@@ -117,7 +136,7 @@ function parseFindingStatusFilter(value: string): FindingStatusFilter {
     case "archived":
       return value;
     default:
-      return "actionable";
+      return "pipeline";
   }
 }
 
@@ -200,6 +219,19 @@ const STATUS_LABELS = {
   archived: "Archived",
 } as const satisfies Record<DashboardFindingStatus, string>;
 
+const PIPELINE_PRESENTATION = {
+  candidate: { label: "Candidate", variant: "outline" },
+  "needs-qualification": { label: "Needs qualification", variant: "warning" },
+  ready: { label: "Ready for automation", variant: "success" },
+  "policy-review": { label: "Needs approval", variant: "warning" },
+  implementing: { label: "In delivery", variant: "info" },
+  paused: { label: "Paused", variant: "outline" },
+  resolved: { label: "Resolved", variant: "outline" },
+} as const satisfies Record<
+  DashboardFindingPipelineStage,
+  { readonly label: string; readonly variant: "outline" | "warning" | "success" | "info" }
+>;
+
 function severityVariant(severity: AgentDashboardFinding["severity"]) {
   switch (severity) {
     case "critical":
@@ -227,10 +259,76 @@ function statusVariant(status: DashboardFindingStatus) {
   }
 }
 
+function continuousImprovementStatus(run: AgentDashboardAutomationRun): {
+  readonly label: string;
+  readonly variant: "outline" | "info" | "success" | "warning" | "error";
+} {
+  switch (run.status) {
+    case "queued":
+      return { label: "Starting", variant: "info" };
+    case "running":
+      return { label: "Working", variant: "info" };
+    case "ingesting":
+      return { label: "Checking pull request", variant: "info" };
+    case "succeeded":
+      return { label: "PR opened", variant: "success" };
+    case "partial":
+      return { label: "Needs attention", variant: "warning" };
+    case "failed":
+      return { label: "Failed", variant: "error" };
+    case "cancelled":
+      return { label: "Stopped", variant: "outline" };
+  }
+}
+
 function findingIntent(record: DashboardFindingRecord): FindingIntent {
-  return record.type === "research" && record.finding.actionability?.readiness !== "ready"
-    ? "research"
-    : "implement";
+  return record.finding.actionability?.readiness === "ready" ? "implement" : "research";
+}
+
+function findingStatusDescription(status: FindingStatusFilter): string {
+  switch (status) {
+    case "pipeline":
+      return "Active pipeline includes every unresolved signal, from first qualification through delivery.";
+    case "ready-to-act":
+      return "Ready for automation includes open findings with a bounded plan inside the configured risk and confidence guardrails.";
+    case "needs-qualification":
+      return "Needs qualification includes signals that still require repository inspection or a more concrete implementation plan.";
+    case "policy-review":
+      return "Needs approval includes qualified work held outside the configured risk or confidence guardrails.";
+    case "resolved":
+      return "Resolved includes completed, dismissed, and blocked findings retained for traceability.";
+    default:
+      return "Lifecycle filters expose the underlying review and delivery state.";
+  }
+}
+
+function findingAutomationBlockReason(
+  record: DashboardFindingRecord,
+  guardrails: {
+    readonly maxRiskTier: "low" | "medium" | "high" | "critical";
+    readonly minimumConfidence: "low" | "medium" | "high";
+  },
+): string {
+  const actionability = record.finding.actionability;
+  if (actionability?.readiness !== "ready") return dashboardFindingQualificationReason(record);
+  const riskWeight = { low: 1, medium: 2, high: 3, critical: 4 } as const;
+  const confidenceWeight = { low: 1, medium: 2, high: 3 } as const;
+  const reasons: Array<string> = [];
+  if (riskWeight[actionability.riskTier] > riskWeight[guardrails.maxRiskTier]) {
+    reasons.push(
+      `${actionability.riskTier} risk exceeds the ${guardrails.maxRiskTier} automation limit`,
+    );
+  }
+  if (
+    confidenceWeight[record.finding.confidence] < confidenceWeight[guardrails.minimumConfidence]
+  ) {
+    reasons.push(
+      `${record.finding.confidence} confidence is below the ${guardrails.minimumConfidence} minimum`,
+    );
+  }
+  return reasons.length > 0
+    ? `${reasons.join(" and ")}. Review the finding or adjust Automation settings.`
+    : "This finding is ready for automation.";
 }
 
 export function AgentFindings() {
@@ -251,6 +349,9 @@ export function AgentFindings() {
   const linkFindingThread = useAtomCommand(agentDashboardEnvironment.linkFindingThread, {
     reportFailure: false,
   });
+  const retryAutomationRun = useAtomCommand(agentDashboardEnvironment.retryRun, {
+    reportFailure: false,
+  });
   const createGithubIssue = useAtomCommand(agentDashboardEnvironment.createGithubIssue, {
     reportFailure: false,
   });
@@ -260,7 +361,7 @@ export function AgentFindings() {
   const [severityFilter, setSeverityFilter] = useState<"all" | AgentDashboardFinding["severity"]>(
     "all",
   );
-  const [statusFilter, setStatusFilter] = useState<FindingStatusFilter>("actionable");
+  const [statusFilter, setStatusFilter] = useState<FindingStatusFilter>("pipeline");
   const [findingSort, setFindingSort] = useState<DashboardFindingSort>("priority");
   const [isCollecting, setIsCollecting] = useState(false);
   const [startingFindingId, setStartingFindingId] = useState<string | null>(null);
@@ -268,6 +369,7 @@ export function AgentFindings() {
   const [updatingFindingId, setUpdatingFindingId] = useState<string | null>(null);
   const [askingFindingId, setAskingFindingId] = useState<string | null>(null);
   const [combiningProjectId, setCombiningProjectId] = useState<string | null>(null);
+  const [retryingAutomationRunId, setRetryingAutomationRunId] = useState<string | null>(null);
   const [voiceFindingId, setVoiceFindingId] = useState<string | null>(null);
   const [researchSetupOpen, setResearchSetupOpen] = useState(false);
   const [researchProjectId, setResearchProjectId] = useState("");
@@ -304,6 +406,45 @@ export function AgentFindings() {
       dashboardSnapshot.data === null ? [] : buildDashboardFindingRecords(dashboardSnapshot.data),
     [dashboardSnapshot.data],
   );
+  const continuousImprovementRuns = useMemo(
+    () =>
+      (dashboardSnapshot.data?.automationRuns ?? []).filter(
+        (run) => run.kind === "continuous-improvement",
+      ),
+    [dashboardSnapshot.data?.automationRuns],
+  );
+  const latestContinuousImprovementRun = continuousImprovementRuns[0] ?? null;
+  const continuousImprovementPullRequests = useMemo(
+    () =>
+      new Map(
+        (dashboardSnapshot.data?.externalActions ?? []).flatMap((action) =>
+          action.actor === "continuous-improvement" &&
+          action.runId !== null &&
+          action.targetUrl !== null
+            ? ([[action.runId, action.targetUrl]] as const)
+            : [],
+        ),
+      ),
+    [dashboardSnapshot.data?.externalActions],
+  );
+  const repositoryNameById = useMemo(
+    () =>
+      new Map(
+        (dashboardSnapshot.data?.repositories ?? []).map((repository) => [
+          String(repository.projectId),
+          repository.title,
+        ]),
+      ),
+    [dashboardSnapshot.data?.repositories],
+  );
+  const findingTitleById = useMemo(
+    () => new Map(records.map((record) => [record.id, record.finding.title])),
+    [records],
+  );
+  const improvementGuardrails = {
+    maxRiskTier: settings.continuousImprovement.maxRiskTier,
+    minimumConfidence: settings.continuousImprovement.minimumConfidence,
+  } as const;
   const recordsAcrossTypes = useMemo(
     () =>
       filterDashboardFindingRecords(records, {
@@ -312,8 +453,17 @@ export function AgentFindings() {
         status: statusFilter,
         type: "all",
         severity: severityFilter,
+        ...improvementGuardrails,
       }),
-    [projectFilter, query, records, severityFilter, statusFilter],
+    [
+      improvementGuardrails.maxRiskTier,
+      improvementGuardrails.minimumConfidence,
+      projectFilter,
+      query,
+      records,
+      severityFilter,
+      statusFilter,
+    ],
   );
   const visibleRecords = useMemo(
     () =>
@@ -326,6 +476,41 @@ export function AgentFindings() {
     [findingSort, recordsAcrossTypes, typeFilter],
   );
   const groups = useMemo(() => groupDashboardFindingRecords(visibleRecords), [visibleRecords]);
+  const pipelineRecords = useMemo(
+    () =>
+      filterDashboardFindingRecords(records, {
+        query,
+        projectId: projectFilter,
+        status: "all",
+        type: typeFilter,
+        severity: severityFilter,
+        ...improvementGuardrails,
+      }),
+    [
+      improvementGuardrails.maxRiskTier,
+      improvementGuardrails.minimumConfidence,
+      projectFilter,
+      query,
+      records,
+      severityFilter,
+      typeFilter,
+    ],
+  );
+  const pipelineCounts = useMemo(() => {
+    const counts: Record<DashboardFindingPipelineStage, number> = {
+      candidate: 0,
+      "needs-qualification": 0,
+      ready: 0,
+      "policy-review": 0,
+      implementing: 0,
+      paused: 0,
+      resolved: 0,
+    };
+    for (const record of pipelineRecords) {
+      counts[dashboardFindingPipelineStage(record, improvementGuardrails)] += 1;
+    }
+    return counts;
+  }, [improvementGuardrails.maxRiskTier, improvementGuardrails.minimumConfidence, pipelineRecords]);
   const selectedVisibleCount = visibleRecords.filter((record) =>
     selectedFindingIds.has(record.id),
   ).length;
@@ -337,6 +522,11 @@ export function AgentFindings() {
         ...new Map(records.map((record) => [record.projectId, record.projectName])).entries(),
       ].toSorted((left, right) => left[1].localeCompare(right[1])),
     [records],
+  );
+  const researchProjectValue = researchProjectId || projectOptions[0]?.[0] || "";
+  const researchProjectLabel = resolveDashboardProjectOptionLabel(
+    projectOptions,
+    researchProjectValue,
   );
   const typeCounts = useMemo(() => {
     const counts = new Map(DASHBOARD_FINDING_TYPES.map((type) => [type, 0]));
@@ -424,6 +614,42 @@ export function AgentFindings() {
       }
     },
     [showFailure],
+  );
+
+  const retryContinuousImprovementRun = useCallback(
+    async (run: AgentDashboardAutomationRun) => {
+      if (!dashboardSnapshot.environmentId || retryingAutomationRunId !== null) return;
+      setRetryingAutomationRunId(run.id);
+      try {
+        const result = await retryAutomationRun({
+          environmentId: dashboardSnapshot.environmentId,
+          input: { id: run.id },
+        });
+        if (result._tag === "Failure" || !result.value.ok) {
+          if (result._tag === "Failure" && isAtomCommandInterrupted(result)) return;
+          const error =
+            result._tag === "Failure"
+              ? squashAtomCommandFailure(result)
+              : (result.value.message ?? "The implementation retry could not start.");
+          showFailure(
+            "Could not retry implementation",
+            error instanceof Error ? error.message : String(error),
+          );
+          return;
+        }
+        await dashboardSnapshot.refresh();
+        toastManager.add(
+          stackedThreadToast({
+            type: "success",
+            title: "Implementation retry started",
+            description: "A new work session is starting with the current automation settings.",
+          }),
+        );
+      } finally {
+        setRetryingAutomationRunId(null);
+      }
+    },
+    [dashboardSnapshot, retryAutomationRun, retryingAutomationRunId, showFailure],
   );
 
   const collectNow = useCallback(async () => {
@@ -622,6 +848,10 @@ export function AgentFindings() {
       const modelSelection = suggestionWorkModelSelection(availableModelSelection);
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
+      const prompt =
+        intent === "implement" && baseBranch
+          ? buildDashboardFindingPrompt(record, { kind: "implement", baseBranch })
+          : buildDashboardFindingPrompt(record, { kind: "research" });
       const title =
         `${intent === "research" ? "Research" : "Work on"}: ${record.finding.title}`.slice(0, 80);
       setStartingFindingId(record.id);
@@ -633,7 +863,7 @@ export function AgentFindings() {
             message: {
               messageId: newMessageId(),
               role: "user",
-              text: buildDashboardFindingPrompt(record, intent),
+              text: prompt,
               attachments: [],
             },
             modelSelection,
@@ -652,14 +882,11 @@ export function AgentFindings() {
                 createdAt,
               },
               ...(intent === "implement" && baseBranch
-                ? {
-                    prepareWorktree: {
-                      projectCwd: project.workspaceRoot,
-                      baseBranch,
-                      branch: buildTemporaryWorktreeBranchName(randomHex),
-                    },
-                    runSetupScript: true,
-                  }
+                ? buildDashboardFindingWorktreeBootstrap({
+                    projectCwd: project.workspaceRoot,
+                    baseBranch,
+                    branch: buildTemporaryWorktreeBranchName(randomHex),
+                  })
                 : {}),
             },
             createdAt,
@@ -695,7 +922,7 @@ export function AgentFindings() {
             description:
               intent === "research"
                 ? "The agent is qualifying this finding against the repository."
-                : `The agent is running in a new worktree from ${baseBranch}.`,
+                : `The agent will open a pull request targeting ${baseBranch} from a new worktree.`,
           }),
         );
         await dashboardSnapshot.refresh();
@@ -1060,8 +1287,58 @@ export function AgentFindings() {
         </div>
       }
       title="Findings"
-      description="Research, security risks, bugs, reviews, and improvement ideas across every project, ready to filter and act on in one place."
+      description="A continuous codebase improvement pipeline from first signal through qualification, implementation, and pull request review."
     >
+      <div
+        aria-label="Finding pipeline"
+        className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
+        role="group"
+      >
+        {[
+          {
+            status: "pipeline" as const,
+            label: "Active pipeline",
+            count: pipelineRecords.length - pipelineCounts.resolved,
+          },
+          {
+            status: "needs-qualification" as const,
+            label: "Needs qualification",
+            count: pipelineCounts.candidate + pipelineCounts["needs-qualification"],
+          },
+          {
+            status: "ready-to-act" as const,
+            label: "Ready for automation",
+            count: pipelineCounts.ready,
+          },
+          {
+            status: "policy-review" as const,
+            label: "Needs approval",
+            count: pipelineCounts["policy-review"],
+          },
+          {
+            status: "in-progress" as const,
+            label: "In delivery",
+            count: pipelineCounts.implementing,
+          },
+          {
+            status: "resolved" as const,
+            label: "Resolved",
+            count: pipelineCounts.resolved,
+          },
+        ].map((stage) => (
+          <Button
+            aria-pressed={statusFilter === stage.status}
+            className="h-auto min-h-14 justify-between gap-3 px-3 py-2"
+            key={stage.status}
+            onClick={() => setStatusFilter(stage.status)}
+            variant={statusFilter === stage.status ? "secondary" : "outline"}
+          >
+            <span className="text-left text-xs font-medium leading-tight">{stage.label}</span>
+            <span className="text-base tabular-nums">{stage.count}</span>
+          </Button>
+        ))}
+      </div>
+
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_12rem_11rem_10rem_10rem]">
         <div className="relative min-w-0 md:col-span-2 lg:col-span-1">
           <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -1090,11 +1367,19 @@ export function AgentFindings() {
           value={statusFilter}
           onValueChange={(value) => value && setStatusFilter(parseFindingStatusFilter(value))}
         >
-          <SelectTrigger aria-label="Filter findings by status" className="w-full">
+          <SelectTrigger
+            aria-describedby="finding-status-filter-description"
+            aria-label="Filter findings by status"
+            className="w-full"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
-            <SelectItem value="actionable">Actionable</SelectItem>
+            <SelectItem value="pipeline">Active pipeline</SelectItem>
+            <SelectItem value="needs-qualification">Needs qualification</SelectItem>
+            <SelectItem value="ready-to-act">Ready for automation</SelectItem>
+            <SelectItem value="policy-review">Needs approval</SelectItem>
+            <SelectItem value="resolved">Resolved</SelectItem>
             <SelectItem value="all">All statuses</SelectItem>
             <SelectItem value="open">Open</SelectItem>
             <SelectItem value="in-progress">In progress</SelectItem>
@@ -1132,6 +1417,10 @@ export function AgentFindings() {
           </SelectPopup>
         </Select>
       </div>
+
+      <p className="text-xs text-muted-foreground" id="finding-status-filter-description">
+        {findingStatusDescription(statusFilter)}
+      </p>
 
       <div className="-mx-1 overflow-x-auto px-1 pb-1">
         <div className="flex min-w-max gap-2" role="group" aria-label="Filter findings by type">
@@ -1280,13 +1569,176 @@ export function AgentFindings() {
         </div>
       ) : null}
 
+      {settings.continuousImprovement.enabled || continuousImprovementRuns.length > 0 ? (
+        <Collapsible defaultOpen={false}>
+          <div
+            className={`overflow-hidden rounded-xl border ${latestContinuousImprovementRun?.status === "failed" ? "border-destructive/35 bg-destructive/5" : "border-success/30 bg-success/5"}`}
+          >
+            <CollapsibleTrigger className="flex min-h-11 w-full min-w-0 items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-panel-open:[&>svg]:rotate-180">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-card text-success">
+                <SparklesIcon className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-foreground">
+                    Continuous Improvement
+                  </span>
+                  <Badge
+                    size="sm"
+                    variant={settings.continuousImprovement.enabled ? "success" : "outline"}
+                  >
+                    {settings.continuousImprovement.enabled ? "On" : "Off"}
+                  </Badge>
+                  {latestContinuousImprovementRun ? (
+                    <Badge
+                      size="sm"
+                      variant={continuousImprovementStatus(latestContinuousImprovementRun).variant}
+                    >
+                      {continuousImprovementStatus(latestContinuousImprovementRun).label}
+                    </Badge>
+                  ) : null}
+                </span>
+                <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                  {latestContinuousImprovementRun
+                    ? `${repositoryNameById.get(String(latestContinuousImprovementRun.repository.projectId)) ?? "Repository"}, ${findingTitleById.get(latestContinuousImprovementRun.jobId ?? "") ?? latestContinuousImprovementRun.target ?? "finding"}`
+                    : "Waiting for the next ready finding inside your automation guardrails"}
+                </span>
+              </span>
+              <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform" />
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              <div className="grid gap-2 border-t border-border/60 p-3">
+                <p className="text-xs text-muted-foreground">
+                  One finding runs at a time. T3 keeps the work session, launch failures, and
+                  verified pull request outcome here.
+                </p>
+                {continuousImprovementRuns.length > 0 ? (
+                  <div className="grid gap-2">
+                    {continuousImprovementRuns.slice(0, 5).map((run) => {
+                      const status = continuousImprovementStatus(run);
+                      const pullRequestUrl = continuousImprovementPullRequests.get(run.id) ?? null;
+                      const canRetry = run.status === "failed" || run.status === "partial";
+                      return (
+                        <div
+                          className="flex min-w-0 flex-col gap-3 rounded-lg border border-border/60 bg-card p-3 sm:flex-row sm:items-start"
+                          key={run.id}
+                        >
+                          <span
+                            className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border ${run.status === "failed" ? "border-destructive/30 bg-destructive/10 text-destructive" : run.status === "succeeded" ? "border-success/30 bg-success/10 text-success" : "border-info/30 bg-info/10 text-info"}`}
+                          >
+                            {run.status === "succeeded" ? (
+                              <GitPullRequestIcon className="size-4" />
+                            ) : run.status === "failed" || run.status === "partial" ? (
+                              <CircleAlertIcon className="size-4" />
+                            ) : (
+                              <BotIcon className="size-4" />
+                            )}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="truncate text-sm font-medium">
+                                {findingTitleById.get(run.jobId ?? "") ?? run.target ?? "Finding"}
+                              </span>
+                              <Badge size="sm" variant={status.variant}>
+                                {status.label}
+                              </Badge>
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {repositoryNameById.get(String(run.repository.projectId)) ??
+                                String(run.repository.projectId)}
+                              {run.target ? `, ${run.target}` : ""}
+                              {` · ${formatRelativeTimeLabel(run.updatedAt) || "Unknown time"}`}
+                            </p>
+                            {run.error ? (
+                              <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-destructive">
+                                {run.error}
+                              </p>
+                            ) : null}
+                          </div>
+                          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+                            {run.threadId && dashboardSnapshot.environmentId ? (
+                              <Button
+                                onClick={() =>
+                                  navigate({
+                                    to: "/$environmentId/$threadId",
+                                    params: {
+                                      environmentId: dashboardSnapshot.environmentId!,
+                                      threadId: run.threadId!,
+                                    },
+                                  })
+                                }
+                                size="sm"
+                                variant="outline"
+                              >
+                                <BotIcon />
+                                Open work
+                              </Button>
+                            ) : null}
+                            {pullRequestUrl ? (
+                              <Button
+                                onClick={() => void openExternal(pullRequestUrl)}
+                                size="sm"
+                                variant="outline"
+                              >
+                                <GitPullRequestIcon />
+                                Open PR
+                              </Button>
+                            ) : null}
+                            {canRetry ? (
+                              <Button
+                                disabled={retryingAutomationRunId !== null}
+                                onClick={() => void retryContinuousImprovementRun(run)}
+                                size="sm"
+                                variant="outline"
+                              >
+                                {retryingAutomationRunId === run.id ? (
+                                  <LoaderIcon className="animate-spin" />
+                                ) : (
+                                  <RotateCcwIcon />
+                                )}
+                                Retry
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="rounded-lg border border-dashed border-border/70 bg-card px-3 py-4 text-sm text-muted-foreground">
+                    No implementation attempts yet. The scheduler will start one when an eligible
+                    finding is ready.
+                  </p>
+                )}
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    onClick={() => navigate({ to: "/agent-dashboard/runs" })}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    View all runs
+                  </Button>
+                  <Button
+                    onClick={() => navigate({ to: "/settings/automation" })}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Automation settings
+                  </Button>
+                </div>
+              </div>
+            </CollapsiblePanel>
+          </div>
+        </Collapsible>
+      ) : null}
+
       {groups.length > 0 ? (
         <div className="grid gap-8">
           {groups.map((group) => {
             const headingId = `findings-project-${group.projectId}`;
             return (
               <section aria-labelledby={headingId} key={group.projectId}>
-                <Collapsible defaultOpen>
+                <Collapsible defaultOpen={false}>
                   <CollapsibleTrigger className="mb-3 flex min-h-11 w-full min-w-0 items-center gap-3 rounded-xl px-1 text-left outline-none transition-colors hover:bg-muted/35 focus-visible:ring-2 focus-visible:ring-ring data-panel-open:[&>svg]:rotate-180">
                     <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border bg-card text-muted-foreground shadow-xs">
                       <FolderGit2Icon className="size-4" />
@@ -1341,6 +1793,11 @@ export function AgentFindings() {
                           singular: typeLabel,
                         } = TYPE_PRESENTATION[record.type];
                         const intent = findingIntent(record);
+                        const pipelineStage = dashboardFindingPipelineStage(
+                          record,
+                          improvementGuardrails,
+                        );
+                        const pipelinePresentation = PIPELINE_PRESENTATION[pipelineStage];
                         const isUpdating = updatingFindingId === record.id;
                         const canCreateIssue =
                           finding.externalIssueUrl !== null ||
@@ -1372,9 +1829,14 @@ export function AgentFindings() {
                                     <Badge size="sm" variant={severityVariant(finding.severity)}>
                                       {finding.severity}
                                     </Badge>
-                                    <Badge size="sm" variant={statusVariant(record.status)}>
-                                      {STATUS_LABELS[record.status]}
+                                    <Badge size="sm" variant={pipelinePresentation.variant}>
+                                      {pipelinePresentation.label}
                                     </Badge>
+                                    {record.status !== "open" ? (
+                                      <Badge size="sm" variant={statusVariant(record.status)}>
+                                        {STATUS_LABELS[record.status]}
+                                      </Badge>
+                                    ) : null}
                                   </div>
                                   <CardDescription className="mt-1 max-w-3xl whitespace-pre-wrap leading-relaxed">
                                     {finding.summary}
@@ -1401,6 +1863,20 @@ export function AgentFindings() {
                                     </li>
                                   ))}
                                 </ul>
+                              ) : null}
+                              {pipelineStage === "candidate" ||
+                              pipelineStage === "needs-qualification" ||
+                              pipelineStage === "policy-review" ? (
+                                <div className="grid gap-1.5 rounded-xl border border-warning/30 bg-warning/5 px-3 py-2.5 text-sm">
+                                  <span className="font-medium text-foreground">
+                                    {pipelineStage === "policy-review"
+                                      ? "Why approval is needed"
+                                      : "Why it is not ready yet"}
+                                  </span>
+                                  <span className="text-foreground/75">
+                                    {findingAutomationBlockReason(record, improvementGuardrails)}
+                                  </span>
+                                </div>
                               ) : null}
                               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -1438,7 +1914,7 @@ export function AgentFindings() {
                                           label: finding.thread
                                             ? "Open work"
                                             : intent === "research"
-                                              ? "Research"
+                                              ? "Investigate"
                                               : "Start work",
                                           pendingLabel: "Starting",
                                           icon: finding.thread ? ExternalLinkIcon : BotIcon,
@@ -1553,12 +2029,28 @@ export function AgentFindings() {
               <CheckCircle2Icon />
             </EmptyMedia>
             <EmptyTitle>
-              {records.length === 0 ? "No findings yet" : "No matching findings"}
+              {records.length === 0
+                ? "No findings yet"
+                : statusFilter === "ready-to-act"
+                  ? "No findings are ready for automation"
+                  : statusFilter === "needs-qualification"
+                    ? "No findings need qualification"
+                    : statusFilter === "policy-review"
+                      ? "No findings need approval"
+                      : statusFilter === "pipeline"
+                        ? "The active pipeline is clear"
+                        : "No matching findings"}
             </EmptyTitle>
             <EmptyDescription>
               {records.length === 0
                 ? "Collect findings to review research, security, engineering, and repository advice here."
-                : "Try another project, type, status, or search term."}
+                : statusFilter === "ready-to-act"
+                  ? "Qualified findings will appear here when their risk and confidence fit the Automation settings."
+                  : statusFilter === "needs-qualification"
+                    ? "New or changed signals will return here when a qualification pass is needed."
+                    : statusFilter === "policy-review"
+                      ? "Qualified findings outside the automation guardrails will wait here for a decision."
+                      : "Try another project, type, status, or search term."}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -1588,6 +2080,19 @@ export function AgentFindings() {
                   <Badge variant={statusVariant(manageRecord.status)}>
                     {STATUS_LABELS[manageRecord.status]}
                   </Badge>
+                  <Badge
+                    variant={
+                      PIPELINE_PRESENTATION[
+                        dashboardFindingPipelineStage(manageRecord, improvementGuardrails)
+                      ].variant
+                    }
+                  >
+                    {
+                      PIPELINE_PRESENTATION[
+                        dashboardFindingPipelineStage(manageRecord, improvementGuardrails)
+                      ].label
+                    }
+                  </Badge>
                 </div>
                 <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">
                   {manageRecord.finding.summary}
@@ -1610,6 +2115,17 @@ export function AgentFindings() {
                     <p>{manageRecord.finding.actionability.proposal}</p>
                     <h3 className="mt-1 font-semibold">Expected value</h3>
                     <p>{manageRecord.finding.actionability.expectedValue}</p>
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span>{manageRecord.finding.actionability.riskTier} risk</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{manageRecord.finding.actionability.estimatedEffort} effort</span>
+                    </div>
+                    {manageRecord.finding.actionability.qualificationReason ? (
+                      <>
+                        <h3 className="mt-1 font-semibold">Qualification decision</h3>
+                        <p>{manageRecord.finding.actionability.qualificationReason}</p>
+                      </>
+                    ) : null}
                   </section>
                 ) : null}
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -1717,28 +2233,31 @@ export function AgentFindings() {
         }}
       >
         <DialogPopup>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void saveResearchSource();
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>Set up repository research</DialogTitle>
-              <DialogDescription>
-                Add a topic or source to the local watchlist. T3 will collect it immediately and
-                include it in future portfolio runs.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogPanel className="grid gap-4">
+          <DialogHeader>
+            <DialogTitle>Set up repository research</DialogTitle>
+            <DialogDescription>
+              Add a topic or source to the local watchlist. T3 will collect it immediately and
+              include it in future portfolio runs.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <form
+              className="grid gap-4"
+              id="repository-research-setup-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void saveResearchSource();
+              }}
+            >
               <Field>
                 <FieldLabel>Repository</FieldLabel>
                 <Select
-                  value={researchProjectId || projectOptions[0]?.[0] || ""}
+                  disabled={savingResearchSource || projectOptions.length === 0}
+                  value={researchProjectValue}
                   onValueChange={(value) => value && setResearchProjectId(value)}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue />
+                    <SelectValue>{researchProjectLabel}</SelectValue>
                   </SelectTrigger>
                   <SelectPopup alignItemWithTrigger={false}>
                     {projectOptions.map(([projectId, projectName]) => (
@@ -1781,25 +2300,26 @@ export function AgentFindings() {
                   value={researchUrl}
                 />
               </Field>
-            </DialogPanel>
-            <DialogFooter>
-              <DialogClose render={<Button disabled={savingResearchSource} variant="outline" />}>
-                Cancel
-              </DialogClose>
-              <Button
-                disabled={
-                  !researchTitle.trim() ||
-                  !researchSummary.trim() ||
-                  projectOptions.length === 0 ||
-                  savingResearchSource
-                }
-                type="submit"
-              >
-                {savingResearchSource ? <LoaderIcon className="animate-spin" /> : <PlusIcon />}
-                {savingResearchSource ? "Saving" : "Save and collect"}
-              </Button>
-            </DialogFooter>
-          </form>
+            </form>
+          </DialogPanel>
+          <DialogFooter>
+            <DialogClose render={<Button disabled={savingResearchSource} variant="outline" />}>
+              Cancel
+            </DialogClose>
+            <Button
+              disabled={
+                !researchTitle.trim() ||
+                !researchSummary.trim() ||
+                projectOptions.length === 0 ||
+                savingResearchSource
+              }
+              form="repository-research-setup-form"
+              type="submit"
+            >
+              {savingResearchSource ? <LoaderIcon className="animate-spin" /> : <PlusIcon />}
+              {savingResearchSource ? "Saving" : "Save and collect"}
+            </Button>
+          </DialogFooter>
         </DialogPopup>
       </Dialog>
     </AgentDashboardPageShell>

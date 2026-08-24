@@ -15,6 +15,7 @@ import type {
   AgentDashboardCollectorState,
   AgentDashboardExternalAction,
   AgentDashboardFinding,
+  AgentDashboardFindingActionability,
   AgentDashboardFindingConfidence,
   AgentDashboardFindingKind,
   AgentDashboardFindingSeverity,
@@ -50,6 +51,19 @@ const MAX_FEED_IMAGE_BYTES = 8 * 1024 * 1024;
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const GITHUB_ISSUE_URL_PATTERN =
   /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[0-9]+$/;
+const decodeAgentDashboardFinding = Schema.decodeUnknownSync(AgentDashboardFindingSchema);
+const decodeAgentDashboardRepositoryPolicy = Schema.decodeUnknownSync(
+  AgentDashboardRepositoryPolicySchema,
+);
+const decodeAgentDashboardRepositoryCoverage = Schema.decodeUnknownSync(
+  AgentDashboardRepositoryCoverageSchema,
+);
+const decodeAgentDashboardExternalAction = Schema.decodeUnknownSync(
+  AgentDashboardExternalActionSchema,
+);
+const decodeAgentDashboardCollectorState = Schema.decodeUnknownSync(
+  AgentDashboardCollectorStateSchema,
+);
 const FEED_IMAGE_CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -84,6 +98,12 @@ export interface AgentDashboardReviewFindingInput {
   readonly confidence: string;
   readonly evidence: ReadonlyArray<string>;
   readonly nextStep: string;
+  readonly targets?: AgentDashboardFindingActionability["targets"] | undefined;
+  readonly validationPlan?: ReadonlyArray<string> | undefined;
+  readonly sources?: AgentDashboardFindingActionability["sources"] | undefined;
+  readonly automationRisk?: AgentDashboardFindingActionability["riskTier"] | undefined;
+  readonly estimatedEffort?: AgentDashboardFindingActionability["estimatedEffort"] | undefined;
+  readonly qualificationReason?: string | null | undefined;
   readonly githubIssueTitle: string;
   readonly githubIssueBody: string;
   readonly markdown?: string | undefined;
@@ -101,6 +121,25 @@ export interface AgentDashboardReviewIngestInput {
   };
   readonly findings: ReadonlyArray<AgentDashboardReviewFindingInput>;
 }
+
+export type AgentDashboardFindingQualificationInput =
+  | {
+      readonly id: string;
+      readonly outcome: "ready" | "needs-research";
+      readonly proposal: string;
+      readonly expectedValue: string;
+      readonly targets: AgentDashboardFindingActionability["targets"];
+      readonly validationPlan: ReadonlyArray<string>;
+      readonly sources: AgentDashboardFindingActionability["sources"];
+      readonly riskTier: AgentDashboardFindingActionability["riskTier"];
+      readonly estimatedEffort: AgentDashboardFindingActionability["estimatedEffort"];
+      readonly reason: string;
+    }
+  | {
+      readonly id: string;
+      readonly outcome: "dismiss";
+      readonly reason: string;
+    };
 
 export interface AgentDashboardCanonicalFindingInput {
   readonly type?: AgentDashboardFindingType | undefined;
@@ -206,10 +245,21 @@ export interface AgentDashboardStoreService {
   readonly appendFindings: (
     input: ReadonlyArray<AgentDashboardCanonicalFindingInput>,
   ) => Effect.Effect<number, AgentDashboardStoreError>;
+  readonly applyFindingQualifications: (
+    input: ReadonlyArray<AgentDashboardFindingQualificationInput>,
+  ) => Effect.Effect<number, AgentDashboardStoreError>;
   readonly applyFindingAction: (
     input: AgentDashboardDispositionActionInput,
   ) => Effect.Effect<AgentDashboardStoreMutationOutcome, AgentDashboardStoreError>;
   readonly linkFindingThread: (
+    input: AgentDashboardLinkFindingThreadInput,
+  ) => Effect.Effect<AgentDashboardStoreMutationOutcome, AgentDashboardStoreError>;
+  /** Atomically reserves an open, ready finding for an implementation thread. */
+  readonly claimFindingThread: (
+    input: AgentDashboardLinkFindingThreadInput,
+  ) => Effect.Effect<AgentDashboardStoreMutationOutcome, AgentDashboardStoreError>;
+  /** Releases only the matching reservation after a launch failure. */
+  readonly releaseFindingThread: (
     input: AgentDashboardLinkFindingThreadInput,
   ) => Effect.Effect<AgentDashboardStoreMutationOutcome, AgentDashboardStoreError>;
   readonly readRepositoryPolicies: Effect.Effect<
@@ -258,6 +308,48 @@ const text = (value: unknown, limit = 500): string | null => {
   const result = String(value).trim();
   return result.length > 0 ? result.slice(0, limit) : null;
 };
+
+const reviewFindingActionability = (
+  proposalValue: unknown,
+  expectedValueValue: unknown,
+  input: {
+    readonly type: AgentDashboardFindingType;
+    readonly category?: string | null | undefined;
+    readonly qualifiedAt: string;
+    readonly occurrenceCount: number;
+    readonly targets?: AgentDashboardFindingActionability["targets"] | undefined;
+    readonly validationPlan?: ReadonlyArray<string> | undefined;
+    readonly sources?: AgentDashboardFindingActionability["sources"] | undefined;
+    readonly riskTier?: AgentDashboardFindingActionability["riskTier"] | undefined;
+    readonly estimatedEffort?: AgentDashboardFindingActionability["estimatedEffort"] | undefined;
+    readonly qualificationReason?: string | null | undefined;
+  },
+): AgentDashboardFindingActionability | null => {
+  const proposal = text(proposalValue, 1_200);
+  const expectedValue = text(expectedValueValue, 1_200);
+  if (!proposal || !expectedValue) return null;
+  return {
+    readiness: "ready",
+    proposal,
+    expectedValue,
+    targets: input.targets ?? [],
+    validationPlan: input.validationPlan ?? [],
+    sources: input.sources ?? [],
+    riskTier:
+      input.riskTier ??
+      (input.type === "security" || input.category?.toLocaleLowerCase() === "secrets"
+        ? "high"
+        : "medium"),
+    estimatedEffort: input.estimatedEffort ?? "medium",
+    qualificationReason: input.qualificationReason?.trim() || null,
+    qualifiedAt: input.qualifiedAt,
+    qualifiedBy: "repository-review",
+    qualifiedOccurrenceCount: input.occurrenceCount,
+  };
+};
+
+const reviewSuggestionKey = (repositoryPath: string, title: string): string =>
+  `${repositoryPath.trim()}\u0000${title.trim().toLocaleLowerCase()}`;
 
 const list = (value: unknown, limit = 24, itemLimit = 180): Array<string> => {
   if (!Array.isArray(value)) return [];
@@ -943,7 +1035,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     try {
       const raw = asObject(value);
       if (!raw) return null;
-      return Schema.decodeUnknownSync(AgentDashboardFindingSchema)({
+      return decodeAgentDashboardFinding({
         ...raw,
         type: findingType({
           type: persistedFindingType(raw.type),
@@ -958,7 +1050,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
 
   const decodePolicy = (value: unknown): AgentDashboardRepositoryPolicy | null => {
     try {
-      return Schema.decodeUnknownSync(AgentDashboardRepositoryPolicySchema)(value);
+      return decodeAgentDashboardRepositoryPolicy(value);
     } catch {
       return null;
     }
@@ -966,7 +1058,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
 
   const decodeCoverage = (value: unknown): AgentDashboardRepositoryCoverage | null => {
     try {
-      return Schema.decodeUnknownSync(AgentDashboardRepositoryCoverageSchema)(value);
+      return decodeAgentDashboardRepositoryCoverage(value);
     } catch {
       return null;
     }
@@ -974,7 +1066,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
 
   const decodeExternalAction = (value: unknown): AgentDashboardExternalAction | null => {
     try {
-      return Schema.decodeUnknownSync(AgentDashboardExternalActionSchema)(value);
+      return decodeAgentDashboardExternalAction(value);
     } catch {
       return null;
     }
@@ -982,7 +1074,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
 
   const decodeCollectorState = (value: unknown): AgentDashboardCollectorState | null => {
     try {
-      return Schema.decodeUnknownSync(AgentDashboardCollectorStateSchema)(value);
+      return decodeAgentDashboardCollectorState(value);
     } catch {
       return null;
     }
@@ -1354,6 +1446,18 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
             collectedAt: createdAt,
             runId: input.runId ?? input.jobId,
             threadId: input.threadId ?? null,
+            actionability: reviewFindingActionability(finding.nextStep, finding.impact, {
+              type: finding.type,
+              category: finding.category,
+              qualifiedAt: createdAt,
+              occurrenceCount: 1,
+              targets: finding.targets,
+              validationPlan: finding.validationPlan,
+              sources: finding.sources,
+              riskTier: finding.automationRisk,
+              estimatedEffort: finding.estimatedEffort,
+              qualificationReason: finding.qualificationReason,
+            }),
           };
           const fingerprint = stableFindingFingerprint(canonicalInput);
           const id = `t3-review-${fingerprint.slice("finding:".length)}`;
@@ -1597,16 +1701,142 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       }),
     );
 
-  const readFindings = run("read canonical findings", async () =>
-    (await readCanonicalFindingsRaw()).toSorted(
+  const hydrateReviewActionability = async (
+    findings: ReadonlyArray<AgentDashboardFinding>,
+  ): Promise<Array<AgentDashboardFinding>> => {
+    const reviewSuggestions = await readReviewSuggestionRaw();
+    const suggestionsByFindingId = new Map<string, JsonObject>();
+    const suggestionsByRepositoryTitle = new Map<string, JsonObject>();
+    for (const suggestion of reviewSuggestions) {
+      if (text(suggestion.source, 120) !== "code_review") continue;
+      const id = text(suggestion.id, 100);
+      if (id?.startsWith("t3-review-")) {
+        suggestionsByFindingId.set(`finding:${id.slice("t3-review-".length)}`, suggestion);
+      }
+      const repositoryPath = text(asObject(suggestion.repository)?.path, 2_000);
+      const title = text(suggestion.title, 300);
+      if (repositoryPath && title) {
+        suggestionsByRepositoryTitle.set(reviewSuggestionKey(repositoryPath, title), suggestion);
+      }
+    }
+
+    return findings.map((finding) => {
+      if (finding.actionability !== null || finding.provenance.source !== "code_review") {
+        return finding;
+      }
+      const byIdentity = suggestionsByFindingId.get(finding.id);
+      const byRepositoryTitle = finding.repositoryPath
+        ? suggestionsByRepositoryTitle.get(
+            reviewSuggestionKey(finding.repositoryPath, finding.title),
+          )
+        : undefined;
+      const suggestion = byIdentity ?? byRepositoryTitle;
+      const actionability = suggestion
+        ? reviewFindingActionability(suggestion.next_step, suggestion.impact, {
+            type: finding.type,
+            category: finding.category,
+            qualifiedAt: finding.lastSeenAt,
+            occurrenceCount: finding.occurrenceCount,
+          })
+        : null;
+      return actionability ? { ...finding, actionability } : finding;
+    });
+  };
+
+  const readFindings = run("read canonical findings", async () => {
+    const findings = await hydrateReviewActionability(await readCanonicalFindingsRaw());
+    return findings.toSorted(
       (left, right) =>
         Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt) ||
         right.id.localeCompare(left.id),
-    ),
-  );
+    );
+  });
 
   const appendFindings = (inputs: ReadonlyArray<AgentDashboardCanonicalFindingInput>) =>
     run("append canonical findings", () => withMutation(() => mergeCanonicalFindings(inputs)));
+
+  const applyFindingQualifications: AgentDashboardStoreService["applyFindingQualifications"] = (
+    inputs,
+  ) =>
+    run("apply finding qualifications", () =>
+      withMutation(async () => {
+        const findings = await readCanonicalFindingsRaw();
+        const qualifications = new Map(
+          inputs
+            .map((input) => ({ ...input, id: input.id.trim() }))
+            .filter((input) => input.id.length > 0)
+            .map((input) => [input.id, input] as const),
+        );
+        const qualifiedAt = new Date().toISOString();
+        let changed = 0;
+        const next = findings.map((finding) => {
+          const qualification = qualifications.get(finding.id);
+          if (!qualification || finding.disposition.state !== "open" || finding.thread !== null) {
+            return finding;
+          }
+
+          const reason = text(qualification.reason, 1_200) ?? "Qualification completed.";
+          changed += 1;
+          if (qualification.outcome === "dismiss") {
+            return {
+              ...finding,
+              disposition: {
+                ...finding.disposition,
+                state: "dismissed" as const,
+                updatedAt: qualifiedAt,
+                actor: "repository-review",
+                note: reason,
+                snoozeUntil: null,
+              },
+            };
+          }
+
+          const proposal = text(qualification.proposal, 1_200);
+          const expectedValue = text(qualification.expectedValue, 1_200);
+          if (!proposal || !expectedValue) {
+            changed -= 1;
+            return finding;
+          }
+          return {
+            ...finding,
+            actionability: {
+              readiness: qualification.outcome,
+              proposal,
+              expectedValue,
+              targets: qualification.targets.slice(0, 24).map((target) => ({
+                path: target.path.trim().slice(0, 1_000),
+                symbol: target.symbol?.trim().slice(0, 300) || null,
+                evidence: target.evidence.trim().slice(0, 1_000),
+              })),
+              validationPlan: qualification.validationPlan
+                .map((item) => item.trim().slice(0, 1_000))
+                .filter(Boolean)
+                .slice(0, 24),
+              sources: qualification.sources.slice(0, 24).map((source) => ({
+                title: source.title.trim().slice(0, 300),
+                url: source.url.trim().slice(0, 2_000),
+                kind: source.kind.trim().slice(0, 120),
+              })),
+              riskTier: qualification.riskTier,
+              estimatedEffort: qualification.estimatedEffort,
+              qualificationReason: reason,
+              qualifiedAt,
+              qualifiedBy: "repository-review",
+              qualifiedOccurrenceCount: finding.occurrenceCount,
+            },
+          };
+        });
+
+        if (changed > 0) {
+          await writeDocumentArray(
+            findingsPath,
+            "findings",
+            next.map((finding) => finding as unknown as JsonObject),
+          );
+        }
+        return changed;
+      }),
+    );
 
   const applyFindingAction = (input: AgentDashboardDispositionActionInput) =>
     run("apply finding action", () =>
@@ -1712,6 +1942,10 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         );
         if (!target) return "not-found";
 
+        if (target.thread !== null && target.thread.threadId !== input.threadId) {
+          return "noop";
+        }
+
         const now = new Date().toISOString();
         const nextThread = { projectId: input.projectId, threadId: input.threadId };
         const nextDisposition = {
@@ -1749,6 +1983,85 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           result: "linked",
           occurredAt: now,
         });
+        return "applied";
+      }),
+    );
+
+  const claimFindingThread = (input: AgentDashboardLinkFindingThreadInput) =>
+    run("claim finding thread", () =>
+      withMutation(async () => {
+        const findings = await readCanonicalFindingsRaw();
+        const rawTarget = findings.find(
+          (finding) => finding.id === input.id || finding.fingerprint === input.id,
+        );
+        if (!rawTarget) return "not-found";
+        const target = (await hydrateReviewActionability([rawTarget]))[0] ?? rawTarget;
+        if (
+          target.thread !== null ||
+          target.disposition.state !== "open" ||
+          target.actionability?.readiness !== "ready"
+        ) {
+          return "noop";
+        }
+
+        const now = new Date().toISOString();
+        await writeDocumentArray(
+          findingsPath,
+          "findings",
+          findings.map(
+            (finding) =>
+              (finding.id === target.id
+                ? {
+                    ...target,
+                    thread: { projectId: input.projectId, threadId: input.threadId },
+                    disposition: {
+                      ...finding.disposition,
+                      state: "in-progress" as const,
+                      updatedAt: now,
+                      actor: "continuous-improvement",
+                      note: "Reserved by Continuous Improvement Mode.",
+                      snoozeUntil: null,
+                    },
+                  }
+                : finding) as unknown as JsonObject,
+          ),
+        );
+        return "applied";
+      }),
+    );
+
+  const releaseFindingThread = (input: AgentDashboardLinkFindingThreadInput) =>
+    run("release finding thread", () =>
+      withMutation(async () => {
+        const findings = await readCanonicalFindingsRaw();
+        const target = findings.find(
+          (finding) => finding.id === input.id || finding.fingerprint === input.id,
+        );
+        if (!target) return "not-found";
+        if (target.thread?.threadId !== input.threadId) return "noop";
+
+        const now = new Date().toISOString();
+        await writeDocumentArray(
+          findingsPath,
+          "findings",
+          findings.map(
+            (finding) =>
+              (finding.id === target.id
+                ? {
+                    ...finding,
+                    thread: null,
+                    disposition: {
+                      ...finding.disposition,
+                      state: "open" as const,
+                      updatedAt: now,
+                      actor: "continuous-improvement",
+                      note: "Automatic implementation launch failed and was released for retry.",
+                      snoozeUntil: null,
+                    },
+                  }
+                : finding) as unknown as JsonObject,
+          ),
+        );
         return "applied";
       }),
     );
@@ -1890,8 +2203,11 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     createGithubIssue,
     readFindings,
     appendFindings,
+    applyFindingQualifications,
     applyFindingAction,
     linkFindingThread,
+    claimFindingThread,
+    releaseFindingThread,
     readRepositoryPolicies,
     writeRepositoryPolicy,
     readRepositoryCoverage,

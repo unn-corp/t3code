@@ -14,11 +14,14 @@ import * as NodePath from "node:path";
 import type {
   AgentDashboardAutomationRun,
   AgentDashboardFindingType,
+  RepositoryReviewSettings,
   AgentDashboardReviewSchedule,
   AgentDashboardReviewScheduleStatus,
 } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as AgentDashboardCollectors from "./AgentDashboardCollectors.ts";
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
@@ -31,7 +34,7 @@ import type { AgentDashboardReviewRunnerError } from "./AgentDashboardReviewRunn
 import { REVIEW_INTERVAL_MINUTES } from "./AgentDashboardReviewRunner.ts";
 const SCHEDULE_ID = "t3-findings-portfolio";
 const POLL_INTERVAL = Duration.seconds(30);
-const INTERVAL_MS = REVIEW_INTERVAL_MINUTES * 60_000;
+const DEFAULT_INTERVAL_MS = REVIEW_INTERVAL_MINUTES * 60_000;
 const COVERED_FINDING_TYPES = [
   "bug",
   "security",
@@ -218,6 +221,7 @@ const scheduleFromRun = (
   run: AgentDashboardAutomationRun,
   startedAtMs: number,
   startedAt: string,
+  intervalMs = DEFAULT_INTERVAL_MS,
 ): AgentDashboardReviewSchedule => {
   const status = scheduleStatusFromRun(run);
   const completed =
@@ -237,7 +241,7 @@ const scheduleFromRun = (
       ? isoAt(
           Math.max(
             Number.isFinite(completedAtMs) ? completedAtMs : startedAtMs,
-            startedAtMs + INTERVAL_MS,
+            startedAtMs + intervalMs,
           ),
         )
       : current.nextRunAt,
@@ -251,6 +255,32 @@ const scheduleFromRun = (
         ? current.lastFindingCount + run.findingCount
         : current.lastFindingCount,
     lastReviewRunId: completed ? run.id : current.lastReviewRunId,
+  };
+};
+
+const syncScheduleSettings = (
+  current: AgentDashboardReviewSchedule,
+  automationSettings: RepositoryReviewSettings,
+  nowMs: number,
+): AgentDashboardReviewSchedule => {
+  const enabledNow = !current.enabled && automationSettings.enabled;
+  const cadenceChanged = current.intervalMinutes !== automationSettings.intervalMinutes;
+  const currentNextRunMs = Date.parse(current.nextRunAt);
+  const nextRunAt = enabledNow
+    ? isoAt(nowMs)
+    : cadenceChanged && automationSettings.enabled
+      ? isoAt(
+          Number.isFinite(currentNextRunMs) && currentNextRunMs <= nowMs
+            ? nowMs
+            : nowMs + automationSettings.intervalMinutes * 60_000,
+        )
+      : current.nextRunAt;
+  return {
+    ...current,
+    enabled: automationSettings.enabled,
+    intervalMinutes: automationSettings.intervalMinutes,
+    nextRunAt,
+    heartbeatAt: isoAt(nowMs),
   };
 };
 
@@ -268,6 +298,7 @@ const modifyPersistedSchedule = <A, E, R>(
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const jobService = yield* AgentDashboardReviewJobService;
   const dashboardStore = AgentDashboardStore.getStore(config.stateDir);
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -371,28 +402,30 @@ const make = Effect.gen(function* () {
       };
     });
 
-  const applyRunToSchedule = (
-    run: AgentDashboardAutomationRun,
-    startedAtMs: number,
-    startedAt: string,
-  ) =>
-    modifyPersistedSchedule(stateRef, persist, (current) => [
-      undefined,
-      scheduleFromRun(current, run, startedAtMs, startedAt),
-    ]);
-
   const run = (force: boolean): AgentDashboardReviewSchedulerService["runNow"] =>
     Effect.gen(function* () {
+      const automationSettings = yield* settings.getSettings.pipe(
+        Effect.map((current) => current.repositoryReview),
+        Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.repositoryReview),
+      );
+      const intervalMs = automationSettings.intervalMinutes * 60_000;
       const startedAtTime = yield* DateTime.now;
       const startedAtMs = DateTime.toEpochMillis(startedAtTime);
       const startedAt = DateTime.formatIso(startedAtTime);
       const claimed = yield* modifyPersistedSchedule(stateRef, persist, (state) => {
         if (
-          !state.enabled ||
+          !automationSettings.enabled ||
           state.lastStatus === "running" ||
           (!force && Date.parse(state.nextRunAt) > startedAtMs)
         ) {
-          return [false, state] as const;
+          return [
+            false,
+            {
+              ...state,
+              enabled: automationSettings.enabled,
+              intervalMinutes: automationSettings.intervalMinutes,
+            },
+          ] as const;
         }
         return [
           true,
@@ -403,6 +436,8 @@ const make = Effect.gen(function* () {
             lastError: null,
             heartbeatAt: startedAt,
             runCount: state.runCount + 1,
+            enabled: true,
+            intervalMinutes: automationSettings.intervalMinutes,
           },
         ] as const;
       });
@@ -432,7 +467,7 @@ const make = Effect.gen(function* () {
                 ...current,
                 lastStatus: "failed",
                 lastError: cause.message,
-                nextRunAt: isoAt(DateTime.toEpochMillis(now) + INTERVAL_MS),
+                nextRunAt: isoAt(DateTime.toEpochMillis(now) + intervalMs),
                 heartbeatAt: nowIso,
               },
             ]);
@@ -448,7 +483,12 @@ const make = Effect.gen(function* () {
           idempotencyKey: force ? "manual:repository-review" : "scheduled:repository-review",
         })
         .pipe(
-          Effect.tap((enqueued) => applyRunToSchedule(enqueued, startedAtMs, startedAt)),
+          Effect.tap((enqueued) =>
+            modifyPersistedSchedule(stateRef, persist, (current) => [
+              undefined,
+              scheduleFromRun(current, enqueued, startedAtMs, startedAt, intervalMs),
+            ]),
+          ),
           Effect.tap((enqueued) =>
             // Follow the job until terminal so schedule lastStatus is truthful.
             Effect.gen(function* () {
@@ -456,7 +496,10 @@ const make = Effect.gen(function* () {
                 const runs = yield* jobService.listRuns.pipe(Effect.orElseSucceed(() => []));
                 const current = runs.find((item) => item.id === enqueued.id);
                 if (!current) return;
-                yield* applyRunToSchedule(current, startedAtMs, startedAt);
+                yield* modifyPersistedSchedule(stateRef, persist, (schedule) => [
+                  undefined,
+                  scheduleFromRun(schedule, current, startedAtMs, startedAt, intervalMs),
+                ]);
                 if (
                   current.status === "succeeded" ||
                   current.status === "partial" ||
@@ -488,7 +531,7 @@ const make = Effect.gen(function* () {
                   lastStatus: "failed",
                   lastError:
                     "message" in cause ? String(cause.message) : "Findings portfolio cycle failed.",
-                  nextRunAt: isoAt(DateTime.toEpochMillis(now) + INTERVAL_MS),
+                  nextRunAt: isoAt(DateTime.toEpochMillis(now) + intervalMs),
                   heartbeatAt: nowIso,
                 },
               ]);
@@ -504,11 +547,15 @@ const make = Effect.gen(function* () {
   const runScheduled = run(false).pipe(Effect.asVoid);
 
   const touchHeartbeat = Effect.gen(function* () {
+    const automationSettings = yield* settings.getSettings.pipe(
+      Effect.map((current) => current.repositoryReview),
+      Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.repositoryReview),
+    );
     const now = yield* DateTime.now;
-    const heartbeatAt = DateTime.formatIso(now);
+    const nowMs = DateTime.toEpochMillis(now);
     yield* modifyPersistedSchedule(stateRef, persist, (current) => [
       undefined,
-      { ...current, heartbeatAt },
+      syncScheduleSettings(current, automationSettings, nowMs),
     ]);
   });
 
@@ -543,6 +590,7 @@ export const __testing = {
   },
   scheduleStatusFromRun,
   scheduleFromRun,
+  syncScheduleSettings,
   modifyPersistedSchedule,
-  intervalMs: INTERVAL_MS,
+  intervalMs: DEFAULT_INTERVAL_MS,
 };
