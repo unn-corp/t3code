@@ -170,7 +170,7 @@ it("never sends Grok allow_always because that option cancels the turn", () => {
 
   assert.equal(selectGrokPermissionOptionId(request, "accept"), "allow-once");
   assert.equal(selectGrokPermissionOptionId(request, "acceptForSession"), "allow-once");
-  assert.equal(selectGrokPermissionOptionId(request, "reject"), "reject-once");
+  assert.equal(selectGrokPermissionOptionId(request, "decline"), "reject-once");
   assert.equal(selectGrokAutoApprovedPermissionOption(request), "allow-once");
 });
 

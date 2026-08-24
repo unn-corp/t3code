@@ -23,12 +23,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -267,9 +269,11 @@ validationLayer("CodexAdapterLive validation", (it) => {
     Effect.gen(function* () {
       validationRuntimeFactory.factory.mockClear();
       const adapter = yield* CodexAdapter;
+      const missingCwdTimestamp = yield* Clock.currentTimeMillis;
+      const missingCwdRandom = yield* Random.nextInt;
       const missingCwd = NodePath.join(
         NodeOS.tmpdir(),
-        `t3-missing-codex-cwd-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        `t3-missing-codex-cwd-${missingCwdTimestamp}-${missingCwdRandom}`,
       );
       const result = yield* adapter
         .startSession({

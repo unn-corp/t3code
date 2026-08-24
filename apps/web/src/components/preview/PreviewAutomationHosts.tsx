@@ -460,8 +460,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               (await resolveBrowserDefaults()).autoShowFloatingPreview,
             );
             const latestState = readThreadPreviewState(threadRef);
+            const snapshotForOverlay = activeSnapshot;
             const needsOverlay =
-              Boolean(activeSnapshot) && previewAutomationOpenNeedsOverlay(input, activeSnapshot);
+              snapshotForOverlay !== undefined &&
+              previewAutomationOpenNeedsOverlay(input, snapshotForOverlay);
             if (
               shouldAttachAutomationOverlay({
                 presentToUser: shouldPresentPreview,

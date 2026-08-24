@@ -1661,7 +1661,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         }
 
         const cwd = input.cwd ?? process.cwd();
-        const cwdExists = yield* fileSystem.exists(cwd);
+        const cwdExists = yield* fileSystem.exists(cwd).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterValidationError({
+                provider: PROVIDER,
+                operation: "startSession",
+                issue: `Failed to inspect workspace directory: ${cwd}`,
+                cause,
+              }),
+          ),
+        );
         if (!cwdExists) {
           // Node/Effect spawn refuses a missing cwd and wraps that as
           // "Failed to spawn Codex App Server". Recreate the project folder
