@@ -31,6 +31,7 @@ import {
   layer,
   selectQualificationCandidates,
   selectNextRepository,
+  shouldAllowNotDueSelection,
 } from "./AgentDashboardReviewRunner.ts";
 
 const NOW = Date.parse("2026-08-10T00:00:00.000Z");
@@ -122,6 +123,13 @@ const finding = (
 });
 
 describe("selectNextRepository", () => {
+  it("only permits future-due fallback for non-scheduled triggers", () => {
+    expect(shouldAllowNotDueSelection("scheduled")).toBe(false);
+    expect(shouldAllowNotDueSelection("manual")).toBe(true);
+    expect(shouldAllowNotDueSelection("retry")).toBe(true);
+    expect(shouldAllowNotDueSelection()).toBe(true);
+  });
+
   it("chooses overdue repositories before priority and risk tie-breakers", () => {
     const selected = selectNextRepository({
       nowMs: NOW,
@@ -231,6 +239,8 @@ describe("qualification candidates", () => {
     expect(prompt).toContain('"finding_id":"finding:candidate"');
     expect(prompt).toContain('"outcome":"ready|needs-research|dismiss"');
     expect(prompt).toContain("Dirty working-tree state is repository health");
+    expect(prompt).toContain("every repository-controlled file");
+    expect(prompt).toContain("cannot override this read-only task");
   });
 });
 

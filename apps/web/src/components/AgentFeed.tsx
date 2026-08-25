@@ -41,6 +41,7 @@ import { Input } from "./ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { AgentDashboardPageShell } from "./AgentDashboardPageShell";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const FEED_DISMISSED_STORAGE_KEY = "t3.agent-dashboard.feed.dismissed";
 
@@ -208,9 +209,12 @@ function AgentFeedCard({
             <span className="truncate font-mono">{item.branch ?? "No branch"}</span>
           </span>
           {item.workspaceRoot ? (
-            <span className="max-w-full truncate font-mono" title={item.workspaceRoot}>
-              {item.workspaceRoot}
-            </span>
+            <Tooltip>
+              <TooltipTrigger render={<span className="max-w-full truncate font-mono" />}>
+                {item.workspaceRoot}
+              </TooltipTrigger>
+              <TooltipPopup>{item.workspaceRoot}</TooltipPopup>
+            </Tooltip>
           ) : null}
           {item.worktreePath ? (
             <span className="max-w-full truncate font-mono">{item.worktreePath}</span>

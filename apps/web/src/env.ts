@@ -15,6 +15,7 @@ export const isElectron = typeof window !== "undefined" && window.desktopBridge 
 export function isInstalledPwa(): boolean {
   if (typeof window === "undefined" || isElectron) return false;
   const standalone = window.matchMedia?.("(display-mode: standalone)").matches ?? false;
-  const iosStandalone = (window.navigator as { standalone?: boolean }).standalone === true;
+  const iosStandalone =
+    (window.navigator as { standalone?: boolean } | undefined)?.standalone === true;
   return standalone || iosStandalone;
 }

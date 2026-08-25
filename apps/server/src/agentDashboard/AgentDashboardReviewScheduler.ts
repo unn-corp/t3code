@@ -492,7 +492,7 @@ const make = Effect.gen(function* () {
           Effect.tap((enqueued) =>
             // Follow the job until terminal so schedule lastStatus is truthful.
             Effect.gen(function* () {
-              for (let attempt = 0; attempt < 2_000; attempt += 1) {
+              for (;;) {
                 const runs = yield* jobService.listRuns.pipe(Effect.orElseSucceed(() => []));
                 const current = runs.find((item) => item.id === enqueued.id);
                 if (!current) return;

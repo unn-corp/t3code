@@ -276,6 +276,10 @@ export interface AgentDashboardStoreService {
   readonly recordAutomationRun: (
     run: AgentDashboardAutomationRun,
   ) => Effect.Effect<void, AgentDashboardStoreError>;
+  /** Repair review coverage from durable terminal review history. */
+  readonly repairRepositoryCoverage: (
+    runs: ReadonlyArray<AgentDashboardAutomationRun>,
+  ) => Effect.Effect<void, AgentDashboardStoreError>;
   readonly readExternalActions: Effect.Effect<
     ReadonlyArray<AgentDashboardExternalAction>,
     AgentDashboardStoreError
@@ -1114,6 +1118,79 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     return `finding:${NodeCrypto.createHash("sha256").update(JSON.stringify(normalized)).digest("hex").slice(0, 32)}`;
   };
 
+  const findingTitleTokens = (title: string): ReadonlySet<string> => {
+    const stopWords = new Set([
+      "a",
+      "an",
+      "and",
+      "for",
+      "in",
+      "is",
+      "of",
+      "on",
+      "the",
+      "to",
+      "with",
+    ]);
+    return new Set(
+      title
+        .toLocaleLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((token) => token.length > 2 && !stopWords.has(token)),
+    );
+  };
+
+  const findingCodePaths = (input: {
+    readonly evidence: ReadonlyArray<string>;
+    readonly actionability: AgentDashboardFinding["actionability"];
+  }): ReadonlySet<string> => {
+    const paths = new Set(
+      input.actionability?.targets
+        .map((target) => target.path.trim().toLocaleLowerCase())
+        .filter(Boolean) ?? [],
+    );
+    const pathPattern = /(?:^|[\s`(])((?:[\w.-]+\/)+[\w.-]+\.[a-z0-9]+)(?::\d+)?/gi;
+    for (const evidence of input.evidence) {
+      for (const match of evidence.matchAll(pathPattern)) {
+        if (match[1]) paths.add(match[1].toLocaleLowerCase());
+      }
+    }
+    return paths;
+  };
+
+  const overlapRatio = (left: ReadonlySet<string>, right: ReadonlySet<string>): number => {
+    if (left.size === 0 || right.size === 0) return 0;
+    let overlap = 0;
+    for (const value of left) if (right.has(value)) overlap += 1;
+    return overlap / new Set([...left, ...right]).size;
+  };
+
+  const isSemanticDuplicate = (
+    existing: AgentDashboardFinding,
+    input: AgentDashboardCanonicalFindingInput,
+  ): boolean => {
+    if (
+      String(existing.repository.projectId) !== input.repository.projectId.trim() ||
+      existing.type !== findingType(input) ||
+      (existing.category ?? "").toLocaleLowerCase() !==
+        (input.category?.trim() ?? "").toLocaleLowerCase()
+    ) {
+      return false;
+    }
+    const titleOverlap = overlapRatio(
+      findingTitleTokens(existing.title),
+      findingTitleTokens(input.title),
+    );
+    const pathOverlap = overlapRatio(
+      findingCodePaths(existing),
+      findingCodePaths({
+        evidence: input.evidence ?? [],
+        actionability: input.actionability ?? null,
+      }),
+    );
+    return titleOverlap >= 0.72 || (pathOverlap > 0 && titleOverlap >= 0.45);
+  };
+
   const mergeCanonicalFindings = async (
     inputs: ReadonlyArray<AgentDashboardCanonicalFindingInput>,
   ): Promise<number> => {
@@ -1129,8 +1206,13 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         .map((item) => item.trim().slice(0, 1_000))
         .filter(Boolean)
         .slice(0, 24);
-      const fingerprint = stableFindingFingerprint({ ...input, title, evidence });
-      const previous = byFingerprint.get(fingerprint);
+      const candidateFingerprint = stableFindingFingerprint({ ...input, title, evidence });
+      const previous =
+        byFingerprint.get(candidateFingerprint) ??
+        [...byFingerprint.values()].find((finding) =>
+          isSemanticDuplicate(finding, { ...input, title, evidence }),
+        );
+      const fingerprint = previous?.fingerprint ?? candidateFingerprint;
       const id = previous?.id ?? fingerprint;
       const next: AgentDashboardFinding = {
         id,
@@ -2125,17 +2207,17 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           runRecord.status === "failed" ||
           runRecord.status === "cancelled";
         const successful = runRecord.status === "succeeded" || runRecord.status === "partial";
-        const duplicateTerminal =
-          terminal && existing?.lastRunId === runRecord.id && existing.observedAt === now;
+        const duplicateTerminal = terminal && existing?.lastTerminalRunId === runRecord.id;
         const failures = successful
           ? 0
           : (existing?.consecutiveFailures ?? 0) + (terminal && !duplicateTerminal ? 1 : 0);
         const backoffMinutes = Math.min(7 * 24 * 60, cadenceMinutes * 2 ** Math.min(failures, 6));
-        const nextDueAt = terminal
-          ? new Date(
-              Date.parse(now) + (successful ? cadenceMinutes : backoffMinutes) * 60_000,
-            ).toISOString()
-          : (existing?.nextDueAt ?? null);
+        const nextDueAt =
+          terminal && !duplicateTerminal
+            ? new Date(
+                Date.parse(now) + (successful ? cadenceMinutes : backoffMinutes) * 60_000,
+              ).toISOString()
+            : (existing?.nextDueAt ?? null);
         const next: AgentDashboardRepositoryCoverage = {
           repository: { projectId: ProjectId.make(projectId) },
           status: successful ? "current" : terminal ? "failing" : (existing?.status ?? "due"),
@@ -2143,8 +2225,13 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           lastSucceededAt: successful ? now : (existing?.lastSucceededAt ?? null),
           nextDueAt,
           consecutiveFailures: Math.max(0, failures),
-          lastError: successful ? null : runRecord.error,
+          lastError: successful ? null : terminal ? runRecord.error : (existing?.lastError ?? null),
           lastRunId: runRecord.id,
+          lastTerminalRunId: terminal
+            ? existing?.lastTerminalRunId === runRecord.id
+              ? existing.lastTerminalRunId
+              : runRecord.id
+            : (existing?.lastTerminalRunId ?? null),
           observedAt: now,
         };
         const byRepository = new Map(
@@ -2157,6 +2244,103 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         );
         byRepository.set(projectId, next as unknown as JsonObject);
         await writeDocumentArray(coveragePath, "coverage", [...byRepository.values()]);
+      }),
+    );
+
+  const repairRepositoryCoverage = (runRecords: ReadonlyArray<AgentDashboardAutomationRun>) =>
+    run("repair repository coverage", () =>
+      withMutation(async () => {
+        const rawCoverage = await readDocumentArray(coveragePath, "coverage");
+        const existingCoverage = rawCoverage
+          .map(decodeCoverage)
+          .filter((item): item is AgentDashboardRepositoryCoverage => item !== null);
+        const policies = (await readRepositoryPoliciesRaw())
+          .map(decodePolicy)
+          .filter((item): item is AgentDashboardRepositoryPolicy => item !== null);
+        const policyByProject = new Map(
+          policies.map((policy) => [String(policy.repository.projectId), policy]),
+        );
+        const terminalById = new Map<string, AgentDashboardAutomationRun>();
+        for (const runRecord of runRecords) {
+          if (
+            runRecord.kind !== "repository-review" ||
+            runRecord.repository.projectId === ProjectId.make("pending-selection") ||
+            !["succeeded", "partial", "failed", "cancelled"].includes(runRecord.status)
+          ) {
+            continue;
+          }
+          const previous = terminalById.get(runRecord.id);
+          if (!previous || Date.parse(runRecord.updatedAt) >= Date.parse(previous.updatedAt)) {
+            terminalById.set(runRecord.id, runRecord);
+          }
+        }
+        const runsByProject = new Map<string, Array<AgentDashboardAutomationRun>>();
+        for (const runRecord of terminalById.values()) {
+          const projectId = String(runRecord.repository.projectId);
+          const current = runsByProject.get(projectId) ?? [];
+          current.push(runRecord);
+          runsByProject.set(projectId, current);
+        }
+
+        const now = new Date().toISOString();
+        const repaired = existingCoverage.map((existing) => {
+          const projectId = String(existing.repository.projectId);
+          const terminalRuns = (runsByProject.get(projectId) ?? []).toSorted(
+            (left, right) => Date.parse(left.updatedAt) - Date.parse(right.updatedAt),
+          );
+          if (terminalRuns.length === 0) {
+            const contaminated =
+              existing.lastRunId?.startsWith("implementation:") === true ||
+              existing.consecutiveFailures > 64;
+            return contaminated
+              ? {
+                  ...existing,
+                  status: "due" as const,
+                  lastAttemptedAt: null,
+                  lastSucceededAt: null,
+                  nextDueAt: null,
+                  consecutiveFailures: 0,
+                  lastError: null,
+                  lastRunId: null,
+                  lastTerminalRunId: null,
+                  observedAt: now,
+                }
+              : existing;
+          }
+
+          let failures = 0;
+          let lastSucceededAt: string | null = null;
+          for (const terminalRun of terminalRuns) {
+            if (terminalRun.status === "succeeded" || terminalRun.status === "partial") {
+              failures = 0;
+              lastSucceededAt = terminalRun.updatedAt;
+            } else {
+              failures += 1;
+            }
+          }
+          const lastRun = terminalRuns[terminalRuns.length - 1]!;
+          const successful = lastRun.status === "succeeded" || lastRun.status === "partial";
+          const cadenceMinutes = policyByProject.get(projectId)?.cadenceMinutes ?? 120;
+          const backoffMinutes = Math.min(7 * 24 * 60, cadenceMinutes * 2 ** Math.min(failures, 6));
+          return {
+            repository: { projectId: ProjectId.make(projectId) },
+            status: successful ? ("current" as const) : ("failing" as const),
+            lastAttemptedAt: lastRun.updatedAt,
+            lastSucceededAt,
+            nextDueAt: new Date(
+              Date.parse(lastRun.updatedAt) +
+                (successful ? cadenceMinutes : backoffMinutes) * 60_000,
+            ).toISOString(),
+            consecutiveFailures: failures,
+            lastError: successful ? null : lastRun.error,
+            lastRunId: lastRun.id,
+            lastTerminalRunId: lastRun.id,
+            observedAt: lastRun.updatedAt,
+          } satisfies AgentDashboardRepositoryCoverage;
+        });
+        if (JSON.stringify(existingCoverage) !== JSON.stringify(repaired)) {
+          await writeDocumentArray(coveragePath, "coverage", repaired as unknown as JsonObject[]);
+        }
       }),
     );
 
@@ -2220,6 +2404,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     writeRepositoryPolicy,
     readRepositoryCoverage,
     recordAutomationRun,
+    repairRepositoryCoverage,
     readExternalActions,
     appendExternalAction,
     readCollectorStates,

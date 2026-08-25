@@ -542,6 +542,8 @@ export const AgentDashboardRepositoryCoverage = Schema.Struct({
   consecutiveFailures: NonNegativeInt,
   lastError: Schema.NullOr(TrimmedNonEmptyString),
   lastRunId: Schema.NullOr(TrimmedNonEmptyString),
+  /** Last terminal run applied to failure/backoff accounting. */
+  lastTerminalRunId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   observedAt: IsoDateTime,
 });
 export type AgentDashboardRepositoryCoverage = typeof AgentDashboardRepositoryCoverage.Type;

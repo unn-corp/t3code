@@ -10,6 +10,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import type {
@@ -17,6 +18,7 @@ import type {
   AgentDashboardAutomationRunStatus,
   AgentDashboardAutomationRunTrigger,
   ModelSelection,
+  OrchestrationProjectShell,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS, ProjectId } from "@t3tools/contracts";
 
@@ -40,6 +42,38 @@ export const MAX_REVIEW_RETRIES = 2;
 export const MONITOR_POLL_INTERVAL = Duration.seconds(1);
 export const REVIEW_IDEMPOTENCY_KIND = "repository-review";
 export const MAX_REVIEW_OUTPUT_NUDGES = 2;
+export const REVIEW_OUTPUT_NUDGE_ACK_TIMEOUT = Duration.minutes(5);
+export const REVIEW_PROGRESS_NUDGE_DELAYS = [
+  Duration.minutes(10),
+  Duration.minutes(20),
+  Duration.minutes(40),
+] as const;
+export const MAX_REVIEW_PROGRESS_NUDGES = REVIEW_PROGRESS_NUDGE_DELAYS.length;
+
+export type ReviewProgressWatchdogDecision =
+  | { readonly kind: "wait" }
+  | { readonly kind: "nudge"; readonly attempt: number }
+  | { readonly kind: "exhausted" };
+
+export const evaluateReviewProgressWatchdog = (input: {
+  readonly nowMs: number;
+  readonly lastProgressAtMs: number;
+  readonly lastNudgeAtMs: number | null;
+  readonly nudgeCount: number;
+}): ReviewProgressWatchdogDecision => {
+  const nudgeCount = Math.max(0, input.nudgeCount);
+  const lastObservedAtMs = Math.max(
+    input.lastProgressAtMs,
+    input.lastNudgeAtMs ?? Number.NEGATIVE_INFINITY,
+  );
+  const delay =
+    REVIEW_PROGRESS_NUDGE_DELAYS[Math.min(nudgeCount, MAX_REVIEW_PROGRESS_NUDGES - 1)] ??
+    REVIEW_PROGRESS_NUDGE_DELAYS[0];
+  if (input.nowMs - lastObservedAtMs < Duration.toMillis(delay)) return { kind: "wait" };
+  return nudgeCount >= MAX_REVIEW_PROGRESS_NUDGES
+    ? { kind: "exhausted" }
+    : { kind: "nudge", attempt: nudgeCount + 1 };
+};
 
 export class AgentDashboardReviewJobServiceError extends Schema.TaggedErrorClass<AgentDashboardReviewJobServiceError>()(
   "AgentDashboardReviewJobServiceError",
@@ -393,6 +427,19 @@ const modelLabel = (selection: ModelSelection): string => {
   return effort ? `${selection.model}/${String(effort.value)}` : selection.model;
 };
 
+const githubRepositoryForProject = (project: OrchestrationProjectShell): string | null => {
+  const identity = project.repositoryIdentity;
+  for (const candidate of [
+    identity?.canonicalKey,
+    identity?.locator.source === "git-remote" ? identity.locator.remoteUrl : null,
+  ]) {
+    if (!candidate) continue;
+    const match = candidate.match(/github\.com[/:]([^/\s]+)\/([^/\s#]+?)(?:\.git)?$/i);
+    if (match?.[1] && match[2]) return `${match[1]}/${match[2]}`;
+  }
+  return null;
+};
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
@@ -470,43 +517,16 @@ const make = Effect.gen(function* () {
         }),
     ),
   );
-  const recoveredAt = yield* nowIso;
-  const recovered = AgentDashboardRunHistory.recoverInterruptedRuns(
-    loadInitial,
-    recoveredAt,
-    "T3 restarted before the repository review completed.",
-    (run) => run.kind === REVIEW_KIND,
-  );
-  if (recovered.some((run, index) => run.status !== loadInitial[index]?.status)) {
-    yield* history.replaceAll(recovered).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AgentDashboardReviewJobServiceError({
-            operation: "recover run history",
-            message: cause.message,
-            cause,
-          }),
-      ),
-    );
-  }
-  yield* Ref.set(runsRef, recovered);
-  if (
-    recovered.length !== loadInitial.length ||
-    recovered.some((run, index) => run.status !== loadInitial[index]?.status)
-  ) {
-    yield* Effect.forEach(
-      recovered.filter((run, index) => run.status !== loadInitial[index]?.status),
-      (run) => dashboardStore.recordAutomationRun(run).pipe(Effect.orElseSucceed(() => undefined)),
-      { concurrency: 1, discard: true },
-    );
-  }
+  // Active repository reviews are reconnected after the monitor is defined
+  // below. Do not manufacture a failure merely because the T3 process restarted.
+  yield* Ref.set(runsRef, loadInitial);
 
   // Older builds created repository reviews as ordinary visible chats. Hide
   // every durable review session on startup so historical research does not
   // leak back into the sidebar after an upgrade.
   if (runner.hideReviewThread) {
     yield* Effect.forEach(
-      recovered.flatMap((run) =>
+      loadInitial.flatMap((run) =>
         run.kind === REVIEW_KIND && run.threadId !== null ? [run.threadId] : [],
       ),
       (threadId) =>
@@ -549,16 +569,58 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       let outputNudgeCount = 0;
       let lastNudgedTurnId: string | null = null;
+      let lastOutputNudgeAtMs: number | null = null;
+      let progressNudgeCount = 0;
+      let lastProgressNudgeAtMs: number | null = null;
       let hasAssistantMessage = false;
       let assistantText: string | null = null;
-      const heartbeatEveryPolls = 15;
+      let monitorFailure: string | null = null;
+      const startedAt = yield* DateTime.now;
+      let lastProgressAtMs = DateTime.toEpochMillis(startedAt);
+      let lastProgressSignature: string | null = null;
+      let lastPersistedProgressSignature: string | null = null;
 
-      for (let poll = 0; ; poll += 1) {
+      for (;;) {
         const thread = yield* projectionSnapshotQuery
           .getThreadDetailById(review.threadId)
           .pipe(Effect.orElseSucceed(() => Option.none()));
+        const observedAt = yield* DateTime.now;
+        const observedAtMs = DateTime.toEpochMillis(observedAt);
 
         if (Option.isSome(thread)) {
+          const assistantProgress = thread.value.messages
+            .filter((message) => message.role === "assistant")
+            .map((message) => `${String(message.id)}:${message.text.length}`)
+            .join("|");
+          const progressSignature = [
+            assistantProgress,
+            String(thread.value.activities?.length ?? 0),
+            thread.value.latestTurn?.state ?? "no-turn",
+            thread.value.latestTurn?.completedAt ?? "not-completed",
+            String(thread.value.latestTurn?.assistantMessageId ?? "no-assistant"),
+          ].join("::");
+          if (lastProgressSignature === null) {
+            lastProgressSignature = progressSignature;
+          } else if (lastProgressSignature !== progressSignature) {
+            lastProgressSignature = progressSignature;
+            lastProgressAtMs = observedAtMs;
+            progressNudgeCount = 0;
+            lastProgressNudgeAtMs = null;
+          }
+          if (lastPersistedProgressSignature !== progressSignature) {
+            lastPersistedProgressSignature = progressSignature;
+            const progressAt = DateTime.formatIso(observedAt);
+            yield* persist({
+              ...run,
+              status: "running",
+              threadId: review.threadId,
+              target: review.projectName,
+              repository: { projectId: review.projectId },
+              jobId: run.jobId ?? String(review.threadId),
+              updatedAt: progressAt,
+            }).pipe(Effect.orElseSucceed(() => run));
+          }
+
           const latestTurn = thread.value.latestTurn;
           if (latestTurn !== null && latestTurn.state !== "running") {
             const message = latestTurn.assistantMessageId
@@ -571,19 +633,26 @@ const make = Effect.gen(function* () {
               message === null ? ({ kind: "missing" } as const) : parseReviewMetadata(message.text);
             const needsCorrection = parsed.kind === "missing" || parsed.kind === "parse-failure";
             const turnId = String(latestTurn.turnId);
-            if (
-              needsCorrection &&
-              runner.nudgeReview &&
-              outputNudgeCount < MAX_REVIEW_OUTPUT_NUDGES
-            ) {
-              if (lastNudgedTurnId !== turnId) {
+            if (needsCorrection && runner.nudgeReview) {
+              const waitingForCorrection =
+                lastNudgedTurnId === turnId &&
+                lastOutputNudgeAtMs !== null &&
+                observedAtMs - lastOutputNudgeAtMs <
+                  Duration.toMillis(REVIEW_OUTPUT_NUDGE_ACK_TIMEOUT);
+              if (waitingForCorrection) {
+                yield* Effect.sleep(MONITOR_POLL_INTERVAL);
+                continue;
+              }
+              if (outputNudgeCount < MAX_REVIEW_OUTPUT_NUDGES) {
                 outputNudgeCount += 1;
                 lastNudgedTurnId = turnId;
+                lastOutputNudgeAtMs = observedAtMs;
                 const nudgeExit = yield* Effect.exit(
                   runner.nudgeReview({
                     threadId: review.threadId,
                     attempt: outputNudgeCount,
                     maxAttempts: MAX_REVIEW_OUTPUT_NUDGES,
+                    reason: "structured-output",
                   }),
                 );
                 if (Exit.isFailure(nudgeExit)) {
@@ -594,29 +663,51 @@ const make = Effect.gen(function* () {
                   });
                   break;
                 }
+                yield* Effect.sleep(MONITOR_POLL_INTERVAL);
+                continue;
               }
-              yield* Effect.sleep(MONITOR_POLL_INTERVAL);
-              continue;
             }
             break;
           }
         }
 
-        // Persist a real worker heartbeat while the provider turn is still
-        // running. The scheduler and external health checks consume this
-        // timestamp, so a long review cannot look dead merely because its
-        // terminal state has not changed yet.
-        if (poll > 0 && poll % heartbeatEveryPolls === 0) {
-          const heartbeatAt = yield* nowIso;
-          yield* persist({
-            ...run,
-            status: "running",
-            threadId: review.threadId,
-            target: review.projectName,
-            repository: { projectId: review.projectId },
-            jobId: run.jobId ?? String(review.threadId),
-            updatedAt: heartbeatAt,
-          }).pipe(Effect.orElseSucceed(() => run));
+        const watchdog = evaluateReviewProgressWatchdog({
+          nowMs: observedAtMs,
+          lastProgressAtMs,
+          lastNudgeAtMs: lastProgressNudgeAtMs,
+          nudgeCount: progressNudgeCount,
+        });
+        if (watchdog.kind === "nudge") {
+          if (!runner.nudgeReview) {
+            monitorFailure =
+              "Repository review stalled and its provider does not support progress checks.";
+            break;
+          }
+          const nudgeExit = yield* Effect.exit(
+            runner.nudgeReview({
+              threadId: review.threadId,
+              attempt: watchdog.attempt,
+              maxAttempts: MAX_REVIEW_PROGRESS_NUDGES,
+              reason: "stalled",
+            }),
+          );
+          if (Exit.isFailure(nudgeExit)) {
+            monitorFailure = "Repository review stalled and T3 could not send a progress check.";
+            yield* Effect.logWarning("T3 could not nudge a stalled repository review", {
+              runId: run.id,
+              threadId: review.threadId,
+              cause: nudgeExit.cause,
+            });
+            break;
+          }
+          progressNudgeCount = watchdog.attempt;
+          lastProgressNudgeAtMs = observedAtMs;
+        } else if (watchdog.kind === "exhausted") {
+          monitorFailure = `Repository review remained inactive after ${MAX_REVIEW_PROGRESS_NUDGES} automated progress checks.`;
+          if (runner.stopReview) {
+            yield* runner.stopReview(review.threadId).pipe(Effect.ignore);
+          }
+          break;
         }
 
         yield* Effect.sleep(MONITOR_POLL_INTERVAL);
@@ -643,7 +734,8 @@ const make = Effect.gen(function* () {
 
       let findingCount = 0;
       let status = decision.status;
-      let error = decision.error;
+      let error = monitorFailure ?? decision.error;
+      if (monitorFailure !== null) status = "failed";
       let persistenceFailed = false;
 
       if (decision.shouldPersistFindings && decision.findings.length > 0) {
@@ -755,9 +847,45 @@ const make = Effect.gen(function* () {
         };
         yield* persist(running).pipe(Effect.orElseSucceed(() => running));
 
+        let selectedProjectId = run.repository.projectId;
+        if (
+          run.trigger === "scheduled" &&
+          selectedProjectId === ProjectId.make("pending-selection") &&
+          runner.selectNextProject
+        ) {
+          const selectionExit = yield* Effect.exit(
+            runner.selectNextProject({ allowNotDue: false }),
+          );
+          if (Exit.isFailure(selectionExit)) {
+            const failedAt = yield* nowIso;
+            yield* persist({
+              ...running,
+              status: "failed",
+              error: "T3 could not select the next due repository review.",
+              updatedAt: failedAt,
+              completedAt: failedAt,
+            }).pipe(Effect.ignore);
+            return;
+          }
+          if (selectionExit.value === null) {
+            const completedAt = yield* nowIso;
+            yield* persist({
+              ...running,
+              status: "succeeded",
+              target: "No repository due",
+              error: null,
+              updatedAt: completedAt,
+              completedAt,
+            }).pipe(Effect.ignore);
+            return;
+          }
+          selectedProjectId = selectionExit.value;
+        }
+
         const reviewExit = yield* Effect.exit(
           runner.runReview({
-            projectId: run.repository.projectId,
+            projectId: selectedProjectId,
+            trigger: run.trigger,
           }),
         );
 
@@ -917,6 +1045,96 @@ const make = Effect.gen(function* () {
       });
     });
 
+  yield* dashboardStore.repairRepositoryCoverage(loadInitial).pipe(
+    Effect.tapError((cause) =>
+      Effect.logWarning("T3 could not repair repository review coverage", { cause }),
+    ),
+    Effect.ignore,
+  );
+
+  const activeReviews = loadInitial.filter(
+    (run) => run.kind === REVIEW_KIND && isActiveStatus(run.status),
+  );
+  if (activeReviews.length > 0) {
+    const queuedReviews = activeReviews.filter(
+      (run) => run.status === "queued" && run.threadId === null,
+    );
+    yield* Effect.forEach(
+      queuedReviews,
+      (run) => executeRun(run).pipe(Effect.forkIn(scope), Effect.asVoid),
+      { concurrency: 1, discard: true },
+    );
+
+    const interruptedReviews = activeReviews.filter(
+      (run) => !(run.status === "queued" && run.threadId === null),
+    );
+    const reconnectInterruptedReviews = Effect.gen(function* () {
+      const shell = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning(
+            "T3 is waiting to reconnect interrupted repository reviews until the project snapshot is available",
+            { cause },
+          ),
+        ),
+        Effect.retry(Schedule.spaced(Duration.seconds(5))),
+      );
+      yield* Effect.forEach(
+        interruptedReviews,
+        (run) => {
+          const project = shell.projects.find(
+            (candidate) => candidate.id === run.repository.projectId,
+          );
+          if (run.threadId === null || !project) {
+            return Effect.gen(function* () {
+              const failedAt = yield* nowIso;
+              yield* persist({
+                ...run,
+                status: "failed",
+                error:
+                  "T3 restarted and could not reconnect this repository review to its durable thread and project.",
+                updatedAt: failedAt,
+                completedAt: failedAt,
+              }).pipe(Effect.ignore);
+            });
+          }
+          const review: AgentDashboardReviewRunResult = {
+            projectId: project.id,
+            projectName: project.title,
+            workspaceRoot: project.workspaceRoot,
+            githubRepo: githubRepositoryForProject(project),
+            threadId: run.threadId,
+            startedAt: run.startedAt ?? run.createdAt,
+          };
+          return Effect.gen(function* () {
+            while (true) {
+              const claimed = yield* Ref.modify(workerSlots, (active) => {
+                if (active >= MAX_CONCURRENT_REVIEW_RUNS) return [false, active] as const;
+                return [true, active + 1] as const;
+              });
+              if (claimed) break;
+              yield* Effect.sleep(MONITOR_POLL_INTERVAL);
+            }
+            try {
+              const resumedAt = yield* nowIso;
+              const resumed = yield* persist({
+                ...run,
+                status: "running",
+                error: null,
+                completedAt: null,
+                updatedAt: resumedAt,
+              }).pipe(Effect.orElseSucceed(() => run));
+              yield* monitorAndIngest(resumed, review);
+            } finally {
+              yield* Ref.update(workerSlots, (active) => Math.max(0, active - 1));
+            }
+          }).pipe(Effect.forkIn(scope), Effect.asVoid);
+        },
+        { concurrency: 1, discard: true },
+      );
+    });
+    yield* reconnectInterruptedReviews.pipe(Effect.forkIn(scope));
+  }
+
   return {
     listRuns,
     enqueueReview,
@@ -939,4 +1157,7 @@ export const __testing = {
   maxRetries: MAX_REVIEW_RETRIES,
   monitorPollInterval: MONITOR_POLL_INTERVAL,
   maxOutputNudges: MAX_REVIEW_OUTPUT_NUDGES,
+  maxProgressNudges: MAX_REVIEW_PROGRESS_NUDGES,
+  outputNudgeAckTimeout: REVIEW_OUTPUT_NUDGE_ACK_TIMEOUT,
+  progressNudgeDelays: REVIEW_PROGRESS_NUDGE_DELAYS,
 };

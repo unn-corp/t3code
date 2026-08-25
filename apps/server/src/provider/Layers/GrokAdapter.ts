@@ -187,7 +187,7 @@ function grokPermissionOptionKind(
   // Grok's allow_always ("Always allow in this session") cancels the turn
   // instead of continuing. See pingdotgg/t3code#6502. Map session-wide
   // allow to allow_once so Auto / Always allow keep the agent running.
-  return decision === "reject" ? "reject_once" : "allow_once";
+  return decision === "decline" ? "reject_once" : "allow_once";
 }
 
 export function selectGrokPermissionOptionId(

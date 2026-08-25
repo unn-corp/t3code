@@ -428,6 +428,14 @@ it.effect("deduplicates canonical findings across runs and preserves disposition
             ...baseInput,
             jobId: "review-job-2",
             runId: "run-2",
+            findings: [
+              {
+                ...baseInput.findings[0]!,
+                title: "Final parser record is dropped",
+                summary: "The parser returns before emitting its last buffered record.",
+                evidence: ["src/parser.ts:47"],
+              },
+            ],
           }),
         ),
       ).toBe(1);
@@ -1043,8 +1051,23 @@ it.effect(
           "2026-08-01T01:00:00.000Z",
         );
 
+        await Effect.runPromise(
+          store.recordAutomationRun({
+            ...failedReview,
+            status: "running",
+            error: null,
+            updatedAt: "2026-08-01T00:59:00.000Z",
+            completedAt: null,
+          }),
+        );
         await Effect.runPromise(store.recordAutomationRun(failedReview));
-        await Effect.runPromise(store.recordAutomationRun(failedReview));
+        await Effect.runPromise(
+          store.recordAutomationRun({
+            ...failedReview,
+            updatedAt: "2026-08-01T01:05:00.000Z",
+            completedAt: "2026-08-01T01:05:00.000Z",
+          }),
+        );
         await Effect.runPromise(
           store.recordAutomationRun(
             automationRun(
@@ -1061,10 +1084,58 @@ it.effect(
         expect(coverage[0]).toMatchObject({
           consecutiveFailures: 1,
           lastRunId: "review-1",
-          observedAt: "2026-08-01T01:00:00.000Z",
+          lastTerminalRunId: "review-1",
+          observedAt: "2026-08-01T01:05:00.000Z",
         });
       } finally {
         await NodeFSP.rm(stateDir, { recursive: true, force: true });
       }
     }),
+);
+
+it.effect("repairs contaminated repository coverage from terminal review history", () =>
+  Effect.promise(async () => {
+    const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-coverage-repair-"));
+    try {
+      const dashboardDir = NodePath.join(stateDir, "agent-dashboard");
+      await NodeFSP.mkdir(dashboardDir, { recursive: true });
+      await NodeFSP.writeFile(
+        NodePath.join(dashboardDir, "repository-coverage.json"),
+        JSON.stringify({
+          coverage: [
+            {
+              repository: { projectId: "coverage-project" },
+              status: "failing",
+              lastAttemptedAt: "2026-08-01T00:00:00.000Z",
+              lastSucceededAt: null,
+              nextDueAt: "2026-08-28T00:00:00.000Z",
+              consecutiveFailures: 6350,
+              lastError: "legacy pollution",
+              lastRunId: "implementation:legacy-run",
+              observedAt: "2026-08-01T00:00:00.000Z",
+            },
+          ],
+        }),
+      );
+      const store = AgentDashboardStore.getStore(stateDir);
+      const succeeded = automationRun(
+        "review-repaired",
+        "repository-review",
+        "succeeded",
+        "2026-08-02T00:00:00.000Z",
+      );
+      await Effect.runPromise(store.repairRepositoryCoverage([succeeded]));
+
+      const coverage = await Effect.runPromise(store.readRepositoryCoverage);
+      expect(coverage[0]).toMatchObject({
+        status: "current",
+        consecutiveFailures: 0,
+        lastRunId: "review-repaired",
+        lastTerminalRunId: "review-repaired",
+        lastSucceededAt: "2026-08-02T00:00:00.000Z",
+      });
+    } finally {
+      await NodeFSP.rm(stateDir, { recursive: true, force: true });
+    }
+  }),
 );

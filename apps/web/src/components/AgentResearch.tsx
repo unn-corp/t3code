@@ -57,6 +57,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./
 import { Input } from "./ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 type ResearchStage = "actionable" | "needs-research" | "ready" | "in-progress" | "done" | "archive";
 type ResearchIntent = "research" | "implement";
@@ -664,9 +665,14 @@ export function AgentResearch() {
                       <FolderGit2Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                       <div className="min-w-0">
                         <p className="text-xs text-muted-foreground">Workspace</p>
-                        <p className="mt-1 truncate font-mono text-xs" title={record.workspaceRoot}>
-                          {record.workspaceRoot || "Not linked"}
-                        </p>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={<p className="mt-1 truncate font-mono text-xs" />}
+                          >
+                            {record.workspaceRoot || "Not linked"}
+                          </TooltipTrigger>
+                          <TooltipPopup>{record.workspaceRoot || "Not linked"}</TooltipPopup>
+                        </Tooltip>
                       </div>
                     </div>
                     <div className="flex items-start gap-2 text-sm">

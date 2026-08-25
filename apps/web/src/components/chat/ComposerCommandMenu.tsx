@@ -10,7 +10,6 @@ import {
 } from "@t3tools/contracts";
 import {
   BlocksIcon,
-  BotIcon,
   FolderGit2Icon,
   FolderIcon,
   HistoryIcon,
@@ -80,25 +79,6 @@ type ComposerCommandGroup = {
   items: ComposerCommandItem[];
 };
 
-function SkillGlyph(props: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.85"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={props.className}
-      aria-hidden="true"
-    >
-      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
-      <path d="m3.3 7 8.7 5 8.7-5" />
-      <path d="M12 22V12" />
-    </svg>
-  );
-}
-
 const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
   app: BlocksIcon,
   repo: FolderGit2Icon,
@@ -141,6 +121,7 @@ export function groupCommandItems(
 
   const builtInItems = items.filter((item) => item.type === "slash-command");
   const providerItems = items.filter((item) => item.type === "provider-slash-command");
+  const skillItems = items.filter((item) => item.type === "skill");
   // Sessions get their own group rather than being left out. This branch used to
   // keep only the two command types, so reaching /resume from the bare "/" menu
   // (where grouping is on, because the query is empty) loaded the conversations
@@ -157,6 +138,9 @@ export function groupCommandItems(
   if (providerItems.length > 0) {
     groups.push({ id: "provider", label: "Provider", items: providerItems });
   }
+  if (skillItems.length > 0) {
+    groups.push({ id: "skills", label: "Skills", items: skillItems });
+  }
   return groups;
 }
 
@@ -172,11 +156,15 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
-  const groups = useMemo(
-    () =>
-      groupCommandItems(props.items, props.triggerKind, props.groupSlashCommandSections ?? true),
-    [props.groupSlashCommandSections, props.items, props.triggerKind],
-  );
+  const groups = useMemo(() => {
+    const grouped = groupCommandItems(
+      props.items,
+      props.triggerKind,
+      props.groupSlashCommandSections ?? true,
+    );
+    const onlyGroup = grouped.length === 1 ? grouped[0] : undefined;
+    return onlyGroup === undefined ? grouped : [{ ...onlyGroup, label: null }];
+  }, [props.groupSlashCommandSections, props.items, props.triggerKind]);
 
   useLayoutEffect(() => {
     if (!props.activeItemId || !listRef.current) return;
@@ -198,10 +186,11 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
     >
       <div
         ref={listRef}
-        className="dropdown-glass relative w-full overflow-hidden rounded-[20px] shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4 dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]"
+        className="chat-composer-drawer-surface chat-composer-drawer-attached relative w-full overflow-hidden **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
+        data-composer-command-drawer="true"
       >
         {props.items.length > 0 ? (
-          <CommandList className="max-h-72 not-empty:py-3">
+          <CommandList className="max-h-72 scroll-pb-6">
             {groups.map((group, groupIndex) => (
               <div key={group.id}>
                 {groupIndex > 0 ? <CommandSeparator className="my-0.5" /> : null}
@@ -215,6 +204,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                     <ComposerCommandMenuItem
                       key={item.id}
                       item={item}
+                      triggerKind={props.triggerKind}
                       resolvedTheme={props.resolvedTheme}
                       isActive={props.activeItemId === item.id}
                       onHighlight={props.onHighlightedItemChange}
@@ -226,7 +216,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             ))}
           </CommandList>
         ) : (
-          <div className="px-5 py-3.5">
+          <div className="px-5 pt-3.5 pb-7">
             {props.triggerKind === "skill" ? (
               <CommandGroup>
                 <CommandGroupLabel className="px-0 pt-0 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-label">
@@ -258,6 +248,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
 
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   item: ComposerCommandItem;
+  triggerKind: ComposerTriggerKind | null;
   resolvedTheme: "light" | "dark";
   isActive: boolean;
   onHighlight: (itemId: string | null) => void;
@@ -265,13 +256,15 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 }) {
   const skillSourceKind =
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
+  const slashSkill =
+    props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
 
   return (
     <CommandItem
       value={props.item.id}
       data-composer-item-id={props.item.id}
       className={cn(
-        "cursor-pointer select-none gap-2 hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit",
+        "cursor-pointer select-none gap-3 rounded-lg px-3 py-2! hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit",
         props.isActive && "bg-accent! text-accent-foreground!",
       )}
       onMouseMove={() => {
@@ -290,16 +283,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
-      ) : skillSourceKind ? (
+      ) : skillSourceKind && !slashSkill ? (
         <SkillSourceIcon kind={skillSourceKind} />
-      ) : null}
-      {props.item.type === "slash-command" ? (
-        <BotIcon className="size-4 shrink-0 text-icon-muted" />
-      ) : null}
-      {props.item.type === "provider-slash-command" ? (
-        <span className="inline-flex size-4 shrink-0 items-center justify-center text-icon-muted">
-          <SkillGlyph className="size-3.5" />
-        </span>
       ) : null}
       {props.item.type === "codex-session" ? (
         <HistoryIcon className="size-4 shrink-0 text-muted-foreground/80" />
@@ -317,18 +302,22 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           <span className="shrink-0 text-secondary-label text-xs">{props.item.description}</span>
         </span>
       ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="shrink-0">{props.item.label}</span>
-          <span className="min-w-0 flex-1 truncate text-secondary-label text-xs">
+        <span className="flex min-w-0 flex-1 items-baseline gap-3">
+          <span className="shrink-0 font-sans text-xs font-medium">
+            {slashSkill ? (
+              <>
+                <span className="text-secondary-label">skill:</span>
+                {slashSkill.name}
+              </>
+            ) : (
+              props.item.label
+            )}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-right text-secondary-label text-xs">
             {props.item.description}
           </span>
         </span>
       )}
-      {skillSourceKind ? (
-        <span className="shrink-0 pl-2 text-secondary-label text-xs">
-          {SKILL_SOURCE_LABEL_BY_KIND[skillSourceKind]}
-        </span>
-      ) : null}
     </CommandItem>
   );
 });

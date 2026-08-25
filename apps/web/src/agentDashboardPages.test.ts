@@ -325,7 +325,7 @@ describe("unified dashboard findings", () => {
       kind: "implement",
       baseBranch: "main",
     });
-    expect(implementationPrompt).toContain("Open one pull request targeting `main`");
+    expect(implementationPrompt).toContain("Open one draft pull request targeting `main`");
     expect(implementationPrompt).toContain("Do not push directly to or merge `main`");
     expect(implementationPrompt).toContain("include the pull request URL");
     expect(buildDashboardFindingQuestionPrompt(record!, "Does this apply here?")).toContain(

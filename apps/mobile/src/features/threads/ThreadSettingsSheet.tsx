@@ -708,7 +708,8 @@ function ThreadSettingsOptionsItem(props: {
             isLast
             label="Runtime"
             value={
-              RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)?.label
+              RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)?.label ??
+              session.runtimeMode
             }
             onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
           />

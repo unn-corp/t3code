@@ -91,6 +91,7 @@ describe("connectCliAuth", () => {
 
   it("falls back to the current URL when the authorize URL cannot be built", () => {
     vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
+    vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "");
 
     const connectUrl = "https://app.t3.codes/connect#state=state-1&challenge=challenge-1";
     expect(

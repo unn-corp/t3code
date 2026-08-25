@@ -48,6 +48,36 @@ const reviewResult: AgentDashboardReviewRunResult = {
   startedAt: "2026-08-10T00:00:00.000Z",
 };
 
+describe("review progress watchdog", () => {
+  it("bounds inactivity without imposing a total run duration", () => {
+    const tenMinutes = Duration.toMillis(Duration.minutes(10));
+    expect(
+      AgentDashboardReviewJobService.evaluateReviewProgressWatchdog({
+        nowMs: tenMinutes - 1,
+        lastProgressAtMs: 0,
+        lastNudgeAtMs: null,
+        nudgeCount: 0,
+      }),
+    ).toEqual({ kind: "wait" });
+    expect(
+      AgentDashboardReviewJobService.evaluateReviewProgressWatchdog({
+        nowMs: tenMinutes,
+        lastProgressAtMs: 0,
+        lastNudgeAtMs: null,
+        nudgeCount: 0,
+      }),
+    ).toEqual({ kind: "nudge", attempt: 1 });
+    expect(
+      AgentDashboardReviewJobService.evaluateReviewProgressWatchdog({
+        nowMs: Duration.toMillis(Duration.minutes(40)),
+        lastProgressAtMs: 0,
+        lastNudgeAtMs: 0,
+        nudgeCount: 3,
+      }),
+    ).toEqual({ kind: "exhausted" });
+  });
+});
+
 describe("parseReviewMetadata", () => {
   it("parses structured findings", () => {
     const parsed = AgentDashboardReviewJobService.parseReviewMetadata(sampleFindingMetadata);
@@ -329,12 +359,14 @@ const jobServiceLayer = (input: {
   readonly baseDir: string;
   readonly runner: AgentDashboardReviewRunner["Service"];
   readonly getThreadDetailById: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getThreadDetailById"];
+  readonly getShellSnapshot?: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getShellSnapshot"];
 }) =>
   AgentDashboardReviewJobService.layerWithoutDefaults.pipe(
     Layer.provide(Layer.succeed(AgentDashboardReviewRunner, input.runner)),
     Layer.provide(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         ...unusedProjection,
+        ...(input.getShellSnapshot ? { getShellSnapshot: input.getShellSnapshot } : {}),
         getThreadDetailById: input.getThreadDetailById,
       }),
     ),
@@ -346,6 +378,36 @@ const jobServiceLayer = (input: {
   );
 
 describe("AgentDashboardReviewJobService lifecycle", () => {
+  it.effect("completes a scheduled no-op when no repository is due", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* makeTempStateDir();
+      const dispatchCount = yield* Ref.make(0);
+
+      yield* Effect.gen(function* () {
+        const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        const enqueued = yield* jobService.enqueueReview({ trigger: "scheduled" });
+        const terminal = yield* waitForTerminal(jobService, enqueued.id, 200);
+        expect(terminal?.status).toBe("succeeded");
+        expect(terminal?.target).toBe("No repository due");
+        expect(yield* Ref.get(dispatchCount)).toBe(0);
+      }).pipe(
+        Effect.provide(
+          jobServiceLayer({
+            baseDir,
+            runner: {
+              selectNextProject: () => Effect.succeed(null),
+              runReview: () =>
+                Ref.update(dispatchCount, (count) => count + 1).pipe(Effect.as(reviewResult)),
+              runRandomReview: Effect.succeed(reviewResult),
+            },
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
+
   it.effect("dispatches through ingestion and succeeds only after findings persist", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
@@ -467,6 +529,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
   it.effect("keeps monitoring a healthy running review without a wall-clock limit", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
+      const activityCount = yield* Ref.make(0);
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
@@ -481,6 +544,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
           if (current?.status === "running") break;
           yield* TestClock.adjust(Duration.seconds(1));
           yield* Effect.yieldNow;
+          yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
         }
         yield* TestClock.adjust(Duration.hours(2));
         yield* Effect.yieldNow;
@@ -496,18 +560,21 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
               runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
             },
             getThreadDetailById: () =>
-              Effect.succeed(
-                Option.some({
-                  latestTurn: {
-                    turnId: "turn-timeout",
-                    state: "running",
-                    assistantMessageId: null,
-                    requestedAt: "2026-08-10T00:00:00.000Z",
-                    startedAt: "2026-08-10T00:00:00.000Z",
-                    completedAt: null,
-                  },
-                  messages: [],
-                } as never),
+              Ref.updateAndGet(activityCount, (count) => count + 1).pipe(
+                Effect.map((count) =>
+                  Option.some({
+                    latestTurn: {
+                      turnId: "turn-timeout",
+                      state: "running",
+                      assistantMessageId: null,
+                      requestedAt: "2026-08-10T00:00:00.000Z",
+                      startedAt: "2026-08-10T00:00:00.000Z",
+                      completedAt: null,
+                    },
+                    messages: [],
+                    activities: Array.from({ length: count }, (_, index) => ({ id: index })),
+                  } as never),
+                ),
               ),
           }),
         ),
@@ -705,7 +772,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
     }),
   );
 
-  it.effect("recovers interrupted runs from disk on service start", () =>
+  it.effect("reconnects interrupted runs from disk on service start", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
       const configLayer = ServerConfig.layerTest(process.cwd(), baseDir).pipe(
@@ -741,10 +808,10 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
-        const runs = yield* jobService.listRuns;
-        expect(runs[0]?.id).toBe("run-interrupted");
-        expect(runs[0]?.status).toBe("failed");
-        expect(runs[0]?.error).toContain("restarted");
+        const terminal = yield* waitForTerminal(jobService, "run-interrupted", 200);
+        expect(terminal?.id).toBe("run-interrupted");
+        expect(terminal?.status).toBe("succeeded");
+        expect(terminal?.error).toBeNull();
       }).pipe(
         Effect.provide(
           jobServiceLayer({
@@ -753,7 +820,36 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
               runReview: () => Effect.succeed(reviewResult),
               runRandomReview: Effect.succeed(reviewResult),
             },
-            getThreadDetailById: () => Effect.succeed(Option.none()),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                projects: [
+                  {
+                    id: PROJECT_ID,
+                    title: "t3code",
+                    workspaceRoot: baseDir,
+                    defaultModelSelection: null,
+                    scripts: [],
+                    createdAt: "2026-08-01T00:00:00.000Z",
+                    updatedAt: "2026-08-01T00:00:00.000Z",
+                  },
+                ],
+                threads: [],
+              } as never),
+            getThreadDetailById: () =>
+              Effect.succeed(
+                Option.some({
+                  latestTurn: {
+                    turnId: "turn-resumed",
+                    state: "completed",
+                    assistantMessageId: ASSISTANT_ID,
+                    requestedAt: "2026-08-10T00:00:00.000Z",
+                    startedAt: "2026-08-10T00:00:00.000Z",
+                    completedAt: "2026-08-10T00:00:10.000Z",
+                  },
+                  messages: [{ id: ASSISTANT_ID, role: "assistant", text: sampleFindingMetadata }],
+                  activities: [],
+                } as never),
+              ),
           }),
         ),
         Effect.scoped,

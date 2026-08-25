@@ -53,15 +53,15 @@ export const codexSessionAppServerArgs = (
   // The per-thread protocol fields are the primary runtime contract, but the
   // Codex app-server can also inherit restrictive approval/sandbox settings
   // from CODEX_HOME or project config before a thread is opened. Force the
-  // automation contract at the process boundary as well so a full-access T3
-  // session cannot silently become an approval-prompting read-only session.
-  return runtimeMode === "full-access"
-    ? [
-        ...configuredArgs,
-        "-c",
-        'approval_policy="never"',
-        "-c",
-        'sandbox_mode="danger-full-access"',
-      ]
-    : configuredArgs;
+  // automation contract at the process boundary as well so a T3 session
+  // cannot silently inherit a different approval or sandbox posture.
+  const enforcedConfig =
+    runtimeMode === "full-access"
+      ? ['approval_policy="never"', 'sandbox_mode="danger-full-access"']
+      : runtimeMode === "automated-review"
+        ? ['approval_policy="never"', 'sandbox_mode="read-only"']
+        : [];
+  return enforcedConfig.length === 0
+    ? configuredArgs
+    : [...configuredArgs, "-c", enforcedConfig[0]!, "-c", enforcedConfig[1]!];
 };

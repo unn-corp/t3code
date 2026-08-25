@@ -16,6 +16,7 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
+  buildThreadStartParams,
   buildTurnStartParams,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
@@ -65,6 +66,45 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
+  it("pins automated review threads to a read-only sandbox", () => {
+    NodeAssert.deepStrictEqual(
+      buildThreadStartParams({
+        cwd: "/tmp/project",
+        runtimeMode: "automated-review",
+        model: "gpt-5.6-luna",
+        serviceTier: undefined,
+      }),
+      {
+        cwd: "/tmp/project",
+        approvalPolicy: "never",
+        sandbox: "read-only",
+        approvalsReviewer: "user",
+        model: "gpt-5.6-luna",
+      },
+    );
+  });
+
+  it("pins automated review turns to read-only with network disabled", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "automated-review",
+        prompt: "Review",
+      }),
+    );
+
+    NodeAssert.deepStrictEqual(params, {
+      threadId: "provider-thread-1",
+      approvalPolicy: "never",
+      approvalsReviewer: "user",
+      sandboxPolicy: {
+        type: "readOnly",
+        networkAccess: false,
+      },
+      input: [{ type: "text", text: "Review" }],
+    });
+  });
+
   it("keeps invalid turn values only in the schema cause", () => {
     const secret = "codex-turn-input-secret-sentinel";
     const error = Effect.runSync(
@@ -222,30 +262,30 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
-  it("omits collaboration mode when interaction mode is absent", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("omits collaboration mode when interaction mode is absent", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "approval-required",
         prompt: "Review",
-      }),
-    );
+      });
 
-    NodeAssert.deepStrictEqual(params, {
-      threadId: "provider-thread-1",
-      approvalPolicy: "untrusted",
-      approvalsReviewer: "user",
-      sandboxPolicy: {
-        type: "readOnly",
-      },
-      input: [
-        {
-          type: "text",
-          text: "Review",
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "readOnly",
         },
-      ],
-    });
-  });
+        input: [
+          {
+            type: "text",
+            text: "Review",
+          },
+        ],
+      });
+    }),
+  );
 });
 
 describe("buildCodexDeveloperInstructions", () => {
