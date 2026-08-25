@@ -24,6 +24,7 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   memo,
+  type CSSProperties,
   type ReactNode,
   useCallback,
   useEffect,
@@ -79,7 +80,7 @@ import {
   type ComposerTaskStep,
   type ComposerTasksProgress,
 } from "./ComposerTasksBadge";
-import { OpenWhisprVoiceInput } from "./OpenWhisprVoiceInput";
+import { OpenWhisprVoiceInput, type VoiceInputPhase } from "./OpenWhisprVoiceInput";
 import { type VoiceInputAudioSource, VoiceInputWaveform } from "./VoiceInputWaveform";
 import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
@@ -149,7 +150,41 @@ function composerCommandMenuPositionsEqual(
   );
 }
 
-function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children: ReactNode }) {
+const COMPOSER_VOICE_PHASE_CLASSES = {
+  idle: "",
+  recording: "chat-voice-recording-active",
+  transcribing: "chat-voice-transcribing-active",
+  success: "chat-voice-success-active",
+  "no-audio": "chat-voice-no-audio-active",
+} as const satisfies Record<VoiceInputPhase, string>;
+
+export function ComposerCommandMenuPortal(props: {
+  children?: ReactNode;
+  style?: CSSProperties;
+  voiceInputPhase: VoiceInputPhase;
+}) {
+  return (
+    <div
+      className={cn(
+        "chat-composer-voice-root chat-composer-voice-portal pointer-events-auto fixed z-[70]",
+        COMPOSER_VOICE_PHASE_CLASSES[props.voiceInputPhase],
+      )}
+      data-composer-drawer-layer="true"
+      data-composer-voice-phase={props.voiceInputPhase}
+      style={props.style}
+    >
+      <div className="chat-composer-voice-portal-halo relative overflow-visible">
+        {props.children}
+      </div>
+    </div>
+  );
+}
+
+export function ComposerCommandMenuLayer(props: {
+  anchor: HTMLElement | null;
+  children: ReactNode;
+  voiceInputPhase: VoiceInputPhase;
+}) {
   const [position, setPosition] = useState<ComposerCommandMenuPosition | null>(null);
 
   useLayoutEffect(() => {
@@ -214,18 +249,17 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
   if (!position) return null;
 
   return createPortal(
-    <div
-      className="pointer-events-auto fixed z-[70]"
-      data-composer-drawer-layer="true"
+    <ComposerCommandMenuPortal
       style={{
         bottom: position.bottom,
         left: position.left,
         maxHeight: position.maxHeight,
         width: position.width,
       }}
+      voiceInputPhase={props.voiceInputPhase}
     >
       {props.children}
-    </div>,
+    </ComposerCommandMenuPortal>,
     document.body,
   );
 }
@@ -698,9 +732,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onVoicePhaseChange,
   } = props;
   const isSendDisabled = sendDisabledReason !== null;
-  const [voiceInputPhase, setVoiceInputPhase] = useState<
-    "idle" | "recording" | "transcribing" | "success" | "no-audio"
-  >("idle");
+  const [voiceInputPhase, setVoiceInputPhase] = useState<VoiceInputPhase>("idle");
   const [voiceInputAudioSource, setVoiceInputAudioSource] = useState<VoiceInputAudioSource | null>(
     null,
   );
@@ -709,7 +741,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("simulateMic") === "1";
   const handleVoicePhaseChange = useCallback(
-    (phase: "idle" | "recording" | "transcribing" | "success" | "no-audio") => {
+    (phase: VoiceInputPhase) => {
       setVoiceInputPhase(phase);
       onVoicePhaseChange(phase);
     },
@@ -3117,7 +3149,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         <div
           data-chat-composer-main-surface="true"
           className={cn(
-            "group relative z-10 rounded-[22px] p-px transition-colors duration-200",
+            "chat-composer-voice-halo-surface group relative z-10 rounded-[22px] p-px transition-colors duration-200",
             composerProviderState.composerFrameClassName,
           )}
         >
@@ -3188,7 +3220,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               {isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && (
-                <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
+                <ComposerCommandMenuLayer
+                  anchor={composerMenuAnchor}
+                  voiceInputPhase={voiceInputPhase}
+                >
                   <ComposerStashMenu
                     entries={stashQueue}
                     onRestore={restoreStashEntry}
@@ -3199,7 +3234,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
 
               {composerMenuOpen && !isComposerApprovalState && (
-                <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
+                <ComposerCommandMenuLayer
+                  anchor={composerMenuAnchor}
+                  voiceInputPhase={voiceInputPhase}
+                >
                   <ComposerCommandMenu
                     items={composerMenuItems}
                     resolvedTheme={resolvedTheme}
