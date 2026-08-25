@@ -258,6 +258,7 @@ export const selectContinuousImprovementFinding = (input: {
   readonly findings: ReadonlyArray<AgentDashboardFinding>;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly policies: ReadonlyArray<AgentDashboardRepositoryPolicy>;
+  readonly recentRuns?: ReadonlyArray<AgentDashboardAutomationRun>;
   readonly guardrails?: Pick<ContinuousImprovementSettings, "maxRiskTier" | "minimumConfidence">;
 }): {
   readonly finding: AgentDashboardFinding;
@@ -271,6 +272,20 @@ export const selectContinuousImprovementFinding = (input: {
     maxRiskTier: "medium",
     minimumConfidence: "medium",
   };
+  const lastImplementationAtByProject = new Map<string, number>();
+  for (const run of input.recentRuns ?? []) {
+    if (run.kind !== CONTINUOUS_IMPROVEMENT_RUN_KIND) continue;
+    const projectId = String(run.repository.projectId);
+    const createdAt = Date.parse(run.createdAt);
+    if (!Number.isFinite(createdAt)) continue;
+    lastImplementationAtByProject.set(
+      projectId,
+      Math.max(lastImplementationAtByProject.get(projectId) ?? Number.NEGATIVE_INFINITY, createdAt),
+    );
+  }
+  const lastImplementationAt = (finding: AgentDashboardFinding): number =>
+    lastImplementationAtByProject.get(String(finding.repository.projectId)) ??
+    Number.NEGATIVE_INFINITY;
   return (
     input.findings
       .filter(
@@ -285,6 +300,7 @@ export const selectContinuousImprovementFinding = (input: {
         (left, right) =>
           severityWeight[right.severity] - severityWeight[left.severity] ||
           confidenceWeight[right.confidence] - confidenceWeight[left.confidence] ||
+          lastImplementationAt(left) - lastImplementationAt(right) ||
           Date.parse(left.firstSeenAt) - Date.parse(right.firstSeenAt) ||
           left.id.localeCompare(right.id),
       )
@@ -310,6 +326,60 @@ export const hasActiveFindingImplementation = (
       thread?.backgroundLiveness != null
     );
   });
+};
+
+export const resolveContinuousImprovementRecovery = (input: {
+  readonly run: AgentDashboardAutomationRun;
+  readonly findings: ReadonlyArray<AgentDashboardFinding>;
+  readonly projects: ReadonlyArray<OrchestrationProjectShell>;
+  readonly threads: ReadonlyArray<OrchestrationThreadShell>;
+}): {
+  readonly finding: AgentDashboardFinding;
+  readonly project: OrchestrationProjectShell;
+  readonly result: AgentDashboardImplementationRunResult;
+} | null => {
+  if (
+    input.run.kind !== CONTINUOUS_IMPROVEMENT_RUN_KIND ||
+    (input.run.status !== "queued" &&
+      input.run.status !== "running" &&
+      input.run.status !== "ingesting") ||
+    input.run.jobId === null
+  ) {
+    return null;
+  }
+  const finding = input.findings.find((candidate) => candidate.id === input.run.jobId) ?? null;
+  const project =
+    input.projects.find((candidate) => candidate.id === input.run.repository.projectId) ?? null;
+  const threadId = input.run.threadId ?? finding?.thread?.threadId ?? null;
+  const thread =
+    threadId === null
+      ? null
+      : (input.threads.find((candidate) => candidate.id === threadId) ?? null);
+  const branch = thread?.branch ?? (input.run.status === "queued" ? null : input.run.target);
+  if (
+    finding === null ||
+    project === null ||
+    thread === null ||
+    branch === null ||
+    thread.worktreePath === null
+  ) {
+    return null;
+  }
+  return {
+    finding,
+    project,
+    result: {
+      findingId: finding.id,
+      projectId: project.id,
+      threadId: thread.id,
+      branch,
+      // Monitoring only needs the durable thread and branch. Retain truthful
+      // worktree metadata for runner calls; baseBranch is not consumed while
+      // resuming an already-launched implementation.
+      baseBranch: branch,
+      worktreePath: thread.worktreePath,
+    },
+  };
 };
 
 const make = Effect.gen(function* () {
@@ -823,10 +893,11 @@ const make = Effect.gen(function* () {
     if (!claimedScheduler) return null;
 
     return yield* Effect.gen(function* () {
-      const [findings, policies, shell] = yield* Effect.all({
+      const [findings, policies, shell, recentRuns] = yield* Effect.all({
         findings: store.readFindings,
         policies: store.readRepositoryPolicies,
         shell: projection.getShellSnapshot(),
+        recentRuns: history.list,
       }).pipe(
         Effect.mapError(
           (cause) =>
@@ -836,7 +907,10 @@ const make = Effect.gen(function* () {
               cause,
             }),
         ),
-        Effect.map(({ findings, policies, shell }) => [findings, policies, shell] as const),
+        Effect.map(
+          ({ findings, policies, shell, recentRuns }) =>
+            [findings, policies, shell, recentRuns] as const,
+        ),
       );
       if (hasActiveFindingImplementation(findings, shell.threads)) return null;
 
@@ -844,6 +918,7 @@ const make = Effect.gen(function* () {
         findings,
         projects: shell.projects,
         policies,
+        recentRuns,
         guardrails: currentSettings.continuousImprovement,
       });
       if (!selected) return null;
@@ -1020,6 +1095,76 @@ const make = Effect.gen(function* () {
         }).pipe(Effect.mapError(mapLaunchError));
       }).pipe(Effect.ensuring(SynchronizedRef.set(busy, false)));
     });
+
+  const resumeInterruptedImplementations = Effect.gen(function* () {
+    const activeRuns = (yield* history.list).filter(
+      (run) =>
+        run.kind === CONTINUOUS_IMPROVEMENT_RUN_KIND &&
+        (run.status === "queued" || run.status === "running" || run.status === "ingesting"),
+    );
+    if (activeRuns.length === 0) return;
+
+    const [currentSettings, findings, shell] = yield* Effect.all([
+      settings.getSettings,
+      store.readFindings,
+      projection.getShellSnapshot(),
+    ]);
+    const recoveries = activeRuns.flatMap((run) => {
+      const recovery = resolveContinuousImprovementRecovery({
+        run,
+        findings,
+        projects: shell.projects,
+        threads: shell.threads,
+      });
+      return recovery === null ? [] : [{ run, ...recovery }];
+    });
+    const recoverableIds = new Set(recoveries.map(({ run }) => run.id));
+    const resumedAt = yield* nowIso;
+    yield* Effect.forEach(
+      activeRuns.filter((run) => !recoverableIds.has(run.id)),
+      (run) =>
+        persistRun(
+          transitionContinuousImprovementRun(run, {
+            state: "needs-attention",
+            error:
+              "T3 restarted and could not reconnect this implementation to its finding worktree. Open the work session to inspect it.",
+            at: resumedAt,
+          }),
+        ),
+      { concurrency: 1, discard: true },
+    );
+    if (recoveries.length === 0) return;
+
+    yield* SynchronizedRef.set(busy, true);
+    yield* Effect.forEach(
+      recoveries,
+      ({ run, finding, project, result }) =>
+        Effect.gen(function* () {
+          const working = transitionContinuousImprovementRun(run, {
+            state: "working",
+            result,
+            at: resumedAt,
+          });
+          yield* persistRun(working);
+          yield* monitorImplementation({
+            run: working,
+            result,
+            project,
+            finding,
+            automationSettings: currentSettings.continuousImprovement,
+          });
+        }),
+      { concurrency: "unbounded", discard: true },
+    ).pipe(Effect.ensuring(SynchronizedRef.set(busy, false)), Effect.forkIn(scope), Effect.asVoid);
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Continuous Improvement Mode could not resume interrupted agents", {
+        cause,
+      }),
+    ),
+  );
+
+  yield* resumeInterruptedImplementations;
 
   const tick = runOnce.pipe(
     Effect.tap((result) =>

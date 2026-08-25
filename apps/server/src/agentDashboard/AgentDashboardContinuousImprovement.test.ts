@@ -17,6 +17,7 @@ import {
   findImplementationPullRequest,
   hasActiveFindingImplementation,
   isFindingEligibleForContinuousImprovement,
+  resolveContinuousImprovementRecovery,
   selectContinuousImprovementFinding,
   transitionContinuousImprovementRun,
 } from "./AgentDashboardContinuousImprovement.ts";
@@ -182,6 +183,56 @@ describe("selectContinuousImprovementFinding", () => {
     ).toBeNull();
   });
 
+  it("rotates repositories for findings with equal severity and confidence", () => {
+    const selected = selectContinuousImprovementFinding({
+      projects: [project("alpha"), project("beta")],
+      policies: [],
+      findings: [
+        finding("older-alpha", "alpha", { firstSeenAt: "2026-07-01T00:00:00.000Z" }),
+        finding("newer-beta", "beta", { firstSeenAt: "2026-08-01T00:00:00.000Z" }),
+      ],
+      recentRuns: [
+        {
+          ...createContinuousImprovementRun({
+            id: "implementation:alpha",
+            finding: finding("implemented-alpha", "alpha"),
+            model: "gpt-5.6-luna/max",
+            createdAt: "2026-08-02T00:00:00.000Z",
+            trigger: "scheduled",
+            retryCount: 0,
+          }),
+          status: "succeeded",
+          completedAt: "2026-08-02T00:10:00.000Z",
+        },
+      ],
+    });
+
+    expect(selected?.finding.id).toBe("newer-beta");
+  });
+
+  it("keeps severity ahead of repository rotation", () => {
+    const selected = selectContinuousImprovementFinding({
+      projects: [project("alpha"), project("beta")],
+      policies: [],
+      findings: [
+        finding("critical-alpha", "alpha", { severity: "critical", confidence: "high" }),
+        finding("medium-beta", "beta", { severity: "medium", confidence: "high" }),
+      ],
+      recentRuns: [
+        createContinuousImprovementRun({
+          id: "implementation:alpha",
+          finding: finding("implemented-alpha", "alpha"),
+          model: "gpt-5.6-luna/max",
+          createdAt: "2026-08-02T00:00:00.000Z",
+          trigger: "scheduled",
+          retryCount: 0,
+        }),
+      ],
+    });
+
+    expect(selected?.finding.id).toBe("critical-alpha");
+  });
+
   it("enforces automation risk and confidence guardrails", () => {
     expect(
       isFindingEligibleForContinuousImprovement(finding("safe", "alpha", { confidence: "high" }), {
@@ -231,6 +282,57 @@ it("recognizes a running finding-linked implementation thread", () => {
     ),
   ).toBe(true);
   expect(hasActiveFindingImplementation([linked], [])).toBe(false);
+});
+
+it("reconnects an interrupted implementation to its durable thread and worktree", () => {
+  const linked = finding("linked", "alpha", {
+    thread: { projectId: ProjectId.make("alpha"), threadId: ThreadId.make("thread-1") },
+  });
+  const run = transitionContinuousImprovementRun(
+    createContinuousImprovementRun({
+      id: "implementation:linked",
+      finding: linked,
+      model: "gpt-5.6-luna/max",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      trigger: "scheduled",
+      retryCount: 0,
+    }),
+    {
+      state: "working",
+      result: {
+        findingId: linked.id,
+        projectId: ProjectId.make("alpha"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "t3code/linked",
+        baseBranch: "main",
+        worktreePath: "/workspace/alpha-linked",
+      },
+      at: "2026-08-01T00:01:00.000Z",
+    },
+  );
+  const thread = {
+    id: ThreadId.make("thread-1"),
+    projectId: ProjectId.make("alpha"),
+    branch: "t3code/linked-renamed",
+    worktreePath: "/workspace/alpha-linked",
+  } as OrchestrationThreadShell;
+
+  expect(
+    resolveContinuousImprovementRecovery({
+      run,
+      findings: [linked],
+      projects: [project("alpha")],
+      threads: [thread],
+    }),
+  ).toMatchObject({
+    finding: { id: "linked" },
+    project: { id: ProjectId.make("alpha") },
+    result: {
+      threadId: ThreadId.make("thread-1"),
+      branch: "t3code/linked-renamed",
+      worktreePath: "/workspace/alpha-linked",
+    },
+  });
 });
 
 describe("evaluateImplementationWatchdog", () => {

@@ -2103,6 +2103,10 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
   const recordAutomationRun = (runRecord: AgentDashboardAutomationRun) =>
     run("record automation run coverage", () =>
       withMutation(async () => {
+        // Repository coverage drives the read-only review scheduler. Runs from
+        // other automation kinds share the same history file but must not move
+        // review due dates or failure backoff.
+        if (runRecord.kind !== "repository-review") return;
         const projectId = String(runRecord.repository.projectId);
         if (!projectId || projectId === "pending-selection") return;
         const now = runRecord.updatedAt;
@@ -2121,7 +2125,11 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           runRecord.status === "failed" ||
           runRecord.status === "cancelled";
         const successful = runRecord.status === "succeeded" || runRecord.status === "partial";
-        const failures = successful ? 0 : (existing?.consecutiveFailures ?? 0) + (terminal ? 1 : 0);
+        const duplicateTerminal =
+          terminal && existing?.lastRunId === runRecord.id && existing.observedAt === now;
+        const failures = successful
+          ? 0
+          : (existing?.consecutiveFailures ?? 0) + (terminal && !duplicateTerminal ? 1 : 0);
         const backoffMinutes = Math.min(7 * 24 * 60, cadenceMinutes * 2 ** Math.min(failures, 6));
         const nextDueAt = terminal
           ? new Date(

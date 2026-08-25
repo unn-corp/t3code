@@ -96,9 +96,10 @@ export const recoverInterruptedRuns = (
   runs: ReadonlyArray<AgentDashboardAutomationRun>,
   nowIso: string,
   error = "T3 restarted before the automation run completed.",
+  shouldRecover: (run: AgentDashboardAutomationRun) => boolean = () => true,
 ): ReadonlyArray<AgentDashboardAutomationRun> =>
   runs.map((run) =>
-    isActiveStatus(run.status)
+    shouldRecover(run) && isActiveStatus(run.status)
       ? {
           ...run,
           status: "failed" as const,

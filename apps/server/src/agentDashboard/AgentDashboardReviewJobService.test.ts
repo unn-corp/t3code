@@ -242,6 +242,38 @@ describe("run history restart recovery", () => {
     expect(recovered[0]?.error).toContain("restarted");
     expect(recovered[3]?.findingCount).toBe(2);
   });
+
+  it("can recover only the automation kind owned by a service", () => {
+    const now = "2026-08-10T01:00:00.000Z";
+    const base = {
+      status: "running" as const,
+      trigger: "scheduled" as const,
+      repository: { projectId: PROJECT_ID },
+      target: "t3code",
+      threadId: THREAD_ID,
+      jobId: "job-1",
+      model: "gpt-5.6-luna",
+      retryCount: 0,
+      findingCount: 0,
+      costUnits: null,
+      error: null,
+      createdAt: "2026-08-10T00:00:00.000Z",
+      startedAt: "2026-08-10T00:00:01.000Z",
+      updatedAt: "2026-08-10T00:00:01.000Z",
+      completedAt: null,
+    };
+    const recovered = AgentDashboardRunHistory.recoverInterruptedRuns(
+      [
+        { ...base, id: "review", kind: "repository-review" },
+        { ...base, id: "implementation", kind: "continuous-improvement" },
+      ],
+      now,
+      "review restarted",
+      (run) => run.kind === "repository-review",
+    );
+
+    expect(recovered.map((run) => run.status)).toEqual(["failed", "running"]);
+  });
 });
 
 const unusedProjection = {
@@ -432,46 +464,35 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
     }),
   );
 
-  it.effect("fails truthfully on timeout and supports retry with bounded attempts", () =>
+  it.effect("keeps monitoring a healthy running review without a wall-clock limit", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
-      const dispatchCount = yield* Ref.make(0);
-      AgentDashboardReviewJobService.__testing.setMonitorTimeoutOverride(Duration.seconds(3));
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
         const enqueued = yield* jobService.enqueueReview({
           trigger: "scheduled",
           projectId: PROJECT_ID,
-          idempotencyKey: "timeout-case",
+          idempotencyKey: "long-running-case",
         });
 
-        const failed = yield* waitForTerminal(jobService, enqueued.id, 200);
-        expect(failed?.status).toBe("failed");
-        expect(failed?.error).toContain("timed out");
-
-        const retry1 = yield* jobService.retryRun(enqueued.id);
-        expect(retry1.trigger).toBe("retry");
-        expect(retry1.retryCount).toBe(1);
-
-        yield* waitForTerminal(jobService, retry1.id, 200);
-
-        const retry2 = yield* jobService.retryRun(retry1.id);
-        expect(retry2.retryCount).toBe(2);
-        yield* waitForTerminal(jobService, retry2.id, 200);
-
-        const overLimit = yield* Effect.flip(jobService.retryRun(retry2.id));
-        expect(overLimit.message).toContain("retry limit");
-        expect(yield* Ref.get(dispatchCount)).toBeGreaterThanOrEqual(3);
+        for (let step = 0; step < 10; step += 1) {
+          const current = (yield* jobService.listRuns).find((run) => run.id === enqueued.id);
+          if (current?.status === "running") break;
+          yield* TestClock.adjust(Duration.seconds(1));
+          yield* Effect.yieldNow;
+        }
+        yield* TestClock.adjust(Duration.hours(2));
+        yield* Effect.yieldNow;
+        const current = (yield* jobService.listRuns).find((run) => run.id === enqueued.id);
+        expect(current?.status).toBe("running");
+        expect(current?.completedAt).toBeNull();
       }).pipe(
         Effect.provide(
           jobServiceLayer({
             baseDir,
             runner: {
-              runReview: () =>
-                Ref.updateAndGet(dispatchCount, (count) => count + 1).pipe(
-                  Effect.as({ ...reviewResult, workspaceRoot: baseDir }),
-                ),
+              runReview: () => Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
               runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
             },
             getThreadDetailById: () =>
@@ -491,11 +512,112 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
           }),
         ),
         Effect.scoped,
-        Effect.ensuring(
-          Effect.sync(() =>
-            AgentDashboardReviewJobService.__testing.setMonitorTimeoutOverride(null),
-          ),
+      );
+    }),
+  );
+
+  it.effect("nudges a settled review once when its structured output is missing", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* makeTempStateDir();
+      const nudgeCount = yield* Ref.make(0);
+
+      yield* Effect.gen(function* () {
+        const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        const enqueued = yield* jobService.enqueueReview({
+          trigger: "scheduled",
+          projectId: PROJECT_ID,
+          idempotencyKey: "correction-case",
+        });
+
+        const terminal = yield* waitForTerminal(jobService, enqueued.id, 200);
+        expect(terminal?.status).toBe("succeeded");
+        expect(yield* Ref.get(nudgeCount)).toBe(1);
+      }).pipe(
+        Effect.provide(
+          jobServiceLayer({
+            baseDir,
+            runner: {
+              runReview: () => Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+              nudgeReview: () => Ref.update(nudgeCount, (count) => count + 1),
+              runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+            },
+            getThreadDetailById: () =>
+              Ref.get(nudgeCount).pipe(
+                Effect.map((nudges) =>
+                  Option.some({
+                    latestTurn: {
+                      turnId: nudges === 0 ? "turn-missing" : "turn-corrected",
+                      state: "completed",
+                      assistantMessageId: ASSISTANT_ID,
+                      requestedAt: "2026-08-10T00:00:00.000Z",
+                      startedAt: "2026-08-10T00:00:00.000Z",
+                      completedAt: "2026-08-10T00:00:10.000Z",
+                    },
+                    messages: [
+                      {
+                        id: ASSISTANT_ID,
+                        role: "assistant",
+                        text:
+                          nudges === 0 ? "Human report without metadata." : sampleFindingMetadata,
+                      },
+                    ],
+                  } as never),
+                ),
+              ),
+          }),
         ),
+        Effect.scoped,
+      );
+    }),
+  );
+
+  it.effect("fails instead of hanging when an output nudge cannot be dispatched", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* makeTempStateDir();
+
+      yield* Effect.gen(function* () {
+        const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        const enqueued = yield* jobService.enqueueReview({
+          trigger: "scheduled",
+          projectId: PROJECT_ID,
+          idempotencyKey: "correction-dispatch-failure",
+        });
+
+        const terminal = yield* waitForTerminal(jobService, enqueued.id, 200);
+        expect(terminal?.status).toBe("failed");
+        expect(terminal?.error).toContain("missing structured findings metadata");
+      }).pipe(
+        Effect.provide(
+          jobServiceLayer({
+            baseDir,
+            runner: {
+              runReview: () => Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+              nudgeReview: () => Effect.die("nudge dispatch failed"),
+              runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+            },
+            getThreadDetailById: () =>
+              Effect.succeed(
+                Option.some({
+                  latestTurn: {
+                    turnId: "turn-missing",
+                    state: "completed",
+                    assistantMessageId: ASSISTANT_ID,
+                    requestedAt: "2026-08-10T00:00:00.000Z",
+                    startedAt: "2026-08-10T00:00:00.000Z",
+                    completedAt: "2026-08-10T00:00:10.000Z",
+                  },
+                  messages: [
+                    {
+                      id: ASSISTANT_ID,
+                      role: "assistant",
+                      text: "Human report without metadata.",
+                    },
+                  ],
+                } as never),
+              ),
+          }),
+        ),
+        Effect.scoped,
       );
     }),
   );

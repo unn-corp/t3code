@@ -74,6 +74,12 @@ export interface AgentDashboardReviewRunnerService {
   readonly hideReviewThread?: (
     threadId: ThreadId,
   ) => Effect.Effect<void, AgentDashboardReviewRunnerError>;
+  /** Ask a settled review turn to repair missing or malformed structured output. */
+  readonly nudgeReview?: (input: {
+    readonly threadId: ThreadId;
+    readonly attempt: number;
+    readonly maxAttempts: number;
+  }) => Effect.Effect<void, AgentDashboardReviewRunnerError>;
   /** Deterministically selects the next eligible repository for scheduled work. */
   readonly selectNextProject?: Effect.Effect<ProjectId | null, AgentDashboardReviewRunnerError>;
   /** @deprecated Prefer runReview — kept as an alias for callers. */
@@ -261,8 +267,10 @@ export const selectNextRepository = (input: {
       const nextDueMs = coverage?.nextDueAt
         ? Date.parse(coverage.nextDueAt)
         : Number.NEGATIVE_INFINITY;
-      const due =
-        coverage === undefined || coverage.lastSucceededAt === null || nextDueMs <= input.nowMs;
+      // A failed first review still has a durable nextDueAt backoff. Treating
+      // every repository without a prior success as immediately due defeats
+      // that backoff and can pin the portfolio to one repeatedly failing repo.
+      const due = coverage === undefined || nextDueMs <= input.nowMs;
       return { project, policy: effectivePolicy, coverage, due, nextDueMs };
     })
     .filter(
@@ -577,10 +585,46 @@ const make = Effect.gen(function* () {
       } satisfies AgentDashboardReviewRunResult;
     });
 
+  const nudgeReview: NonNullable<AgentDashboardReviewRunnerService["nudgeReview"]> = (input) =>
+    Effect.gen(function* () {
+      const modelSelection = yield* settings.getSettings.pipe(
+        Effect.map((currentSettings) => currentSettings.repositoryReview.modelSelection),
+        Effect.mapError(
+          (cause) =>
+            new AgentDashboardReviewRunnerError({
+              operation: "read settings",
+              message: "Failed to load the model settings for the review correction.",
+              cause,
+            }),
+        ),
+      );
+      const createdAt = yield* nowIso;
+      yield* dispatch({
+        type: "thread.turn.start",
+        commandId: yield* makeCommandId("review-turn-nudge"),
+        threadId: input.threadId,
+        message: {
+          messageId: MessageId.make(yield* randomUuid),
+          role: "user",
+          text: [
+            `Automated review output check ${input.attempt} of ${input.maxAttempts}.`,
+            "Your previous review turn settled without a valid T3_REVIEW_METADATA line.",
+            "Use the evidence you already gathered. Return the required valid single-line JSON metadata first, followed by the concise human-readable report. Do not restart the repository review from scratch.",
+          ].join("\n\n"),
+          attachments: [],
+        },
+        modelSelection,
+        runtimeMode: REVIEW_RUNTIME_MODE,
+        interactionMode: "default",
+        createdAt,
+      });
+    });
+
   const runRandomReview = runReview();
 
   return {
     runReview,
+    nudgeReview,
     runRandomReview,
     selectNextProject,
     hideReviewThread,

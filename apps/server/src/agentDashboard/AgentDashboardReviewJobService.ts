@@ -38,13 +38,8 @@ export const MAX_CONCURRENT_REVIEW_RUNS = 1;
 export const MAX_REVIEW_RETRIES = 2;
 /** Poll interval while waiting for the review turn to settle. TestClock-friendly. */
 export const MONITOR_POLL_INTERVAL = Duration.seconds(1);
-/** Wall-clock budget for turn completion + ingestion. */
-export const MONITOR_TIMEOUT = Duration.minutes(30);
 export const REVIEW_IDEMPOTENCY_KIND = "repository-review";
-
-/** Test-only override so monitor timeouts can be driven with a small TestClock jump. */
-let monitorTimeoutOverride: Duration.Duration | null = null;
-const activeMonitorTimeout = (): Duration.Duration => monitorTimeoutOverride ?? MONITOR_TIMEOUT;
+export const MAX_REVIEW_OUTPUT_NUDGES = 2;
 
 export class AgentDashboardReviewJobServiceError extends Schema.TaggedErrorClass<AgentDashboardReviewJobServiceError>()(
   "AgentDashboardReviewJobServiceError",
@@ -476,7 +471,12 @@ const make = Effect.gen(function* () {
     ),
   );
   const recoveredAt = yield* nowIso;
-  const recovered = AgentDashboardRunHistory.recoverInterruptedRuns(loadInitial, recoveredAt);
+  const recovered = AgentDashboardRunHistory.recoverInterruptedRuns(
+    loadInitial,
+    recoveredAt,
+    "T3 restarted before the repository review completed.",
+    (run) => run.kind === REVIEW_KIND,
+  );
   if (recovered.some((run, index) => run.status !== loadInitial[index]?.status)) {
     yield* history.replaceAll(recovered).pipe(
       Effect.mapError(
@@ -547,18 +547,13 @@ const make = Effect.gen(function* () {
     review: AgentDashboardReviewRunResult,
   ): Effect.Effect<AgentDashboardAutomationRun, never> =>
     Effect.gen(function* () {
-      // Poll budget (not wall Clock) so TestClock-driven sleeps alone can time out.
-      const pollMs = Duration.toMillis(MONITOR_POLL_INTERVAL);
-      const maxPolls = Math.max(
-        1,
-        Math.ceil(Duration.toMillis(activeMonitorTimeout()) / Math.max(1, pollMs)),
-      );
-      let timedOut = true;
+      let outputNudgeCount = 0;
+      let lastNudgedTurnId: string | null = null;
       let hasAssistantMessage = false;
       let assistantText: string | null = null;
       const heartbeatEveryPolls = 15;
 
-      for (let poll = 0; poll < maxPolls; poll += 1) {
+      for (let poll = 0; ; poll += 1) {
         const thread = yield* projectionSnapshotQuery
           .getThreadDetailById(review.threadId)
           .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -566,13 +561,43 @@ const make = Effect.gen(function* () {
         if (Option.isSome(thread)) {
           const latestTurn = thread.value.latestTurn;
           if (latestTurn !== null && latestTurn.state !== "running") {
-            timedOut = false;
             const message = latestTurn.assistantMessageId
               ? (thread.value.messages.find((item) => item.id === latestTurn.assistantMessageId) ??
                 null)
               : null;
             hasAssistantMessage = message !== null;
             assistantText = message?.text ?? null;
+            const parsed =
+              message === null ? ({ kind: "missing" } as const) : parseReviewMetadata(message.text);
+            const needsCorrection = parsed.kind === "missing" || parsed.kind === "parse-failure";
+            const turnId = String(latestTurn.turnId);
+            if (
+              needsCorrection &&
+              runner.nudgeReview &&
+              outputNudgeCount < MAX_REVIEW_OUTPUT_NUDGES
+            ) {
+              if (lastNudgedTurnId !== turnId) {
+                outputNudgeCount += 1;
+                lastNudgedTurnId = turnId;
+                const nudgeExit = yield* Effect.exit(
+                  runner.nudgeReview({
+                    threadId: review.threadId,
+                    attempt: outputNudgeCount,
+                    maxAttempts: MAX_REVIEW_OUTPUT_NUDGES,
+                  }),
+                );
+                if (Exit.isFailure(nudgeExit)) {
+                  yield* Effect.logWarning("T3 could not nudge an incomplete repository review", {
+                    runId: run.id,
+                    threadId: review.threadId,
+                    cause: nudgeExit.cause,
+                  });
+                  break;
+                }
+              }
+              yield* Effect.sleep(MONITOR_POLL_INTERVAL);
+              continue;
+            }
             break;
           }
         }
@@ -594,9 +619,7 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.orElseSucceed(() => run));
         }
 
-        if (poll + 1 < maxPolls) {
-          yield* Effect.sleep(MONITOR_POLL_INTERVAL);
-        }
+        yield* Effect.sleep(MONITOR_POLL_INTERVAL);
       }
 
       const ingestingAt = yield* nowIso;
@@ -612,7 +635,7 @@ const make = Effect.gen(function* () {
       yield* persist(ingestingRun).pipe(Effect.orElseSucceed(() => ingestingRun));
 
       const decision = decideTerminalOutcome({
-        timedOut,
+        timedOut: false,
         hasAssistantMessage,
         assistantText,
         persistedFindingCount: null,
@@ -915,8 +938,5 @@ export const __testing = {
   maxConcurrent: MAX_CONCURRENT_REVIEW_RUNS,
   maxRetries: MAX_REVIEW_RETRIES,
   monitorPollInterval: MONITOR_POLL_INTERVAL,
-  monitorTimeout: MONITOR_TIMEOUT,
-  setMonitorTimeoutOverride: (timeout: Duration.Duration | null) => {
-    monitorTimeoutOverride = timeout;
-  },
+  maxOutputNudges: MAX_REVIEW_OUTPUT_NUDGES,
 };

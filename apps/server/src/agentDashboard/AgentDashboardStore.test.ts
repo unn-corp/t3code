@@ -10,7 +10,7 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, type AgentDashboardAutomationRun } from "@t3tools/contracts";
 
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 
@@ -1001,4 +1001,70 @@ it.effect("keeps feed and research state-file mtimes stable across pure reads", 
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
     }
   }),
+);
+
+const automationRun = (
+  id: string,
+  kind: string,
+  status: AgentDashboardAutomationRun["status"],
+  updatedAt: string,
+): AgentDashboardAutomationRun => ({
+  id,
+  kind,
+  status,
+  trigger: "scheduled",
+  repository: { projectId: ProjectId.make("coverage-project") },
+  target: "coverage-project",
+  threadId: ThreadId.make("coverage-thread"),
+  jobId: id,
+  model: "gpt-5.6-luna/max",
+  retryCount: 0,
+  findingCount: 0,
+  costUnits: null,
+  error: status === "failed" ? "review failed" : null,
+  createdAt: "2026-08-01T00:00:00.000Z",
+  startedAt: "2026-08-01T00:00:01.000Z",
+  updatedAt,
+  completedAt:
+    status === "failed" || status === "succeeded" || status === "partial" ? updatedAt : null,
+});
+
+it.effect(
+  "isolates review coverage from implementation history and duplicate terminal writes",
+  () =>
+    Effect.promise(async () => {
+      const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-coverage-"));
+      try {
+        const store = AgentDashboardStore.getStore(stateDir);
+        const failedReview = automationRun(
+          "review-1",
+          "repository-review",
+          "failed",
+          "2026-08-01T01:00:00.000Z",
+        );
+
+        await Effect.runPromise(store.recordAutomationRun(failedReview));
+        await Effect.runPromise(store.recordAutomationRun(failedReview));
+        await Effect.runPromise(
+          store.recordAutomationRun(
+            automationRun(
+              "implementation-1",
+              "continuous-improvement",
+              "failed",
+              "2026-08-01T02:00:00.000Z",
+            ),
+          ),
+        );
+
+        const coverage = await Effect.runPromise(store.readRepositoryCoverage);
+        expect(coverage).toHaveLength(1);
+        expect(coverage[0]).toMatchObject({
+          consecutiveFailures: 1,
+          lastRunId: "review-1",
+          observedAt: "2026-08-01T01:00:00.000Z",
+        });
+      } finally {
+        await NodeFSP.rm(stateDir, { recursive: true, force: true });
+      }
+    }),
 );

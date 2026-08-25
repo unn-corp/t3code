@@ -166,6 +166,25 @@ describe("selectNextRepository", () => {
     expect(selectNextRepository(input)).toBeNull();
     expect(selectNextRepository({ ...input, allowNotDue: true })).toBe(ProjectId.make("future"));
   });
+
+  it("respects failure backoff before a repository has ever succeeded", () => {
+    const selected = selectNextRepository({
+      nowMs: NOW,
+      projects: [project("failed-first"), project("overdue")],
+      policies: [policy("failed-first"), policy("overdue")],
+      coverage: [
+        coverage("failed-first", "2026-08-11T00:00:00.000Z", {
+          status: "failing",
+          lastSucceededAt: null,
+          consecutiveFailures: 1,
+        }),
+        coverage("overdue", "2026-08-09T00:00:00.000Z"),
+      ],
+      allowNotDue: true,
+    });
+
+    expect(selected).toBe(ProjectId.make("overdue"));
+  });
 });
 
 describe("qualification candidates", () => {
