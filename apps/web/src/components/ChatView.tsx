@@ -7251,7 +7251,15 @@ function ChatViewContent(props: ChatViewProps) {
                 ref={attachDraftHeroTransitionGroupRef}
                 className="w-full ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]"
               >
-                <div className="pointer-events-auto relative z-10">
+                <div
+                  className={cn(
+                    "chat-composer-voice-root pointer-events-auto relative z-10",
+                    voiceInputPhase === "recording" && "chat-voice-recording-active",
+                    voiceInputPhase === "transcribing" && "chat-voice-transcribing-active",
+                    voiceInputPhase === "success" && "chat-voice-success-active",
+                    voiceInputPhase === "no-audio" && "chat-voice-no-audio-active",
+                  )}
+                >
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full z-0">
                       <div
@@ -7290,10 +7298,6 @@ function ChatViewContent(props: ChatViewProps) {
                         "chat-composer-glass-shell relative mx-auto w-full max-w-3xl",
                         externalComposerDrawerAttached && "chat-composer-glass-shell-attached",
                         showComposerContextStrip && "chat-composer-glass-shell-with-context",
-                        voiceInputPhase === "recording" && "chat-voice-recording-active",
-                        voiceInputPhase === "transcribing" && "chat-voice-transcribing-active",
-                        voiceInputPhase === "success" && "chat-voice-success-active",
-                        voiceInputPhase === "no-audio" && "chat-voice-no-audio-active",
                       )}
                     >
                       <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
