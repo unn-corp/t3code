@@ -398,6 +398,11 @@ export const make = (options?: StartupOptions) =>
     const httpListening = yield* Deferred.make<void>();
     const reactorScope = yield* Scope.make("sequential");
 
+    // The HTTP server layer is acquired before this runtime service. Signal
+    // readiness here so startup activation cannot wait on an application layer
+    // which, in turn, requires activation before it can attach routes.
+    yield* Deferred.succeed(httpListening, undefined).pipe(Effect.orDie);
+
     yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
 
     const startup = Effect.gen(function* () {

@@ -16,7 +16,7 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 
-const MAX_RUNS = 200;
+const MAX_RUNS = 2_000;
 const HISTORY_FILENAME = "automation-runs.json";
 
 export class AgentDashboardRunHistoryError extends Schema.TaggedErrorClass<AgentDashboardRunHistoryError>()(
@@ -95,10 +95,11 @@ const isActiveStatus = (status: AgentDashboardAutomationRunStatus): boolean =>
 export const recoverInterruptedRuns = (
   runs: ReadonlyArray<AgentDashboardAutomationRun>,
   nowIso: string,
-  error = "T3 restarted before the repository review completed.",
+  error = "T3 restarted before the automation run completed.",
+  shouldRecover: (run: AgentDashboardAutomationRun) => boolean = () => true,
 ): ReadonlyArray<AgentDashboardAutomationRun> =>
   runs.map((run) =>
-    isActiveStatus(run.status)
+    shouldRecover(run) && isActiveStatus(run.status)
       ? {
           ...run,
           status: "failed" as const,
@@ -184,15 +185,19 @@ const readRuns = async (path: string): Promise<Array<AgentDashboardAutomationRun
   try {
     const parsed = JSON.parse(await NodeFSP.readFile(path, "utf8")) as unknown;
     const root = asObject(parsed);
-    const rawRuns = Array.isArray(parsed) ? parsed : Array.isArray(root?.runs) ? root.runs : [];
-    return rawRuns
-      .map(normalizeRun)
-      .filter((run): run is AgentDashboardAutomationRun => run !== null)
-      .slice(0, MAX_RUNS);
+    const rawRuns = Array.isArray(parsed) ? parsed : Array.isArray(root?.runs) ? root.runs : null;
+    if (rawRuns === null) {
+      throw new TypeError("Automation run history does not contain a runs array.");
+    }
+    const normalized = rawRuns.map(normalizeRun);
+    if (normalized.some((run) => run === null)) {
+      throw new TypeError("Automation run history contains an invalid run record.");
+    }
+    return normalized.slice(0, MAX_RUNS) as Array<AgentDashboardAutomationRun>;
   } catch (cause) {
     const code = asObject(cause)?.code;
     if (code === "ENOENT") return [];
-    return [];
+    throw cause;
   }
 };
 
@@ -202,8 +207,19 @@ export const readPersistedRuns = (
 ): Effect.Effect<ReadonlyArray<AgentDashboardAutomationRun>> =>
   Effect.tryPromise({
     try: () => readRuns(historyPathFor(stateDir)),
-    catch: () => undefined,
-  }).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<AgentDashboardAutomationRun>));
+    catch: (cause) =>
+      new AgentDashboardRunHistoryError({
+        operation: "read runs",
+        message: "Failed to read Agent Dashboard automation run history.",
+        cause,
+      }),
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("T3 could not read automation run history", { cause }).pipe(
+        Effect.as([] as ReadonlyArray<AgentDashboardAutomationRun>),
+      ),
+    ),
+  );
 
 const makeForStateDir = (stateDir: string): Effect.Effect<AgentDashboardRunHistoryService> =>
   Effect.sync(() => {

@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -20,7 +21,6 @@ import {
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
-  MessageId,
   type OrchestrationClientOrigin,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -65,6 +65,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -75,11 +76,11 @@ import {
 } from "./agentDashboard/AgentDashboardSnapshot.ts";
 import * as AgentDashboardStore from "./agentDashboard/AgentDashboardStore.ts";
 import * as AgentDashboardCollectors from "./agentDashboard/AgentDashboardCollectors.ts";
+import * as AgentDashboardContinuousImprovement from "./agentDashboard/AgentDashboardContinuousImprovement.ts";
 import * as AgentDashboardRunHistory from "./agentDashboard/AgentDashboardRunHistory.ts";
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
-import * as AgentDashboardSecurityScheduler from "./agentDashboard/AgentDashboardSecurityScheduler.ts";
 import * as NodeOS from "node:os";
 
 import { discoverAgentSessions } from "./provider/agentSessionDiscovery.ts";
@@ -477,6 +478,11 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const dashboardStore = AgentDashboardStore.getStore(config.stateDir);
       const reviewJobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+      const runtimeContext = yield* Effect.context<never>();
+      const continuousImprovement = Context.getOption(
+        runtimeContext,
+        AgentDashboardContinuousImprovement.AgentDashboardContinuousImprovement,
+      );
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -1372,6 +1378,7 @@ const makeWsRpcLayer = (
                 (finding) =>
                   finding.disposition.state !== "dismissed" &&
                   finding.disposition.state !== "blocked" &&
+                  finding.disposition.state !== "done" &&
                   !(
                     finding.disposition.state === "snoozed" &&
                     finding.disposition.snoozeUntil !== null &&
@@ -1387,22 +1394,32 @@ const makeWsRpcLayer = (
               );
               for (const finding of openFindings)
                 attentionRepositories.add(String(finding.repository.projectId));
+              const classifiedRepositories = nativeSnapshot.repositories.map((repository) => {
+                const projectId = String(repository.projectId);
+                const coverage = repositoryCoverage.find(
+                  (item) => String(item.repository.projectId) === projectId,
+                );
+                if (attentionRepositories.has(projectId)) return "attention" as const;
+                if (!coverage || coverage.lastSucceededAt === null || coverage.status === "never") {
+                  return "unassessed" as const;
+                }
+                return "healthy" as const;
+              });
               const lastRunAt =
                 automationRuns
                   .map((run) => run.updatedAt)
                   .toSorted()
                   .at(-1) ?? null;
+              const findingsSchedule = yield* AgentDashboardReviewScheduler.readPersistedStatus(
+                config.stateDir,
+              );
               return {
                 ...nativeSnapshot,
                 externalFeed: migrated.externalFeed,
                 researchFindings: migrated.researchFindings,
                 reviewSuggestions: migrated.reviewSuggestions,
-                reviewSchedule: yield* AgentDashboardReviewScheduler.readPersistedStatus(
-                  config.stateDir,
-                ),
-                securitySchedule: yield* AgentDashboardSecurityScheduler.readPersistedStatus(
-                  config.stateDir,
-                ),
+                reviewSchedule: findingsSchedule,
+                findingsSchedule,
                 automationRuns,
                 findings: migrated.findings,
                 repositoryPolicies,
@@ -1411,11 +1428,15 @@ const makeWsRpcLayer = (
                 collectorStates: migrated.collectorStates,
                 portfolioHealth: {
                   repositoryCount: nativeSnapshot.repositories.length,
-                  healthyRepositoryCount: Math.max(
-                    0,
-                    nativeSnapshot.repositories.length - attentionRepositories.size,
-                  ),
-                  attentionRepositoryCount: attentionRepositories.size,
+                  healthyRepositoryCount: classifiedRepositories.filter(
+                    (state) => state === "healthy",
+                  ).length,
+                  attentionRepositoryCount: classifiedRepositories.filter(
+                    (state) => state === "attention",
+                  ).length,
+                  unassessedRepositoryCount: classifiedRepositories.filter(
+                    (state) => state === "unassessed",
+                  ).length,
                   staleRepositoryCount: repositoryCoverage.filter(
                     (coverage) => coverage.status === "stale",
                   ).length,
@@ -1515,22 +1536,48 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.agentDashboardRetryRun,
             Effect.gen(function* () {
-              const retried = yield* reviewJobService.retryRun(input.id);
+              const existing = (yield* AgentDashboardRunHistory.readPersistedRuns(
+                config.stateDir,
+              )).find((run) => run.id === input.id);
+              const retried =
+                existing?.kind ===
+                AgentDashboardContinuousImprovement.CONTINUOUS_IMPROVEMENT_RUN_KIND
+                  ? Option.isSome(continuousImprovement)
+                    ? yield* continuousImprovement.value.retryRun(input.id)
+                    : yield* new AgentDashboardError({
+                        message: "Continuous Improvement retry is unavailable.",
+                      })
+                  : yield* reviewJobService.retryRun(input.id);
+              if (retried === null) {
+                return {
+                  ok: false as const,
+                  outcome: "noop" as const,
+                  message: "The finding was claimed before the retry could start.",
+                  targetId: input.id,
+                  targetUrl: null,
+                };
+              }
+              const retriedId = "id" in retried ? retried.id : String(retried.threadId);
+              const retryCount = "retryCount" in retried ? retried.retryCount : null;
+              const occurredAt =
+                "createdAt" in retried
+                  ? retried.createdAt
+                  : DateTime.formatIso(yield* DateTime.now);
               yield* dashboardStore
                 .appendExternalAction({
-                  id: `action:retry-run:${retried.id}`,
+                  id: `action:retry-run:${retriedId}`,
                   kind: "run-investigation",
                   status: "succeeded",
                   actor: "dashboard",
-                  targetId: retried.id,
+                  targetId: retriedId,
                   targetUrl: null,
                   findingId: null,
-                  runId: retried.id,
-                  result: `retry-${retried.retryCount}`,
-                  occurredAt: retried.createdAt,
+                  runId: retriedId,
+                  result: retryCount === null ? "implementation-retry" : `retry-${retryCount}`,
+                  occurredAt,
                 })
                 .pipe(Effect.orElseSucceed(() => undefined));
-              return appliedMutation(retried.id);
+              return appliedMutation(retriedId);
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -1545,14 +1592,29 @@ const makeWsRpcLayer = (
         [WS_METHODS.agentDashboardCreateGithubIssue]: (input) =>
           observeRpcEffect(
             WS_METHODS.agentDashboardCreateGithubIssue,
-            dashboardStore.createGithubIssue(input.id).pipe(
+            Effect.gen(function* () {
+              const canonical = (yield* dashboardStore.readFindings).find(
+                (finding) =>
+                  finding.id === input.id ||
+                  finding.id === input.id.replace(/^t3-review-/, "finding:"),
+              );
+              const project = canonical
+                ? yield* projectionSnapshotQuery.getProjectShellById(canonical.repository.projectId)
+                : Option.none();
+              const githubRepository = Option.isSome(project)
+                ? parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+                    project.value.repositoryIdentity?.locator.remoteUrl ?? null,
+                  )
+                : null;
+              return yield* dashboardStore.createGithubIssue(input.id, githubRepository);
+            }).pipe(
               Effect.map((changed) =>
                 changed
                   ? appliedMutation(input.id)
                   : {
                       ok: false as const,
                       outcome: "not-found" as const,
-                      message: "Review suggestion not found.",
+                      message: "Finding not found.",
                       targetId: input.id,
                       targetUrl: null,
                     },
@@ -1565,6 +1627,103 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardListProjectPullRequests]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardListProjectPullRequests,
+            Effect.gen(function* () {
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(input.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AgentDashboardError({
+                        message: "Failed to load the project for pull request discovery.",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new AgentDashboardError({ message: "Project not found." });
+              }
+              const repository = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+                project.value.repositoryIdentity?.locator.remoteUrl ?? null,
+              );
+              if (!repository) {
+                return yield* new AgentDashboardError({
+                  message: "This project does not have a GitHub remote configured.",
+                });
+              }
+              const pullRequests = yield* sourceControlRepositories.listProjectPullRequests({
+                cwd: project.value.workspaceRoot,
+                repository,
+                limit: 50,
+              });
+              return {
+                projectId: input.projectId,
+                provider: "github" as const,
+                repository,
+                pullRequests,
+              };
+            }),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardMergeProjectPullRequest]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardMergeProjectPullRequest,
+            Effect.gen(function* () {
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(input.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AgentDashboardError({
+                        message: "Failed to load the project for pull request merge.",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new AgentDashboardError({ message: "Project not found." });
+              }
+              const repository = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+                project.value.repositoryIdentity?.locator.remoteUrl ?? null,
+              );
+              if (!repository) {
+                return yield* new AgentDashboardError({
+                  message: "This project does not have a GitHub remote configured.",
+                });
+              }
+              yield* sourceControlRepositories.mergeProjectPullRequest({
+                cwd: project.value.workspaceRoot,
+                repository,
+                number: input.number,
+                expectedHeadOid: input.expectedHeadOid,
+                method: input.method,
+              });
+              const occurredAt = DateTime.formatIso(yield* DateTime.now);
+              yield* dashboardStore
+                .appendExternalAction({
+                  id: `action:merge-pr:${input.projectId}:${input.number}:${occurredAt}`,
+                  kind: "merge-pull-request",
+                  status: "succeeded",
+                  actor: "dashboard",
+                  targetId: `pr:${repository}:${input.number}`,
+                  targetUrl: `https://github.com/${repository}/pull/${input.number}`,
+                  findingId: null,
+                  runId: null,
+                  result: `merge-submitted:${input.method}`,
+                  occurredAt,
+                })
+                .pipe(Effect.orElseSucceed(() => undefined));
+              return {
+                projectId: input.projectId,
+                number: input.number,
+                method: input.method,
+                submitted: true,
+              };
+            }),
             { "rpc.aggregate": "agent-dashboard" },
           ),
         [WS_METHODS.agentDashboardApplyFindingAction]: (input) =>
@@ -1681,13 +1840,19 @@ const makeWsRpcLayer = (
                   discard: true,
                 },
               );
+              if (input.kind === "all") {
+                yield* runAgentDashboardInvestigation(input.projectId);
+              }
               return {
                 ok: true as const,
                 outcome:
                   findingCount > 0 || collected.states.length > 0
                     ? ("applied" as const)
                     : ("noop" as const),
-                message: `Collection completed with ${findingCount} finding${findingCount === 1 ? "" : "s"}.`,
+                message:
+                  input.kind === "all"
+                    ? `Portfolio collection stored ${findingCount} local finding${findingCount === 1 ? "" : "s"} and started a deep review.`
+                    : `Collection completed with ${findingCount} finding${findingCount === 1 ? "" : "s"}.`,
                 targetId: input.projectId ? String(input.projectId) : null,
                 targetUrl: null,
               };
@@ -1696,6 +1861,29 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new AgentDashboardError({
                     message: "Failed to persist Agent Dashboard collector results.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-dashboard" },
+          ),
+        [WS_METHODS.agentDashboardAddResearchWatchItem]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentDashboardAddResearchWatchItem,
+            dashboardStore.upsertResearchWatchItem(input).pipe(
+              Effect.map((changed) => ({
+                ok: true as const,
+                outcome: changed ? ("applied" as const) : ("noop" as const),
+                message: changed
+                  ? "Research source saved."
+                  : "That research source is already configured.",
+                targetId: String(input.projectId),
+                targetUrl: null,
+              })),
+              Effect.mapError(
+                (cause) =>
+                  new AgentDashboardError({
+                    message: "Failed to save the research source.",
                     cause,
                   }),
               ),

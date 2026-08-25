@@ -31,7 +31,9 @@ function severityVariant(severity: AgentDashboardFinding["severity"]) {
 }
 
 function dispositionVariant(state: AgentDashboardFinding["disposition"]["state"]) {
-  return state === "open" ? ("warning" as const) : ("outline" as const);
+  if (state === "open") return "warning" as const;
+  if (state === "done") return "success" as const;
+  return "outline" as const;
 }
 
 export function AgentSecurity() {
@@ -183,22 +185,33 @@ export function AgentSecurity() {
                   ))}
                 </ul>
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    disabled={updatingId !== null}
-                    onClick={() => void apply(finding, "acknowledge")}
-                    size="sm"
-                    variant="outline"
-                  >
-                    <CheckCircle2Icon /> Acknowledge
-                  </Button>
-                  <Button
-                    disabled={updatingId !== null}
-                    onClick={() => void apply(finding, "snooze")}
-                    size="sm"
-                    variant="outline"
-                  >
-                    Snooze
-                  </Button>
+                  {finding.disposition.state !== "done" ? (
+                    <>
+                      <Button
+                        disabled={updatingId !== null}
+                        onClick={() => void apply(finding, "complete")}
+                        size="sm"
+                      >
+                        <CheckCircle2Icon /> Done
+                      </Button>
+                      <Button
+                        disabled={updatingId !== null}
+                        onClick={() => void apply(finding, "acknowledge")}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Acknowledge
+                      </Button>
+                      <Button
+                        disabled={updatingId !== null}
+                        onClick={() => void apply(finding, "snooze")}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Snooze
+                      </Button>
+                    </>
+                  ) : null}
                   <Button
                     disabled={updatingId !== null}
                     onClick={() => void apply(finding, "dismiss")}

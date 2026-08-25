@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
-
-import { AgentSuggestions } from "../components/AgentSuggestions";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/agent-dashboard/suggestions")({
-  component: AgentSuggestions,
+  beforeLoad: () => {
+    throw redirect({ to: "/agent-dashboard/findings", replace: true });
+  },
 });

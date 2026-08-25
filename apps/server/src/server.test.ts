@@ -4654,6 +4654,112 @@ it.layer(routerSeamLayer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("scopes Agent Dashboard pull request listing and merge to the registered project", () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-pr-workspace");
+      const mergeCalls: Array<{
+        readonly cwd: string;
+        readonly repository: string;
+        readonly number: number;
+        readonly expectedHeadOid: string;
+        readonly method: "squash" | "merge" | "rebase";
+      }> = [];
+      const pullRequest = {
+        number: 42,
+        title: "Add project PR workspace",
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+        baseRefName: "main",
+        headRefName: "feature/pr-workspace",
+        headRefOid: "abcdef123456abcdef123456abcdef123456abcd",
+        authorLogin: "octocat",
+        isDraft: false,
+        mergeState: "ready" as const,
+        reviewDecision: "approved" as const,
+        checkStatus: "passing" as const,
+        canMerge: true,
+        mergeBlockedReason: null,
+        updatedAt: "2026-08-22T12:00:00.000Z",
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getProjectShellById: (requestedProjectId) =>
+              Effect.succeed(
+                requestedProjectId === projectId
+                  ? Option.some({
+                      id: projectId,
+                      title: "T3 Code",
+                      workspaceRoot: "/workspace/t3code",
+                      repositoryIdentity: {
+                        canonicalKey: "github.com/pingdotgg/t3code",
+                        locator: {
+                          source: "git-remote" as const,
+                          remoteName: "origin",
+                          remoteUrl: "https://github.com/pingdotgg/t3code.git",
+                        },
+                        rootPath: "/workspace/t3code",
+                        provider: "github",
+                        owner: "pingdotgg",
+                        name: "t3code",
+                      },
+                      defaultModelSelection: null,
+                      scripts: [],
+                      createdAt: "2026-08-22T10:00:00.000Z",
+                      updatedAt: "2026-08-22T10:00:00.000Z",
+                    })
+                  : Option.none(),
+              ),
+          },
+          sourceControlRepositoryService: {
+            listProjectPullRequests: (input) => {
+              assert.deepStrictEqual(input, {
+                cwd: "/workspace/t3code",
+                repository: "pingdotgg/t3code",
+                limit: 50,
+              });
+              return Effect.succeed([pullRequest]);
+            },
+            mergeProjectPullRequest: (input) =>
+              Effect.sync(() => {
+                mergeCalls.push(input);
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const listed = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.agentDashboardListProjectPullRequests]({ projectId }),
+        ),
+      );
+      assert.equal(listed.repository, "pingdotgg/t3code");
+      assert.deepStrictEqual(listed.pullRequests, [pullRequest]);
+
+      const merged = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.agentDashboardMergeProjectPullRequest]({
+            projectId,
+            number: 42,
+            expectedHeadOid: "abcdef123456abcdef123456abcdef123456abcd",
+            method: "squash",
+          }),
+        ),
+      );
+      assert.isTrue(merged.submitted);
+      assert.deepStrictEqual(mergeCalls, [
+        {
+          cwd: "/workspace/t3code",
+          repository: "pingdotgg/t3code",
+          number: 42,
+          expectedHeadOid: "abcdef123456abcdef123456abcdef123456abcd",
+          method: "squash",
+        },
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket resource telemetry through the subscription", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();

@@ -536,6 +536,11 @@ function GeneralSettingsSection() {
 
   return (
     <SettingsSection title="General">
+      <SettingsRow
+        icon="gauge.with.dots.needle.67percent"
+        label="Agent Dashboard"
+        target="SettingsAgentDashboard"
+      />
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
       <SettingsSwitchRow
         icon="arrow.triangle.branch"

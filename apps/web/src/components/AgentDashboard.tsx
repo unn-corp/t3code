@@ -1,17 +1,21 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useRouter } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
   ArrowUpRightIcon,
+  CircleAlertIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
+  FileSearchIcon,
   FolderGit2Icon,
   GitBranchIcon,
   LoaderIcon,
+  MessageCircleWarningIcon,
   RefreshCwIcon,
   ServerIcon,
   SquareTerminalIcon,
+  TelescopeIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
@@ -489,6 +493,10 @@ export function AgentDashboard() {
     [serverRepositories],
   );
   const portfolioHealth = serverSnapshotQuery.data?.portfolioHealth;
+  const needsInputCount =
+    serverSnapshotQuery.data?.feed.filter((item) => item.status === "needs-input").length ?? 0;
+  const failedRunCount =
+    serverSnapshotQuery.data?.automationRuns.filter((run) => run.status === "failed").length ?? 0;
   const environmentLabelById = useMemo(
     () =>
       new Map(environments.map((environment) => [environment.environmentId, environment.label])),
@@ -531,6 +539,10 @@ export function AgentDashboard() {
               {repositoryGroups.length}{" "}
               {repositoryGroups.length === 1 ? "repository" : "repositories"}
             </Badge>
+            <Button render={<Link to="/agent-dashboard/findings" />} size="sm" variant="outline">
+              <FileSearchIcon />
+              <span className="hidden sm:inline">Findings</span>
+            </Button>
             {serverSnapshotQuery.data !== null ? (
               <Badge className="hidden md:inline-flex" size="sm" variant="outline">
                 T3 server snapshot
@@ -571,8 +583,11 @@ export function AgentDashboard() {
             </div>
 
             {portfolioHealth ? (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <Card>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                <Card
+                  className="transition-colors hover:border-success/50"
+                  render={<Link to="/agent-dashboard/runs" />}
+                >
                   <CardPanel className="p-4">
                     <p className="text-xs text-muted-foreground">Healthy repositories</p>
                     <p className="mt-1 text-lg font-semibold text-success">
@@ -580,7 +595,10 @@ export function AgentDashboard() {
                     </p>
                   </CardPanel>
                 </Card>
-                <Card>
+                <Card
+                  className="transition-colors hover:border-warning/60"
+                  render={<Link to="/agent-dashboard/findings" />}
+                >
                   <CardPanel className="p-4">
                     <p className="text-xs text-muted-foreground">Needs attention</p>
                     <p className="mt-1 text-lg font-semibold text-warning">
@@ -588,19 +606,115 @@ export function AgentDashboard() {
                     </p>
                   </CardPanel>
                 </Card>
-                <Card>
+                <Card
+                  className="transition-colors hover:border-muted-foreground/50"
+                  render={<Link to="/agent-dashboard/runs" />}
+                >
+                  <CardPanel className="p-4">
+                    <p className="text-xs text-muted-foreground">Unassessed</p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {portfolioHealth.unassessedRepositoryCount}
+                    </p>
+                  </CardPanel>
+                </Card>
+                <Card
+                  className="transition-colors hover:border-primary/50"
+                  render={<Link to="/agent-dashboard/findings" />}
+                >
                   <CardPanel className="p-4">
                     <p className="text-xs text-muted-foreground">Open findings</p>
                     <p className="mt-1 text-lg font-semibold">{portfolioHealth.openFindingCount}</p>
                   </CardPanel>
                 </Card>
-                <Card>
+                <Card
+                  className="transition-colors hover:border-info/50"
+                  render={<Link to="/agent-dashboard/runs" />}
+                >
                   <CardPanel className="p-4">
                     <p className="text-xs text-muted-foreground">Active runs</p>
                     <p className="mt-1 text-lg font-semibold">{portfolioHealth.activeRunCount}</p>
                   </CardPanel>
                 </Card>
               </div>
+            ) : null}
+
+            {portfolioHealth &&
+            (portfolioHealth.criticalFindingCount > 0 ||
+              portfolioHealth.attentionRepositoryCount > 0 ||
+              needsInputCount > 0 ||
+              failedRunCount > 0) ? (
+              <Card className="border-warning/35">
+                <CardHeader className="p-4 sm:p-5">
+                  <CardTitle className="text-base">Needs you now</CardTitle>
+                  <CardDescription>
+                    The highest-signal items that may need a decision or intervention.
+                  </CardDescription>
+                </CardHeader>
+                <CardPanel className="grid gap-2 border-t border-border/60 p-3 sm:grid-cols-2 sm:p-4">
+                  {needsInputCount > 0 ? (
+                    <Button
+                      className="h-auto justify-start gap-3 py-3"
+                      render={<Link to="/agent-dashboard/feed" />}
+                      variant="ghost"
+                    >
+                      <MessageCircleWarningIcon className="text-warning" />
+                      <span className="text-left">
+                        <span className="block font-medium">{needsInputCount} agent responses</span>
+                        <span className="block text-xs text-muted-foreground">
+                          Waiting for input
+                        </span>
+                      </span>
+                    </Button>
+                  ) : null}
+                  {portfolioHealth.criticalFindingCount > 0 ? (
+                    <Button
+                      className="h-auto justify-start gap-3 py-3"
+                      render={<Link to="/agent-dashboard/findings" />}
+                      variant="ghost"
+                    >
+                      <TriangleAlertIcon className="text-destructive" />
+                      <span className="text-left">
+                        <span className="block font-medium">
+                          {portfolioHealth.criticalFindingCount} critical findings
+                        </span>
+                        <span className="block text-xs text-muted-foreground">Review priority</span>
+                      </span>
+                    </Button>
+                  ) : null}
+                  {portfolioHealth.attentionRepositoryCount > 0 ? (
+                    <Button
+                      className="h-auto justify-start gap-3 py-3"
+                      render={<Link to="/agent-dashboard/runs" />}
+                      variant="ghost"
+                    >
+                      <TelescopeIcon className="text-warning" />
+                      <span className="text-left">
+                        <span className="block font-medium">
+                          {portfolioHealth.attentionRepositoryCount} repositories need attention
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          Inspect coverage
+                        </span>
+                      </span>
+                    </Button>
+                  ) : null}
+                  {failedRunCount > 0 ? (
+                    <Button
+                      className="h-auto justify-start gap-3 py-3"
+                      render={<Link to="/agent-dashboard/runs" />}
+                      variant="ghost"
+                    >
+                      <CircleAlertIcon className="text-destructive" />
+                      <span className="text-left">
+                        <span className="block font-medium">{failedRunCount} failed runs</span>
+                        <span className="block text-xs text-muted-foreground">
+                          Retry or diagnose
+                        </span>
+                      </span>
+                    </Button>
+                  ) : null}
+                </CardPanel>
+              </Card>
             ) : null}
 
             {!allEnvironmentShellsBootstrapped && repositoryGroups.length === 0 ? (

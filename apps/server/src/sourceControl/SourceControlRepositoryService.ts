@@ -14,6 +14,8 @@ import {
   type SourceControlProviderKind,
   type SourceControlPublishRepositoryInput,
   type SourceControlPublishRepositoryResult,
+  type SourceControlProjectPullRequest,
+  type SourceControlPullRequestMergeMethod,
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryInfo,
   type SourceControlRepositoryLookupInput,
@@ -21,6 +23,7 @@ import {
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitHubCli from "./GitHubCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
@@ -36,6 +39,21 @@ export class SourceControlRepositoryService extends Context.Service<
     readonly publishRepository: (
       input: SourceControlPublishRepositoryInput,
     ) => Effect.Effect<SourceControlPublishRepositoryResult, SourceControlRepositoryError>;
+    readonly listProjectPullRequests: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly limit?: number;
+    }) => Effect.Effect<
+      ReadonlyArray<SourceControlProjectPullRequest>,
+      SourceControlRepositoryError
+    >;
+    readonly mergeProjectPullRequest: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly number: number;
+      readonly expectedHeadOid: string;
+      readonly method: SourceControlPullRequestMergeMethod;
+    }) => Effect.Effect<void, SourceControlRepositoryError>;
   }
 >()("t3/sourceControl/SourceControlRepositoryService") {}
 
@@ -91,6 +109,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const github = yield* GitHubCli.GitHubCli;
   const path = yield* Path.Path;
   const providers = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
 
@@ -284,6 +303,30 @@ export const make = Effect.gen(function* () {
       ),
     publishRepository: (input) =>
       publishRepository(input).pipe(mapRepositoryError("publishRepository", input.provider)),
+    listProjectPullRequests: (input) =>
+      github.listProjectPullRequests(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new SourceControlRepositoryError({
+              operation: "listProjectPullRequests",
+              provider: "github",
+              detail: cause.detail,
+              cause,
+            }),
+        ),
+      ),
+    mergeProjectPullRequest: (input) =>
+      github.mergePullRequest(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new SourceControlRepositoryError({
+              operation: "mergeProjectPullRequest",
+              provider: "github",
+              detail: cause.detail,
+              cause,
+            }),
+        ),
+      ),
   });
 });
 

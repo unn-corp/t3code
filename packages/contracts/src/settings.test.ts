@@ -42,6 +42,48 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ServerSettings continuous improvement", () => {
+  it("is off by default and keeps its automation model configurable", () => {
+    expect(decodeServerSettings({}).continuousImprovement).toEqual({
+      enabled: false,
+      maxRiskTier: "medium",
+      minimumConfidence: "medium",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "max" }],
+      },
+    });
+    expect(
+      decodeServerSettingsPatch({ continuousImprovement: { enabled: true } }).continuousImprovement,
+    ).toEqual({ enabled: true });
+  });
+
+  it("defaults scheduled reviews to their existing model policy", () => {
+    expect(decodeServerSettings({}).repositoryReview).toEqual({
+      enabled: true,
+      intervalMinutes: 120,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "xhigh" }],
+      },
+    });
+  });
+
+  it("accepts qualification cadence and implementation guardrails", () => {
+    expect(
+      decodeServerSettingsPatch({
+        repositoryReview: { enabled: false, intervalMinutes: 30 },
+        continuousImprovement: { maxRiskTier: "high", minimumConfidence: "high" },
+      }),
+    ).toMatchObject({
+      repositoryReview: { enabled: false, intervalMinutes: 30 },
+      continuousImprovement: { maxRiskTier: "high", minimumConfidence: "high" },
+    });
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

@@ -19,9 +19,11 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
 import * as AgentDashboardReviewJobService from "./AgentDashboardReviewJobService.ts";
+import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import {
   AgentDashboardReviewRunner,
   type AgentDashboardReviewRunResult,
@@ -33,7 +35,7 @@ const THREAD_ID = ThreadId.make("thread-review-1");
 const ASSISTANT_ID = MessageId.make("assistant-review-1");
 
 const sampleFindingMetadata = [
-  'T3_REVIEW_METADATA: {"findings":[{"title":"Parser bug","category":"bug","summary":"Drops the last item","impact":"Import loss","confidence":"high","evidence":["src/parser.ts:42"],"next_step":"Flush before return","github_issue_title":"Fix parser flush","github_issue_body":"## Problem"}]}',
+  'T3_REVIEW_METADATA: {"findings":[{"title":"Parser bug","type":"bug","category":"parser","summary":"Drops the last item","impact":"Import loss","confidence":"high","evidence":["src/parser.ts:42"],"next_step":"Flush before return","github_issue_title":"Fix parser flush","github_issue_body":"## Problem"}]}',
   "# Random Codebase Review",
 ].join("\n");
 
@@ -46,6 +48,36 @@ const reviewResult: AgentDashboardReviewRunResult = {
   startedAt: "2026-08-10T00:00:00.000Z",
 };
 
+describe("review progress watchdog", () => {
+  it("bounds inactivity without imposing a total run duration", () => {
+    const tenMinutes = Duration.toMillis(Duration.minutes(10));
+    expect(
+      AgentDashboardReviewJobService.evaluateReviewProgressWatchdog({
+        nowMs: tenMinutes - 1,
+        lastProgressAtMs: 0,
+        lastNudgeAtMs: null,
+        nudgeCount: 0,
+      }),
+    ).toEqual({ kind: "wait" });
+    expect(
+      AgentDashboardReviewJobService.evaluateReviewProgressWatchdog({
+        nowMs: tenMinutes,
+        lastProgressAtMs: 0,
+        lastNudgeAtMs: null,
+        nudgeCount: 0,
+      }),
+    ).toEqual({ kind: "nudge", attempt: 1 });
+    expect(
+      AgentDashboardReviewJobService.evaluateReviewProgressWatchdog({
+        nowMs: Duration.toMillis(Duration.minutes(40)),
+        lastProgressAtMs: 0,
+        lastNudgeAtMs: 0,
+        nudgeCount: 3,
+      }),
+    ).toEqual({ kind: "exhausted" });
+  });
+});
+
 describe("parseReviewMetadata", () => {
   it("parses structured findings", () => {
     const parsed = AgentDashboardReviewJobService.parseReviewMetadata(sampleFindingMetadata);
@@ -54,14 +86,58 @@ describe("parseReviewMetadata", () => {
       findings: [
         {
           title: "Parser bug",
-          category: "bug",
+          type: "bug",
+          category: "parser",
           summary: "Drops the last item",
           impact: "Import loss",
           confidence: "high",
           evidence: ["src/parser.ts:42"],
           nextStep: "Flush before return",
+          targets: [],
+          validationPlan: [],
+          sources: [],
+          automationRisk: "medium",
+          estimatedEffort: "medium",
+          qualificationReason: null,
           githubIssueTitle: "Fix parser flush",
           githubIssueBody: "## Problem",
+        },
+      ],
+      qualifications: [],
+    });
+  });
+
+  it("parses qualification decisions for existing collector findings", () => {
+    expect(
+      AgentDashboardReviewJobService.parseReviewMetadata(
+        'T3_REVIEW_METADATA: {"findings":[],"qualifications":[{"finding_id":"finding:ci","outcome":"ready","proposal":"Add CI checks.","expected_value":"Catch regressions.","targets":[{"path":".github/workflows/checks.yml","symbol":null,"evidence":"No workflow exists."}],"validation_plan":["Validate workflow syntax."],"sources":[],"automation_risk":"low","estimated_effort":"small","reason":"The repository exposes a deterministic test command."},{"finding_id":"finding:fixture","outcome":"dismiss","reason":"This is an inert test fixture."}]}',
+      ),
+    ).toEqual({
+      kind: "parsed",
+      findings: [],
+      qualifications: [
+        {
+          id: "finding:ci",
+          outcome: "ready",
+          proposal: "Add CI checks.",
+          expectedValue: "Catch regressions.",
+          targets: [
+            {
+              path: ".github/workflows/checks.yml",
+              symbol: null,
+              evidence: "No workflow exists.",
+            },
+          ],
+          validationPlan: ["Validate workflow syntax."],
+          sources: [],
+          riskTier: "low",
+          estimatedEffort: "small",
+          reason: "The repository exposes a deterministic test command.",
+        },
+        {
+          id: "finding:fixture",
+          outcome: "dismiss",
+          reason: "This is an inert test fixture.",
         },
       ],
     });
@@ -76,7 +152,7 @@ describe("parseReviewMetadata", () => {
     });
     expect(
       AgentDashboardReviewJobService.parseReviewMetadata('T3_REVIEW_METADATA: {"findings":[]}'),
-    ).toEqual({ kind: "parsed", findings: [] });
+    ).toEqual({ kind: "parsed", findings: [], qualifications: [] });
     expect(
       AgentDashboardReviewJobService.parseReviewMetadata("T3_REVIEW_METADATA: {not-json"),
     ).toMatchObject({ kind: "parse-failure" });
@@ -135,7 +211,7 @@ describe("decideTerminalOutcome", () => {
       }),
     ).toMatchObject({
       status: "partial",
-      error: "Repository review completed with zero usable findings.",
+      error: "Repository review completed with zero usable findings or qualifications.",
       shouldPersistFindings: false,
     });
   });
@@ -196,6 +272,38 @@ describe("run history restart recovery", () => {
     expect(recovered[0]?.error).toContain("restarted");
     expect(recovered[3]?.findingCount).toBe(2);
   });
+
+  it("can recover only the automation kind owned by a service", () => {
+    const now = "2026-08-10T01:00:00.000Z";
+    const base = {
+      status: "running" as const,
+      trigger: "scheduled" as const,
+      repository: { projectId: PROJECT_ID },
+      target: "t3code",
+      threadId: THREAD_ID,
+      jobId: "job-1",
+      model: "gpt-5.6-luna",
+      retryCount: 0,
+      findingCount: 0,
+      costUnits: null,
+      error: null,
+      createdAt: "2026-08-10T00:00:00.000Z",
+      startedAt: "2026-08-10T00:00:01.000Z",
+      updatedAt: "2026-08-10T00:00:01.000Z",
+      completedAt: null,
+    };
+    const recovered = AgentDashboardRunHistory.recoverInterruptedRuns(
+      [
+        { ...base, id: "review", kind: "repository-review" },
+        { ...base, id: "implementation", kind: "continuous-improvement" },
+      ],
+      now,
+      "review restarted",
+      (run) => run.kind === "repository-review",
+    );
+
+    expect(recovered.map((run) => run.status)).toEqual(["failed", "running"]);
+  });
 });
 
 const unusedProjection = {
@@ -251,22 +359,55 @@ const jobServiceLayer = (input: {
   readonly baseDir: string;
   readonly runner: AgentDashboardReviewRunner["Service"];
   readonly getThreadDetailById: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getThreadDetailById"];
+  readonly getShellSnapshot?: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getShellSnapshot"];
 }) =>
   AgentDashboardReviewJobService.layerWithoutDefaults.pipe(
     Layer.provide(Layer.succeed(AgentDashboardReviewRunner, input.runner)),
     Layer.provide(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         ...unusedProjection,
+        ...(input.getShellSnapshot ? { getShellSnapshot: input.getShellSnapshot } : {}),
         getThreadDetailById: input.getThreadDetailById,
       }),
     ),
     Layer.provide(AgentDashboardRunHistory.layer),
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(process.cwd(), input.baseDir)),
     Layer.provideMerge(TestClock.layer()),
     Layer.provideMerge(NodeServices.layer),
   );
 
 describe("AgentDashboardReviewJobService lifecycle", () => {
+  it.effect("completes a scheduled no-op when no repository is due", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* makeTempStateDir();
+      const dispatchCount = yield* Ref.make(0);
+
+      yield* Effect.gen(function* () {
+        const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        const enqueued = yield* jobService.enqueueReview({ trigger: "scheduled" });
+        const terminal = yield* waitForTerminal(jobService, enqueued.id, 200);
+        expect(terminal?.status).toBe("succeeded");
+        expect(terminal?.target).toBe("No repository due");
+        expect(yield* Ref.get(dispatchCount)).toBe(0);
+      }).pipe(
+        Effect.provide(
+          jobServiceLayer({
+            baseDir,
+            runner: {
+              selectNextProject: () => Effect.succeed(null),
+              runReview: () =>
+                Ref.update(dispatchCount, (count) => count + 1).pipe(Effect.as(reviewResult)),
+              runRandomReview: Effect.succeed(reviewResult),
+            },
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
+
   it.effect("dispatches through ingestion and succeeds only after findings persist", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
@@ -275,6 +416,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
 
       const turnComplete = yield* Ref.make(false);
       const dispatchCount = yield* Ref.make(0);
+      const hiddenThreadCount = yield* Ref.make(0);
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
@@ -289,12 +431,17 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
         yield* Effect.yieldNow;
 
         yield* Ref.set(turnComplete, true);
-        const terminal = yield* waitForTerminal(jobService, enqueued.id);
+        const terminal = yield* waitForTerminal(jobService, enqueued.id, 1_000);
         expect(terminal?.status).toBe("succeeded");
         expect(terminal?.findingCount).toBe(1);
         expect(terminal?.threadId).toEqual(THREAD_ID);
         expect(terminal?.error).toBeNull();
         expect(yield* Ref.get(dispatchCount)).toBe(1);
+        expect(yield* Ref.get(hiddenThreadCount)).toBe(1);
+        const findings = yield* AgentDashboardStore.getStore(NodePath.join(baseDir, "userdata"))
+          .readFindings;
+        expect(findings).toHaveLength(1);
+        expect(findings[0]?.thread).toBeNull();
       }).pipe(
         Effect.provide(
           jobServiceLayer({
@@ -307,6 +454,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
                     workspaceRoot,
                   }),
                 ),
+              hideReviewThread: () => Ref.update(hiddenThreadCount, (count) => count + 1),
               runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot }),
             },
             getThreadDetailById: () =>
@@ -378,70 +526,165 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
     }),
   );
 
-  it.effect("fails truthfully on timeout and supports retry with bounded attempts", () =>
+  it.effect("keeps monitoring a healthy running review without a wall-clock limit", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
-      const dispatchCount = yield* Ref.make(0);
-      AgentDashboardReviewJobService.__testing.setMonitorTimeoutOverride(Duration.seconds(3));
+      const activityCount = yield* Ref.make(0);
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
         const enqueued = yield* jobService.enqueueReview({
           trigger: "scheduled",
           projectId: PROJECT_ID,
-          idempotencyKey: "timeout-case",
+          idempotencyKey: "long-running-case",
         });
 
-        const failed = yield* waitForTerminal(jobService, enqueued.id, 200);
-        expect(failed?.status).toBe("failed");
-        expect(failed?.error).toContain("timed out");
-
-        const retry1 = yield* jobService.retryRun(enqueued.id);
-        expect(retry1.trigger).toBe("retry");
-        expect(retry1.retryCount).toBe(1);
-
-        yield* waitForTerminal(jobService, retry1.id, 200);
-
-        const retry2 = yield* jobService.retryRun(retry1.id);
-        expect(retry2.retryCount).toBe(2);
-        yield* waitForTerminal(jobService, retry2.id, 200);
-
-        const overLimit = yield* Effect.flip(jobService.retryRun(retry2.id));
-        expect(overLimit.message).toContain("retry limit");
-        expect(yield* Ref.get(dispatchCount)).toBeGreaterThanOrEqual(3);
+        for (let step = 0; step < 10; step += 1) {
+          const current = (yield* jobService.listRuns).find((run) => run.id === enqueued.id);
+          if (current?.status === "running") break;
+          yield* TestClock.adjust(Duration.seconds(1));
+          yield* Effect.yieldNow;
+          yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        }
+        yield* TestClock.adjust(Duration.hours(2));
+        yield* Effect.yieldNow;
+        const current = (yield* jobService.listRuns).find((run) => run.id === enqueued.id);
+        expect(current?.status).toBe("running");
+        expect(current?.completedAt).toBeNull();
       }).pipe(
         Effect.provide(
           jobServiceLayer({
             baseDir,
             runner: {
-              runReview: () =>
-                Ref.updateAndGet(dispatchCount, (count) => count + 1).pipe(
-                  Effect.as({ ...reviewResult, workspaceRoot: baseDir }),
+              runReview: () => Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+              runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+            },
+            getThreadDetailById: () =>
+              Ref.updateAndGet(activityCount, (count) => count + 1).pipe(
+                Effect.map((count) =>
+                  Option.some({
+                    latestTurn: {
+                      turnId: "turn-timeout",
+                      state: "running",
+                      assistantMessageId: null,
+                      requestedAt: "2026-08-10T00:00:00.000Z",
+                      startedAt: "2026-08-10T00:00:00.000Z",
+                      completedAt: null,
+                    },
+                    messages: [],
+                    activities: Array.from({ length: count }, (_, index) => ({ id: index })),
+                  } as never),
                 ),
+              ),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
+
+  it.effect("nudges a settled review once when its structured output is missing", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* makeTempStateDir();
+      const nudgeCount = yield* Ref.make(0);
+
+      yield* Effect.gen(function* () {
+        const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        const enqueued = yield* jobService.enqueueReview({
+          trigger: "scheduled",
+          projectId: PROJECT_ID,
+          idempotencyKey: "correction-case",
+        });
+
+        const terminal = yield* waitForTerminal(jobService, enqueued.id, 200);
+        expect(terminal?.status).toBe("succeeded");
+        expect(yield* Ref.get(nudgeCount)).toBe(1);
+      }).pipe(
+        Effect.provide(
+          jobServiceLayer({
+            baseDir,
+            runner: {
+              runReview: () => Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+              nudgeReview: () => Ref.update(nudgeCount, (count) => count + 1),
+              runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+            },
+            getThreadDetailById: () =>
+              Ref.get(nudgeCount).pipe(
+                Effect.map((nudges) =>
+                  Option.some({
+                    latestTurn: {
+                      turnId: nudges === 0 ? "turn-missing" : "turn-corrected",
+                      state: "completed",
+                      assistantMessageId: ASSISTANT_ID,
+                      requestedAt: "2026-08-10T00:00:00.000Z",
+                      startedAt: "2026-08-10T00:00:00.000Z",
+                      completedAt: "2026-08-10T00:00:10.000Z",
+                    },
+                    messages: [
+                      {
+                        id: ASSISTANT_ID,
+                        role: "assistant",
+                        text:
+                          nudges === 0 ? "Human report without metadata." : sampleFindingMetadata,
+                      },
+                    ],
+                  } as never),
+                ),
+              ),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
+
+  it.effect("fails instead of hanging when an output nudge cannot be dispatched", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* makeTempStateDir();
+
+      yield* Effect.gen(function* () {
+        const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        const enqueued = yield* jobService.enqueueReview({
+          trigger: "scheduled",
+          projectId: PROJECT_ID,
+          idempotencyKey: "correction-dispatch-failure",
+        });
+
+        const terminal = yield* waitForTerminal(jobService, enqueued.id, 200);
+        expect(terminal?.status).toBe("failed");
+        expect(terminal?.error).toContain("missing structured findings metadata");
+      }).pipe(
+        Effect.provide(
+          jobServiceLayer({
+            baseDir,
+            runner: {
+              runReview: () => Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+              nudgeReview: () => Effect.die("nudge dispatch failed"),
               runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
             },
             getThreadDetailById: () =>
               Effect.succeed(
                 Option.some({
                   latestTurn: {
-                    turnId: "turn-timeout",
-                    state: "running",
-                    assistantMessageId: null,
+                    turnId: "turn-missing",
+                    state: "completed",
+                    assistantMessageId: ASSISTANT_ID,
                     requestedAt: "2026-08-10T00:00:00.000Z",
                     startedAt: "2026-08-10T00:00:00.000Z",
-                    completedAt: null,
+                    completedAt: "2026-08-10T00:00:10.000Z",
                   },
-                  messages: [],
+                  messages: [
+                    {
+                      id: ASSISTANT_ID,
+                      role: "assistant",
+                      text: "Human report without metadata.",
+                    },
+                  ],
                 } as never),
               ),
           }),
         ),
         Effect.scoped,
-        Effect.ensuring(
-          Effect.sync(() =>
-            AgentDashboardReviewJobService.__testing.setMonitorTimeoutOverride(null),
-          ),
-        ),
       );
     }),
   );
@@ -529,7 +772,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
     }),
   );
 
-  it.effect("recovers interrupted runs from disk on service start", () =>
+  it.effect("reconnects interrupted runs from disk on service start", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
       const configLayer = ServerConfig.layerTest(process.cwd(), baseDir).pipe(
@@ -565,10 +808,10 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
-        const runs = yield* jobService.listRuns;
-        expect(runs[0]?.id).toBe("run-interrupted");
-        expect(runs[0]?.status).toBe("failed");
-        expect(runs[0]?.error).toContain("restarted");
+        const terminal = yield* waitForTerminal(jobService, "run-interrupted", 200);
+        expect(terminal?.id).toBe("run-interrupted");
+        expect(terminal?.status).toBe("succeeded");
+        expect(terminal?.error).toBeNull();
       }).pipe(
         Effect.provide(
           jobServiceLayer({
@@ -577,7 +820,36 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
               runReview: () => Effect.succeed(reviewResult),
               runRandomReview: Effect.succeed(reviewResult),
             },
-            getThreadDetailById: () => Effect.succeed(Option.none()),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                projects: [
+                  {
+                    id: PROJECT_ID,
+                    title: "t3code",
+                    workspaceRoot: baseDir,
+                    defaultModelSelection: null,
+                    scripts: [],
+                    createdAt: "2026-08-01T00:00:00.000Z",
+                    updatedAt: "2026-08-01T00:00:00.000Z",
+                  },
+                ],
+                threads: [],
+              } as never),
+            getThreadDetailById: () =>
+              Effect.succeed(
+                Option.some({
+                  latestTurn: {
+                    turnId: "turn-resumed",
+                    state: "completed",
+                    assistantMessageId: ASSISTANT_ID,
+                    requestedAt: "2026-08-10T00:00:00.000Z",
+                    startedAt: "2026-08-10T00:00:00.000Z",
+                    completedAt: "2026-08-10T00:00:10.000Z",
+                  },
+                  messages: [{ id: ASSISTANT_ID, role: "assistant", text: sampleFindingMetadata }],
+                  activities: [],
+                } as never),
+              ),
           }),
         ),
         Effect.scoped,

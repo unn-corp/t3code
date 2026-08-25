@@ -669,6 +669,59 @@ export const DiscordBridgeSettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type DiscordBridgeSettings = typeof DiscordBridgeSettings.Type;
 
+/**
+ * Opt-in policy for turning ready Agent Dashboard findings into isolated
+ * implementation sessions. The server owns this setting because launches
+ * must continue without an open dashboard and must not race across clients.
+ */
+export const ContinuousImprovementSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  maxRiskTier: Schema.Literals(["low", "medium", "high", "critical"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("medium")),
+  ),
+  minimumConfidence: Schema.Literals(["low", "medium", "high"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("medium")),
+  ),
+  modelSelection: ModelSelection.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "max" }],
+      }),
+    ),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type ContinuousImprovementSettings = typeof ContinuousImprovementSettings.Type;
+
+export const MIN_REPOSITORY_REVIEW_INTERVAL_MINUTES = 15;
+export const MAX_REPOSITORY_REVIEW_INTERVAL_MINUTES = 24 * 60;
+export const RepositoryReviewIntervalMinutes = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_REPOSITORY_REVIEW_INTERVAL_MINUTES,
+    maximum: MAX_REPOSITORY_REVIEW_INTERVAL_MINUTES,
+  }),
+);
+export type RepositoryReviewIntervalMinutes = typeof RepositoryReviewIntervalMinutes.Type;
+
+/** Model policy for the scheduled, read-only repository review automation. */
+export const RepositoryReviewSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  intervalMinutes: RepositoryReviewIntervalMinutes.pipe(
+    Schema.withDecodingDefault(Effect.succeed(120)),
+  ),
+  modelSelection: ModelSelection.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "xhigh" }],
+      }),
+    ),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type RepositoryReviewSettings = typeof RepositoryReviewSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
   // `enableAssistantStreaming`): decoding drops the old key, so everyone,
@@ -757,6 +810,8 @@ export const ServerSettings = Schema.Struct({
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   discordBridge: DiscordBridgeSettings,
+  continuousImprovement: ContinuousImprovementSettings,
+  repositoryReview: RepositoryReviewSettings,
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -945,6 +1000,21 @@ export const ServerSettingsPatch = Schema.Struct({
       publicOrigin: Schema.optionalKey(TrimmedString),
       projectAllowlist: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
       mirrorActivity: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
+  continuousImprovement: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      maxRiskTier: Schema.optionalKey(Schema.Literals(["low", "medium", "high", "critical"])),
+      minimumConfidence: Schema.optionalKey(Schema.Literals(["low", "medium", "high"])),
+      modelSelection: Schema.optionalKey(ModelSelection),
+    }),
+  ),
+  repositoryReview: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      intervalMinutes: Schema.optionalKey(RepositoryReviewIntervalMinutes),
+      modelSelection: Schema.optionalKey(ModelSelection),
     }),
   ),
   providers: Schema.optionalKey(

@@ -25,6 +25,7 @@ import { Route as SettingsIntegrationsRouteImport } from './routes/settings.inte
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
+import { Route as SettingsAutomationRouteImport } from './routes/settings.automation'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
@@ -33,6 +34,7 @@ import { Route as AgentDashboardSuggestionsRouteImport } from './routes/agent-da
 import { Route as AgentDashboardSecurityRouteImport } from './routes/agent-dashboard.security'
 import { Route as AgentDashboardRunsRouteImport } from './routes/agent-dashboard.runs'
 import { Route as AgentDashboardResearchRouteImport } from './routes/agent-dashboard.research'
+import { Route as AgentDashboardFindingsRouteImport } from './routes/agent-dashboard.findings'
 import { Route as AgentDashboardFeedRouteImport } from './routes/agent-dashboard.feed'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
@@ -117,6 +119,11 @@ const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   path: '/connections',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsAutomationRoute = SettingsAutomationRouteImport.update({
+  id: '/automation',
+  path: '/automation',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
@@ -158,6 +165,11 @@ const AgentDashboardResearchRoute = AgentDashboardResearchRouteImport.update({
   path: '/research',
   getParentRoute: () => AgentDashboardRoute,
 } as any)
+const AgentDashboardFindingsRoute = AgentDashboardFindingsRouteImport.update({
+  id: '/findings',
+  path: '/findings',
+  getParentRoute: () => AgentDashboardRoute,
+} as any)
 const AgentDashboardFeedRoute = AgentDashboardFeedRouteImport.update({
   id: '/feed',
   path: '/feed',
@@ -190,6 +202,7 @@ export interface FileRoutesByFullPath {
   '/usage': typeof UsageRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/agent-dashboard/feed': typeof AgentDashboardFeedRoute
+  '/agent-dashboard/findings': typeof AgentDashboardFindingsRoute
   '/agent-dashboard/research': typeof AgentDashboardResearchRoute
   '/agent-dashboard/runs': typeof AgentDashboardRunsRoute
   '/agent-dashboard/security': typeof AgentDashboardSecurityRoute
@@ -198,6 +211,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/automation': typeof SettingsAutomationRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -217,6 +231,7 @@ export interface FileRoutesByTo {
   '/usage': typeof UsageRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/agent-dashboard/feed': typeof AgentDashboardFeedRoute
+  '/agent-dashboard/findings': typeof AgentDashboardFindingsRoute
   '/agent-dashboard/research': typeof AgentDashboardResearchRoute
   '/agent-dashboard/runs': typeof AgentDashboardRunsRoute
   '/agent-dashboard/security': typeof AgentDashboardSecurityRoute
@@ -225,6 +240,7 @@ export interface FileRoutesByTo {
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/automation': typeof SettingsAutomationRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -248,6 +264,7 @@ export interface FileRoutesById {
   '/usage': typeof UsageRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/agent-dashboard/feed': typeof AgentDashboardFeedRoute
+  '/agent-dashboard/findings': typeof AgentDashboardFindingsRoute
   '/agent-dashboard/research': typeof AgentDashboardResearchRoute
   '/agent-dashboard/runs': typeof AgentDashboardRunsRoute
   '/agent-dashboard/security': typeof AgentDashboardSecurityRoute
@@ -256,6 +273,7 @@ export interface FileRoutesById {
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/automation': typeof SettingsAutomationRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -280,6 +298,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/pull-requests'
     | '/agent-dashboard/feed'
+    | '/agent-dashboard/findings'
     | '/agent-dashboard/research'
     | '/agent-dashboard/runs'
     | '/agent-dashboard/security'
@@ -288,6 +307,7 @@ export interface FileRouteTypes {
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/automation'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -307,6 +327,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/pull-requests'
     | '/agent-dashboard/feed'
+    | '/agent-dashboard/findings'
     | '/agent-dashboard/research'
     | '/agent-dashboard/runs'
     | '/agent-dashboard/security'
@@ -315,6 +336,7 @@ export interface FileRouteTypes {
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/automation'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -337,6 +359,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/_chat/pull-requests'
     | '/agent-dashboard/feed'
+    | '/agent-dashboard/findings'
     | '/agent-dashboard/research'
     | '/agent-dashboard/runs'
     | '/agent-dashboard/security'
@@ -345,6 +368,7 @@ export interface FileRouteTypes {
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/automation'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -484,6 +508,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectionsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/automation': {
+      id: '/settings/automation'
+      path: '/automation'
+      fullPath: '/settings/automation'
+      preLoaderRoute: typeof SettingsAutomationRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/archived': {
       id: '/settings/archived'
       path: '/archived'
@@ -540,6 +571,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentDashboardResearchRouteImport
       parentRoute: typeof AgentDashboardRoute
     }
+    '/agent-dashboard/findings': {
+      id: '/agent-dashboard/findings'
+      path: '/findings'
+      fullPath: '/agent-dashboard/findings'
+      preLoaderRoute: typeof AgentDashboardFindingsRouteImport
+      parentRoute: typeof AgentDashboardRoute
+    }
     '/agent-dashboard/feed': {
       id: '/agent-dashboard/feed'
       path: '/feed'
@@ -589,6 +627,7 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface AgentDashboardRouteChildren {
   AgentDashboardFeedRoute: typeof AgentDashboardFeedRoute
+  AgentDashboardFindingsRoute: typeof AgentDashboardFindingsRoute
   AgentDashboardResearchRoute: typeof AgentDashboardResearchRoute
   AgentDashboardRunsRoute: typeof AgentDashboardRunsRoute
   AgentDashboardSecurityRoute: typeof AgentDashboardSecurityRoute
@@ -598,6 +637,7 @@ interface AgentDashboardRouteChildren {
 
 const AgentDashboardRouteChildren: AgentDashboardRouteChildren = {
   AgentDashboardFeedRoute: AgentDashboardFeedRoute,
+  AgentDashboardFindingsRoute: AgentDashboardFindingsRoute,
   AgentDashboardResearchRoute: AgentDashboardResearchRoute,
   AgentDashboardRunsRoute: AgentDashboardRunsRoute,
   AgentDashboardSecurityRoute: AgentDashboardSecurityRoute,
@@ -612,6 +652,7 @@ const AgentDashboardRouteWithChildren = AgentDashboardRoute._addFileChildren(
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
+  SettingsAutomationRoute: typeof SettingsAutomationRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
@@ -624,6 +665,7 @@ interface SettingsRouteChildren {
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
+  SettingsAutomationRoute: SettingsAutomationRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,

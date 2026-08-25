@@ -2,11 +2,9 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ActivityIcon,
   ChevronRightIcon,
-  FlaskConicalIcon,
   LayoutDashboardIcon,
-  LightbulbIcon,
+  ListFilterIcon,
   ListChecksIcon,
-  ShieldCheckIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
@@ -25,9 +23,7 @@ import {
 type AgentDashboardPath =
   | "/agent-dashboard"
   | "/agent-dashboard/feed"
-  | "/agent-dashboard/research"
-  | "/agent-dashboard/suggestions"
-  | "/agent-dashboard/security"
+  | "/agent-dashboard/findings"
   | "/agent-dashboard/runs";
 
 type AgentDashboardNavItem = {
@@ -39,9 +35,7 @@ type AgentDashboardNavItem = {
 const AGENT_DASHBOARD_NAV_ITEMS = [
   { label: "Overview", to: "/agent-dashboard", icon: LayoutDashboardIcon },
   { label: "Agent Feed", to: "/agent-dashboard/feed", icon: ActivityIcon },
-  { label: "Research", to: "/agent-dashboard/research", icon: FlaskConicalIcon },
-  { label: "Security", to: "/agent-dashboard/security", icon: ShieldCheckIcon },
-  { label: "Suggestions", to: "/agent-dashboard/suggestions", icon: LightbulbIcon },
+  { label: "Findings", to: "/agent-dashboard/findings", icon: ListFilterIcon },
   { label: "Runs", to: "/agent-dashboard/runs", icon: ListChecksIcon },
 ] as const satisfies readonly AgentDashboardNavItem[];
 

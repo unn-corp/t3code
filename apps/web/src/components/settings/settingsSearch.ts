@@ -2,6 +2,7 @@ import { isElectron } from "~/env";
 
 export type SettingsPath =
   | "/settings/general"
+  | "/settings/automation"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
@@ -26,6 +27,7 @@ export interface SettingsSearchItem {
  */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
+  "/settings/automation": "Automation",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
@@ -143,7 +145,47 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "provider-update-checks",
     title: "Provider update checks",
-    to: "/settings/general",
+    to: "/settings/automation",
+  },
+  {
+    id: "continuous-improvement",
+    title: "Continuous Improvement Mode",
+    to: "/settings/automation",
+  },
+  {
+    id: "continuous-improvement-model",
+    title: "Implementation agent model",
+    to: "/settings/automation",
+  },
+  {
+    id: "continuous-improvement-max-risk",
+    title: "Maximum automation risk",
+    to: "/settings/automation",
+  },
+  {
+    id: "continuous-improvement-confidence",
+    title: "Minimum automation confidence",
+    to: "/settings/automation",
+  },
+  {
+    id: "repository-review",
+    title: "Scheduled discovery and qualification",
+    to: "/settings/automation",
+  },
+  {
+    id: "repository-review-interval",
+    title: "Qualification cadence",
+    to: "/settings/automation",
+  },
+  {
+    id: "repository-review-model",
+    title: "Discovery and qualification model",
+    to: "/settings/automation",
+  },
+  {
+    id: "background-activity",
+    title: "Background activity",
+    to: "/settings/automation",
   },
   {
     id: "new-threads",

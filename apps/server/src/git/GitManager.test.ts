@@ -518,6 +518,8 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
               .filter((entry): entry is GitHubCli.GitHubPullRequestSummary => entry !== null),
           ),
         ),
+      listProjectPullRequests: () => Effect.die("Unexpected project pull request list"),
+      mergePullRequest: () => Effect.die("Unexpected pull request merge"),
       createPullRequest: (input) =>
         execute({
           cwd: input.cwd,

@@ -54,6 +54,19 @@ export const agentDashboardEnvironment = {
     label: "environment-data:agent-dashboard:collect",
     tag: WS_METHODS.agentDashboardCollect,
   }),
+  addResearchWatchItem: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:agent-dashboard:add-research-watch-item",
+    tag: WS_METHODS.agentDashboardAddResearchWatchItem,
+  }),
+  projectPullRequests: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:agent-dashboard:project-pull-requests",
+    tag: WS_METHODS.agentDashboardListProjectPullRequests,
+    staleTimeMs: 15_000,
+  }),
+  mergeProjectPullRequest: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:agent-dashboard:merge-project-pull-request",
+    tag: WS_METHODS.agentDashboardMergeProjectPullRequest,
+  }),
 };
 
 /** Shared native dashboard snapshot query for the dashboard child pages. */

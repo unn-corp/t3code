@@ -31,6 +31,140 @@ afterEach(() => {
 });
 
 describe("GitHubCli.layer", () => {
+  it.effect("merges only the reviewed pull request head commit", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      const gh = yield* GitHubCli.GitHubCli;
+
+      yield* gh.mergePullRequest({
+        cwd: "/repo",
+        repository: "octocat/codething-mvp",
+        number: 42,
+        expectedHeadOid: "abcdef123456abcdef123456abcdef123456abcd",
+        method: "squash",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "pr",
+          "merge",
+          "42",
+          "--squash",
+          "--match-head-commit",
+          "abcdef123456abcdef123456abcdef123456abcd",
+          "--repo",
+          "octocat/codething-mvp",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect(
+    "uses another authenticated account when the active account cannot access a repository",
+    () =>
+      Effect.gen(function* () {
+        const repositoryAccessFailure = new VcsProcessExitError({
+          operation: "GitHubCli.execute",
+          command: "gh",
+          cwd: "/repo",
+          exitCode: 1,
+          failureKind: "repository-not-found",
+          detail: "GitHub repository not found or inaccessible.",
+        });
+        mockRun
+          .mockReturnValueOnce(Effect.fail(repositoryAccessFailure))
+          .mockReturnValueOnce(
+            Effect.succeed(
+              processOutput(
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
+                JSON.stringify({
+                  hosts: {
+                    "github.com": [
+                      {
+                        state: "success",
+                        active: true,
+                        host: "github.com",
+                        login: "Quad-Kamatu",
+                      },
+                      {
+                        state: "success",
+                        active: false,
+                        host: "github.com",
+                        login: "AnotherAccount",
+                      },
+                      {
+                        state: "success",
+                        active: false,
+                        host: "github.com",
+                        login: "OneDayDance",
+                      },
+                    ],
+                  },
+                }),
+              ),
+            ),
+          )
+          .mockReturnValueOnce(Effect.succeed(processOutput("test-token\n")))
+          .mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+
+        const gh = yield* GitHubCli.GitHubCli;
+        const result = yield* gh.listProjectPullRequests({
+          cwd: "/repo",
+          repository: "OneDayDance/motion-by-degrees",
+        });
+
+        assert.deepStrictEqual(result, []);
+        expect(mockRun).toHaveBeenCalledTimes(4);
+        expect(mockRun).toHaveBeenNthCalledWith(1, {
+          operation: "GitHubCli.execute",
+          command: "gh",
+          args: [
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "50",
+            "--json",
+            "number,title,url,baseRefName,headRefName,headRefOid,isDraft,mergeStateStatus,reviewDecision,statusCheckRollup,author,updatedAt",
+            "--repo",
+            "OneDayDance/motion-by-degrees",
+          ],
+          cwd: "/repo",
+          timeoutMs: 30_000,
+        });
+        expect(mockRun).toHaveBeenNthCalledWith(2, {
+          operation: "GitHubCli.execute",
+          command: "gh",
+          args: ["auth", "status", "--hostname", "github.com", "--json", "hosts"],
+          cwd: "/repo",
+          timeoutMs: 30_000,
+        });
+        expect(mockRun).toHaveBeenNthCalledWith(3, {
+          operation: "GitHubCli.execute",
+          command: "gh",
+          args: ["auth", "token", "--hostname", "github.com", "--user", "OneDayDance"],
+          cwd: "/repo",
+          timeoutMs: 30_000,
+        });
+        expect(mockRun).toHaveBeenNthCalledWith(4, {
+          operation: "GitHubCli.execute",
+          command: "gh",
+          args: expect.not.arrayContaining(["test-token"]),
+          cwd: "/repo",
+          env: {
+            GH_HOST: "github.com",
+            GH_TOKEN: "test-token",
+          },
+          timeoutMs: 30_000,
+        });
+      }).pipe(Effect.provide(layer)),
+  );
+
   it("does not classify a missing cwd as an unavailable gh executable", () => {
     const context = { command: "gh", cwd: "/repo" } as const;
     const missingCwd = new VcsProcessSpawnError({

@@ -2,11 +2,8 @@ import {
   ArchiveIcon,
   ArchiveX,
   ChevronRightIcon,
-  InfoIcon,
   LoaderIcon,
   PlayIcon,
-  PlusIcon,
-  RefreshCwIcon,
   SettingsIcon,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
@@ -21,6 +18,7 @@ import {
   AGENT_NOTIFICATION_SOUND_IDS,
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
+  type ModelSelection,
   ProviderDriverKind,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
@@ -562,6 +560,15 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
         : []),
+      ...(!Equal.equals(
+        settings.continuousImprovement,
+        DEFAULT_UNIFIED_SETTINGS.continuousImprovement,
+      )
+        ? ["Continuous Improvement Mode"]
+        : []),
+      ...(!Equal.equals(settings.repositoryReview, DEFAULT_UNIFIED_SETTINGS.repositoryReview)
+        ? ["Repository review model"]
+        : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -619,6 +626,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.dictationEndKeybinds,
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
+      settings.continuousImprovement,
+      settings.repositoryReview,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
@@ -709,6 +718,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      continuousImprovement: DEFAULT_UNIFIED_SETTINGS.continuousImprovement,
+      repositoryReview: DEFAULT_UNIFIED_SETTINGS.repositoryReview,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -2271,6 +2282,505 @@ function LegacyFeaturesSection() {
   );
 }
 
+function AutomationModelControl({
+  selection,
+  ariaLabel,
+  onChange,
+}: {
+  readonly selection: ModelSelection;
+  readonly ariaLabel: string;
+  readonly onChange: (selection: ModelSelection) => void;
+}) {
+  const settings = usePrimarySettings();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const instanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+  );
+  const instanceEntry = instanceEntries.find((entry) => entry.instanceId === selection.instanceId);
+  const provider = instanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    serverProviders,
+    selection.instanceId,
+    selection.model,
+  );
+
+  return (
+    <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-1.5 sm:w-auto">
+      <ProviderModelPicker
+        activeInstanceId={selection.instanceId}
+        model={selection.model}
+        lockedProvider={null}
+        instanceEntries={instanceEntries}
+        modelOptionsByInstance={modelOptionsByInstance}
+        triggerVariant="outline"
+        triggerClassName="min-w-0 max-w-full shrink-0 text-foreground/90 hover:text-foreground"
+        triggerAriaLabel={`${ariaLabel} provider account and model`}
+        onInstanceModelChange={(instanceId, model) => {
+          const options =
+            instanceId === selection.instanceId && model === selection.model
+              ? selection.options
+              : undefined;
+          onChange(createModelSelection(instanceId, model, options));
+        }}
+      />
+      <TraitsPicker
+        provider={provider}
+        models={instanceEntry?.models ?? []}
+        model={selection.model}
+        prompt=""
+        onPromptChange={() => {}}
+        modelOptions={selection.options}
+        allowPromptInjectedEffort={false}
+        planModeEnabled={settings.planModeEnabled}
+        triggerVariant="outline"
+        triggerClassName="min-w-0 max-w-full shrink-0 text-foreground/90 hover:text-foreground"
+        onModelOptionsChange={(options) =>
+          onChange(createModelSelection(selection.instanceId, selection.model, options))
+        }
+      />
+    </div>
+  );
+}
+
+export function AutomationSettingsPanel() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
+  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
+  const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
+  const backgroundActivityDescription =
+    backgroundActivityProfileOption === "advanced"
+      ? `${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Current shared policy: ${
+          BACKGROUND_ACTIVITY_PROFILE_LABELS[activeBackgroundActivityProfile]
+        }.`
+      : BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS[resolvedBackgroundActivity.profile];
+  const canResetBackgroundActivity = !Equal.equals(
+    settings.backgroundActivity,
+    DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+  );
+  const continuousModelDirty = !Equal.equals(
+    settings.continuousImprovement.modelSelection,
+    DEFAULT_UNIFIED_SETTINGS.continuousImprovement.modelSelection,
+  );
+  const repositoryReviewModelDirty = !Equal.equals(
+    settings.repositoryReview.modelSelection,
+    DEFAULT_UNIFIED_SETTINGS.repositoryReview.modelSelection,
+  );
+  const continuousRiskDirty =
+    settings.continuousImprovement.maxRiskTier !==
+    DEFAULT_UNIFIED_SETTINGS.continuousImprovement.maxRiskTier;
+  const continuousConfidenceDirty =
+    settings.continuousImprovement.minimumConfidence !==
+    DEFAULT_UNIFIED_SETTINGS.continuousImprovement.minimumConfidence;
+  const repositoryReviewEnabledDirty =
+    settings.repositoryReview.enabled !== DEFAULT_UNIFIED_SETTINGS.repositoryReview.enabled;
+  const repositoryReviewIntervalDirty =
+    settings.repositoryReview.intervalMinutes !==
+    DEFAULT_UNIFIED_SETTINGS.repositoryReview.intervalMinutes;
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Agent automations">
+        <SettingsRow
+          {...searchableSetting("continuous-improvement")}
+          description="Continuously starts one implementation agent at a time for open, ready-to-act findings. Each run works in an isolated branch and must open a pull request against the repository's default branch. T3 never merges it automatically."
+          resetAction={
+            settings.continuousImprovement.enabled !==
+            DEFAULT_UNIFIED_SETTINGS.continuousImprovement.enabled ? (
+              <SettingResetButton
+                label="continuous improvement"
+                onClick={() =>
+                  updateSettings({
+                    continuousImprovement: {
+                      ...settings.continuousImprovement,
+                      enabled: DEFAULT_UNIFIED_SETTINGS.continuousImprovement.enabled,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.continuousImprovement.enabled}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  continuousImprovement: {
+                    ...settings.continuousImprovement,
+                    enabled: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Continuous Improvement Mode"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("continuous-improvement-model")}
+          className="bg-muted/20 sm:pl-9"
+          description="Provider account, model, and effort used when Continuous Improvement starts an implementation agent."
+          resetAction={
+            continuousModelDirty ? (
+              <SettingResetButton
+                label="implementation agent model"
+                onClick={() =>
+                  updateSettings({
+                    continuousImprovement: {
+                      ...settings.continuousImprovement,
+                      modelSelection: DEFAULT_UNIFIED_SETTINGS.continuousImprovement.modelSelection,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <AutomationModelControl
+              selection={settings.continuousImprovement.modelSelection}
+              ariaLabel="Implementation agent"
+              onChange={(modelSelection) =>
+                updateSettings({
+                  continuousImprovement: {
+                    ...settings.continuousImprovement,
+                    modelSelection,
+                  },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("continuous-improvement-max-risk")}
+          className="bg-muted/20 sm:pl-9"
+          description="Highest qualified risk tier that Continuous Improvement may start without approval."
+          resetAction={
+            continuousRiskDirty ? (
+              <SettingResetButton
+                label="maximum automation risk"
+                onClick={() =>
+                  updateSettings({
+                    continuousImprovement: {
+                      ...settings.continuousImprovement,
+                      maxRiskTier: DEFAULT_UNIFIED_SETTINGS.continuousImprovement.maxRiskTier,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.continuousImprovement.maxRiskTier}
+              onValueChange={(value) => {
+                if (
+                  value !== "low" &&
+                  value !== "medium" &&
+                  value !== "high" &&
+                  value !== "critical"
+                ) {
+                  return;
+                }
+                updateSettings({
+                  continuousImprovement: {
+                    ...settings.continuousImprovement,
+                    maxRiskTier: value,
+                  },
+                });
+              }}
+            >
+              <SelectTrigger aria-label="Maximum automation risk" className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup alignItemWithTrigger={false}>
+                <SelectItem value="low">Low</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+                <SelectItem value="critical">Critical</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("continuous-improvement-confidence")}
+          className="bg-muted/20 sm:pl-9"
+          description="Minimum evidence confidence required before Continuous Improvement may start work."
+          resetAction={
+            continuousConfidenceDirty ? (
+              <SettingResetButton
+                label="minimum automation confidence"
+                onClick={() =>
+                  updateSettings({
+                    continuousImprovement: {
+                      ...settings.continuousImprovement,
+                      minimumConfidence:
+                        DEFAULT_UNIFIED_SETTINGS.continuousImprovement.minimumConfidence,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.continuousImprovement.minimumConfidence}
+              onValueChange={(value) => {
+                if (value !== "low" && value !== "medium" && value !== "high") return;
+                updateSettings({
+                  continuousImprovement: {
+                    ...settings.continuousImprovement,
+                    minimumConfidence: value,
+                  },
+                });
+              }}
+            >
+              <SelectTrigger aria-label="Minimum automation confidence" className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup alignItemWithTrigger={false}>
+                <SelectItem value="low">Low</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("repository-review")}
+          description="Periodically inspects repositories and qualifies new or changed findings into implementation-ready work."
+          resetAction={
+            repositoryReviewEnabledDirty ? (
+              <SettingResetButton
+                label="scheduled qualification"
+                onClick={() =>
+                  updateSettings({
+                    repositoryReview: {
+                      ...settings.repositoryReview,
+                      enabled: DEFAULT_UNIFIED_SETTINGS.repositoryReview.enabled,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.repositoryReview.enabled}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  repositoryReview: {
+                    ...settings.repositoryReview,
+                    enabled: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Scheduled discovery and qualification"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("repository-review-interval")}
+          className="bg-muted/20 sm:pl-9"
+          description="How often T3 runs the read-only discovery and qualification pass while the app is open."
+          resetAction={
+            repositoryReviewIntervalDirty ? (
+              <SettingResetButton
+                label="qualification cadence"
+                onClick={() =>
+                  updateSettings({
+                    repositoryReview: {
+                      ...settings.repositoryReview,
+                      intervalMinutes: DEFAULT_UNIFIED_SETTINGS.repositoryReview.intervalMinutes,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.repositoryReview.intervalMinutes)}
+              onValueChange={(value) => {
+                const intervalMinutes = Number(value);
+                if (!Number.isInteger(intervalMinutes)) return;
+                updateSettings({
+                  repositoryReview: {
+                    ...settings.repositoryReview,
+                    intervalMinutes,
+                  },
+                });
+              }}
+            >
+              <SelectTrigger aria-label="Qualification cadence" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup alignItemWithTrigger={false}>
+                <SelectItem value="15">Every 15 minutes</SelectItem>
+                <SelectItem value="30">Every 30 minutes</SelectItem>
+                <SelectItem value="60">Every hour</SelectItem>
+                <SelectItem value="120">Every 2 hours</SelectItem>
+                <SelectItem value="360">Every 6 hours</SelectItem>
+                <SelectItem value="720">Every 12 hours</SelectItem>
+                <SelectItem value="1440">Every day</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("repository-review-model")}
+          className="bg-muted/20 sm:pl-9"
+          description="Provider account, model, and effort used for discovery and qualification."
+          resetAction={
+            repositoryReviewModelDirty ? (
+              <SettingResetButton
+                label="repository review model"
+                onClick={() =>
+                  updateSettings({
+                    repositoryReview: {
+                      ...settings.repositoryReview,
+                      modelSelection: DEFAULT_UNIFIED_SETTINGS.repositoryReview.modelSelection,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <AutomationModelControl
+              selection={settings.repositoryReview.modelSelection}
+              ariaLabel="Discovery and qualification"
+              onChange={(modelSelection) =>
+                updateSettings({
+                  repositoryReview: { ...settings.repositoryReview, modelSelection },
+                })
+              }
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Background services">
+        <SettingsRow
+          {...searchableSetting("provider-update-checks")}
+          description="Check installed provider CLIs for newer available versions."
+          resetAction={
+            settings.enableProviderUpdateChecks !==
+            DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
+              <SettingResetButton
+                label="provider update checks"
+                onClick={() =>
+                  updateSettings({
+                    enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.enableProviderUpdateChecks}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
+              }
+              aria-label="Check provider versions"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("background-activity")}
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              Background activity
+              <PolicyTooltip>
+                This shared policy gates background work such as Git refreshes and provider health
+                probes after their individual intervals elapse.
+              </PolicyTooltip>
+            </span>
+          }
+          description={backgroundActivityDescription}
+          resetAction={
+            canResetBackgroundActivity ? (
+              <SettingResetButton
+                label="background activity"
+                onClick={() => updateSettings(resetBackgroundActivitySettings())}
+              />
+            ) : null
+          }
+          control={
+            <>
+              <Select
+                value={backgroundActivityProfileOption}
+                onValueChange={(value) => {
+                  if (value === "advanced") {
+                    setBackgroundActivityDialogOpen(true);
+                    return;
+                  }
+                  if (
+                    value === "balanced" ||
+                    value === "performance" ||
+                    value === "battery-saver"
+                  ) {
+                    updateSettings(backgroundActivityProfileSettings(value));
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-40" aria-label="Background activity profile">
+                  <SelectValue>
+                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[backgroundActivityProfileOption]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="balanced">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="performance">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="battery-saver">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="advanced">
+                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+              {backgroundActivityProfileOption === "advanced" ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        aria-label="Configure advanced background activity"
+                        onClick={() => setBackgroundActivityDialogOpen(true)}
+                      >
+                        <SettingsIcon className="size-4" />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top">Configure background activity</TooltipPopup>
+                </Tooltip>
+              ) : null}
+              <BackgroundActivityAdvancedDialog
+                open={backgroundActivityDialogOpen}
+                onOpenChange={setBackgroundActivityDialogOpen}
+              />
+            </>
+          }
+        />
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -2328,7 +2838,6 @@ export function GeneralSettingsPanel() {
     },
     [notificationPreferences, updateClientSettings],
   );
-  const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -2363,19 +2872,6 @@ export function GeneralSettingsPanel() {
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
-  );
-  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
-  const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
-  const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
-  const backgroundActivityDescription =
-    backgroundActivityProfileOption === "advanced"
-      ? `${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Current shared policy: ${
-          BACKGROUND_ACTIVITY_PROFILE_LABELS[activeBackgroundActivityProfile]
-        }.`
-      : BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS[resolvedBackgroundActivity.profile];
-  const canResetBackgroundActivity = !Equal.equals(
-    settings.backgroundActivity,
-    DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
   );
 
   return (
@@ -2615,115 +3111,6 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Hide whitespace changes by default"
             />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("provider-update-checks")}
-          description="Check installed provider CLIs for newer available versions."
-          resetAction={
-            settings.enableProviderUpdateChecks !==
-            DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
-              <SettingResetButton
-                label="provider update checks"
-                onClick={() =>
-                  updateSettings({
-                    enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.enableProviderUpdateChecks}
-              onCheckedChange={(checked) =>
-                updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
-              }
-              aria-label="Check provider versions"
-            />
-          }
-        />
-
-        <SettingsRow
-          title={
-            <span className="inline-flex items-center gap-1.5">
-              Background activity
-              <PolicyTooltip>
-                This shared policy gates background work such as Git refreshes and provider health
-                probes after their individual intervals elapse.
-              </PolicyTooltip>
-            </span>
-          }
-          description={backgroundActivityDescription}
-          resetAction={
-            canResetBackgroundActivity ? (
-              <SettingResetButton
-                label="background activity"
-                onClick={() => updateSettings(resetBackgroundActivitySettings())}
-              />
-            ) : null
-          }
-          control={
-            <>
-              <Select
-                value={backgroundActivityProfileOption}
-                onValueChange={(value) => {
-                  if (value === "advanced") {
-                    setBackgroundActivityDialogOpen(true);
-                    return;
-                  }
-                  if (
-                    value === "balanced" ||
-                    value === "performance" ||
-                    value === "battery-saver"
-                  ) {
-                    updateSettings(backgroundActivityProfileSettings(value));
-                  }
-                }}
-              >
-                <SelectTrigger className="w-full sm:w-40" aria-label="Background activity profile">
-                  <SelectValue>
-                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[backgroundActivityProfileOption]}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="balanced">
-                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="performance">
-                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="battery-saver">
-                    {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="advanced">
-                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced}
-                  </SelectItem>
-                </SelectPopup>
-              </Select>
-              {backgroundActivityProfileOption === "advanced" ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="icon-sm"
-                        variant="outline"
-                        aria-label="Configure advanced background activity"
-                        onClick={() => setBackgroundActivityDialogOpen(true)}
-                      >
-                        <SettingsIcon className="size-4" />
-                      </Button>
-                    }
-                  />
-                  <TooltipPopup side="top">Configure background activity</TooltipPopup>
-                </Tooltip>
-              ) : null}
-              <BackgroundActivityAdvancedDialog
-                open={backgroundActivityDialogOpen}
-                onOpenChange={setBackgroundActivityDialogOpen}
-              />
-            </>
           }
         />
 
