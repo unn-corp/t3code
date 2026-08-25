@@ -7,8 +7,10 @@ import {
   ThreadId,
   type AgentDashboardAutomationRun,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -24,6 +26,7 @@ import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
 import * as AgentDashboardReviewJobService from "./AgentDashboardReviewJobService.ts";
 import {
   AgentDashboardReviewRunner,
+  AgentDashboardReviewRunnerError,
   type AgentDashboardReviewRunResult,
 } from "./AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewScheduler from "./AgentDashboardReviewScheduler.ts";
@@ -251,8 +254,9 @@ const jobServiceLayer = (input: {
   readonly baseDir: string;
   readonly runner: AgentDashboardReviewRunner["Service"];
   readonly getThreadDetailById: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getThreadDetailById"];
-}) =>
-  AgentDashboardReviewJobService.layerWithoutDefaults.pipe(
+  readonly history?: AgentDashboardRunHistory.AgentDashboardRunHistory["Service"];
+}) => {
+  const serviceLayer = AgentDashboardReviewJobService.layerWithoutDefaults.pipe(
     Layer.provide(Layer.succeed(AgentDashboardReviewRunner, input.runner)),
     Layer.provide(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
@@ -260,11 +264,22 @@ const jobServiceLayer = (input: {
         getThreadDetailById: input.getThreadDetailById,
       }),
     ),
-    Layer.provide(AgentDashboardRunHistory.layer),
+  );
+
+  const serviceWithHistory = input.history
+    ? serviceLayer.pipe(
+        Layer.provide(
+          Layer.succeed(AgentDashboardRunHistory.AgentDashboardRunHistory, input.history),
+        ),
+      )
+    : serviceLayer.pipe(Layer.provide(AgentDashboardRunHistory.layer));
+
+  return serviceWithHistory.pipe(
     Layer.provide(ServerConfig.layerTest(process.cwd(), input.baseDir)),
     Layer.provideMerge(TestClock.layer()),
     Layer.provideMerge(NodeServices.layer),
   );
+};
 
 describe("AgentDashboardReviewJobService lifecycle", () => {
   it.effect("dispatches through ingestion and succeeds only after findings persist", () =>
@@ -369,6 +384,94 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
                   return { ...reviewResult, workspaceRoot: baseDir };
                 }),
               runRandomReview: Effect.succeed(reviewResult),
+            },
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
+
+  it.effect("deduplicates overlapping enqueue requests during persistence", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* makeTempStateDir();
+      const persistedRuns = yield* Ref.make<ReadonlyArray<AgentDashboardAutomationRun>>([]);
+      const upsertCount = yield* Ref.make(0);
+      const firstUpsertStarted = yield* Deferred.make<void>();
+      const releaseFirstUpsert = yield* Deferred.make<void>();
+      const releaseDispatch = yield* Deferred.make<void>();
+      const dispatchCount = yield* Ref.make(0);
+      const dispatchFailure = new AgentDashboardReviewRunnerError({
+        operation: "test dispatch",
+        message: "test dispatch failure",
+      });
+
+      const history = {
+        list: Ref.get(persistedRuns),
+        get: (id: string) =>
+          Ref.get(persistedRuns).pipe(
+            Effect.map((runs) => runs.find((run) => run.id === id) ?? null),
+          ),
+        upsert: (run: AgentDashboardAutomationRun) =>
+          Effect.gen(function* () {
+            const count = yield* Ref.updateAndGet(upsertCount, (value) => value + 1);
+            if (count === 1) {
+              yield* Deferred.succeed(firstUpsertStarted, undefined);
+              yield* Deferred.await(releaseFirstUpsert);
+            }
+            yield* Ref.update(persistedRuns, (runs) => [
+              run,
+              ...runs.filter((item) => item.id !== run.id),
+            ]);
+            return run;
+          }),
+        replaceAll: (runs: ReadonlyArray<AgentDashboardAutomationRun>) =>
+          Ref.set(persistedRuns, runs).pipe(Effect.as(runs)),
+      } satisfies AgentDashboardRunHistory.AgentDashboardRunHistory["Service"];
+
+      yield* Effect.gen(function* () {
+        const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        const firstFiber = yield* jobService
+          .enqueueReview({
+            trigger: "manual",
+            idempotencyKey: "manual:overlap",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* Deferred.await(firstUpsertStarted);
+
+        const secondFiber = yield* jobService
+          .enqueueReview({
+            trigger: "manual",
+            idempotencyKey: "manual:overlap",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseFirstUpsert, undefined);
+
+        const first = yield* Fiber.join(firstFiber);
+        const second = yield* Fiber.join(secondFiber);
+        expect(second.id).toBe(first.id);
+
+        yield* Deferred.succeed(releaseDispatch, undefined);
+        const terminal = yield* waitForTerminal(jobService, first.id);
+        expect(terminal?.status).toBe("failed");
+        expect(yield* Ref.get(dispatchCount)).toBe(1);
+      }).pipe(
+        Effect.provide(
+          jobServiceLayer({
+            baseDir,
+            history,
+            runner: {
+              runReview: () =>
+                Effect.gen(function* () {
+                  yield* Ref.update(dispatchCount, (count) => count + 1);
+                  yield* Deferred.await(releaseDispatch);
+                  return yield* Effect.fail(dispatchFailure);
+                }),
+              runRandomReview: Effect.fail(dispatchFailure),
             },
             getThreadDetailById: () => Effect.succeed(Option.none()),
           }),
