@@ -20,6 +20,12 @@ export const RUNTIME_MODE_PRESENTATION: Record<
     description: "Supported providers approve routine actions; others still ask.",
     icon: SparklesIcon,
   },
+  "automated-review": {
+    label: "Read-only automation",
+    description:
+      "Run unattended repository reviews with read-only commands and no edits or network access.",
+    icon: LockIcon,
+  },
   "full-access": {
     label: "Full access",
     description: "Allow commands and edits without prompts.",
