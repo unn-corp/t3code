@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   type OrchestrationCommand,
   type AgentDashboardFinding,
@@ -318,6 +319,9 @@ it.effect("starts the provider turn before snoozing the internal review thread",
           Layer.provide(
             ServerSettings.layerTest({
               repositoryReview: { modelSelection: reviewModelSelection },
+              providerInstances: {
+                [reviewModelSelection.instanceId]: { driver: ProviderDriverKind.make("codex") },
+              },
             }),
           ),
           Layer.provide(ServerConfig.layerTest(process.cwd(), stateDir)),
@@ -334,6 +338,107 @@ it.effect("starts the provider turn before snoozing the internal review thread",
     ]);
     expect(dispatchedCommands[0]).toMatchObject({ modelSelection: reviewModelSelection });
     expect(dispatchedCommands[1]).toMatchObject({ modelSelection: reviewModelSelection });
+    yield* Effect.promise(() => NodeFSP.rm(stateDir, { recursive: true, force: true }));
+  }),
+);
+
+it.effect("rejects an unsupported review provider before creating a thread", () =>
+  Effect.gen(function* () {
+    const stateDir = yield* Effect.promise(() =>
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-review-runner-test-")),
+    );
+    const target = {
+      ...project("unsupported-review-target", "Unsupported review target"),
+      workspaceRoot: NodePath.resolve(import.meta.dirname, "../../../.."),
+    };
+    const commands = yield* Ref.make<Array<OrchestrationCommand>>([]);
+    const projection = {
+      getCommandReadModel: () => Effect.die("unused"),
+      getSnapshot: () => Effect.die("unused"),
+      getShellSnapshot: () =>
+        Effect.succeed({
+          snapshotSequence: 0,
+          projects: [target],
+          threads: [],
+          updatedAt: "2026-08-10T00:00:00.000Z",
+        }),
+      getArchivedShellSnapshot: () => Effect.die("unused"),
+      getSnapshotSequence: () => Effect.die("unused"),
+      getCounts: () => Effect.die("unused"),
+      getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+      getProjectShellById: () => Effect.succeed(Option.none()),
+      getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+      getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+      getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+      getThreadShellById: () =>
+        Effect.succeed(
+          Option.some({
+            session: { status: "running" },
+          } as never),
+        ),
+      getThreadDetailById: () => Effect.succeed(Option.none()),
+      getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+      searchThreads: () => Effect.succeed({ matches: [] }),
+    } satisfies ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
+    const orchestration = {
+      dispatch: (command: OrchestrationCommand) =>
+        Ref.updateAndGet(commands, (current) => [...current, command]).pipe(
+          Effect.map((current) => ({ sequence: current.length })),
+        ),
+      readEvents: () => Stream.empty,
+      streamDomainEvents: Stream.empty,
+      latestSequence: Effect.succeed(0),
+    } satisfies OrchestrationEngine.OrchestrationEngineService["Service"];
+    const startup = {
+      awaitCommandReady: Effect.void,
+      markHttpListening: Effect.void,
+      enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) => effect,
+    } satisfies ServerRuntimeStartup.ServerRuntimeStartup["Service"];
+    const reviewModelSelection = {
+      instanceId: ProviderInstanceId.make("claude_work"),
+      model: "claude-sonnet",
+    } as const;
+
+    const result = yield* Effect.exit(
+      Effect.gen(function* () {
+        const runner = yield* AgentDashboardReviewRunner;
+        return yield* runner.runReview({ projectId: target.id }).pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(
+          layer.pipe(
+            Layer.provide(
+              Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, projection),
+            ),
+            Layer.provide(
+              Layer.succeed(OrchestrationEngine.OrchestrationEngineService, orchestration),
+            ),
+            Layer.provide(Layer.succeed(ServerRuntimeStartup.ServerRuntimeStartup, startup)),
+            Layer.provide(
+              ServerSettings.layerTest({
+                repositoryReview: { modelSelection: reviewModelSelection },
+                providerInstances: {
+                  [reviewModelSelection.instanceId]: {
+                    driver: ProviderDriverKind.make("claudeAgent"),
+                  },
+                },
+              }),
+            ),
+            Layer.provide(ServerConfig.layerTest(process.cwd(), stateDir)),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(result._tag).toBe("Success");
+    if (result._tag === "Success") {
+      expect(result.value).toMatchObject({
+        operation: "validate model selection",
+        message:
+          "The repository review provider 'claudeAgent' does not support the automated-review runtime. Select a Codex provider instance.",
+      });
+    }
+    expect(yield* Ref.get(commands)).toEqual([]);
     yield* Effect.promise(() => NodeFSP.rm(stateDir, { recursive: true, force: true }));
   }),
 );
