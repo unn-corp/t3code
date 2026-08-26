@@ -3,6 +3,7 @@ import { it } from "@effect/vitest";
 import {
   ProjectId,
   ProviderInstanceId,
+  ThreadId,
   type AgentDashboardAutomationRun,
   type AgentDashboardReviewSchedule,
 } from "@t3tools/contracts";
@@ -149,6 +150,7 @@ it("counts a queued deep review exactly once when it completes", () => {
     {
       ...queued,
       status: "succeeded",
+      threadId: ThreadId.make("review-thread-1"),
       findingCount: 2,
       updatedAt: "2026-08-10T00:01:00.000Z",
       completedAt: "2026-08-10T00:01:00.000Z",
@@ -161,6 +163,7 @@ it("counts a queued deep review exactly once when it completes", () => {
     {
       ...queued,
       status: "succeeded",
+      threadId: ThreadId.make("review-thread-1"),
       findingCount: 2,
       updatedAt: "2026-08-10T00:01:00.000Z",
       completedAt: "2026-08-10T00:01:00.000Z",
@@ -181,6 +184,171 @@ it("counts a queued deep review exactly once when it completes", () => {
     "operations",
   ]);
   expect(replayed.lastFindingCount).toBe(6);
+});
+
+it("preserves prior coverage when deep-review dispatch fails", () => {
+  const startedAt = "2026-08-10T00:00:00.000Z";
+  const startedAtMs = Date.parse(startedAt);
+  const current: AgentDashboardReviewSchedule = {
+    ...AgentDashboardReviewScheduler.__testing.defaultSchedule(startedAtMs),
+    lastCoveredTypes: ["bug", "security"],
+    lastSuccessfulTypes: ["security"],
+  };
+  const failed: AgentDashboardAutomationRun = {
+    id: "review-dispatch-failure",
+    status: "failed",
+    trigger: "scheduled",
+    kind: "repository-review",
+    repository: { projectId: ProjectId.make("project-1") },
+    target: "Project one",
+    threadId: null,
+    jobId: "review-dispatch-failure",
+    model: null,
+    retryCount: 0,
+    findingCount: 0,
+    costUnits: null,
+    error: "Repository review dispatch failed.",
+    createdAt: startedAt,
+    startedAt,
+    updatedAt: "2026-08-10T00:01:00.000Z",
+    completedAt: "2026-08-10T00:01:00.000Z",
+  };
+
+  const next = AgentDashboardReviewScheduler.__testing.scheduleFromRun(
+    current,
+    failed,
+    startedAtMs,
+    startedAt,
+  );
+
+  expect(next.lastStatus).toBe("failed");
+  expect(next.lastCoveredTypes).toEqual(current.lastCoveredTypes);
+  expect(next.lastSuccessfulTypes).toEqual(current.lastSuccessfulTypes);
+});
+
+it("does not claim deep-review coverage for a cancelled run before dispatch", () => {
+  const startedAt = "2026-08-10T00:00:00.000Z";
+  const startedAtMs = Date.parse(startedAt);
+  const current = AgentDashboardReviewScheduler.__testing.defaultSchedule(startedAtMs);
+  const cancelled: AgentDashboardAutomationRun = {
+    id: "review-cancelled-before-dispatch",
+    status: "cancelled",
+    trigger: "scheduled",
+    kind: "repository-review",
+    repository: { projectId: ProjectId.make("project-1") },
+    target: "Project one",
+    threadId: null,
+    jobId: "review-cancelled-before-dispatch",
+    model: null,
+    retryCount: 0,
+    findingCount: 0,
+    costUnits: null,
+    error: "Repository review was cancelled before dispatch.",
+    createdAt: startedAt,
+    startedAt: null,
+    updatedAt: "2026-08-10T00:01:00.000Z",
+    completedAt: "2026-08-10T00:01:00.000Z",
+  };
+
+  const next = AgentDashboardReviewScheduler.__testing.scheduleFromRun(
+    current,
+    cancelled,
+    startedAtMs,
+    startedAt,
+  );
+
+  expect(next.lastCoveredTypes).toEqual([]);
+  expect(next.lastSuccessfulTypes).toEqual([]);
+});
+
+it("counts a completed [SILENT] review as successful deep-review coverage", () => {
+  const startedAt = "2026-08-10T00:00:00.000Z";
+  const startedAtMs = Date.parse(startedAt);
+  const current = AgentDashboardReviewScheduler.__testing.defaultSchedule(startedAtMs);
+  const partial: AgentDashboardAutomationRun = {
+    id: "review-silent",
+    status: "partial",
+    trigger: "scheduled",
+    kind: "repository-review",
+    repository: { projectId: ProjectId.make("project-1") },
+    target: "Project one",
+    threadId: ThreadId.make("review-silent-thread"),
+    jobId: "review-silent",
+    model: null,
+    retryCount: 0,
+    findingCount: 0,
+    costUnits: null,
+    error: "Repository review completed with [SILENT] (nothing new to report).",
+    createdAt: startedAt,
+    startedAt,
+    updatedAt: "2026-08-10T00:01:00.000Z",
+    completedAt: "2026-08-10T00:01:00.000Z",
+  };
+
+  const next = AgentDashboardReviewScheduler.__testing.scheduleFromRun(
+    current,
+    partial,
+    startedAtMs,
+    startedAt,
+  );
+
+  expect(next.lastSuccessfulTypes).toEqual([
+    "bug",
+    "security",
+    "research",
+    "improvement",
+    "review",
+    "operations",
+  ]);
+});
+
+it("counts duplicate-only partial output as completed deep-review coverage", () => {
+  const startedAt = "2026-08-10T00:00:00.000Z";
+  const startedAtMs = Date.parse(startedAt);
+  const current = AgentDashboardReviewScheduler.__testing.defaultSchedule(startedAtMs);
+  const partial: AgentDashboardAutomationRun = {
+    id: "review-duplicates",
+    status: "partial",
+    trigger: "scheduled",
+    kind: "repository-review",
+    repository: { projectId: ProjectId.make("project-1") },
+    target: "Project one",
+    threadId: ThreadId.make("review-duplicates-thread"),
+    jobId: "review-duplicates",
+    model: null,
+    retryCount: 0,
+    findingCount: 0,
+    costUnits: null,
+    error: "Structured findings did not change the portfolio.",
+    createdAt: startedAt,
+    startedAt,
+    updatedAt: "2026-08-10T00:01:00.000Z",
+    completedAt: "2026-08-10T00:01:00.000Z",
+  };
+
+  const next = AgentDashboardReviewScheduler.__testing.scheduleFromRun(
+    current,
+    partial,
+    startedAtMs,
+    startedAt,
+  );
+
+  expect(next.lastCoveredTypes).toEqual([
+    "bug",
+    "security",
+    "research",
+    "improvement",
+    "review",
+    "operations",
+  ]);
+  expect(next.lastSuccessfulTypes).toEqual([
+    "bug",
+    "security",
+    "research",
+    "improvement",
+    "review",
+    "operations",
+  ]);
 });
 
 it.effect("does not let a heartbeat restore stale running state after a terminal update", () =>
