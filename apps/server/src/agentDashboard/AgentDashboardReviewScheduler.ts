@@ -229,6 +229,12 @@ const scheduleFromRun = (
     run.status === "partial" ||
     run.status === "failed" ||
     run.status === "cancelled";
+  // startedAt is recorded before provider dispatch. A thread ID is only
+  // available after the deep-review session was created, so it is the
+  // boundary for attempted deep-review coverage.
+  const deepReviewDispatched = run.threadId !== null;
+  const deepReviewCompleted =
+    deepReviewDispatched && (run.status === "succeeded" || run.status === "partial");
   const completedAtMs = completed ? Date.parse(run.completedAt ?? run.updatedAt) : Number.NaN;
   return {
     ...current,
@@ -247,9 +253,10 @@ const scheduleFromRun = (
       : current.nextRunAt,
     heartbeatAt: run.updatedAt,
     runCount: current.runCount,
-    lastCoveredTypes: completed ? [...COVERED_FINDING_TYPES] : current.lastCoveredTypes,
-    lastSuccessfulTypes:
-      run.status === "succeeded" ? [...COVERED_FINDING_TYPES] : current.lastSuccessfulTypes,
+    lastCoveredTypes: deepReviewDispatched ? [...COVERED_FINDING_TYPES] : current.lastCoveredTypes,
+    lastSuccessfulTypes: deepReviewCompleted
+      ? [...COVERED_FINDING_TYPES]
+      : current.lastSuccessfulTypes,
     lastFindingCount:
       completed && current.lastReviewRunId !== run.id
         ? current.lastFindingCount + run.findingCount

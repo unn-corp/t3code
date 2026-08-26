@@ -11,6 +11,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProjectId,
+  ThreadId,
   type AgentDashboardAutomationRun,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
@@ -87,7 +88,7 @@ const completedReviewRun = (): AgentDashboardAutomationRun => ({
   kind: "repository-review",
   repository: { projectId: PROJECT_ID },
   target: "Portfolio scheduler fixture",
-  threadId: null,
+  threadId: ThreadId.make("portfolio-review-thread"),
   jobId: "portfolio-review-job",
   model: null,
   retryCount: 0,
