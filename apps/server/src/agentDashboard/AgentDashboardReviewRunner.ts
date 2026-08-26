@@ -10,8 +10,13 @@ import * as Schema from "effect/Schema";
 
 import {
   CommandId,
+  isAutomatedReviewCapableDriver,
+  isProviderDriverKind,
   MessageId,
+  type ModelSelection,
+  type ProviderDriverKind,
   ProjectId,
+  type ServerSettings as ServerSettingsConfig,
   ThreadId,
   type AgentDashboardAutomationRunTrigger,
   type AgentDashboardFinding,
@@ -348,6 +353,25 @@ const stableProjects = Effect.fn("AgentDashboardReviewRunner.stableProjects")(fu
   );
 });
 
+const providerDriverForModelSelection = (
+  settings: Pick<ServerSettingsConfig, "providerInstances" | "providers">,
+  selection: ModelSelection,
+): ProviderDriverKind | undefined => {
+  const configuredInstance = settings.providerInstances[selection.instanceId];
+  if (configuredInstance !== undefined) {
+    return configuredInstance.driver;
+  }
+
+  if (
+    isProviderDriverKind(selection.instanceId) &&
+    (settings.providers as Record<string, unknown>)[selection.instanceId] !== undefined
+  ) {
+    return selection.instanceId;
+  }
+
+  return undefined;
+};
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -382,6 +406,25 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+
+  const validateAutomatedReviewModelSelection = Effect.fn(
+    "AgentDashboardReviewRunner.validateAutomatedReviewModelSelection",
+  )(function* (currentSettings: ServerSettingsConfig) {
+    const modelSelection = currentSettings.repositoryReview.modelSelection;
+    const driverKind = providerDriverForModelSelection(currentSettings, modelSelection);
+    if (driverKind === undefined) {
+      return yield* new AgentDashboardReviewRunnerError({
+        operation: "validate model selection",
+        message: `The repository review provider instance '${modelSelection.instanceId}' is unavailable. Select an available Codex provider instance.`,
+      });
+    }
+    if (!isAutomatedReviewCapableDriver(driverKind)) {
+      return yield* new AgentDashboardReviewRunnerError({
+        operation: "validate model selection",
+        message: `The repository review provider '${driverKind}' does not support the automated-review runtime. Select a Codex provider instance.`,
+      });
+    }
+  });
 
   const hideReviewThread: NonNullable<AgentDashboardReviewRunnerService["hideReviewThread"]> = (
     threadId,
@@ -537,6 +580,7 @@ const make = Effect.gen(function* () {
         ),
       );
       const modelSelection = currentSettings.repositoryReview.modelSelection;
+      yield* validateAutomatedReviewModelSelection(currentSettings);
       const policy = policies.find(
         (candidate) => String(candidate.repository.projectId) === String(project.id),
       );
@@ -650,8 +694,7 @@ const make = Effect.gen(function* () {
 
   const nudgeReview: NonNullable<AgentDashboardReviewRunnerService["nudgeReview"]> = (input) =>
     Effect.gen(function* () {
-      const modelSelection = yield* settings.getSettings.pipe(
-        Effect.map((currentSettings) => currentSettings.repositoryReview.modelSelection),
+      const currentSettings = yield* settings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
             new AgentDashboardReviewRunnerError({
@@ -661,6 +704,8 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
+      const modelSelection = currentSettings.repositoryReview.modelSelection;
+      yield* validateAutomatedReviewModelSelection(currentSettings);
       const createdAt = yield* nowIso;
       yield* dispatch({
         type: "thread.turn.start",
