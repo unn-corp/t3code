@@ -1,6 +1,5 @@
 import type { RuntimeMode } from "@t3tools/contracts";
 import {
-  EyeIcon,
   LockIcon,
   LockOpenIcon,
   PenLineIcon,
@@ -29,8 +28,9 @@ export const RUNTIME_MODE_PRESENTATION: Record<
   },
   "automated-review": {
     label: "Read-only automation",
-    description: "Run autonomous inspections without file or network writes.",
-    icon: EyeIcon,
+    description:
+      "Run unattended repository reviews with read-only commands and no edits or network access.",
+    icon: LockIcon,
   },
   "full-access": {
     label: "Full access",
