@@ -33,6 +33,7 @@ import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type EnvironmentIdentificationMode,
+  MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
   MAX_INTERFACE_FONT_SIZE,
@@ -40,6 +41,7 @@ import {
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
+  MIN_APPEARANCE_CONTRAST,
   MIN_GLASS_OPACITY,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
@@ -518,6 +520,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(theme !== "system" ? ["Theme"] : []),
       ...(!followSystem ? ["Follow system"] : []),
       ...(themeHalves !== null ? ["Theme mix"] : []),
+      ...(settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast
+        ? ["Contrast"]
+        : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
       ...(settings.environmentIdentificationMode !==
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
@@ -551,6 +556,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
+        : []),
+      ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
+        ? ["Show skills in slash menu"]
         : []),
       ...(settings.enableLegacyTokenStreaming !==
       DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming
@@ -602,6 +610,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.browserDefaultZoomFactor,
       settings.browserDefaultAppearance,
       settings.browserAutoShowFloatingPreview,
+      settings.appearanceContrast,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
       settings.confirmThreadArchive,
@@ -632,6 +641,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
+      settings.showSkillsInSlashMenu,
       settings.timestampFormat,
       settings.wordWrap,
       followSystem,
@@ -703,9 +713,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       return;
     }
     updateSettings({
+      appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
@@ -1482,6 +1494,13 @@ export function AppearanceSettingsPanel() {
     "--settings-slider-progress": `${glassOpacityRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
   } as CSSProperties;
+  const appearanceContrastRatio =
+    (settings.appearanceContrast - MIN_APPEARANCE_CONTRAST) /
+    (MAX_APPEARANCE_CONTRAST - MIN_APPEARANCE_CONTRAST);
+  const appearanceContrastSliderStyle = {
+    "--settings-slider-progress": `${appearanceContrastRatio * 100}%`,
+    "--settings-slider-fill-offset": `${0.5 - appearanceContrastRatio}rem`,
+  } as CSSProperties;
 
   return (
     <SettingsPageContainer>
@@ -1501,6 +1520,54 @@ export function AppearanceSettingsPanel() {
             onImportOpenChange={setIsImportThemeOpen}
           />
         </div>
+
+        <SettingsRow
+          {...searchableSetting("setting-appearance-contrast")}
+          description="Adjust the contrast of colors and borders across the interface."
+          resetAction={
+            settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast ? (
+              <SettingResetButton
+                label="contrast"
+                onClick={() =>
+                  updateSettings({
+                    appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full items-center gap-3 sm:w-52">
+              <output
+                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                htmlFor="appearance-contrast"
+              >
+                {settings.appearanceContrast}%
+              </output>
+              <input
+                aria-label="Contrast"
+                className="settings-slider min-w-0 flex-1"
+                id="appearance-contrast"
+                max={MAX_APPEARANCE_CONTRAST}
+                min={MIN_APPEARANCE_CONTRAST}
+                onChange={(event) => {
+                  const appearanceContrast = Number(event.currentTarget.value);
+                  if (
+                    Number.isInteger(appearanceContrast) &&
+                    appearanceContrast >= MIN_APPEARANCE_CONTRAST &&
+                    appearanceContrast <= MAX_APPEARANCE_CONTRAST
+                  ) {
+                    updateSettings({ appearanceContrast });
+                  }
+                }}
+                step={5}
+                style={appearanceContrastSliderStyle}
+                type="range"
+                value={settings.appearanceContrast}
+              />
+            </div>
+          }
+        />
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}
@@ -2784,6 +2851,7 @@ export function AutomationSettingsPanel() {
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const notificationPreferences = useClientSettings((value) => value.agentNotifications);
   const updateClientSettings = useUpdateClientSettings();
   const sendNotificationTest = useCallback(() => {
@@ -2872,6 +2940,19 @@ export function GeneralSettingsPanel() {
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
+  );
+  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
+  const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
+  const backgroundActivityDescription =
+    backgroundActivityProfileOption === "advanced"
+      ? `${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Current shared policy: ${
+          BACKGROUND_ACTIVITY_PROFILE_LABELS[activeBackgroundActivityProfile]
+        }.`
+      : BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS[resolvedBackgroundActivity.profile];
+  const canResetBackgroundActivity = !Equal.equals(
+    settings.backgroundActivity,
+    DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
   );
 
   return (
@@ -3111,6 +3192,141 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Hide whitespace changes by default"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("skills-in-slash-menu")}
+          description="Also include skills in the / command menu. Skills always appear when you type $."
+          resetAction={
+            settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu ? (
+              <SettingResetButton
+                label="skills in slash menu"
+                onClick={() =>
+                  updateSettings({
+                    showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showSkillsInSlashMenu}
+              onCheckedChange={(checked) =>
+                updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
+              }
+              aria-label="Show skills in slash menu"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("provider-update-checks")}
+          description="Check installed provider CLIs for newer available versions."
+          resetAction={
+            settings.enableProviderUpdateChecks !==
+            DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
+              <SettingResetButton
+                label="provider update checks"
+                onClick={() =>
+                  updateSettings({
+                    enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.enableProviderUpdateChecks}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
+              }
+              aria-label="Check provider versions"
+            />
+          }
+        />
+
+        <SettingsRow
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              Background activity
+              <PolicyTooltip>
+                This shared policy gates background work such as Git refreshes and provider health
+                probes after their individual intervals elapse.
+              </PolicyTooltip>
+            </span>
+          }
+          description={backgroundActivityDescription}
+          resetAction={
+            canResetBackgroundActivity ? (
+              <SettingResetButton
+                label="background activity"
+                onClick={() => updateSettings(resetBackgroundActivitySettings())}
+              />
+            ) : null
+          }
+          control={
+            <>
+              <Select
+                value={backgroundActivityProfileOption}
+                onValueChange={(value) => {
+                  if (value === "advanced") {
+                    setBackgroundActivityDialogOpen(true);
+                    return;
+                  }
+                  if (
+                    value === "balanced" ||
+                    value === "performance" ||
+                    value === "battery-saver"
+                  ) {
+                    updateSettings(backgroundActivityProfileSettings(value));
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-40" aria-label="Background activity profile">
+                  <SelectValue>
+                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[backgroundActivityProfileOption]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="balanced">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="performance">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="battery-saver">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="advanced">
+                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+              {backgroundActivityProfileOption === "advanced" ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        aria-label="Configure advanced background activity"
+                        onClick={() => setBackgroundActivityDialogOpen(true)}
+                      >
+                        <SettingsIcon className="size-4" />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top">Configure background activity</TooltipPopup>
+                </Tooltip>
+              ) : null}
+              <BackgroundActivityAdvancedDialog
+                open={backgroundActivityDialogOpen}
+                onOpenChange={setBackgroundActivityDialogOpen}
+              />
+            </>
           }
         />
 
