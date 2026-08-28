@@ -163,6 +163,28 @@ describe("selectNextRepository", () => {
     expect(selected).toBe(ProjectId.make("alpha"));
   });
 
+  it("skips repositories without the repository-review check enabled", () => {
+    const selected = selectNextRepository({
+      nowMs: NOW,
+      projects: [project("excluded-check")],
+      policies: [policy("excluded-check", { enabledChecks: [] })],
+      coverage: [coverage("excluded-check", "2026-08-09T00:00:00.000Z")],
+    });
+
+    expect(selected).toBeNull();
+  });
+
+  it("selects due repositories with the repository-review check enabled", () => {
+    const selected = selectNextRepository({
+      nowMs: NOW,
+      projects: [project("enabled-check")],
+      policies: [policy("enabled-check", { enabledChecks: ["repository-review"] })],
+      coverage: [coverage("enabled-check", "2026-08-09T00:00:00.000Z")],
+    });
+
+    expect(selected).toBe(ProjectId.make("enabled-check"));
+  });
+
   it("can report that no repository is due without inventing work", () => {
     const input = {
       nowMs: NOW,

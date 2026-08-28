@@ -291,7 +291,10 @@ export const selectNextRepository = (input: {
       return { project, policy: effectivePolicy, coverage, due, nextDueMs };
     })
     .filter(
-      (candidate) => candidate.policy.enabled && (input.allowNotDue === true || candidate.due),
+      (candidate) =>
+        candidate.policy.enabled &&
+        candidate.policy.enabledChecks.includes(REVIEW_KIND) &&
+        (input.allowNotDue === true || candidate.due),
     )
     .toSorted(
       (left, right) =>
