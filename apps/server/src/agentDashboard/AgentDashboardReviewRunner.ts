@@ -319,6 +319,7 @@ export const selectNextRepository = (input: {
           candidate.project.id,
           "repository-review",
         ) &&
+        candidate.policy.enabledChecks.includes(REVIEW_KIND) &&
         (input.allowNotDue === true || candidate.due),
     )
     .toSorted(
