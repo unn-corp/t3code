@@ -44,7 +44,7 @@ import {
   XIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   DASHBOARD_FINDING_TYPES,
@@ -69,6 +69,11 @@ import {
   type DashboardFindingSort,
   type DashboardFindingType,
 } from "../agentDashboardPages";
+import {
+  parseAgentFindingsStatus,
+  type AgentFindingsSearch,
+  type AgentFindingsStatusFilter,
+} from "../agentDashboardRouteSearch";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { newMessageId, newThreadId, randomHex } from "../lib/utils";
 import { readLocalApi } from "../localApi";
@@ -111,33 +116,11 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Textarea } from "./ui/textarea";
 
-type FindingStatusFilter =
-  | "pipeline"
-  | "ready-to-act"
-  | "needs-qualification"
-  | "policy-review"
-  | "resolved"
-  | "all"
-  | DashboardFindingStatus;
 type FindingIntent = "research" | "implement";
+const EMPTY_AGENT_FINDINGS_SEARCH = {} satisfies AgentFindingsSearch;
 
-function parseFindingStatusFilter(value: string): FindingStatusFilter {
-  switch (value) {
-    case "pipeline":
-    case "ready-to-act":
-    case "needs-qualification":
-    case "policy-review":
-    case "resolved":
-    case "all":
-    case "open":
-    case "in-progress":
-    case "snoozed":
-    case "done":
-    case "archived":
-      return value;
-    default:
-      return "pipeline";
-  }
+function parseFindingStatusFilter(value: string): AgentFindingsStatusFilter {
+  return parseAgentFindingsStatus(value) ?? "pipeline";
 }
 
 function parseFindingSeverityFilter(value: string): "all" | AgentDashboardFinding["severity"] {
@@ -285,7 +268,7 @@ function findingIntent(record: DashboardFindingRecord): FindingIntent {
   return record.finding.actionability?.readiness === "ready" ? "implement" : "research";
 }
 
-function findingStatusDescription(status: FindingStatusFilter): string {
+function findingStatusDescription(status: AgentFindingsStatusFilter): string {
   switch (status) {
     case "pipeline":
       return "Active pipeline includes every unresolved signal, from first qualification through delivery.";
@@ -331,7 +314,11 @@ function findingAutomationBlockReason(
     : "This finding is ready for automation.";
 }
 
-export function AgentFindings() {
+export function AgentFindings({
+  initialSearch = EMPTY_AGENT_FINDINGS_SEARCH,
+}: {
+  readonly initialSearch?: AgentFindingsSearch;
+}) {
   const navigate = useNavigate();
   const settings = usePrimarySettings();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -356,12 +343,14 @@ export function AgentFindings() {
     reportFailure: false,
   });
   const [query, setQuery] = useState("");
-  const [projectFilter, setProjectFilter] = useState("all");
+  const [projectFilter, setProjectFilter] = useState(initialSearch.project ?? "all");
   const [typeFilter, setTypeFilter] = useState<"all" | DashboardFindingType>("all");
   const [severityFilter, setSeverityFilter] = useState<"all" | AgentDashboardFinding["severity"]>(
-    "all",
+    initialSearch.severity ?? "all",
   );
-  const [statusFilter, setStatusFilter] = useState<FindingStatusFilter>("pipeline");
+  const [statusFilter, setStatusFilter] = useState<AgentFindingsStatusFilter>(
+    initialSearch.status ?? "pipeline",
+  );
   const [findingSort, setFindingSort] = useState<DashboardFindingSort>("priority");
   const [isCollecting, setIsCollecting] = useState(false);
   const [startingFindingId, setStartingFindingId] = useState<string | null>(null);
@@ -476,6 +465,15 @@ export function AgentFindings() {
     [findingSort, recordsAcrossTypes, typeFilter],
   );
   const groups = useMemo(() => groupDashboardFindingRecords(visibleRecords), [visibleRecords]);
+  useEffect(() => {
+    if (!initialSearch.findingId) return;
+    const frame = requestAnimationFrame(() => {
+      const target = document.getElementById(`agent-finding-${initialSearch.findingId}`);
+      target?.scrollIntoView({ block: "center" });
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [groups, initialSearch.findingId]);
   const pipelineRecords = useMemo(
     () =>
       filterDashboardFindingRecords(records, {
@@ -1738,7 +1736,13 @@ export function AgentFindings() {
             const headingId = `findings-project-${group.projectId}`;
             return (
               <section aria-labelledby={headingId} key={group.projectId}>
-                <Collapsible defaultOpen={false}>
+                <Collapsible
+                  defaultOpen={
+                    (initialSearch.findingId !== undefined &&
+                      group.findings.some((record) => record.id === initialSearch.findingId)) ||
+                    initialSearch.project === group.projectId
+                  }
+                >
                   <CollapsibleTrigger className="mb-3 flex min-h-11 w-full min-w-0 items-center gap-3 rounded-xl px-1 text-left outline-none transition-colors hover:bg-muted/35 focus-visible:ring-2 focus-visible:ring-ring data-panel-open:[&>svg]:rotate-180">
                     <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border bg-card text-muted-foreground shadow-xs">
                       <FolderGit2Icon className="size-4" />
@@ -1803,216 +1807,226 @@ export function AgentFindings() {
                           finding.externalIssueUrl !== null ||
                           githubRepositoryForRecord(record) !== null;
                         return (
-                          <Card className={cardClass} key={record.id}>
-                            <CardHeader className="gap-3 p-4 sm:p-5">
-                              <div className="flex min-w-0 items-start gap-3">
-                                <Checkbox
-                                  aria-label={`Select ${finding.title}`}
-                                  checked={selectedFindingIds.has(record.id)}
-                                  onCheckedChange={(checked) =>
-                                    setSelectedFindingIds((current) => {
-                                      const next = new Set(current);
-                                      if (checked === true) next.add(record.id);
-                                      else next.delete(record.id);
-                                      return next;
-                                    })
-                                  }
-                                />
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <CardTitle className="text-base leading-snug">
-                                      {finding.title}
-                                    </CardTitle>
-                                    <Badge size="sm" variant="outline">
-                                      {typeLabel}
-                                    </Badge>
-                                    <Badge size="sm" variant={severityVariant(finding.severity)}>
-                                      {finding.severity}
-                                    </Badge>
-                                    <Badge size="sm" variant={pipelinePresentation.variant}>
-                                      {pipelinePresentation.label}
-                                    </Badge>
-                                    {record.status !== "open" ? (
-                                      <Badge size="sm" variant={statusVariant(record.status)}>
-                                        {STATUS_LABELS[record.status]}
+                          <div
+                            className="scroll-mt-4 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            id={`agent-finding-${record.id}`}
+                            key={record.id}
+                            tabIndex={-1}
+                          >
+                            <Card className={cardClass}>
+                              <CardHeader className="gap-3 p-4 sm:p-5">
+                                <div className="flex min-w-0 items-start gap-3">
+                                  <Checkbox
+                                    aria-label={`Select ${finding.title}`}
+                                    checked={selectedFindingIds.has(record.id)}
+                                    onCheckedChange={(checked) =>
+                                      setSelectedFindingIds((current) => {
+                                        const next = new Set(current);
+                                        if (checked === true) next.add(record.id);
+                                        else next.delete(record.id);
+                                        return next;
+                                      })
+                                    }
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <CardTitle className="text-base leading-snug">
+                                        {finding.title}
+                                      </CardTitle>
+                                      <Badge size="sm" variant="outline">
+                                        {typeLabel}
                                       </Badge>
+                                      <Badge size="sm" variant={severityVariant(finding.severity)}>
+                                        {finding.severity}
+                                      </Badge>
+                                      <Badge size="sm" variant={pipelinePresentation.variant}>
+                                        {pipelinePresentation.label}
+                                      </Badge>
+                                      {record.status !== "open" ? (
+                                        <Badge size="sm" variant={statusVariant(record.status)}>
+                                          {STATUS_LABELS[record.status]}
+                                        </Badge>
+                                      ) : null}
+                                    </div>
+                                    <CardDescription className="mt-1 max-w-3xl whitespace-pre-wrap leading-relaxed">
+                                      {finding.summary}
+                                    </CardDescription>
+                                  </div>
+                                  <div
+                                    aria-label={`${typeLabel} finding`}
+                                    className={`flex size-14 shrink-0 items-center justify-center rounded-xl border ${iconClass}`}
+                                    role="img"
+                                  >
+                                    <TypeIcon className="size-7" />
+                                  </div>
+                                </div>
+                              </CardHeader>
+                              <CardPanel className="flex flex-col gap-4 border-t border-border/60 p-4 sm:p-5">
+                                {finding.evidence.length > 0 ? (
+                                  <ul className="grid gap-1 text-sm text-foreground/80">
+                                    {finding.evidence.slice(0, 3).map((evidence) => (
+                                      <li className="flex gap-2" key={evidence}>
+                                        <span aria-hidden="true" className="text-muted-foreground">
+                                          •
+                                        </span>
+                                        <span className="min-w-0 break-words">{evidence}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                                {pipelineStage === "candidate" ||
+                                pipelineStage === "needs-qualification" ||
+                                pipelineStage === "policy-review" ? (
+                                  <div className="grid gap-1.5 rounded-xl border border-warning/30 bg-warning/5 px-3 py-2.5 text-sm">
+                                    <span className="font-medium text-foreground">
+                                      {pipelineStage === "policy-review"
+                                        ? "Why approval is needed"
+                                        : "Why it is not ready yet"}
+                                    </span>
+                                    <span className="text-foreground/75">
+                                      {findingAutomationBlockReason(record, improvementGuardrails)}
+                                    </span>
+                                  </div>
+                                ) : null}
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                  <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                    <span>{finding.provenance.source}</span>
+                                    <span aria-hidden="true">·</span>
+                                    <span>{finding.confidence} confidence</span>
+                                    <span aria-hidden="true">·</span>
+                                    <span>
+                                      {formatRelativeTimeLabel(finding.lastSeenAt) ||
+                                        "Unknown time"}
+                                    </span>
+                                    {finding.occurrenceCount > 1 ? (
+                                      <>
+                                        <span aria-hidden="true">·</span>
+                                        <span>Seen {finding.occurrenceCount} times</span>
+                                      </>
                                     ) : null}
                                   </div>
-                                  <CardDescription className="mt-1 max-w-3xl whitespace-pre-wrap leading-relaxed">
-                                    {finding.summary}
-                                  </CardDescription>
-                                </div>
-                                <div
-                                  aria-label={`${typeLabel} finding`}
-                                  className={`flex size-14 shrink-0 items-center justify-center rounded-xl border ${iconClass}`}
-                                  role="img"
-                                >
-                                  <TypeIcon className="size-7" />
-                                </div>
-                              </div>
-                            </CardHeader>
-                            <CardPanel className="flex flex-col gap-4 border-t border-border/60 p-4 sm:p-5">
-                              {finding.evidence.length > 0 ? (
-                                <ul className="grid gap-1 text-sm text-foreground/80">
-                                  {finding.evidence.slice(0, 3).map((evidence) => (
-                                    <li className="flex gap-2" key={evidence}>
-                                      <span aria-hidden="true" className="text-muted-foreground">
-                                        •
-                                      </span>
-                                      <span className="min-w-0 break-words">{evidence}</span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : null}
-                              {pipelineStage === "candidate" ||
-                              pipelineStage === "needs-qualification" ||
-                              pipelineStage === "policy-review" ? (
-                                <div className="grid gap-1.5 rounded-xl border border-warning/30 bg-warning/5 px-3 py-2.5 text-sm">
-                                  <span className="font-medium text-foreground">
-                                    {pipelineStage === "policy-review"
-                                      ? "Why approval is needed"
-                                      : "Why it is not ready yet"}
-                                  </span>
-                                  <span className="text-foreground/75">
-                                    {findingAutomationBlockReason(record, improvementGuardrails)}
-                                  </span>
-                                </div>
-                              ) : null}
-                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                  <span>{finding.provenance.source}</span>
-                                  <span aria-hidden="true">·</span>
-                                  <span>{finding.confidence} confidence</span>
-                                  <span aria-hidden="true">·</span>
-                                  <span>
-                                    {formatRelativeTimeLabel(finding.lastSeenAt) || "Unknown time"}
-                                  </span>
-                                  {finding.occurrenceCount > 1 ? (
-                                    <>
-                                      <span aria-hidden="true">·</span>
-                                      <span>Seen {finding.occurrenceCount} times</span>
-                                    </>
-                                  ) : null}
-                                </div>
-                                <AgentFindingActions
-                                  actions={[
-                                    {
-                                      id: "manage",
-                                      label: "Details and triage",
-                                      icon: SlidersHorizontalIcon,
-                                      onSelect: () => {
-                                        setManageAssignee(finding.disposition.assignee ?? "");
-                                        setManageNote(finding.disposition.note ?? "");
-                                        setSnoozeDays("3");
-                                        setManageRecord(record);
+                                  <AgentFindingActions
+                                    actions={[
+                                      {
+                                        id: "manage",
+                                        label: "Details and triage",
+                                        icon: SlidersHorizontalIcon,
+                                        onSelect: () => {
+                                          setManageAssignee(finding.disposition.assignee ?? "");
+                                          setManageNote(finding.disposition.note ?? "");
+                                          setSnoozeDays("3");
+                                          setManageRecord(record);
+                                        },
+                                        variant: "outline",
                                       },
-                                      variant: "outline",
-                                    },
-                                    record.status !== "done" && record.status !== "archived"
-                                      ? {
-                                          id: "work",
-                                          label: finding.thread
-                                            ? "Open work"
-                                            : intent === "research"
-                                              ? "Investigate"
-                                              : "Start work",
-                                          pendingLabel: "Starting",
-                                          icon: finding.thread ? ExternalLinkIcon : BotIcon,
-                                          pending: startingFindingId === record.id,
-                                          disabled: startingFindingId !== null,
-                                          onSelect: () => void startFindingWork(record),
-                                        }
-                                      : null,
-                                    canCreateIssue
-                                      ? {
-                                          id: "issue",
-                                          label: finding.externalIssueUrl
-                                            ? "Open issue"
-                                            : "Create issue",
-                                          pendingLabel: "Creating issue",
-                                          icon: finding.externalIssueUrl
-                                            ? ExternalLinkIcon
-                                            : GithubIcon,
-                                          pending: creatingIssueId === record.id,
-                                          disabled: creatingIssueId !== null,
-                                          onSelect: () => void createIssueForRecord(record),
-                                          variant: "outline",
-                                        }
-                                      : null,
-                                    record.status !== "done" && record.status !== "archived"
-                                      ? {
-                                          id: "done",
-                                          label: "Done",
-                                          pendingLabel: "Saving",
-                                          icon: CheckCircle2Icon,
-                                          pending: isUpdating,
-                                          disabled: updatingFindingId !== null,
-                                          onSelect: () => void applyDisposition(record, "complete"),
-                                          variant: "outline",
-                                        }
-                                      : null,
-                                    record.status === "open" || record.status === "in-progress"
-                                      ? {
-                                          id: "snooze",
-                                          label: "Snooze",
-                                          icon: ClockIcon,
-                                          disabled: updatingFindingId !== null,
-                                          onSelect: () => void applyDisposition(record, "snooze"),
-                                          variant: "ghost",
-                                        }
-                                      : null,
-                                    record.status === "snoozed" ||
-                                    record.status === "done" ||
-                                    record.status === "archived"
-                                      ? {
-                                          id: "reopen",
-                                          label: "Reopen",
-                                          pendingLabel: "Saving",
-                                          icon: RotateCcwIcon,
-                                          pending: isUpdating,
-                                          disabled: updatingFindingId !== null,
-                                          onSelect: () => void applyDisposition(record, "reopen"),
-                                          variant: "outline",
-                                        }
-                                      : null,
-                                    record.status !== "archived"
-                                      ? {
-                                          id: "dismiss",
-                                          label: "Dismiss",
-                                          icon: XIcon,
-                                          disabled: updatingFindingId !== null,
-                                          onSelect: () => void applyDisposition(record, "dismiss"),
-                                          variant: "ghost",
-                                        }
-                                      : null,
-                                  ]}
-                                />
-                              </div>
-                              <div className="border-t border-border/60 pt-4">
-                                <AgentFindingQuestionComposer
-                                  busy={askingFindingId === record.id}
-                                  disabled={askingFindingId !== null}
-                                  findingId={record.id}
-                                  findingTitle={finding.title}
-                                  initialModelSelection={
-                                    findingComposerModelCatalog.initialModelSelection
-                                  }
-                                  modelOptionsByInstance={
-                                    findingComposerModelCatalog.modelOptionsByInstance
-                                  }
-                                  onSubmit={(input) => void askAboutFinding(record, input)}
-                                  onVoiceActivityChange={handleFindingVoiceActivityChange}
-                                  providerInstanceEntries={
-                                    findingComposerModelCatalog.providerInstanceEntries
-                                  }
-                                  settings={settings}
-                                  voiceDisabled={
-                                    voiceFindingId !== null && voiceFindingId !== record.id
-                                  }
-                                />
-                              </div>
-                            </CardPanel>
-                          </Card>
+                                      record.status !== "done" && record.status !== "archived"
+                                        ? {
+                                            id: "work",
+                                            label: finding.thread
+                                              ? "Open work"
+                                              : intent === "research"
+                                                ? "Investigate"
+                                                : "Start work",
+                                            pendingLabel: "Starting",
+                                            icon: finding.thread ? ExternalLinkIcon : BotIcon,
+                                            pending: startingFindingId === record.id,
+                                            disabled: startingFindingId !== null,
+                                            onSelect: () => void startFindingWork(record),
+                                          }
+                                        : null,
+                                      canCreateIssue
+                                        ? {
+                                            id: "issue",
+                                            label: finding.externalIssueUrl
+                                              ? "Open issue"
+                                              : "Create issue",
+                                            pendingLabel: "Creating issue",
+                                            icon: finding.externalIssueUrl
+                                              ? ExternalLinkIcon
+                                              : GithubIcon,
+                                            pending: creatingIssueId === record.id,
+                                            disabled: creatingIssueId !== null,
+                                            onSelect: () => void createIssueForRecord(record),
+                                            variant: "outline",
+                                          }
+                                        : null,
+                                      record.status !== "done" && record.status !== "archived"
+                                        ? {
+                                            id: "done",
+                                            label: "Done",
+                                            pendingLabel: "Saving",
+                                            icon: CheckCircle2Icon,
+                                            pending: isUpdating,
+                                            disabled: updatingFindingId !== null,
+                                            onSelect: () =>
+                                              void applyDisposition(record, "complete"),
+                                            variant: "outline",
+                                          }
+                                        : null,
+                                      record.status === "open" || record.status === "in-progress"
+                                        ? {
+                                            id: "snooze",
+                                            label: "Snooze",
+                                            icon: ClockIcon,
+                                            disabled: updatingFindingId !== null,
+                                            onSelect: () => void applyDisposition(record, "snooze"),
+                                            variant: "ghost",
+                                          }
+                                        : null,
+                                      record.status === "snoozed" ||
+                                      record.status === "done" ||
+                                      record.status === "archived"
+                                        ? {
+                                            id: "reopen",
+                                            label: "Reopen",
+                                            pendingLabel: "Saving",
+                                            icon: RotateCcwIcon,
+                                            pending: isUpdating,
+                                            disabled: updatingFindingId !== null,
+                                            onSelect: () => void applyDisposition(record, "reopen"),
+                                            variant: "outline",
+                                          }
+                                        : null,
+                                      record.status !== "archived"
+                                        ? {
+                                            id: "dismiss",
+                                            label: "Dismiss",
+                                            icon: XIcon,
+                                            disabled: updatingFindingId !== null,
+                                            onSelect: () =>
+                                              void applyDisposition(record, "dismiss"),
+                                            variant: "ghost",
+                                          }
+                                        : null,
+                                    ]}
+                                  />
+                                </div>
+                                <div className="border-t border-border/60 pt-4">
+                                  <AgentFindingQuestionComposer
+                                    busy={askingFindingId === record.id}
+                                    disabled={askingFindingId !== null}
+                                    findingId={record.id}
+                                    findingTitle={finding.title}
+                                    initialModelSelection={
+                                      findingComposerModelCatalog.initialModelSelection
+                                    }
+                                    modelOptionsByInstance={
+                                      findingComposerModelCatalog.modelOptionsByInstance
+                                    }
+                                    onSubmit={(input) => void askAboutFinding(record, input)}
+                                    onVoiceActivityChange={handleFindingVoiceActivityChange}
+                                    providerInstanceEntries={
+                                      findingComposerModelCatalog.providerInstanceEntries
+                                    }
+                                    settings={settings}
+                                    voiceDisabled={
+                                      voiceFindingId !== null && voiceFindingId !== record.id
+                                    }
+                                  />
+                                </div>
+                              </CardPanel>
+                            </Card>
+                          </div>
                         );
                       })}
                     </div>

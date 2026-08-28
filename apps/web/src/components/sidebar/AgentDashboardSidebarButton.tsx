@@ -1,6 +1,5 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
-  ActivityIcon,
   ChevronRightIcon,
   LayoutDashboardIcon,
   ListFilterIcon,
@@ -22,7 +21,6 @@ import {
 
 type AgentDashboardPath =
   | "/agent-dashboard"
-  | "/agent-dashboard/feed"
   | "/agent-dashboard/findings"
   | "/agent-dashboard/runs";
 
@@ -34,7 +32,6 @@ type AgentDashboardNavItem = {
 
 const AGENT_DASHBOARD_NAV_ITEMS = [
   { label: "Overview", to: "/agent-dashboard", icon: LayoutDashboardIcon },
-  { label: "Agent Feed", to: "/agent-dashboard/feed", icon: ActivityIcon },
   { label: "Findings", to: "/agent-dashboard/findings", icon: ListFilterIcon },
   { label: "Runs", to: "/agent-dashboard/runs", icon: ListChecksIcon },
 ] as const satisfies readonly AgentDashboardNavItem[];

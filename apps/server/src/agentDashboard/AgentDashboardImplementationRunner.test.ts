@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { CommandId, ThreadId, type VcsListRefsResult } from "@t3tools/contracts";
 
 import {
+  buildCompletedImplementationWorktreeRemovalInput,
   buildCompletedImplementationCleanupCommands,
   buildAgentDashboardImplementationNudgePrompt,
   defaultBranchFromRefs,
@@ -84,5 +85,18 @@ it("settles a completed implementation before requesting a race-safe session sto
     threadId,
     createdAt: "2026-08-23T12:00:00.000Z",
     onlyIfSettled: true,
+  });
+});
+
+it("removes a completed implementation worktree without forcing dirty changes away", () => {
+  expect(
+    buildCompletedImplementationWorktreeRemovalInput({
+      projectCwd: "/workspace/project",
+      worktreePath: "/workspace/.t3/worktrees/project/t3code-f00dcafe",
+    }),
+  ).toEqual({
+    cwd: "/workspace/project",
+    path: "/workspace/.t3/worktrees/project/t3code-f00dcafe",
+    force: false,
   });
 });

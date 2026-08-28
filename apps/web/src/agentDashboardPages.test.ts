@@ -14,6 +14,7 @@ import {
   buildDashboardFindingPrompt,
   buildDashboardFindingQuestionPrompt,
   buildDashboardFindingWorktreeBootstrap,
+  buildDashboardUpdateQuestionPrompt,
   buildDashboardPullRequestCombinationPrompt,
   buildDashboardFindingRecords,
   buildNativeResearchRecordsFromCanonicalFindings,
@@ -30,6 +31,7 @@ import {
   groupDashboardFindingRecords,
   githubRepositoryForIdentity,
   resolveDashboardProjectOptionLabel,
+  safeDashboardUpdateFileUrl,
   suggestionWorkflowStatus,
   suggestionWorkModelSelection,
   suggestionWorktreeBaseBranch,
@@ -459,6 +461,47 @@ describe("agent dashboard ordering", () => {
 });
 
 describe("durable agent feed origins", () => {
+  it("keeps delivered file actions inside their repository", () => {
+    expect(safeDashboardUpdateFileUrl("/workspace/t3code", "reports/result.md")).toBe(
+      "file:///workspace/t3code/reports/result.md",
+    );
+    expect(safeDashboardUpdateFileUrl("/workspace/t3code", "../secrets.txt")).toBeNull();
+    expect(
+      safeDashboardUpdateFileUrl("/workspace/t3code", "/workspace/other/result.md"),
+    ).toBeNull();
+  });
+
+  it("grounds follow-up questions in the delivered update", () => {
+    expect(
+      buildDashboardUpdateQuestionPrompt(
+        {
+          title: "Tests finished",
+          summary: "The focused suite passed.",
+          projectName: "T3 Code",
+          workspaceRoot: "/workspace/t3code",
+          provider: "codex",
+          updatedAt: "2026-08-09T12:05:00.000Z",
+        },
+        "  What should I review?  ",
+      ),
+    ).toContain(
+      "Update: Tests finished\nSummary: The focused suite passed.\nProject: T3 Code\nRepository path: /workspace/t3code",
+    );
+    expect(
+      buildDashboardUpdateQuestionPrompt(
+        {
+          title: "Tests finished",
+          summary: "The focused suite passed.",
+          projectName: "T3 Code",
+          workspaceRoot: "/workspace/t3code",
+          provider: "codex",
+          updatedAt: "2026-08-09T12:05:00.000Z",
+        },
+        "  What should I review?  ",
+      ),
+    ).toContain("## User question\nWhat should I review?");
+  });
+
   it("resolves a card to its project and source chat", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const projectId = ProjectId.make("project-1");
@@ -516,6 +559,33 @@ describe("durable agent feed origins", () => {
       provider: "codex",
       model: "gpt-5",
       chatLabel: "Open chat",
+    });
+  });
+
+  it("labels historical cards without origin metadata as external updates", () => {
+    const records = buildNativeAgentFeedFromDurableCards(
+      [
+        {
+          id: 2,
+          ts: Date.parse("2026-08-09T12:05:00.000Z") / 1_000,
+          agent: "codex",
+          kind: "activity",
+          title: "Legacy update",
+          text: "This card predates project origin metadata.",
+          imageUrl: null,
+          level: "info",
+          tags: [],
+          actions: [],
+          origin: null,
+        },
+      ],
+      EnvironmentId.make("environment-1"),
+    );
+
+    expect(records[0]).toMatchObject({
+      projectName: "External update",
+      workspaceRoot: "",
+      threadId: "",
     });
   });
 

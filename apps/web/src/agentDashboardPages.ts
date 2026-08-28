@@ -1073,10 +1073,7 @@ export function buildNativeAgentFeedFromDurableCards(
       const targetThreadId = targetThread?.id ?? origin?.threadId ?? "";
       const projectPath = project?.workspaceRoot ?? origin?.projectPath ?? "";
       const projectName =
-        project?.title ??
-        origin?.projectName ??
-        projectPathLeaf(projectPath) ??
-        "Project unavailable";
+        project?.title ?? origin?.projectName ?? projectPathLeaf(projectPath) ?? "External update";
       const updatedAt = new Date(card.ts * 1_000).toISOString();
       const state: NativeAgentState =
         card.level === "error"
@@ -1111,6 +1108,45 @@ export function buildNativeAgentFeedFromDurableCards(
       } satisfies NativeAgentFeedItem;
     })
     .toSorted(compareDashboardRecency);
+}
+
+/** Grounds a dashboard question in a delivered agent update without assuming it requests edits. */
+export function buildDashboardUpdateQuestionPrompt(
+  update: Pick<
+    NativeAgentFeedItem,
+    "title" | "summary" | "projectName" | "workspaceRoot" | "provider" | "updatedAt"
+  >,
+  question: string,
+): string {
+  return [
+    "Answer the user's question about this delivered agent update.",
+    "Inspect the current repository when useful. Do not modify code unless the user explicitly asks you to.",
+    "",
+    `Update: ${update.title}`,
+    `Summary: ${update.summary}`,
+    `Project: ${update.projectName}`,
+    `Repository path: ${update.workspaceRoot || "Unavailable"}`,
+    `Delivered by: ${update.provider}`,
+    `Delivered at: ${update.updatedAt}`,
+    "",
+    "## User question",
+    question.trim(),
+  ].join("\n");
+}
+
+/** Resolves a delivered file action without allowing it to escape the update's repository. */
+export function safeDashboardUpdateFileUrl(workspaceRoot: string, file: string): string | null {
+  const trimmed = file.trim();
+  if (!trimmed || trimmed.includes("\0")) return null;
+  const segments = trimmed.replaceAll("\\", "/").split("/");
+  if (segments.some((segment) => segment === "..")) return null;
+  const base = workspaceRoot.trim().replaceAll("\\", "/").replace(/\/$/, "");
+  const target =
+    trimmed.startsWith("/") || /^[A-Za-z]:\//.test(trimmed)
+      ? trimmed.replaceAll("\\", "/")
+      : `${base}/${trimmed.replace(/^\.\//, "")}`;
+  if (!base || (target !== base && !target.startsWith(`${base}/`))) return null;
+  return encodeURI(`file://${target}`);
 }
 
 /** Merges native and migrated feed records while retaining both source kinds. */

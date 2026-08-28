@@ -114,6 +114,47 @@ export function resolveDashboardThreadStateLabel(state: DashboardThreadState): s
   }
 }
 
+/** Names the concrete next step instead of sending every thread through a generic Open action. */
+export function resolveDashboardThreadActionLabel(state: DashboardThreadState): string {
+  switch (state) {
+    case "needs-input":
+      return "Respond";
+    case "error":
+      return "Inspect";
+    case "running":
+      return "Message";
+    case "ready":
+      return "Review";
+    case "paused":
+      return "Resume";
+    case "idle":
+      return "Open";
+  }
+}
+
+/** Gives repository questions enough durable context to remain useful after navigation. */
+export function buildDashboardRepositoryQuestionPrompt(
+  repository: Pick<EnvironmentProject, "title" | "workspaceRoot">,
+  question: string,
+): string {
+  return [
+    "Answer the user's question about this repository.",
+    "Inspect the current repository when useful. Do not modify code unless the user explicitly asks you to.",
+    "",
+    `Repository: ${repository.title}`,
+    `Repository path: ${repository.workspaceRoot}`,
+    "",
+    "## User question",
+    question.trim(),
+  ].join("\n");
+}
+
+/** The overview only treats live or actionable work as active. */
+export function isDashboardThreadActive(thread: DashboardThreadRecord): boolean {
+  const state = resolveDashboardThreadState(thread);
+  return state === "running" || state === "needs-input" || state === "error" || state === "ready";
+}
+
 export interface DashboardWorktreeGroup {
   readonly key: string;
   readonly environmentId: string;

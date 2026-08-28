@@ -1,7 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
-
-import { AgentFeed } from "../components/AgentFeed";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/agent-dashboard/feed")({
-  component: AgentFeed,
+  beforeLoad: () => {
+    throw redirect({
+      to: "/agent-dashboard",
+      hash: "dashboard-updates",
+      replace: true,
+    });
+  },
 });

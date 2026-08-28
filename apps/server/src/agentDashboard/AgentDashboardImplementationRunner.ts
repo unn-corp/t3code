@@ -4,6 +4,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
@@ -102,6 +103,7 @@ export interface AgentDashboardImplementationRunnerService {
   }) => Effect.Effect<void, AgentDashboardImplementationRunnerError>;
   readonly settleCompletedFinding: (input: {
     readonly finding: AgentDashboardFinding;
+    readonly project: OrchestrationProjectShell;
     readonly result: AgentDashboardImplementationRunResult;
     readonly runId: string;
     readonly outcome:
@@ -153,6 +155,17 @@ export const buildCompletedImplementationCleanupCommands = (input: {
     createdAt: input.createdAt,
     onlyIfSettled: true,
   },
+});
+
+export const buildCompletedImplementationWorktreeRemovalInput = (input: {
+  readonly projectCwd: string;
+  readonly worktreePath: string;
+}) => ({
+  cwd: input.projectCwd,
+  path: input.worktreePath,
+  // A completed agent should have committed its work before delivery. Never
+  // discard unexpected local changes just to reclaim the checkout.
+  force: false,
 });
 
 const make = Effect.gen(function* () {
@@ -487,7 +500,7 @@ const make = Effect.gen(function* () {
     (input) =>
       Effect.gen(function* () {
         const createdAt = DateTime.formatIso(yield* DateTime.now);
-        const auditResult =
+        const completionResult =
           input.outcome.kind === "pull-request-delivered"
             ? `Completed implementation session stopped after pull request delivery from ${input.result.branch}.`
             : `Completed implementation session stopped after the agent confirmed the finding was stale: ${input.outcome.reason}`;
@@ -501,11 +514,35 @@ const make = Effect.gen(function* () {
         yield* dispatch(commands.settle);
         yield* dispatch(commands.stop);
 
+        const worktreeRemovalResult = yield* Effect.result(
+          git.removeWorktree(
+            buildCompletedImplementationWorktreeRemovalInput({
+              projectCwd: input.project.workspaceRoot,
+              worktreePath: input.result.worktreePath,
+            }),
+          ),
+        );
+        const worktreeRemovalFailed = Result.isFailure(worktreeRemovalResult);
+        if (worktreeRemovalFailed) {
+          yield* Effect.logWarning(
+            "Continuous improvement retained a completed worktree because safe removal failed",
+            {
+              findingId: input.finding.id,
+              threadId: input.result.threadId,
+              worktreePath: input.result.worktreePath,
+              cause: worktreeRemovalResult.failure,
+            },
+          );
+        }
+        const auditResult = worktreeRemovalFailed
+          ? `${completionResult} The worktree was retained because safe removal failed; inspect it for local changes.`
+          : `${completionResult} The completed worktree was removed.`;
+
         yield* store
           .appendExternalAction({
             id: `action:continuous-improvement-finished:${yield* randomUuid}`,
             kind: "other",
-            status: "succeeded",
+            status: worktreeRemovalFailed ? "failed" : "succeeded",
             actor: "continuous-improvement",
             targetId: input.result.threadId,
             targetUrl: null,

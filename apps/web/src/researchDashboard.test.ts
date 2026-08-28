@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import {
   buildDashboardWorktreeGroups,
+  buildDashboardRepositoryQuestionPrompt,
   configuredResearchDashboardUrl,
   DEFAULT_RESEARCH_DASHBOARD_URL,
+  isDashboardThreadActive,
   resolveDashboardRepositoryName,
   resolveDashboardRepositoryStatus,
   resolveDashboardThreadState,
+  resolveDashboardThreadActionLabel,
   resolveDashboardThreadStateLabel,
   selectDashboardThreadsForRepository,
   type DashboardThreadRecord,
@@ -140,6 +143,46 @@ describe("dashboard thread presentation", () => {
       ),
     ).toBe("paused");
     expect(resolveDashboardThreadStateLabel("needs-input")).toBe("Needs input");
+  });
+
+  it("only counts live or actionable work as active", () => {
+    expect(
+      isDashboardThreadActive(
+        makeThread({ session: { status: "running", providerName: "Codex" } }),
+      ),
+    ).toBe(true);
+    expect(isDashboardThreadActive(makeThread({ hasPendingUserInput: true }))).toBe(true);
+    expect(
+      isDashboardThreadActive(makeThread({ session: { status: "ready", providerName: "Codex" } })),
+    ).toBe(true);
+    expect(
+      isDashboardThreadActive(
+        makeThread({ session: { status: "stopped", providerName: "Codex" } }),
+      ),
+    ).toBe(false);
+    expect(isDashboardThreadActive(makeThread())).toBe(false);
+  });
+
+  it("names the next action for each thread state", () => {
+    expect(resolveDashboardThreadActionLabel("needs-input")).toBe("Respond");
+    expect(resolveDashboardThreadActionLabel("error")).toBe("Inspect");
+    expect(resolveDashboardThreadActionLabel("running")).toBe("Message");
+    expect(resolveDashboardThreadActionLabel("ready")).toBe("Review");
+    expect(resolveDashboardThreadActionLabel("paused")).toBe("Resume");
+    expect(resolveDashboardThreadActionLabel("idle")).toBe("Open");
+  });
+});
+
+describe("dashboard repository questions", () => {
+  it("grounds the agent in the selected repository and trims the question", () => {
+    expect(
+      buildDashboardRepositoryQuestionPrompt(
+        { title: "T3 Code", workspaceRoot: "/work/t3code" },
+        "  What is blocking the release?  ",
+      ),
+    ).toContain(
+      "Repository: T3 Code\nRepository path: /work/t3code\n\n## User question\nWhat is blocking the release?",
+    );
   });
 });
 

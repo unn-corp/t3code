@@ -143,14 +143,14 @@ export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionCo
           >
             <div
               className={cn(
-                "chat-composer-glass-shell relative w-full",
+                "chat-composer-glass-shell chat-composer-voice-root relative w-full",
                 voiceInputPhase === "recording" && "chat-voice-recording-active",
                 voiceInputPhase === "transcribing" && "chat-voice-transcribing-active",
                 voiceInputPhase === "success" && "chat-voice-success-active",
                 voiceInputPhase === "no-audio" && "chat-voice-no-audio-active",
               )}
             >
-              <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
+              <div className="chat-composer-glass-host chat-composer-voice-halo-surface relative z-10 w-full rounded-[22px]">
                 <div className="chat-composer-glass rounded-[20px] border border-black/12 transition-colors duration-200 has-focus-visible:border-foreground/40 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5">
                   <div className="relative grid grid-cols-[minmax(0,1fr)_4.25rem] overflow-visible rounded-[18px]">
                     {voiceInputBusy ? (

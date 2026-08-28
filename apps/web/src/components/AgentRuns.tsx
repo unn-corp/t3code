@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -16,6 +16,7 @@ import type {
   AgentDashboardAutomationRun,
   AgentDashboardRepositoryPolicy,
 } from "@t3tools/contracts";
+import type { AgentRunsSearch } from "../agentDashboardRouteSearch";
 import { agentDashboardEnvironment, useAgentDashboardSnapshot } from "../state/agentDashboard";
 import { useAtomCommand } from "../state/use-atom-command";
 import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timestampFormat";
@@ -26,6 +27,8 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { AgentDashboardPageShell } from "./AgentDashboardPageShell";
+
+const EMPTY_AGENT_RUNS_SEARCH = {} satisfies AgentRunsSearch;
 
 function runVariant(status: AgentDashboardAutomationRun["status"]) {
   switch (status) {
@@ -103,7 +106,11 @@ function runStatusLabel(run: AgentDashboardAutomationRun): string {
   }
 }
 
-export function AgentRuns() {
+export function AgentRuns({
+  initialSearch = EMPTY_AGENT_RUNS_SEARCH,
+}: {
+  readonly initialSearch?: AgentRunsSearch;
+}) {
   const dashboardSnapshot = useAgentDashboardSnapshot();
   const retryRun = useAtomCommand(agentDashboardEnvironment.retryRun, { reportFailure: false });
   const updatePolicy = useAtomCommand(agentDashboardEnvironment.updateRepositoryPolicy, {
@@ -111,8 +118,8 @@ export function AgentRuns() {
   });
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [updatingPolicyId, setUpdatingPolicyId] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [projectFilter, setProjectFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState(initialSearch.status ?? "all");
+  const [projectFilter, setProjectFilter] = useState(initialSearch.project ?? "all");
   const runs = useMemo(
     () => dashboardSnapshot.data?.automationRuns ?? [],
     [dashboardSnapshot.data?.automationRuns],
@@ -139,6 +146,20 @@ export function AgentRuns() {
       ),
     [projectFilter, runs, statusFilter],
   );
+  useEffect(() => {
+    const targetId = initialSearch.runId
+      ? `agent-run-${initialSearch.runId}`
+      : initialSearch.focus === "coverage" && initialSearch.project
+        ? `agent-coverage-${initialSearch.project}`
+        : null;
+    if (!targetId) return;
+    const frame = requestAnimationFrame(() => {
+      const target = document.getElementById(targetId);
+      target?.scrollIntoView({ block: "center" });
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [coverage, initialSearch.focus, initialSearch.project, initialSearch.runId, visibleRuns]);
 
   const showFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -291,8 +312,10 @@ export function AgentRuns() {
             );
             return (
               <div
-                className="flex flex-col gap-3 rounded-lg border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between"
+                className="flex scroll-mt-4 flex-col gap-3 rounded-lg border border-border/60 p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-row sm:items-center sm:justify-between"
+                id={`agent-coverage-${id}`}
                 key={id}
+                tabIndex={-1}
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{repositoryNames.get(id) ?? id}</p>
@@ -406,68 +429,75 @@ export function AgentRuns() {
       {visibleRuns.length > 0 ? (
         <div className="grid gap-3">
           {visibleRuns.map((run) => (
-            <Card key={run.id}>
-              <CardHeader className="gap-3 p-4 sm:p-5">
-                <div className="flex min-w-0 items-start gap-3">
-                  {statusIcon(run.status)}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <CardTitle className="text-base">{runTitle(run)}</CardTitle>
-                      <Badge size="sm" variant={runVariant(run.status)}>
-                        {runStatusLabel(run)}
-                      </Badge>
-                      <Badge size="sm" variant="outline">
-                        {run.trigger}
-                      </Badge>
+            <div
+              className="scroll-mt-4 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              id={`agent-run-${run.id}`}
+              key={run.id}
+              tabIndex={-1}
+            >
+              <Card>
+                <CardHeader className="gap-3 p-4 sm:p-5">
+                  <div className="flex min-w-0 items-start gap-3">
+                    {statusIcon(run.status)}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <CardTitle className="text-base">{runTitle(run)}</CardTitle>
+                        <Badge size="sm" variant={runVariant(run.status)}>
+                          {runStatusLabel(run)}
+                        </Badge>
+                        <Badge size="sm" variant="outline">
+                          {run.trigger}
+                        </Badge>
+                      </div>
+                      <CardDescription className="mt-1 truncate">
+                        {repositoryNames.get(String(run.repository.projectId)) ??
+                          String(run.repository.projectId)}
+                        {run.target ? `, ${run.target}` : ""}
+                      </CardDescription>
                     </div>
-                    <CardDescription className="mt-1 truncate">
-                      {repositoryNames.get(String(run.repository.projectId)) ??
-                        String(run.repository.projectId)}
-                      {run.target ? `, ${run.target}` : ""}
-                    </CardDescription>
+                    {run.status === "failed" || run.status === "partial" ? (
+                      <Button
+                        disabled={retryingRunId !== null}
+                        onClick={() => void retry(run)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        {retryingRunId === run.id ? (
+                          <LoaderIcon className="animate-spin" />
+                        ) : (
+                          <RotateCcwIcon />
+                        )}
+                        Retry
+                      </Button>
+                    ) : null}
                   </div>
-                  {run.status === "failed" || run.status === "partial" ? (
-                    <Button
-                      disabled={retryingRunId !== null}
-                      onClick={() => void retry(run)}
-                      size="sm"
-                      variant="outline"
-                    >
-                      {retryingRunId === run.id ? (
-                        <LoaderIcon className="animate-spin" />
-                      ) : (
-                        <RotateCcwIcon />
-                      )}
-                      Retry
-                    </Button>
-                  ) : null}
-                </div>
-              </CardHeader>
-              <CardPanel className="flex flex-col gap-2 border-t border-border/60 p-4 text-xs text-muted-foreground sm:p-5">
-                <div className="grid grid-cols-4 gap-1" aria-label={`Run stage: ${run.status}`}>
-                  {["Queued", "Running", "Ingesting", "Complete"].map((label, index) => (
-                    <div key={label}>
-                      <div
-                        className={`h-1.5 rounded-full ${index <= runStage(run.status) ? "bg-primary" : "bg-muted"}`}
-                      />
-                      <span className="mt-1 block text-[10px]">{label}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-2">
-                  <span className="inline-flex items-center gap-1.5">
-                    <Clock3Icon className="size-3.5" />
-                    {formatRelativeTimeLabel(run.updatedAt) || "Unknown time"}
-                  </span>
-                  <span>Model: {run.model ?? "Unmeasured"}</span>
-                  <span>Findings: {run.findingCount}</span>
-                  <span>Retries: {run.retryCount}</span>
-                  <span>Cost: {run.costUnits === null ? "Unmeasured" : run.costUnits}</span>
-                  <span>Duration: {runDuration(run)}</span>
-                </div>
-                {run.error ? <p className="text-destructive">{run.error}</p> : null}
-              </CardPanel>
-            </Card>
+                </CardHeader>
+                <CardPanel className="flex flex-col gap-2 border-t border-border/60 p-4 text-xs text-muted-foreground sm:p-5">
+                  <div className="grid grid-cols-4 gap-1" aria-label={`Run stage: ${run.status}`}>
+                    {["Queued", "Running", "Ingesting", "Complete"].map((label, index) => (
+                      <div key={label}>
+                        <div
+                          className={`h-1.5 rounded-full ${index <= runStage(run.status) ? "bg-primary" : "bg-muted"}`}
+                        />
+                        <span className="mt-1 block text-[10px]">{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-2">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Clock3Icon className="size-3.5" />
+                      {formatRelativeTimeLabel(run.updatedAt) || "Unknown time"}
+                    </span>
+                    <span>Model: {run.model ?? "Unmeasured"}</span>
+                    <span>Findings: {run.findingCount}</span>
+                    <span>Retries: {run.retryCount}</span>
+                    <span>Cost: {run.costUnits === null ? "Unmeasured" : run.costUnits}</span>
+                    <span>Duration: {runDuration(run)}</span>
+                  </div>
+                  {run.error ? <p className="text-destructive">{run.error}</p> : null}
+                </CardPanel>
+              </Card>
+            </div>
           ))}
         </div>
       ) : (

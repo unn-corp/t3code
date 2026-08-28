@@ -612,6 +612,7 @@ const make = Effect.gen(function* () {
             yield* runner
               .settleCompletedFinding({
                 finding: input.finding,
+                project: input.project,
                 result: input.result,
                 runId: input.run.id,
                 outcome: { kind: "finding-stale", reason: staleOutcome.reason },
@@ -725,6 +726,7 @@ const make = Effect.gen(function* () {
           yield* runner
             .settleCompletedFinding({
               finding: input.finding,
+              project: input.project,
               result: { ...input.result, branch: pullRequest.headRefName },
               runId: input.run.id,
               outcome: { kind: "pull-request-delivered" },
