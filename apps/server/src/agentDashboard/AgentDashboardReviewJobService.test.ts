@@ -7,8 +7,10 @@ import {
   ThreadId,
   type AgentDashboardAutomationRun,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -26,6 +28,7 @@ import * as AgentDashboardReviewJobService from "./AgentDashboardReviewJobServic
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import {
   AgentDashboardReviewRunner,
+  AgentDashboardReviewRunnerError,
   type AgentDashboardReviewRunResult,
 } from "./AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewScheduler from "./AgentDashboardReviewScheduler.ts";
@@ -360,8 +363,9 @@ const jobServiceLayer = (input: {
   readonly runner: AgentDashboardReviewRunner["Service"];
   readonly getThreadDetailById: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getThreadDetailById"];
   readonly getShellSnapshot?: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getShellSnapshot"];
-}) =>
-  AgentDashboardReviewJobService.layerWithoutDefaults.pipe(
+  readonly history?: AgentDashboardRunHistory.AgentDashboardRunHistory["Service"];
+}) => {
+  const serviceLayer = AgentDashboardReviewJobService.layerWithoutDefaults.pipe(
     Layer.provide(Layer.succeed(AgentDashboardReviewRunner, input.runner)),
     Layer.provide(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
@@ -370,12 +374,23 @@ const jobServiceLayer = (input: {
         getThreadDetailById: input.getThreadDetailById,
       }),
     ),
-    Layer.provide(AgentDashboardRunHistory.layer),
+  );
+
+  const serviceWithHistory = input.history
+    ? serviceLayer.pipe(
+        Layer.provide(
+          Layer.succeed(AgentDashboardRunHistory.AgentDashboardRunHistory, input.history),
+        ),
+      )
+    : serviceLayer.pipe(Layer.provide(AgentDashboardRunHistory.layer));
+
+  return serviceWithHistory.pipe(
     Layer.provide(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(process.cwd(), input.baseDir)),
     Layer.provideMerge(TestClock.layer()),
     Layer.provideMerge(NodeServices.layer),
   );
+};
 
 describe("AgentDashboardReviewJobService lifecycle", () => {
   it.effect("completes a scheduled no-op when no repository is due", () =>
@@ -517,6 +532,96 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
                   return { ...reviewResult, workspaceRoot: baseDir };
                 }),
               runRandomReview: Effect.succeed(reviewResult),
+            },
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
+
+  it.effect("deduplicates overlapping enqueue requests during persistence", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* makeTempStateDir();
+      const persistedRuns = yield* Ref.make<ReadonlyArray<AgentDashboardAutomationRun>>([]);
+      const firstUpsertStarted = yield* Deferred.make<void>();
+      const releaseFirstUpsert = yield* Deferred.make<void>();
+      const releaseDispatch = yield* Deferred.make<void>();
+      const dispatchCount = yield* Ref.make(0);
+      const dispatchFailure = new AgentDashboardReviewRunnerError({
+        operation: "test dispatch",
+        message: "test dispatch failure",
+      });
+
+      const history = {
+        list: Ref.get(persistedRuns),
+        get: (id: string) =>
+          Ref.get(persistedRuns).pipe(
+            Effect.map((runs) => runs.find((run) => run.id === id) ?? null),
+          ),
+        upsert: (run: AgentDashboardAutomationRun) =>
+          Effect.gen(function* () {
+            if ((yield* Ref.get(persistedRuns)).length === 0) {
+              yield* Deferred.succeed(firstUpsertStarted, undefined);
+              yield* Deferred.await(releaseFirstUpsert);
+            }
+            yield* Ref.update(persistedRuns, (runs) => [
+              run,
+              ...runs.filter((item) => item.id !== run.id),
+            ]);
+            return run;
+          }),
+        replaceAll: (runs: ReadonlyArray<AgentDashboardAutomationRun>) =>
+          Ref.set(persistedRuns, runs).pipe(Effect.as(runs)),
+      } satisfies AgentDashboardRunHistory.AgentDashboardRunHistory["Service"];
+
+      yield* Effect.gen(function* () {
+        const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        const firstFiber = yield* jobService
+          .enqueueReview({
+            trigger: "manual",
+            idempotencyKey: "manual:overlap",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* Deferred.await(firstUpsertStarted);
+
+        const secondFiber = yield* jobService
+          .enqueueReview({
+            trigger: "manual",
+            idempotencyKey: "manual:overlap",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseFirstUpsert, undefined);
+
+        const first = yield* Fiber.join(firstFiber);
+        const second = yield* Fiber.join(secondFiber);
+        expect(second.id).toBe(first.id);
+
+        const records = yield* Ref.get(persistedRuns);
+        expect(records).toHaveLength(1);
+        expect(records[0]?.id).toBe(first.id);
+
+        yield* Deferred.succeed(releaseDispatch, undefined);
+        const terminal = yield* waitForTerminal(jobService, first.id);
+        expect(terminal?.status).toBe("failed");
+        expect(yield* Ref.get(dispatchCount)).toBe(1);
+      }).pipe(
+        Effect.provide(
+          jobServiceLayer({
+            baseDir,
+            history,
+            runner: {
+              runReview: () =>
+                Effect.gen(function* () {
+                  yield* Ref.update(dispatchCount, (count) => count + 1);
+                  yield* Deferred.await(releaseDispatch);
+                  return yield* dispatchFailure;
+                }),
+              runRandomReview: Effect.fail(dispatchFailure),
             },
             getThreadDetailById: () => Effect.succeed(Option.none()),
           }),
@@ -698,16 +803,21 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
-        const first = yield* jobService.enqueueReview({
-          trigger: "manual",
-          projectId: PROJECT_ID,
-          idempotencyKey: "concurrent-a",
-        });
-        const second = yield* jobService.enqueueReview({
-          trigger: "manual",
-          projectId: PROJECT_ID,
-          idempotencyKey: "concurrent-b",
-        });
+        const [first, second] = yield* Effect.all(
+          [
+            jobService.enqueueReview({
+              trigger: "manual",
+              projectId: PROJECT_ID,
+              idempotencyKey: "concurrent-a",
+            }),
+            jobService.enqueueReview({
+              trigger: "manual",
+              projectId: PROJECT_ID,
+              idempotencyKey: "concurrent-b",
+            }),
+          ],
+          { concurrency: 2 },
+        );
         expect(first.id).not.toBe(second.id);
 
         // Drain the forked workers enough for the first to claim the slot.
