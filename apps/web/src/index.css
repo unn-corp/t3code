@@ -6,66 +6,129 @@
   initial-value: 0deg;
 }
 
-/* Voice input motion system. Keep the composer's existing glass surface intact
-   and layer the recording/result treatments around it. */
-.chat-composer-glass-shell {
+/* Voice input motion system. Keep the composer's existing glass surfaces intact
+   and layer the recording/result treatments around their real perimeter. */
+.chat-composer-voice-root {
   --chat-voice-blue: #5f76ad;
   --chat-voice-blue-bright: #8193bb;
   --chat-voice-green: #70a38a;
   --chat-voice-red: #bd7077;
 }
 
-.chat-composer-glass-shell.chat-voice-recording-active::before,
-.chat-composer-glass-shell.chat-voice-transcribing-active::before,
-.chat-composer-glass-shell.chat-voice-success-active::before,
-.chat-composer-glass-shell.chat-voice-no-audio-active::before {
-  border: 0;
-  box-shadow: none;
-  opacity: 1;
-  animation: none;
-}
-
-.chat-composer-glass-shell.chat-voice-recording-active::after,
-.chat-composer-glass-shell.chat-voice-transcribing-active::after,
-.chat-composer-glass-shell.chat-voice-success-active::after,
-.chat-composer-glass-shell.chat-voice-no-audio-active::after {
-  position: absolute;
-  inset: -4px;
-  z-index: 0;
-  pointer-events: none;
-  border: 1px solid transparent;
-  border-radius: 26px;
-  box-shadow: 0 0 0 transparent;
-  content: "";
-}
-
-.chat-composer-glass-shell.chat-voice-recording-active::after,
-.chat-composer-glass-shell.chat-voice-transcribing-active::after {
-  border-color: color-mix(in srgb, var(--chat-voice-blue) 42%, transparent);
-  box-shadow:
+.chat-composer-voice-root:is(.chat-voice-recording-active, .chat-voice-transcribing-active) {
+  --chat-voice-halo-border: color-mix(in srgb, var(--chat-voice-blue) 42%, transparent);
+  --chat-voice-halo-shadow:
     0 0 22px color-mix(in srgb, var(--chat-voice-blue) 15%, transparent),
     0 0 48px color-mix(in srgb, var(--chat-voice-blue) 8%, transparent);
-  animation: chat-voice-breathe 1.8s ease-in-out infinite;
+  --chat-voice-halo-opacity: 0.62;
+  --chat-voice-halo-animation: chat-voice-breathe 1.8s ease-in-out infinite;
 }
 
-.chat-composer-glass-shell.chat-voice-success-active::after {
-  border-color: color-mix(in srgb, var(--chat-voice-green) 42%, transparent);
-  box-shadow:
+.chat-composer-voice-root.chat-voice-success-active {
+  --chat-voice-halo-border: color-mix(in srgb, var(--chat-voice-green) 42%, transparent);
+  --chat-voice-halo-shadow:
     0 0 22px color-mix(in srgb, var(--chat-voice-green) 16%, transparent),
     0 0 46px color-mix(in srgb, var(--chat-voice-green) 8%, transparent);
-  opacity: 0.68;
+  --chat-voice-halo-opacity: 0.68;
+  --chat-voice-halo-animation: none;
 }
 
-.chat-composer-glass-shell.chat-voice-no-audio-active {
+.chat-composer-voice-root.chat-voice-no-audio-active {
+  --chat-voice-halo-border: color-mix(in srgb, var(--chat-voice-red) 44%, transparent);
+  --chat-voice-halo-shadow:
+    0 0 20px 2px color-mix(in srgb, var(--chat-voice-red) 16%, transparent),
+    0 0 42px 5px color-mix(in srgb, var(--chat-voice-red) 8%, transparent);
+  --chat-voice-halo-opacity: 0.46;
+  --chat-voice-halo-animation: chat-voice-error-glow 1.1s ease-out both;
   animation: chat-voice-error-shake 420ms ease-in-out both;
 }
 
-.chat-composer-glass-shell.chat-voice-no-audio-active::after {
-  border-color: color-mix(in srgb, var(--chat-voice-red) 44%, transparent);
-  box-shadow:
-    0 0 20px 2px color-mix(in srgb, var(--chat-voice-red) 16%, transparent),
-    0 0 42px 5px color-mix(in srgb, var(--chat-voice-red) 8%, transparent);
-  animation: chat-voice-error-glow 1.1s ease-out both;
+.chat-composer-voice-root:is(
+    .chat-voice-recording-active,
+    .chat-voice-transcribing-active,
+    .chat-voice-success-active,
+    .chat-voice-no-audio-active
+  )
+  .chat-composer-voice-halo-surface::before,
+.chat-composer-voice-root:is(
+    .chat-voice-recording-active,
+    .chat-voice-transcribing-active,
+    .chat-voice-success-active,
+    .chat-voice-no-audio-active
+  )
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)::after,
+.chat-composer-voice-root:is(
+    .chat-voice-recording-active,
+    .chat-voice-transcribing-active,
+    .chat-voice-success-active,
+    .chat-voice-no-audio-active
+  )
+  .chat-composer-context-strip::after,
+.chat-composer-voice-root:is(
+    .chat-voice-recording-active,
+    .chat-voice-transcribing-active,
+    .chat-voice-success-active,
+    .chat-voice-no-audio-active
+  )
+  .chat-composer-shoulder-tab::after {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  border: 1px solid var(--chat-voice-halo-border);
+  box-shadow: var(--chat-voice-halo-shadow);
+  opacity: var(--chat-voice-halo-opacity);
+  animation: var(--chat-voice-halo-animation);
+  content: "";
+}
+
+.chat-composer-voice-root:is(
+    .chat-voice-recording-active,
+    .chat-voice-transcribing-active,
+    .chat-voice-success-active,
+    .chat-voice-no-audio-active
+  )
+  .chat-composer-voice-halo-surface::before {
+  inset: -4px;
+  border-radius: 26px;
+}
+
+.chat-composer-voice-root:is(
+    .chat-voice-recording-active,
+    .chat-voice-transcribing-active,
+    .chat-voice-success-active,
+    .chat-voice-no-audio-active
+  )
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)::after {
+  inset: -4px -4px var(--chat-composer-attachment-overlap);
+  z-index: -2;
+  border-bottom: 0;
+  border-radius: 20px 20px 0 0;
+}
+
+.chat-composer-voice-root:is(
+    .chat-voice-recording-active,
+    .chat-voice-transcribing-active,
+    .chat-voice-success-active,
+    .chat-voice-no-audio-active
+  )
+  .chat-composer-context-strip::after {
+  inset: 1rem -4px -4px;
+  z-index: -2;
+  border-top: 0;
+  border-radius: 0 0 20px 20px;
+}
+
+.chat-composer-voice-root:is(
+    .chat-voice-recording-active,
+    .chat-voice-transcribing-active,
+    .chat-voice-success-active,
+    .chat-voice-no-audio-active
+  )
+  .chat-composer-shoulder-tab::after {
+  inset: -4px -4px 0;
+  z-index: -1;
+  border-bottom: 0;
+  border-radius: 16px 16px 0 0;
 }
 
 [data-openwhispr-voice-input="true"] {
@@ -528,10 +591,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-composer-glass-shell.chat-voice-recording-active::after,
-  .chat-composer-glass-shell.chat-voice-transcribing-active::after,
-  .chat-composer-glass-shell.chat-voice-no-audio-active,
-  .chat-composer-glass-shell.chat-voice-no-audio-active::after,
+  .chat-composer-voice-root:is(
+    .chat-voice-recording-active,
+    .chat-voice-transcribing-active,
+    .chat-voice-no-audio-active
+  ),
   .chat-voice-transcribing-active .chat-voice-spinner-mark,
   .chat-voice-transcribing-active .chat-voice-spinner-wave,
   .chat-voice-transcribing-active .chat-voice-spinner-regular-orbit,
@@ -540,6 +604,14 @@
   .chat-voice-no-audio-active .chat-voice-error-mark circle,
   .chat-voice-no-audio-active .chat-voice-error-mark path {
     animation: none;
+  }
+
+  .chat-composer-voice-root:is(
+    .chat-voice-recording-active,
+    .chat-voice-transcribing-active,
+    .chat-voice-no-audio-active
+  ) {
+    --chat-voice-halo-animation: none;
   }
 
   .chat-voice-transcribing-active .chat-voice-entry-waveform {
