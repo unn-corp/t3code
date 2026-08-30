@@ -248,10 +248,14 @@ export const transitionContinuousImprovementRun = (
 export const isFindingEligibleForContinuousImprovement = (
   finding: AgentDashboardFinding,
   guardrails: Pick<ContinuousImprovementSettings, "maxRiskTier" | "minimumConfidence">,
-): boolean =>
-  finding.actionability?.readiness === "ready" &&
-  riskWeight[finding.actionability.riskTier] <= riskWeight[guardrails.maxRiskTier] &&
-  confidenceWeight[finding.confidence] >= confidenceWeight[guardrails.minimumConfidence];
+): boolean => {
+  const actionability = finding.actionability;
+  return (
+    AgentDashboardStore.hasQualifiedFindingActionability(actionability) &&
+    riskWeight[actionability.riskTier] <= riskWeight[guardrails.maxRiskTier] &&
+    confidenceWeight[finding.confidence] >= confidenceWeight[guardrails.minimumConfidence]
+  );
+};
 
 export const selectContinuousImprovementFinding = (input: {
   readonly findings: ReadonlyArray<AgentDashboardFinding>;

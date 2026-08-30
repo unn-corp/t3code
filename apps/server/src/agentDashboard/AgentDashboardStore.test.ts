@@ -286,7 +286,7 @@ it.effect("hides missing and linked-worktree review targets but accepts submodul
   }),
 );
 
-it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
+it.effect("keeps prose-only native T3 review findings out of automation", () =>
   Effect.promise(async () => {
     const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-review-ingest-"));
     const repositoryPath = NodePath.join(stateDir, "repository");
@@ -311,6 +311,7 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
             confidence: "high",
             evidence: ["src/parser.ts:42 — buffered output is returned without a final flush"],
             nextStep: "Flush the buffer before returning and add an end-of-input test.",
+            readiness: "needs-research",
             githubIssueTitle: "Flush the parser buffer at end of input",
             githubIssueBody: "## Problem\nThe parser drops the final record.",
           },
@@ -333,7 +334,7 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
       });
       const [finding] = await Effect.runPromise(store.readFindings);
       expect(finding?.actionability).toMatchObject({
-        readiness: "ready",
+        readiness: "needs-research",
         proposal: "Flush the buffer before returning and add an end-of-input test.",
         expectedValue: "The last item silently disappears from imports.",
       });
@@ -347,7 +348,7 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
 
       const [legacyFinding] = await Effect.runPromise(store.readFindings);
       expect(legacyFinding?.actionability).toMatchObject({
-        readiness: "ready",
+        readiness: "needs-research",
         proposal: "Flush the buffer before returning and add an end-of-input test.",
         expectedValue: "The last item silently disappears from imports.",
       });
@@ -359,10 +360,36 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
             threadId: ThreadId.make("thread-legacy-implementation"),
           }),
         ),
-      ).toBe("applied");
+      ).toBe("noop");
       expect((await Effect.runPromise(store.readFindings))[0]).toMatchObject({
-        actionability: { readiness: "ready" },
-        thread: { threadId: "thread-legacy-implementation" },
+        actionability: { readiness: "needs-research" },
+        thread: null,
+      });
+
+      const qualifiedInput: AgentDashboardStore.AgentDashboardReviewIngestInput = {
+        ...input,
+        findings: [
+          {
+            ...input.findings[0]!,
+            readiness: "ready",
+            targets: [
+              {
+                path: "src/parser.ts",
+                symbol: "parseRecords",
+                evidence: "The parser returns before flushing its final buffer.",
+              },
+            ],
+            validationPlan: ["Run the parser end-of-input regression test."],
+            qualificationReason: "The target and validation are repository-grounded.",
+          },
+        ],
+      };
+      expect(await Effect.runPromise(store.appendReviewSuggestions(qualifiedInput))).toBe(1);
+      expect((await Effect.runPromise(store.readFindings))[0]?.actionability).toMatchObject({
+        readiness: "ready",
+        targets: [{ path: "src/parser.ts" }],
+        validationPlan: ["Run the parser end-of-input regression test."],
+        qualificationReason: "The target and validation are repository-grounded.",
       });
     } finally {
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
@@ -399,6 +426,7 @@ it.effect("deduplicates canonical findings across runs and preserves disposition
             confidence: "high",
             evidence: ["src/parser.ts:42"],
             nextStep: "Flush the buffer before returning.",
+            readiness: "needs-research",
             githubIssueTitle: "Flush parser buffer",
             githubIssueBody: "## Problem",
           },
@@ -484,11 +512,23 @@ it.effect("qualifies open collector signals and archives verified false positive
             repository: { projectId: "project-1" },
             source: "local-secret-scan",
           },
+          {
+            kind: "review",
+            type: "improvement",
+            title: "Under-specified observation",
+            summary: "A review mentioned a possible improvement without locating it.",
+            evidence: ["The review contains no concrete code target."],
+            repository: { projectId: "project-1" },
+            source: "repository-review",
+          },
         ]),
       );
       const findings = await Effect.runPromise(store.readFindings);
       const ci = findings.find((finding) => finding.title === "No CI workflow");
       const secret = findings.find((finding) => finding.title === "Possible credential");
+      const incomplete = findings.find(
+        (finding) => finding.title === "Under-specified observation",
+      );
 
       expect(
         await Effect.runPromise(
@@ -516,9 +556,21 @@ it.effect("qualifies open collector signals and archives verified false positive
               outcome: "dismiss",
               reason: "The value is an intentionally inert test fixture.",
             },
+            {
+              id: incomplete!.id,
+              outcome: "ready",
+              proposal: "Investigate the observation.",
+              expectedValue: "Clarify whether it needs work.",
+              targets: [],
+              validationPlan: [],
+              sources: [],
+              riskTier: "low",
+              estimatedEffort: "small",
+              reason: "The observation was not checked against a concrete target.",
+            },
           ]),
         ),
-      ).toBe(2);
+      ).toBe(3);
 
       const qualified = await Effect.runPromise(store.readFindings);
       expect(qualified.find((finding) => finding.id === ci!.id)?.actionability).toMatchObject({
@@ -532,6 +584,13 @@ it.effect("qualifies open collector signals and archives verified false positive
         state: "dismissed",
         actor: "repository-review",
         note: "The value is an intentionally inert test fixture.",
+      });
+      expect(
+        qualified.find((finding) => finding.id === incomplete!.id)?.actionability,
+      ).toMatchObject({
+        readiness: "needs-research",
+        targets: [],
+        validationPlan: [],
       });
     } finally {
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
@@ -656,6 +715,7 @@ it.effect("links a finding to its working chat and records the transition", () =
               confidence: "high",
               evidence: ["src/parser.ts:42"],
               nextStep: "Flush the buffer before returning.",
+              readiness: "needs-research",
               githubIssueTitle: "Flush parser buffer",
               githubIssueBody: "## Problem",
             },
@@ -761,7 +821,13 @@ it.effect("atomically claims and releases a ready finding for continuous impleme
               readiness: "ready",
               proposal: "Reuse the first projection result.",
               expectedValue: "Avoid redundant work.",
-              targets: [],
+              targets: [
+                {
+                  path: "apps/server/src/orchestration/Services/ProjectionSnapshotQuery.ts",
+                  symbol: "getSnapshot",
+                  evidence: "The same projection is loaded twice.",
+                },
+              ],
               validationPlan: ["Run the focused store test."],
               sources: [],
               riskTier: "medium",

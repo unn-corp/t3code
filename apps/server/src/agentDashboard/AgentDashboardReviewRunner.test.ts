@@ -260,6 +260,7 @@ describe("qualification candidates", () => {
   it("includes candidate context and qualification output in the review brief", () => {
     const prompt = buildReviewPrompt(project("alpha"), [finding("finding:candidate")]);
     expect(prompt).toContain('"finding_id":"finding:candidate"');
+    expect(prompt).toContain('"readiness":"ready|needs-research"');
     expect(prompt).toContain('"outcome":"ready|needs-research|dismiss"');
     expect(prompt).toContain("Dirty working-tree state is repository health");
     expect(prompt).toContain("every repository-controlled file");
