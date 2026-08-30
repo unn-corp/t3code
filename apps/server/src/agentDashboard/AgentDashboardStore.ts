@@ -99,6 +99,7 @@ export interface AgentDashboardReviewFindingInput {
   readonly confidence: string;
   readonly evidence: ReadonlyArray<string>;
   readonly nextStep: string;
+  readonly readiness: AgentDashboardFindingActionability["readiness"];
   readonly targets?: AgentDashboardFindingActionability["targets"] | undefined;
   readonly validationPlan?: ReadonlyArray<string> | undefined;
   readonly sources?: AgentDashboardFindingActionability["sources"] | undefined;
@@ -321,6 +322,7 @@ const reviewFindingActionability = (
   input: {
     readonly type: AgentDashboardFindingType;
     readonly category?: string | null | undefined;
+    readonly readiness: AgentDashboardFindingActionability["readiness"];
     readonly qualifiedAt: string;
     readonly occurrenceCount: number;
     readonly targets?: AgentDashboardFindingActionability["targets"] | undefined;
@@ -334,12 +336,20 @@ const reviewFindingActionability = (
   const proposal = text(proposalValue, 1_200);
   const expectedValue = text(expectedValueValue, 1_200);
   if (!proposal || !expectedValue) return null;
+  const targets = input.targets ?? [];
+  const validationPlan = input.validationPlan ?? [];
+  const qualificationReason = text(input.qualificationReason, 1_200);
+  const ready =
+    input.readiness === "ready" &&
+    targets.length > 0 &&
+    validationPlan.length > 0 &&
+    qualificationReason !== null;
   return {
-    readiness: "ready",
+    readiness: ready ? "ready" : "needs-research",
     proposal,
     expectedValue,
-    targets: input.targets ?? [],
-    validationPlan: input.validationPlan ?? [],
+    targets,
+    validationPlan,
     sources: input.sources ?? [],
     riskTier:
       input.riskTier ??
@@ -347,12 +357,23 @@ const reviewFindingActionability = (
         ? "high"
         : "medium"),
     estimatedEffort: input.estimatedEffort ?? "medium",
-    qualificationReason: input.qualificationReason?.trim() || null,
-    qualifiedAt: input.qualifiedAt,
-    qualifiedBy: "repository-review",
-    qualifiedOccurrenceCount: input.occurrenceCount,
+    qualificationReason,
+    qualifiedAt: ready ? input.qualifiedAt : null,
+    qualifiedBy: ready ? "repository-review" : null,
+    qualifiedOccurrenceCount: ready ? input.occurrenceCount : 0,
   };
 };
+
+export const hasQualifiedFindingActionability = (
+  actionability: AgentDashboardFinding["actionability"],
+): actionability is AgentDashboardFindingActionability =>
+  actionability !== null &&
+  actionability.readiness === "ready" &&
+  actionability.targets.length > 0 &&
+  actionability.validationPlan.length > 0 &&
+  actionability.qualificationReason !== null &&
+  actionability.qualifiedAt !== null &&
+  actionability.qualifiedBy !== null;
 
 const reviewSuggestionKey = (repositoryPath: string, title: string): string =>
   `${repositoryPath.trim()}\u0000${title.trim().toLocaleLowerCase()}`;
@@ -1538,6 +1559,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
             actionability: reviewFindingActionability(finding.nextStep, finding.impact, {
               type: finding.type,
               category: finding.category,
+              readiness: finding.readiness,
               qualifiedAt: createdAt,
               occurrenceCount: 1,
               targets: finding.targets,
@@ -1829,6 +1851,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         ? reviewFindingActionability(suggestion.next_step, suggestion.impact, {
             type: finding.type,
             category: finding.category,
+            readiness: "needs-research",
             qualifiedAt: finding.lastSeenAt,
             occurrenceCount: finding.occurrenceCount,
           })
@@ -1869,7 +1892,8 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
             return finding;
           }
 
-          const reason = text(qualification.reason, 1_200) ?? "Qualification completed.";
+          const qualificationReason = text(qualification.reason, 1_200);
+          const reason = qualificationReason ?? "Qualification completed.";
           changed += 1;
           if (qualification.outcome === "dismiss") {
             return {
@@ -1891,21 +1915,33 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
             changed -= 1;
             return finding;
           }
+          const targets = qualification.targets
+            .slice(0, 24)
+            .map((target) => ({
+              path: text(target.path, 1_000) ?? "",
+              symbol: text(target.symbol, 300),
+              evidence: text(target.evidence, 1_000) ?? "",
+            }))
+            .filter((target) => target.path.length > 0 && target.evidence.length > 0);
+          const validationPlan = qualification.validationPlan
+            .map((item) => text(item, 1_000) ?? "")
+            .filter(Boolean)
+            .slice(0, 24);
+          const readiness =
+            qualification.outcome === "ready" &&
+            qualificationReason !== null &&
+            targets.length > 0 &&
+            validationPlan.length > 0
+              ? "ready"
+              : "needs-research";
           return {
             ...finding,
             actionability: {
-              readiness: qualification.outcome,
+              readiness,
               proposal,
               expectedValue,
-              targets: qualification.targets.slice(0, 24).map((target) => ({
-                path: target.path.trim().slice(0, 1_000),
-                symbol: target.symbol?.trim().slice(0, 300) || null,
-                evidence: target.evidence.trim().slice(0, 1_000),
-              })),
-              validationPlan: qualification.validationPlan
-                .map((item) => item.trim().slice(0, 1_000))
-                .filter(Boolean)
-                .slice(0, 24),
+              targets,
+              validationPlan,
               sources: qualification.sources.slice(0, 24).map((source) => ({
                 title: source.title.trim().slice(0, 300),
                 url: source.url.trim().slice(0, 2_000),

@@ -155,6 +155,11 @@ const estimatedEffort = (value: unknown): "small" | "medium" | "large" => {
   return candidate === "small" || candidate === "large" ? candidate : "medium";
 };
 
+const findingReadiness = (
+  value: unknown,
+): AgentDashboardStore.AgentDashboardReviewFindingInput["readiness"] =>
+  stringValue(value) === "ready" ? "ready" : "needs-research";
+
 const findingTargets = (
   value: unknown,
 ): Array<{ path: string; symbol: string | null; evidence: string }> =>
@@ -215,13 +220,18 @@ const parseQualification = (
   const proposal = stringValue(qualification?.proposal);
   const expectedValue = stringValue(qualification?.expected_value);
   if (!proposal || !expectedValue) return null;
+  const targets = findingTargets(qualification?.targets);
+  const validationPlan = stringList(qualification?.validation_plan);
   return {
     id,
-    outcome,
+    outcome:
+      outcome === "ready" && targets.length > 0 && validationPlan.length > 0
+        ? "ready"
+        : "needs-research",
     proposal,
     expectedValue,
-    targets: findingTargets(qualification?.targets),
-    validationPlan: stringList(qualification?.validation_plan),
+    targets,
+    validationPlan,
     sources: findingSources(qualification?.sources),
     riskTier: riskTier(qualification?.automation_risk),
     estimatedEffort: estimatedEffort(qualification?.estimated_effort),
@@ -282,6 +292,7 @@ export const parseReviewMetadata = (text: string): ParsedReviewMetadata => {
           confidence: stringValue(finding.confidence) ?? "medium",
           evidence: stringList(finding.evidence),
           nextStep: stringValue(finding.next_step) ?? "",
+          readiness: findingReadiness(finding.readiness),
           targets: findingTargets(finding.targets),
           validationPlan: stringList(finding.validation_plan),
           sources: findingSources(finding.sources),

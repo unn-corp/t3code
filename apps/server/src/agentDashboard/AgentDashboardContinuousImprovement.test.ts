@@ -181,12 +181,18 @@ const finding = (
       readiness: "ready",
       proposal: "Implement it.",
       expectedValue: "Improve behavior.",
-      targets: [],
+      targets: [
+        {
+          path: "src/example.ts",
+          symbol: "implementIt",
+          evidence: "The implementation belongs in this bounded function.",
+        },
+      ],
       validationPlan: ["Run focused tests."],
       sources: [],
       riskTier: "medium",
       estimatedEffort: "medium",
-      qualificationReason: null,
+      qualificationReason: "The change is bounded and locally testable.",
       qualifiedAt: "2026-08-01T00:00:00.000Z",
       qualifiedBy: "human",
       qualifiedOccurrenceCount: 1,
@@ -324,6 +330,17 @@ describe("selectContinuousImprovementFinding", () => {
         maxRiskTier: "critical",
         minimumConfidence: "high",
       }),
+    ).toBe(false);
+    expect(
+      isFindingEligibleForContinuousImprovement(
+        finding("under-specified", "alpha", {
+          actionability: {
+            ...finding("base", "alpha").actionability!,
+            targets: [],
+          },
+        }),
+        { maxRiskTier: "medium", minimumConfidence: "medium" },
+      ),
     ).toBe(false);
   });
 });
