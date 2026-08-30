@@ -93,6 +93,7 @@ describe("parseReviewMetadata", () => {
           confidence: "high",
           evidence: ["src/parser.ts:42"],
           nextStep: "Flush before return",
+          readiness: "needs-research",
           targets: [],
           validationPlan: [],
           sources: [],
@@ -110,7 +111,7 @@ describe("parseReviewMetadata", () => {
   it("parses qualification decisions for existing collector findings", () => {
     expect(
       AgentDashboardReviewJobService.parseReviewMetadata(
-        'T3_REVIEW_METADATA: {"findings":[],"qualifications":[{"finding_id":"finding:ci","outcome":"ready","proposal":"Add CI checks.","expected_value":"Catch regressions.","targets":[{"path":".github/workflows/checks.yml","symbol":null,"evidence":"No workflow exists."}],"validation_plan":["Validate workflow syntax."],"sources":[],"automation_risk":"low","estimated_effort":"small","reason":"The repository exposes a deterministic test command."},{"finding_id":"finding:fixture","outcome":"dismiss","reason":"This is an inert test fixture."}]}',
+        'T3_REVIEW_METADATA: {"findings":[],"qualifications":[{"finding_id":"finding:ci","outcome":"ready","proposal":"Add CI checks.","expected_value":"Catch regressions.","targets":[{"path":".github/workflows/checks.yml","symbol":null,"evidence":"No workflow exists."}],"validation_plan":["Validate workflow syntax."],"sources":[],"automation_risk":"low","estimated_effort":"small","reason":"The repository exposes a deterministic test command."},{"finding_id":"finding:fixture","outcome":"dismiss","reason":"This is an inert test fixture."},{"finding_id":"finding:incomplete","outcome":"ready","proposal":"Investigate the observation.","expected_value":"Clarify whether it needs work.","targets":[],"validation_plan":[],"sources":[],"automation_risk":"low","estimated_effort":"small","reason":"The observation was not checked against a concrete target."}]}',
       ),
     ).toEqual({
       kind: "parsed",
@@ -138,6 +139,18 @@ describe("parseReviewMetadata", () => {
           id: "finding:fixture",
           outcome: "dismiss",
           reason: "This is an inert test fixture.",
+        },
+        {
+          id: "finding:incomplete",
+          outcome: "needs-research",
+          proposal: "Investigate the observation.",
+          expectedValue: "Clarify whether it needs work.",
+          targets: [],
+          validationPlan: [],
+          sources: [],
+          riskTier: "low",
+          estimatedEffort: "small",
+          reason: "The observation was not checked against a concrete target.",
         },
       ],
     });

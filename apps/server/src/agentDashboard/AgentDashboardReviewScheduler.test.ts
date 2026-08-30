@@ -253,6 +253,7 @@ it.effect("parses the native metadata contract", () =>
         confidence: "high",
         evidence: ["src/parser.ts:42"],
         nextStep: "Flush before return",
+        readiness: "needs-research",
         targets: [],
         validationPlan: [],
         sources: [],
