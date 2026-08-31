@@ -17,6 +17,7 @@ import type {
   SourceControlProjectPullRequest,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { hasTrustedAgentDashboardFindingQualification } from "@t3tools/shared/agentDashboardFinding";
 import { useNavigate } from "@tanstack/react-router";
 import {
   BotIcon,
@@ -269,7 +270,7 @@ function continuousImprovementStatus(run: AgentDashboardAutomationRun): {
 }
 
 function findingIntent(record: DashboardFindingRecord): FindingIntent {
-  return record.finding.actionability?.readiness === "ready" ? "implement" : "research";
+  return hasTrustedAgentDashboardFindingQualification(record.finding) ? "implement" : "research";
 }
 
 function findingStatusDescription(status: AgentFindingsStatusFilter): string {
@@ -298,6 +299,9 @@ function findingAutomationBlockReason(
 ): string {
   const actionability = record.finding.actionability;
   if (actionability?.readiness !== "ready") return dashboardFindingQualificationReason(record);
+  if (!hasTrustedAgentDashboardFindingQualification(record.finding)) {
+    return "An explicit human approval is required before this review-derived plan can use implementation automation.";
+  }
   const riskWeight = { low: 1, medium: 2, high: 3, critical: 4 } as const;
   const confidenceWeight = { low: 1, medium: 2, high: 3 } as const;
   const reasons: Array<string> = [];
@@ -884,14 +888,14 @@ export function AgentFindings({
             },
             modelSelection,
             titleSeed: title,
-            runtimeMode: "full-access",
+            runtimeMode: intent === "implement" ? "full-access" : "automated-review",
             interactionMode: "default",
             bootstrap: {
               createThread: {
                 projectId: project.id,
                 title,
                 modelSelection,
-                runtimeMode: "full-access",
+                runtimeMode: intent === "implement" ? "full-access" : "automated-review",
                 interactionMode: "default",
                 branch: null,
                 worktreePath: null,
@@ -998,6 +1002,7 @@ export function AgentFindings({
       }
 
       const modelSelection = input.modelSelection;
+      const findingQuestionRuntimeMode = "automated-review" as const;
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       const title = `Ask: ${record.finding.title}`.slice(0, 80);
@@ -1015,14 +1020,14 @@ export function AgentFindings({
             },
             modelSelection,
             titleSeed: title,
-            runtimeMode: input.runtimeMode,
+            runtimeMode: findingQuestionRuntimeMode,
             interactionMode: "default",
             bootstrap: {
               createThread: {
                 projectId: project.id,
                 title,
                 modelSelection,
-                runtimeMode: input.runtimeMode,
+                runtimeMode: findingQuestionRuntimeMode,
                 interactionMode: "default",
                 branch: null,
                 worktreePath: null,
@@ -1842,6 +1847,11 @@ export function AgentFindings({
                         const canCreateIssue =
                           finding.externalIssueUrl !== null ||
                           githubRepositoryForRecord(record) !== null;
+                        const requiresApproval =
+                          record.status === "open" &&
+                          finding.thread === null &&
+                          finding.actionability?.readiness === "ready" &&
+                          !hasTrustedAgentDashboardFindingQualification(finding);
                         return (
                           <div
                             className="scroll-mt-4 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -1952,9 +1962,23 @@ export function AgentFindings({
                                           setManageNote(finding.disposition.note ?? "");
                                           setSnoozeDays("3");
                                           setManageRecord(record);
-                                        },
-                                        variant: "outline",
                                       },
+                                      variant: "outline",
+                                    },
+                                      requiresApproval
+                                        ? {
+                                            id: "approve",
+                                            label: "Approve implementation",
+                                            pendingLabel: "Approving",
+                                            icon: CheckCircle2Icon,
+                                            pending: isUpdating,
+                                            disabled: updatingFindingId !== null,
+                                            title:
+                                              "Approve this bounded finding before any implementation agent can use full access.",
+                                            onSelect: () =>
+                                              void applyDisposition(record, "approve"),
+                                          }
+                                        : null,
                                       record.status !== "done" && record.status !== "archived"
                                         ? {
                                             id: "work",

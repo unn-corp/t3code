@@ -16,7 +16,10 @@ import {
   type OrchestrationProjectShell,
   type VcsListRefsResult,
 } from "@t3tools/contracts";
-import { buildAgentDashboardFindingPrompt } from "@t3tools/shared/agentDashboardFinding";
+import {
+  buildAgentDashboardFindingPrompt,
+  hasTrustedAgentDashboardFindingQualification,
+} from "@t3tools/shared/agentDashboardFinding";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
@@ -237,6 +240,8 @@ const make = Effect.gen(function* () {
 
   const runFinding: AgentDashboardImplementationRunnerService["runFinding"] = (input) =>
     Effect.gen(function* () {
+      if (!hasTrustedAgentDashboardFindingQualification(input.finding)) return null;
+
       const refs = yield* git
         .listRefs({
           cwd: input.project.workspaceRoot,
@@ -492,6 +497,12 @@ const make = Effect.gen(function* () {
 
   const nudgeFinding: AgentDashboardImplementationRunnerService["nudgeFinding"] = (input) =>
     Effect.gen(function* () {
+      if (!hasTrustedAgentDashboardFindingQualification(input.finding)) {
+        return yield* new AgentDashboardImplementationRunnerError({
+          operation: "nudge implementation",
+          message: "An explicit trusted qualification is required before implementation continues.",
+        });
+      }
       const createdAt = DateTime.formatIso(yield* DateTime.now);
       yield* dispatch({
         type: "thread.turn.start",

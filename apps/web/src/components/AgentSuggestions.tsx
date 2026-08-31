@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { AgentDashboardDispositionAction, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { hasTrustedAgentDashboardFindingQualification } from "@t3tools/shared/agentDashboardFinding";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -319,6 +320,14 @@ export function AgentSuggestions() {
     : null;
   const selectedSuggestionActionError =
     selectedSuggestion && actionError?.suggestionId === selectedSuggestion.id ? actionError : null;
+  const needsFindingApproval = (suggestion: NativeSuggestion): boolean =>
+    Boolean(
+      suggestion.reviewDerived &&
+      !hasTrustedAgentDashboardFindingQualification({
+        actionability: suggestion.findingActionability ?? null,
+        occurrenceCount: suggestion.findingOccurrenceCount ?? 0,
+      }),
+    );
 
   const dashboardRepositoryForSuggestion = useCallback(
     (suggestion: NativeSuggestion) => {
@@ -731,6 +740,20 @@ export function AgentSuggestions() {
         return;
       }
 
+      const reviewFindingRequiresApproval =
+        suggestion.reviewDerived &&
+        !hasTrustedAgentDashboardFindingQualification({
+          actionability: suggestion.findingActionability ?? null,
+          occurrenceCount: suggestion.findingOccurrenceCount ?? 0,
+        });
+      if (reviewFindingRequiresApproval) {
+        showStartFailure(
+          "Approval is needed",
+          "An explicit human approval is required before this review finding can start implementation.",
+        );
+        return;
+      }
+
       const project = findDashboardProject(
         projects,
         {
@@ -934,6 +957,7 @@ export function AgentSuggestions() {
                   {group.suggestions.map((suggestion) => {
                     const workflowStatus = suggestionWorkflowStatus(suggestion);
                     const hasGithubRepository = githubRepositoryForSuggestion(suggestion) !== null;
+                    const requiresApproval = needsFindingApproval(suggestion);
                     const suggestionActionError =
                       actionError?.suggestionId === suggestion.id ? actionError : null;
                     return (
@@ -1027,14 +1051,32 @@ export function AgentSuggestions() {
                           </div>
                           <AgentFindingActions
                             actions={[
+                              requiresApproval && suggestion.findingId
+                                ? {
+                                    id: "approve",
+                                    label: "Approve implementation",
+                                    pendingLabel: "Approving",
+                                    icon: CheckCircle2Icon,
+                                    pending: updatingFindingId === suggestion.findingId,
+                                    disabled: updatingFindingId !== null,
+                                    title:
+                                      "Approve this bounded finding before any implementation agent can use full access.",
+                                    onSelect: () =>
+                                      void applyCanonicalDisposition(suggestion, "approve"),
+                                  }
+                                : null,
                               {
                                 id: "work",
-                                label: suggestion.threadId ? "Open work" : "Start work",
+                                label: suggestion.threadId
+                                  ? "Open work"
+                                  : requiresApproval
+                                    ? "Approval required"
+                                    : "Start work",
                                 pendingLabel: "Starting work",
                                 icon: suggestion.threadId ? ExternalLinkIcon : BotIcon,
                                 onSelect: () => void startSuggestionWork(suggestion),
                                 pending: startingSuggestionId === suggestion.id,
-                                disabled: startingSuggestionId !== null,
+                                disabled: startingSuggestionId !== null || requiresApproval,
                               },
                               hasGithubRepository && {
                                 id: "issue",
@@ -1225,14 +1267,33 @@ export function AgentSuggestions() {
             <DialogFooter>
               <AgentFindingActions
                 actions={[
+                  needsFindingApproval(selectedSuggestion) && selectedSuggestion.findingId
+                    ? {
+                        id: "approve",
+                        label: "Approve implementation",
+                        pendingLabel: "Approving",
+                        icon: CheckCircle2Icon,
+                        pending: updatingFindingId === selectedSuggestion.findingId,
+                        disabled: updatingFindingId !== null,
+                        title:
+                          "Approve this bounded finding before any implementation agent can use full access.",
+                        onSelect: () =>
+                          void applyCanonicalDisposition(selectedSuggestion, "approve"),
+                      }
+                    : null,
                   {
                     id: "work",
-                    label: selectedSuggestion.threadId ? "Open work" : "Start work",
+                    label: selectedSuggestion.threadId
+                      ? "Open work"
+                      : needsFindingApproval(selectedSuggestion)
+                        ? "Approval required"
+                        : "Start work",
                     pendingLabel: "Starting work",
                     icon: selectedSuggestion.threadId ? ExternalLinkIcon : BotIcon,
                     onSelect: () => void startSuggestionWork(selectedSuggestion),
                     pending: startingSuggestionId === selectedSuggestion.id,
-                    disabled: startingSuggestionId !== null,
+                    disabled:
+                      startingSuggestionId !== null || needsFindingApproval(selectedSuggestion),
                   },
                   githubRepositoryForSuggestion(selectedSuggestion) !== null && {
                     id: "issue",

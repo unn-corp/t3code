@@ -621,6 +621,13 @@ describe("AgentDashboardDispositionActionInput", () => {
     expect(
       decodeDispositionAction({
         id: "finding-1",
+        action: "approve",
+      }),
+    ).toMatchObject({ action: "approve" });
+
+    expect(
+      decodeDispositionAction({
+        id: "finding-1",
         action: "complete",
       }),
     ).toMatchObject({ action: "complete" });
