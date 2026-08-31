@@ -18,11 +18,9 @@ import {
 import { useMemo, useState } from "react";
 
 import {
+  buildAgentDashboardUpdateRecords,
   buildNativeAgentFeed,
-  buildNativeAgentFeedFromDurableCards,
-  buildNativeAgentFeedFromSnapshot,
   compareDashboardRecency,
-  mergeNativeAgentFeedRecords,
   nativeAgentStateLabel,
   type NativeAgentState,
 } from "../agentDashboardPages";
@@ -246,19 +244,11 @@ export function AgentFeed() {
     readDismissedFeedIds(),
   );
   const records = useMemo(() => {
-    if (dashboardSnapshot.data === null) return buildNativeAgentFeed(projects, threads);
-    const environmentId = dashboardSnapshot.environmentId ?? "native";
-    return mergeNativeAgentFeedRecords(
-      buildNativeAgentFeedFromSnapshot(dashboardSnapshot.data).map((record) => ({
-        ...record,
-        environmentId,
-      })),
-      buildNativeAgentFeedFromDurableCards(
-        dashboardSnapshot.data.externalFeed,
-        environmentId,
-        projects,
-        threads,
-      ),
+    return buildAgentDashboardUpdateRecords(
+      dashboardSnapshot.data,
+      dashboardSnapshot.environmentId,
+      projects,
+      threads,
     );
   }, [dashboardSnapshot.data, dashboardSnapshot.environmentId, projects, threads]);
   const visibleRecords = useMemo(() => {

@@ -14,6 +14,7 @@ import {
   buildDashboardFindingPrompt,
   buildDashboardFindingQuestionPrompt,
   buildDashboardFindingWorktreeBootstrap,
+  buildAgentDashboardUpdateRecords,
   buildDashboardPullRequestCombinationPrompt,
   buildDashboardFindingRecords,
   buildNativeResearchRecordsFromCanonicalFindings,
@@ -492,6 +493,99 @@ describe("agent dashboard ordering", () => {
       "agent-b",
       "agent-a",
     ]);
+  });
+});
+
+describe("agent dashboard updates", () => {
+  it("keeps native snapshot activity visible when there are no durable cards", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const projectId = ProjectId.make("project-1");
+    const threadId = ThreadId.make("thread-1");
+    const snapshot = {
+      observedAt: "2026-08-09T12:00:00.000Z",
+      repositories: [
+        {
+          projectId,
+          title: "T3 Code",
+          workspaceRoot: "/workspace/t3code",
+          threads: [
+            {
+              threadId,
+              title: "Native agent",
+              model: "gpt-5",
+              branch: "feature/native-feed",
+              worktreePath: null,
+            },
+          ],
+          worktrees: [],
+        },
+      ],
+      feed: [
+        {
+          id: "feed-native-needs-input",
+          kind: "attention",
+          status: "needs-input",
+          summary: "Native response required",
+          occurredAt: "2026-08-09T12:01:00.000Z",
+          repository: { projectId },
+          thread: { projectId, threadId },
+          turnId: null,
+        },
+      ],
+      externalFeed: [],
+    } as unknown as AgentDashboardSnapshot;
+
+    const [update] = buildAgentDashboardUpdateRecords(snapshot, environmentId, [], []);
+
+    expect(update).toMatchObject({
+      id: "feed-native-needs-input",
+      environmentId,
+      threadId,
+      title: "Native agent",
+      summary: "Native response required",
+      state: "needs-input",
+      level: "warn",
+    });
+    expect(update?.durableCard).toBeUndefined();
+  });
+
+  it("falls back to active thread shells when the server snapshot is unavailable", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const projectId = ProjectId.make("project-1");
+    const threadId = ThreadId.make("thread-1");
+    const projects = [
+      {
+        environmentId,
+        id: projectId,
+        title: "T3 Code",
+        workspaceRoot: "/workspace/t3code",
+      },
+    ] as unknown as Parameters<typeof buildAgentDashboardUpdateRecords>[2];
+    const threads = [
+      {
+        environmentId,
+        id: threadId,
+        projectId,
+        title: "Waiting agent",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        branch: "feature/waiting",
+        worktreePath: null,
+        updatedAt: "2026-08-09T12:01:00.000Z",
+        archivedAt: null,
+        hasPendingUserInput: true,
+      },
+    ] as unknown as Parameters<typeof buildAgentDashboardUpdateRecords>[3];
+
+    const [update] = buildAgentDashboardUpdateRecords(null, environmentId, projects, threads);
+
+    expect(update).toMatchObject({
+      id: `thread:${environmentId}:${threadId}`,
+      environmentId,
+      threadId,
+      title: "Waiting agent",
+      state: "needs-input",
+      level: "warn",
+    });
   });
 });
 
