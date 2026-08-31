@@ -18,7 +18,7 @@ import {
 import { useMemo, useState } from "react";
 
 import {
-  buildNativeAgentFeedFromDurableCards,
+  buildAgentDashboardUpdateRecords,
   safeDashboardUpdateFileUrl,
   type NativeAgentFeedItem,
 } from "../agentDashboardPages";
@@ -172,14 +172,12 @@ export function AgentDashboardUpdates({
   const [dismissingId, setDismissingId] = useState<string | null>(null);
   const updates = useMemo(
     () =>
-      dashboardSnapshot.data === null || dashboardSnapshot.environmentId === null
-        ? []
-        : buildNativeAgentFeedFromDurableCards(
-            dashboardSnapshot.data.externalFeed,
-            dashboardSnapshot.environmentId,
-            projects,
-            threads,
-          ),
+      buildAgentDashboardUpdateRecords(
+        dashboardSnapshot.data,
+        dashboardSnapshot.environmentId,
+        projects,
+        threads,
+      ),
     [dashboardSnapshot.data, dashboardSnapshot.environmentId, projects, threads],
   );
   const visibleUpdates = expanded ? updates : updates.slice(0, COLLAPSED_UPDATE_COUNT);
