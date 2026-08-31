@@ -164,15 +164,21 @@ describe("unified dashboard findings", () => {
             readiness: "ready",
             proposal: "Upgrade the vulnerable dependency.",
             expectedValue: "Remove the known vulnerability.",
-            targets: [],
+            targets: [
+              {
+                path: "src/dependencies.ts",
+                symbol: null,
+                evidence: "The dependency declaration is stored here.",
+              },
+            ],
             validationPlan: ["Run the dependency audit."],
             sources: [],
             riskTier: "medium",
             estimatedEffort: "medium",
-            qualificationReason: null,
-            qualifiedAt: null,
-            qualifiedBy: null,
-            qualifiedOccurrenceCount: 0,
+            qualificationReason: "The target and validation are concrete.",
+            qualifiedAt: "2026-08-09T12:05:00.000Z",
+            qualifiedBy: "human",
+            qualifiedOccurrenceCount: 1,
           },
         }),
         finding({
@@ -201,14 +207,20 @@ describe("unified dashboard findings", () => {
       readiness: "ready" as const,
       proposal: "Apply the focused repository change.",
       expectedValue: "Resolve the verified finding.",
-      targets: [],
+      targets: [
+        {
+          path: "src/example.ts",
+          symbol: null,
+          evidence: "The focused change belongs in this file.",
+        },
+      ],
       validationPlan: ["Run the focused regression test."],
       sources: [],
       riskTier: "medium" as const,
       estimatedEffort: "medium" as const,
       qualificationReason: "The change is bounded and locally testable.",
       qualifiedAt: "2026-08-09T12:05:00.000Z",
-      qualifiedBy: "repository-review" as const,
+      qualifiedBy: "human" as const,
       qualifiedOccurrenceCount: 1,
     };
     const snapshot = {
@@ -316,7 +328,32 @@ describe("unified dashboard findings", () => {
           workspaceRoot: "/workspace/t3code",
         },
       ],
-      findings: [finding({ kind: "research", title: "Adopt an upstream optimization" })],
+      findings: [
+        finding({
+          kind: "research",
+          title: "Adopt an upstream optimization",
+          actionability: {
+            readiness: "ready",
+            proposal: "Apply the bounded optimization.",
+            expectedValue: "Reduce the measured work.",
+            targets: [
+              {
+                path: "src/example.ts",
+                symbol: null,
+                evidence: "The optimization belongs in this file.",
+              },
+            ],
+            validationPlan: ["Run the focused test."],
+            sources: [],
+            riskTier: "low",
+            estimatedEffort: "small",
+            qualificationReason: "The change is locally verifiable.",
+            qualifiedAt: "2026-08-09T12:05:00.000Z",
+            qualifiedBy: "human",
+            qualifiedOccurrenceCount: 1,
+          },
+        }),
+      ],
     } as unknown as AgentDashboardSnapshot;
     const [record] = buildDashboardFindingRecords(snapshot);
 
@@ -327,8 +364,8 @@ describe("unified dashboard findings", () => {
       kind: "implement",
       baseBranch: "main",
     });
-    expect(implementationPrompt).toContain("Open one draft pull request targeting `main`");
-    expect(implementationPrompt).toContain("Do not push directly to or merge `main`");
+    expect(implementationPrompt).toContain('"baseBranch": "main"');
+    expect(implementationPrompt).toContain("Open one draft pull request");
     expect(implementationPrompt).toContain("include the pull request URL");
     expect(buildDashboardFindingQuestionPrompt(record!, "Does this apply here?")).toContain(
       "## User question\nDoes this apply here?",
@@ -1099,6 +1136,7 @@ describe("agent dashboard suggestion actions", () => {
             collectedAt: "2026-08-09T12:00:00.000Z",
           },
           lastSeenAt: "2026-08-09T12:00:00.000Z",
+          occurrenceCount: 1,
           disposition: {
             state: "open",
             updatedAt: "2026-08-09T12:00:00.000Z",
@@ -1148,6 +1186,7 @@ describe("agent dashboard suggestion actions", () => {
       workflow: {
         kind: "finding",
         findingId: "finding:research",
+        occurrenceCount: 1,
         actionability: { readiness: "ready" },
       },
     });
@@ -1179,6 +1218,7 @@ describe("agent dashboard suggestion actions", () => {
         snoozeUntil: null,
         threadId: null,
         githubIssueUrl: null,
+        occurrenceCount: 1,
         actionability: {
           readiness: "ready",
           proposal: "Reuse parsed module state during a repository scan.",
@@ -1196,7 +1236,7 @@ describe("agent dashboard suggestion actions", () => {
           estimatedEffort: "medium",
           qualificationReason: "The target and validation plan are repository-grounded.",
           qualifiedAt: "2026-08-09T12:05:00.000Z",
-          qualifiedBy: "repository-review",
+          qualifiedBy: "human",
           qualifiedOccurrenceCount: 1,
         },
       },
@@ -1207,9 +1247,10 @@ describe("agent dashboard suggestion actions", () => {
 
     expect(researchPrompt).toContain("without implementing it yet");
     expect(researchPrompt).toContain("Do not modify implementation code");
-    expect(implementationPrompt).toContain("`src/scanner.ts` (scanRepository)");
-    expect(implementationPrompt).toContain("Run the focused scanner benchmark.");
-    expect(implementationPrompt).toContain("## Sources");
+    expect(implementationPrompt).toContain('"path": "src/scanner.ts"');
+    expect(implementationPrompt).toContain('"symbol": "scanRepository"');
+    expect(implementationPrompt).not.toContain("Run the focused scanner benchmark.");
+    expect(implementationPrompt).not.toContain("## Sources");
     expect(implementationPrompt).toContain("mark this finding as Done in T3 Code");
   });
 });

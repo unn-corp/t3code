@@ -188,7 +188,7 @@ const finding = (
       estimatedEffort: "medium",
       qualificationReason: null,
       qualifiedAt: "2026-08-01T00:00:00.000Z",
-      qualifiedBy: "repository-review",
+      qualifiedBy: "human",
       qualifiedOccurrenceCount: 1,
     },
     ...overrides,
@@ -201,6 +201,23 @@ const policy = (projectId: string, enabled: boolean): AgentDashboardRepositoryPo
   }) as AgentDashboardRepositoryPolicy;
 
 describe("selectContinuousImprovementFinding", () => {
+  it("does not select a finding qualified only by the review model", () => {
+    expect(
+      selectContinuousImprovementFinding({
+        projects: [project("alpha")],
+        policies: [],
+        findings: [
+          finding("review-qualified", "alpha", {
+            actionability: {
+              ...finding("review-qualified", "alpha").actionability!,
+              qualifiedBy: "repository-review",
+            },
+          }),
+        ],
+      }),
+    ).toBeNull();
+  });
+
   it("selects the highest-severity ready finding and respects disabled repositories", () => {
     const selected = selectContinuousImprovementFinding({
       projects: [project("alpha"), project("disabled")],

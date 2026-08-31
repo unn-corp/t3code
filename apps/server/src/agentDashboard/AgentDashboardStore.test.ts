@@ -780,6 +780,19 @@ it.effect("atomically claims and releases a ready finding for continuous impleme
         projectId: ProjectId.make("project-1"),
         threadId: ThreadId.make("thread-first"),
       };
+      expect(await Effect.runPromise(store.claimFindingThread(first))).toBe("noop");
+      expect(
+        await Effect.runPromise(
+          store.applyFindingAction({
+            id: finding!.id,
+            action: "approve",
+          }),
+        ),
+      ).toBe("applied");
+      expect((await Effect.runPromise(store.readFindings))[0]?.actionability).toMatchObject({
+        qualifiedBy: "human",
+        qualifiedOccurrenceCount: 1,
+      });
       expect(await Effect.runPromise(store.claimFindingThread(first))).toBe("applied");
       expect(
         await Effect.runPromise(
