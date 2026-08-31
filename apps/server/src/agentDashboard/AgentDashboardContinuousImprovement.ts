@@ -22,7 +22,10 @@ import type {
   OrchestrationProjectShell,
   OrchestrationThreadShell,
 } from "@t3tools/contracts";
-import { parseAgentDashboardStaleOutcome } from "@t3tools/shared/agentDashboardFinding";
+import {
+  hasTrustedAgentDashboardFindingQualification,
+  parseAgentDashboardStaleOutcome,
+} from "@t3tools/shared/agentDashboardFinding";
 import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
 
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
@@ -249,9 +252,9 @@ export const isFindingEligibleForContinuousImprovement = (
   finding: AgentDashboardFinding,
   guardrails: Pick<ContinuousImprovementSettings, "maxRiskTier" | "minimumConfidence">,
 ): boolean => {
-  const actionability = finding.actionability;
+  if (!hasTrustedAgentDashboardFindingQualification(finding)) return false;
+  const { actionability } = finding;
   return (
-    AgentDashboardStore.hasQualifiedFindingActionability(actionability) &&
     riskWeight[actionability.riskTier] <= riskWeight[guardrails.maxRiskTier] &&
     confidenceWeight[finding.confidence] >= confidenceWeight[guardrails.minimumConfidence]
   );
