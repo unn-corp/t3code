@@ -27,6 +27,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  type RuntimeMode,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -79,6 +80,7 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerConfig from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
@@ -5160,12 +5162,14 @@ const decodeBrowserAccessThreadShell = Schema.decodeUnknownEffect(OrchestrationT
 
 describe("agent browser access", () => {
   const projectId = ProjectId.make("project-browser-access");
+  const revokedThreads: Array<ThreadId> = [];
 
   const startSessionWith = (
     access: boolean | { readonly browser: boolean; readonly device: boolean },
     threadId: ThreadId,
     projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
     options?: { readonly withoutOrchestration?: boolean },
+    runtimeMode: RuntimeMode = "full-access",
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -5239,6 +5243,10 @@ describe("agent browser access", () => {
             });
             return undefined;
           }),
+        revokeMcpCredential: (revokedThreadId) =>
+          Effect.sync(() => {
+            revokedThreads.push(revokedThreadId);
+          }),
       }).pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
@@ -5280,7 +5288,7 @@ describe("agent browser access", () => {
           provider: CODEX_DRIVER,
           providerInstanceId: codexInstanceId,
           threadId,
-          runtimeMode: "full-access",
+          runtimeMode,
         });
       }).pipe(Effect.provide(providerLayer));
 
@@ -5297,6 +5305,34 @@ describe("agent browser access", () => {
       const issued = yield* startSessionWith(false, threadId);
 
       assert.deepEqual(issued, [{ threadId, capabilities: ["pull-requests"] }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("requests no MCP credential for automated reviews even when access is on", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-browser-automated-review");
+      revokedThreads.length = 0;
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-browser-automated-review"),
+        threadId,
+        providerSessionId: "stale-provider-session",
+        providerInstanceId: codexInstanceId,
+        endpoint: "http://127.0.0.1/mcp",
+        authorizationHeader: "Bearer stale-token",
+        capabilities: new Set(["preview"]),
+      });
+
+      const issued = yield* startSessionWith(
+        true,
+        threadId,
+        undefined,
+        undefined,
+        "automated-review",
+      );
+
+      assert.deepEqual(issued, []);
+      assert.deepEqual(revokedThreads, [threadId]);
+      assert.equal(McpProviderSession.readMcpProviderSession(threadId), undefined);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

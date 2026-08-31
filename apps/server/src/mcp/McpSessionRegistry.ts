@@ -1,4 +1,4 @@
-import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, ThreadId, type RuntimeMode } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -16,6 +16,7 @@ export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<McpInvocationContext.McpCapability>;
+  readonly runtimeMode: RuntimeMode;
 }
 
 export interface McpIssuedCredential {
@@ -46,6 +47,7 @@ export class McpSessionRegistry extends Context.Service<
 interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpInvocationScope;
+  readonly runtimeMode: RuntimeMode;
   readonly lastAliveAt: number;
 }
 
@@ -133,7 +135,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(pruneDead(records, issuedAt));
-        next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
+        next.set(tokenHash, {
+          tokenHash,
+          scope,
+          runtimeMode: request.runtimeMode,
+          lastAliveAt: issuedAt,
+        });
         return { records: next };
       });
       return {
@@ -159,6 +166,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         const current = pruneDead(records, timestamp);
         const record = current.get(tokenHash);
         if (!record) return [undefined, { records: current }] as const;
+        if (record.runtimeMode === "automated-review") {
+          const next = new Map(current);
+          next.delete(tokenHash);
+          return [undefined, { records: next }] as const;
+        }
         const next = new Map(current);
         next.set(tokenHash, { ...record, lastAliveAt: timestamp });
         return [record.scope, { records: next }] as const;
@@ -225,12 +237,20 @@ export const layer = Layer.effect(McpSessionRegistry, make);
 
 export const issueActiveMcpCredential = (
   request: McpCredentialRequest,
-): Effect.Effect<McpIssuedCredential | undefined> =>
-  activeMcpSessionRegistry
-    ? activeMcpSessionRegistry
-        .revokeThread(request.threadId)
-        .pipe(Effect.andThen(activeMcpSessionRegistry.issue(request)))
-    : Effect.undefined;
+): Effect.Effect<McpIssuedCredential | undefined> => {
+  const registry = activeMcpSessionRegistry;
+  if (!registry) return Effect.sync((): McpIssuedCredential | undefined => undefined);
+
+  return registry
+    .revokeThread(request.threadId)
+    .pipe(
+      Effect.andThen(
+        request.runtimeMode === "automated-review"
+          ? Effect.succeed<McpIssuedCredential | undefined>(undefined)
+          : registry.issue(request),
+      ),
+    );
+};
 
 /**
  * Refreshes the liveness of a thread's MCP credential. Called on every provider
