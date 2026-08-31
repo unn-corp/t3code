@@ -40,6 +40,7 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { hasTrustedAgentDashboardFindingQualification } from "@t3tools/shared/agentDashboardFinding";
 
 import * as ServerConfig from "../config.ts";
 
@@ -1272,7 +1273,12 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
             }
           : (previous?.thread ?? null),
         externalIssueUrl: input.externalIssueUrl?.trim() || previous?.externalIssueUrl || null,
-        actionability: input.actionability ?? previous?.actionability ?? null,
+        // A new review observation must never inherit a prior human approval.
+        // The review model has to qualify the current occurrence again.
+        actionability:
+          input.source.trim() === "code_review"
+            ? (input.actionability ?? null)
+            : (input.actionability ?? previous?.actionability ?? null),
       };
       byFingerprint.set(fingerprint, next);
       changed += 1;
@@ -1964,6 +1970,44 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           (finding) => finding.id === input.id || finding.fingerprint === input.id,
         );
         const now = new Date().toISOString();
+
+        if (input.action === "approve") {
+          if (!target || target.thread !== null || target.disposition.state !== "open") {
+            return target ? "noop" : "not-found";
+          }
+          if (!hasQualifiedFindingActionability(target.actionability)) return "noop";
+          if (hasTrustedAgentDashboardFindingQualification(target)) return "noop";
+
+          const nextActionability = {
+            ...target.actionability,
+            qualifiedAt: now,
+            qualifiedBy: "human" as const,
+            qualifiedOccurrenceCount: target.occurrenceCount,
+          };
+          if (
+            !hasTrustedAgentDashboardFindingQualification({
+              ...target,
+              actionability: nextActionability,
+            })
+          ) {
+            return "noop";
+          }
+          const nextFindings = findings.map((finding) =>
+            finding.id === target.id
+              ? {
+                  ...finding,
+                  actionability: nextActionability,
+                }
+              : finding,
+          );
+          await writeDocumentArray(
+            findingsPath,
+            "findings",
+            nextFindings.map((finding) => finding as unknown as JsonObject),
+          );
+          return "applied";
+        }
+
         const nextState = (() => {
           switch (input.action) {
             case "acknowledge":
@@ -2117,7 +2161,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
         if (
           target.thread !== null ||
           target.disposition.state !== "open" ||
-          !hasQualifiedFindingActionability(target.actionability)
+          !hasTrustedAgentDashboardFindingQualification(target)
         ) {
           return "noop";
         }

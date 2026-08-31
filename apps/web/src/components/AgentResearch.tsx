@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import type { AgentDashboardDispositionAction, EnvironmentId } from "@t3tools/contracts";
+import { hasTrustedAgentDashboardFindingQualification } from "@t3tools/shared/agentDashboardFinding";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -59,20 +60,35 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-type ResearchStage = "actionable" | "needs-research" | "ready" | "in-progress" | "done" | "archive";
+type ResearchStage =
+  | "actionable"
+  | "needs-research"
+  | "needs-approval"
+  | "ready"
+  | "in-progress"
+  | "done"
+  | "archive";
 type ResearchIntent = "research" | "implement";
 
 function researchStage(record: NativeResearchRecord): Exclude<ResearchStage, "actionable"> {
   if (record.workflow.kind !== "finding") return "archive";
   if (record.workflow.state === "done") return "done";
   if (record.workflow.threadId || record.workflow.state === "in-progress") return "in-progress";
-  return record.workflow.actionability?.readiness === "ready" ? "ready" : "needs-research";
+  if (record.workflow.actionability?.readiness !== "ready") return "needs-research";
+  return hasTrustedAgentDashboardFindingQualification({
+    actionability: record.workflow.actionability,
+    occurrenceCount: record.workflow.occurrenceCount,
+  })
+    ? "ready"
+    : "needs-approval";
 }
 
 function stageLabel(stage: Exclude<ResearchStage, "actionable">): string {
   switch (stage) {
     case "needs-research":
       return "Needs research";
+    case "needs-approval":
+      return "Needs approval";
     case "ready":
       return "Ready to implement";
     case "in-progress":
@@ -87,6 +103,7 @@ function stageLabel(stage: Exclude<ResearchStage, "actionable">): string {
 function stageVariant(stage: Exclude<ResearchStage, "actionable">) {
   switch (stage) {
     case "needs-research":
+    case "needs-approval":
       return "warning" as const;
     case "ready":
     case "in-progress":
@@ -375,11 +392,17 @@ export function AgentResearch() {
         return;
       }
       const actionability = record.workflow.actionability;
-      if (intent === "implement" && actionability?.readiness !== "ready") {
+      if (
+        intent === "implement" &&
+        !hasTrustedAgentDashboardFindingQualification({
+          actionability: actionability,
+          occurrenceCount: record.workflow.kind === "finding" ? record.workflow.occurrenceCount : 0,
+        })
+      ) {
         showFailure(
           record.id,
-          "More research is needed",
-          "Qualify a concrete proposal, code targets, and validation plan before starting implementation.",
+          "Approval is needed",
+          "An explicit human approval is required before this finding can start implementation.",
         );
         return;
       }
@@ -427,14 +450,14 @@ export function AgentResearch() {
             },
             modelSelection,
             titleSeed: title,
-            runtimeMode: "full-access",
+            runtimeMode: intent === "implement" ? "full-access" : "automated-review",
             interactionMode: "default",
             bootstrap: {
               createThread: {
                 projectId: project.id,
                 title,
                 modelSelection,
-                runtimeMode: "full-access",
+                runtimeMode: intent === "implement" ? "full-access" : "automated-review",
                 interactionMode: "default",
                 branch: null,
                 worktreePath: null,
@@ -565,6 +588,7 @@ export function AgentResearch() {
           <SelectPopup alignItemWithTrigger={false}>
             <SelectItem value="actionable">Actionable</SelectItem>
             <SelectItem value="needs-research">Needs research</SelectItem>
+            <SelectItem value="needs-approval">Needs approval</SelectItem>
             <SelectItem value="ready">Ready to implement</SelectItem>
             <SelectItem value="in-progress">In progress</SelectItem>
             <SelectItem value="done">Done</SelectItem>
@@ -582,6 +606,14 @@ export function AgentResearch() {
             const repository = githubRepositoryForRecord(record);
             const actionIsPending = startingAction?.endsWith(`:${record.id}`) ?? false;
             const findingIsUpdating = workflow !== null && updatingFindingId === workflow.findingId;
+            const requiresApproval =
+              workflow?.state === "open" &&
+              workflow.threadId === null &&
+              actionability?.readiness === "ready" &&
+              !hasTrustedAgentDashboardFindingQualification({
+                actionability,
+                occurrenceCount: workflow.occurrenceCount,
+              });
             return (
               <Card key={record.id}>
                 <CardHeader className="gap-3 p-5">
@@ -715,6 +747,19 @@ export function AgentResearch() {
                   <AgentFindingActions
                     className="border-t border-border/60 pt-3"
                     actions={[
+                      requiresApproval
+                        ? {
+                            id: "approve",
+                            label: "Approve implementation",
+                            pendingLabel: "Approving",
+                            icon: CheckCircle2Icon,
+                            pending: findingIsUpdating,
+                            disabled: updatingFindingId !== null,
+                            title:
+                              "Approve this bounded finding before any implementation agent can use full access.",
+                            onSelect: () => void applyDisposition(record, "approve"),
+                          }
+                        : null,
                       workflow && workflow.state !== "done"
                         ? {
                             id: "research",

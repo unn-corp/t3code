@@ -403,6 +403,7 @@ export const AgentDashboardDisposition = Schema.Struct({
 export type AgentDashboardDisposition = typeof AgentDashboardDisposition.Type;
 
 export const AgentDashboardDispositionAction = Schema.Literals([
+  "approve",
   "acknowledge",
   "snooze",
   "assign",
