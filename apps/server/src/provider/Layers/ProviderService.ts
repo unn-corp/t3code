@@ -25,6 +25,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type GitHubAccountId,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
@@ -272,7 +273,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
    * This is the only place a credential is minted, so withholding one here is
    * what disables agent browser access everywhere: every adapter already
    * treats a missing session as "no MCP server", and the `/mcp` endpoint
-   * accepts nothing but tokens issued from this path.
+   * accepts nothing but tokens issued from this path. Automated-review sessions
+   * take the deny branch below regardless of the server-wide browser setting.
    */
   /**
    * Deny on an unreadable settings file rather than letting the read failure
@@ -292,9 +294,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+  const prepareMcpSession = (
+    threadId: ThreadId,
+    providerInstanceId: ProviderInstanceId,
+    runtimeMode: RuntimeMode,
+  ) =>
     Effect.gen(function* () {
-      if (!(yield* agentBrowserAccessEnabled)) {
+      if (runtimeMode === "automated-review" || !(yield* agentBrowserAccessEnabled)) {
         // Revoke as well as clear. Every other prepare path reaches
         // `issueActiveMcpCredential`, which revokes the thread first, so
         // skipping it here would leave a previously issued bearer token valid
@@ -305,7 +311,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
         return undefined;
       }
-      const credential = yield* issueMcpCredential({ threadId, providerInstanceId });
+      const credential = yield* issueMcpCredential({ threadId, providerInstanceId, runtimeMode });
       if (credential) {
         yield* Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config));
       }
@@ -496,8 +502,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             input.operation,
           )
         : undefined;
+      const runtimeMode = input.binding.runtimeMode ?? "full-access";
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId, runtimeMode);
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -507,7 +514,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           ...(githubAccountEnvironment ? { environment: githubAccountEnvironment } : {}),
-          runtimeMode: input.binding.runtimeMode ?? "full-access",
+          runtimeMode,
         })
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
       if (resumed.provider !== adapter.provider) {
@@ -707,7 +714,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.cwd.effective": effectiveCwd ?? "",
         });
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId);
+        yield* prepareMcpSession(threadId, resolvedInstanceId, input.runtimeMode);
         const session = yield* adapter
           .startSession({
             ...input,
