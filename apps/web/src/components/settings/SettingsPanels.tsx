@@ -94,6 +94,7 @@ import {
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  filterAutomatedReviewProviderEntries,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
@@ -2353,16 +2354,21 @@ function AutomationModelControl({
   selection,
   ariaLabel,
   onChange,
+  automatedReviewOnly = false,
 }: {
   readonly selection: ModelSelection;
   readonly ariaLabel: string;
   readonly onChange: (selection: ModelSelection) => void;
+  readonly automatedReviewOnly?: boolean;
 }) {
   const settings = usePrimarySettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const instanceEntries = sortProviderInstanceEntries(
+  const sortedInstanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
   );
+  const instanceEntries = automatedReviewOnly
+    ? filterAutomatedReviewProviderEntries(sortedInstanceEntries)
+    : sortedInstanceEntries;
   const instanceEntry = instanceEntries.find((entry) => entry.instanceId === selection.instanceId);
   const provider = instanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
@@ -2723,6 +2729,7 @@ export function AutomationSettingsPanel() {
             <AutomationModelControl
               selection={settings.repositoryReview.modelSelection}
               ariaLabel="Discovery and qualification"
+              automatedReviewOnly
               onChange={(modelSelection) =>
                 updateSettings({
                   repositoryReview: { ...settings.repositoryReview, modelSelection },
