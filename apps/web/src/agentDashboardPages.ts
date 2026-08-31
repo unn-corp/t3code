@@ -1250,6 +1250,30 @@ export function mergeNativeAgentFeedRecords(
   return [...byIdentity.values()].toSorted(compareDashboardRecency);
 }
 
+/** Builds overview updates from native activity and migrated durable cards. */
+export function buildAgentDashboardUpdateRecords(
+  snapshot: AgentDashboardSnapshot | null,
+  environmentId: string | null,
+  projects: ReadonlyArray<EnvironmentProject>,
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+): ReadonlyArray<NativeAgentFeedItem> {
+  if (snapshot === null) return buildNativeAgentFeed(projects, threads);
+
+  const resolvedEnvironmentId = environmentId ?? "native";
+  return mergeNativeAgentFeedRecords(
+    buildNativeAgentFeedFromSnapshot(snapshot).map((record) => ({
+      ...record,
+      environmentId: resolvedEnvironmentId,
+    })),
+    buildNativeAgentFeedFromDurableCards(
+      snapshot.externalFeed,
+      resolvedEnvironmentId,
+      projects,
+      threads,
+    ),
+  );
+}
+
 function projectPathLeaf(path: string): string | null {
   const normalized = path.trim().replace(/[\\/]+$/, "");
   if (!normalized) return null;
