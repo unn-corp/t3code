@@ -776,7 +776,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onVoicePhaseChange,
   } = props;
-  const isSendDisabled = sendDisabledReason !== null;
   const [voiceInputPhase, setVoiceInputPhase] = useState<VoiceInputPhase>("idle");
   const [voiceInputAudioSource, setVoiceInputAudioSource] = useState<VoiceInputAudioSource | null>(
     null,
