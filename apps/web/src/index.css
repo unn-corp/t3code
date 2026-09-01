@@ -671,6 +671,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-native-controls-inset: 0px;
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
+  --workspace-titlebar-scroll-fade-height: 1.5rem;
 
   @variant dark {
     --appearance-contrast-target: white;
@@ -920,7 +921,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @utility topbar-scroll-fade {
-  --topbar-scroll-fade-height: 2.5rem;
   -webkit-mask-image:
     linear-gradient(
       to bottom,
@@ -936,8 +936,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   -webkit-mask-position: top, bottom, right;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-size:
-    100% var(--topbar-scroll-fade-height),
-    100% calc(100% - var(--topbar-scroll-fade-height)),
+    100% var(--workspace-titlebar-scroll-fade-height),
+    100% calc(100% - var(--workspace-titlebar-scroll-fade-height)),
     var(--app-scrollbar-width) 100%;
   mask-image:
     linear-gradient(
@@ -954,13 +954,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   mask-position: top, bottom, right;
   mask-repeat: no-repeat;
   mask-size:
-    100% var(--topbar-scroll-fade-height),
-    100% calc(100% - var(--topbar-scroll-fade-height)),
+    100% var(--workspace-titlebar-scroll-fade-height),
+    100% calc(100% - var(--workspace-titlebar-scroll-fade-height)),
     var(--app-scrollbar-width) 100%;
-
-  @variant sm {
-    --topbar-scroll-fade-height: 3rem;
-  }
 }
 
 /* Virtualizers own their native scroll element, so they cannot use ScrollArea's
@@ -1921,12 +1917,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       all: revert;
     }
   }
-
-  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    .chat-composer-glass-shell::before {
-      background: var(--chat-composer-glass-surface);
-    }
-  }
 }
 
 /* Safe-area inset utilities for surfaces that opt into edge-to-edge rendering.
@@ -2191,58 +2181,6 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --terminal-foreground: var(--app-theme-terminal-foreground);
   --terminal-cursor: var(--app-theme-terminal-cursor);
   --terminal-selection-background: var(--app-theme-terminal-selection-background);
-}
-
-/* T3 Chat's composer is a translucent lift over --chat-background. Route its
-   measured flattened color through the raised-surface role instead of deriving
-   another tint from the canvas, which made the dark composer too red. */
-html[data-theme-id] .chat-composer-glass-shell {
-  --chat-composer-glass-surface: var(--app-theme-surface-raised);
-  --chat-composer-outline: var(--app-theme-toolbar-border);
-
-  @variant dark {
-    --chat-composer-outline: color-mix(in srgb, var(--app-theme-input) 30%, var(--background));
-    --chat-composer-highlight: color-mix(in srgb, var(--app-theme-input) 12%, transparent);
-  }
-}
-
-html[data-theme-id]
-  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer) {
-  --chat-composer-attached-surface: var(--app-theme-surface-raised);
-}
-
-html[data-theme-id]
-  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer):is(
-    :not([data-variant]),
-    [data-variant="default"]
-  ) {
-  --chat-composer-attached-outline: var(--chat-composer-outline, var(--app-theme-toolbar-border));
-
-  @variant dark {
-    --chat-composer-attached-outline: var(
-      --chat-composer-outline,
-      color-mix(in srgb, var(--app-theme-input) 30%, var(--background))
-    );
-  }
-}
-
-html[data-theme-id="t3-chat"] .chat-composer-glass-shell {
-  /* T3 Chat's visible composer edge is a dark plum, not the stock translucent
-     white outline. Its highlight is derived from --chat-input-gradient. */
-  @variant dark {
-    --chat-composer-outline: #241e28;
-    --chat-composer-highlight: color-mix(in srgb, #432d48 12%, transparent);
-  }
-}
-
-html[data-theme-id="t3-chat"]
-  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer):is(
-    :not([data-variant]),
-    [data-variant="default"]
-  ) {
-  @variant dark {
-    --chat-composer-attached-outline: #241e28;
-  }
 }
 
 /* Theme-token dependency probes are restored synchronously, before paint. Keep

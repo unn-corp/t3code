@@ -586,6 +586,12 @@ export const DesktopPreviewTabIdSchema = Schema.String.check(Schema.isTrimmed())
   Schema.isNonEmpty(),
 );
 
+export const DesktopPreviewAutomationStatusSchema = Schema.Struct({
+  ...PreviewAutomationStatus.fields,
+  tabId: Schema.NullOr(DesktopPreviewTabIdSchema),
+});
+export type DesktopPreviewAutomationStatus = typeof DesktopPreviewAutomationStatusSchema.Type;
+
 export const DesktopPreviewNavStatusSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("Idle") }),
   Schema.Struct({
@@ -762,6 +768,19 @@ export const DesktopPreviewRemoteStreamBoundsSchema: Schema.Codec<DesktopPreview
     maxWidth: Schema.Number,
     maxHeight: Schema.Number,
     quality: Schema.Number,
+  });
+
+export interface DesktopPreviewRecordingSource {
+  sourceId: string;
+  width: number;
+  height: number;
+}
+
+export const DesktopPreviewRecordingSourceSchema: Schema.Codec<DesktopPreviewRecordingSource> =
+  Schema.Struct({
+    sourceId: Schema.String,
+    width: Schema.Int.check(Schema.isGreaterThan(0)),
+    height: Schema.Int.check(Schema.isGreaterThan(0)),
   });
 
 export interface DesktopPreviewRecordingArtifact {
@@ -1099,6 +1118,8 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
+  /** The desktop client's OS platform, read from Electron's preload process. */
+  getClientPlatform?: () => string;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so
@@ -1246,7 +1267,7 @@ export interface DesktopPreviewBridge {
     close: (tabId: string) => Promise<void>;
   };
   recording: {
-    startScreencast: (tabId: string) => Promise<void>;
+    startScreencast: (tabId: string) => Promise<DesktopPreviewRecordingSource>;
     stopScreencast: (tabId: string) => Promise<void>;
     save: (
       tabId: string,
@@ -1266,7 +1287,7 @@ export interface DesktopPreviewBridge {
     onFrame: (listener: (frame: DesktopPreviewRemoteFrame) => void) => () => void;
   };
   automation: {
-    status: (tabId: string) => Promise<PreviewAutomationStatus>;
+    status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
     snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
