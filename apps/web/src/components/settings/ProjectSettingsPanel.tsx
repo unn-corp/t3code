@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
   deriveProjectGroupingOverrideKey,
@@ -14,6 +14,7 @@ import {
 } from "../../logicalProject";
 import type {
   ContextMenuItem,
+  GitHubAccountId,
   ModelSelection,
   ProviderDriverKind,
   SidebarProjectGroupingMode,
@@ -364,6 +365,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         title: string;
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
+        githubAccountId: GitHubAccountId | null;
         faviconPath: string | null;
       }>,
       failureTitle: string,
@@ -417,6 +419,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   // ----- default model -----
   const storedSelection = representative.defaultModelSelection;
   const resolvedSelection = resolveDefaultProviderModelSelection(serverProviders, storedSelection);
+  const resolvedInstanceId = resolvedSelection?.instanceId ?? null;
+  const resolvedModel = resolvedSelection?.model ?? null;
   const instanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
@@ -425,12 +429,11 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     [serverProviders, settings],
   );
   const modelOptionsByInstance = useMemo(
-    () => getCustomModelOptionsByInstance(settings, serverProviders),
-    [serverProviders, settings],
+    () =>
+      getCustomModelOptionsByInstance(settings, serverProviders, resolvedInstanceId, resolvedModel),
+    [resolvedInstanceId, resolvedModel, serverProviders, settings],
   );
-  const activeEntry = instanceEntries.find(
-    (entry) => entry.instanceId === resolvedSelection?.instanceId,
-  );
+  const activeEntry = instanceEntries.find((entry) => entry.instanceId === resolvedInstanceId);
   const setDefaultModel = useCallback(
     (selection: ModelSelection | null) =>
       void updateAllMembers({ defaultModelSelection: selection }, "Failed to update default model"),
@@ -445,6 +448,14 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         { defaultThreadEnvMode: mode },
         "Failed to update new-thread workspace",
       ),
+    [updateAllMembers],
+  );
+
+  // ----- GitHub account -----
+  const storedGitHubAccountId = representative.githubAccountId ?? null;
+  const setGitHubAccountId = useCallback(
+    (accountId: GitHubAccountId | null) =>
+      void updateAllMembers({ githubAccountId: accountId }, "Failed to update GitHub account"),
     [updateAllMembers],
   );
 
@@ -732,7 +743,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           return;
         }
         const projectRef = scopeProjectRef(member.environmentId, member.id);
-        releaseProjectDraftUploads(projectRef);
+        releaseProjectDraftUploads(
+          projectRef,
+          memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+        );
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
         if (projectDraftThread) {
           draftStore.clearDraftThread(projectDraftThread.draftId);
@@ -918,6 +932,38 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   </SelectItem>
                   <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
                   <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="GitHub account"
+            description="Used by Agent Dashboard GitHub actions and passed to every agent session in this project."
+            control={
+              <Select
+                value={storedGitHubAccountId ?? "default"}
+                onValueChange={(value) =>
+                  setGitHubAccountId(
+                    value === "default" ? null : (String(value) as GitHubAccountId),
+                  )
+                }
+              >
+                <SelectTrigger aria-label="GitHub account">
+                  <SelectValue>
+                    {storedGitHubAccountId === null
+                      ? "Default GitHub authentication"
+                      : (settings.githubAccounts[storedGitHubAccountId]?.label ??
+                        "Configured account (missing)")}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="default">Default GitHub authentication</SelectItem>
+                  {Object.entries(settings.githubAccounts).map(([accountId, account]) => (
+                    <SelectItem key={accountId} value={accountId}>
+                      {account.label}
+                      {account.login ? ` (${account.login})` : ""}
+                    </SelectItem>
+                  ))}
                 </SelectPopup>
               </Select>
             }

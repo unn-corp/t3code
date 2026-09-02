@@ -22,6 +22,7 @@ import {
   RuntimeMode,
 } from "./orchestration.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { GitHubAccountId } from "./sourceControl.ts";
 
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
@@ -55,6 +56,8 @@ export const ProviderSessionStartInput = Schema.Struct({
   provider: Schema.optional(ProviderDriverKind),
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  /** Server-resolved project GitHub identity; the PAT itself never crosses this contract. */
+  githubAccountId: Schema.optional(GitHubAccountId),
   cwd: Schema.optional(TrimmedNonEmptyString),
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),

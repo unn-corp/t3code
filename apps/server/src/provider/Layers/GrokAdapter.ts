@@ -1003,6 +1003,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          const sessionEnvironment = input.environment
+            ? { ...(options?.environment ?? hostEnvironment), ...input.environment }
+            : (options?.environment ?? hostEnvironment);
           if (input.provider !== undefined && input.provider !== PROVIDER) {
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
@@ -1045,7 +1048,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeGrokAcpRuntime({
             grokSettings,
-            ...(options?.environment ? { environment: options.environment } : {}),
+            environment: sessionEnvironment,
             childProcessSpawner,
             cwd,
             trustProject: true,
@@ -1582,8 +1585,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               );
 
               const text = input.input?.trim();
+              // Grok ingests images only. Generic files reach the agent
+              // through the path line ProviderService puts in the prompt.
               const imagePromptParts = yield* Effect.forEach(
-                input.attachments ?? [],
+                (input.attachments ?? []).filter((attachment) => attachment.type === "image"),
                 (attachment) =>
                   Effect.gen(function* () {
                     const attachmentPath = resolveAttachmentPath({

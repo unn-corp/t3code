@@ -1,21 +1,31 @@
 import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, GitHubAccountId } from "@t3tools/contracts";
+import { createContext, useContext, useMemo } from "react";
+import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import { cn } from "~/lib/utils";
+import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
+import { readLocalApi } from "~/localApi";
 
 import ChatMarkdown from "../ChatMarkdown";
-import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+
+export interface PullRequestMarkdownContextValue {
+  readonly repositoryUrl: string | null;
+  readonly githubAccountId: GitHubAccountId | null;
+}
+
+export const PullRequestMarkdownContext = createContext<PullRequestMarkdownContextValue>({
+  repositoryUrl: null,
+  githubAccountId: null,
+});
 
 /**
  * A pull request body, rendered with the app's markdown renderer plus a card for each upload
  * embedded in it, which that renderer drops on the floor.
  *
- * The card links out instead of playing in place, because nothing here can play. A
- * `github.com/user-attachments/assets/…` link is a 302 to a signed S3 URL that serves the file
- * as uploaded — `video/quicktime` for anything recorded on a Mac, which no Chromium decodes —
- * and the desktop window's content policy declares no `media-src`, so media falls back to
- * `default-src 'self'` and every remote source is refused before a byte is fetched. A player
- * here can only be the box that never fills in; a card that opens the host is a real answer.
+ * These upload URLs do not identify the media format. The card links to GitHub, where the
+ * original upload can be opened or downloaded even when its codec cannot play in the client.
  */
 export function PullRequestMarkdown({
   text,
@@ -29,6 +39,11 @@ export function PullRequestMarkdown({
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
+  const { repositoryUrl, githubAccountId } = useContext(PullRequestMarkdownContext);
+  const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
+    () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
+    [repositoryUrl],
+  );
   return (
     <div className={cn("space-y-3", className)}>
       {segments.map((segment) => {
@@ -39,6 +54,7 @@ export function PullRequestMarkdown({
               text={segment.text}
               cwd={cwd}
               environmentId={environmentId}
+              extraRemarkPlugins={extraRemarkPlugins}
             />
           );
         }
@@ -53,6 +69,15 @@ export function PullRequestMarkdown({
             href={segment.url}
             rel="noreferrer noopener"
             target="_blank"
+            onClick={(event) => {
+              if (!githubAccountId) return;
+              const api = readLocalApi();
+              if (!api) return;
+              event.preventDefault();
+              void openExternalWithGitHubAccount(api.shell, segment.url, githubAccountId).catch(
+                () => undefined,
+              );
+            }}
             className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm hover:bg-muted/60"
           >
             <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />

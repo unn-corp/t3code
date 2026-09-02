@@ -1,14 +1,17 @@
 import type {
   EnvironmentId,
+  GitHubAccountId,
   PullRequestCheck,
   PullRequestChecksState,
   PullRequestRef,
 } from "@t3tools/contracts";
 
 import { readLocalApi } from "~/localApi";
+import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { useProjects } from "~/state/entities";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -27,9 +30,11 @@ import {
 function LazyChecksBody({
   environmentId,
   reference,
+  githubAccountId,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  githubAccountId?: GitHubAccountId | null;
 }) {
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
@@ -44,10 +49,21 @@ function LazyChecksBody({
       </p>
     );
   }
-  return <ChecksBody checks={detailQuery.data.checks} />;
+  return (
+    <ChecksBody
+      checks={detailQuery.data.checks}
+      {...(githubAccountId === undefined ? {} : { githubAccountId })}
+    />
+  );
 }
 
-function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
+function ChecksBody({
+  checks,
+  githubAccountId,
+}: {
+  checks: ReadonlyArray<PullRequestCheck>;
+  githubAccountId?: GitHubAccountId | null;
+}) {
   if (checks.length === 0) {
     return <p className="text-muted-foreground text-xs">No checks reported</p>;
   }
@@ -71,7 +87,16 @@ function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
             <button
               type="button"
               className="shrink-0 text-primary hover:underline"
-              onClick={() => void readLocalApi()?.shell.openExternal(check.url ?? "")}
+              onClick={() => {
+                const api = readLocalApi();
+                if (api) {
+                  void openExternalWithGitHubAccount(
+                    api.shell,
+                    check.url ?? "",
+                    githubAccountId,
+                  ).catch(() => undefined);
+                }
+              }}
             >
               Details
             </button>
@@ -94,6 +119,7 @@ export function PullRequestChecksPopover({
   checks,
   environmentId,
   reference,
+  githubAccountId,
   className,
 }: {
   checksState: PullRequestChecksState;
@@ -101,8 +127,18 @@ export function PullRequestChecksPopover({
   checks?: ReadonlyArray<PullRequestCheck>;
   environmentId?: EnvironmentId;
   reference?: PullRequestRef;
+  githubAccountId?: GitHubAccountId | null;
   className?: string;
 }) {
+  const projects = useProjects();
+  const resolvedGitHubAccountId =
+    githubAccountId ??
+    (environmentId === undefined || reference === undefined
+      ? null
+      : (projects.find(
+          (project) =>
+            project.environmentId === environmentId && project.id === reference.projectId,
+        )?.githubAccountId ?? null));
   const presentation = pullRequestChecksStatePresentation(checksState);
   // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
   const summary = checks === undefined ? null : summarizePullRequestChecks(checks);
@@ -128,9 +164,13 @@ export function PullRequestChecksPopover({
         <p className="mb-2 font-medium text-sm">{presentation.label}</p>
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
         {checks !== undefined ? (
-          <ChecksBody checks={checks} />
+          <ChecksBody checks={checks} githubAccountId={resolvedGitHubAccountId} />
         ) : environmentId !== undefined && reference !== undefined ? (
-          <LazyChecksBody environmentId={environmentId} reference={reference} />
+          <LazyChecksBody
+            environmentId={environmentId}
+            reference={reference}
+            githubAccountId={resolvedGitHubAccountId}
+          />
         ) : null}
       </PopoverPopup>
     </Popover>

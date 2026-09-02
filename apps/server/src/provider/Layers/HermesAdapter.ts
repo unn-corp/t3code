@@ -528,6 +528,9 @@ export function makeHermesAdapter(
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          const sessionEnvironment = input.environment
+            ? { ...options?.environment, ...input.environment }
+            : options?.environment;
           if (input.provider !== undefined && input.provider !== PROVIDER) {
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
@@ -569,7 +572,7 @@ export function makeHermesAdapter(
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeHermesAcpRuntime({
             hermesSettings,
-            ...(options?.environment ? { environment: options.environment } : {}),
+            ...(sessionEnvironment ? { environment: sessionEnvironment } : {}),
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),

@@ -1,7 +1,8 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, GitHubAccountId } from "@t3tools/contracts";
 
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { readLocalApi } from "~/localApi";
+import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
 
 import { toastManager } from "../ui/toast";
 
@@ -41,10 +42,12 @@ export async function showPullRequestLinkContextMenu({
   url,
   openLabel,
   position,
+  githubAccountId,
 }: {
   readonly url: string;
   readonly openLabel: string;
   readonly position: { readonly x: number; readonly y: number };
+  readonly githubAccountId?: GitHubAccountId | null;
 }): Promise<void> {
   const api = readLocalApi();
   if (!api) return;
@@ -58,7 +61,9 @@ export async function showPullRequestLinkContextMenu({
   }
   try {
     if (action === "copy-link") await writeTextToClipboard(url, "link");
-    else if (action === "open-external") await api.shell.openExternal(url);
+    else if (action === "open-external") {
+      await openExternalWithGitHubAccount(api.shell, url, githubAccountId);
+    }
   } catch {
     toastManager.add({
       type: "error",

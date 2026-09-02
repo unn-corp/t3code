@@ -9,6 +9,7 @@ import {
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   REMOTE_CAPABLE_EDITOR_IDS,
+  OpenExternalInGitHubAccountInputSchema,
   type DesktopEnvironmentBootstrap,
   type PickedThemeFile,
 } from "@t3tools/contracts";
@@ -29,6 +30,7 @@ import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
+import * as GitHubAccountBrowser from "../../electron/GitHubAccountBrowser.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
@@ -295,6 +297,16 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+export const openExternalInGitHubAccount = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_EXTERNAL_GITHUB_ACCOUNT_CHANNEL,
+  payload: OpenExternalInGitHubAccountInputSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.openExternalInGitHubAccount")(function* (input) {
+    const browser = yield* GitHubAccountBrowser.GitHubAccountBrowser;
+    return yield* browser.open(input);
   }),
 });
 

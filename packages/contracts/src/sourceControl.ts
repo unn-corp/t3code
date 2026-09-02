@@ -1,6 +1,38 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import * as Effect from "effect/Effect";
+import {
+  IsoDateTime,
+  PositiveInt,
+  ProjectId,
+  TrimmedNonEmptyString,
+  TrimmedString,
+} from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
+
+/** Stable user-selected key for a configured GitHub identity. */
+export const GitHubAccountId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9_-]*$/),
+).pipe(Schema.brand("GitHubAccountId"));
+export type GitHubAccountId = typeof GitHubAccountId.Type;
+
+/** Non-secret account metadata returned to clients and stored in settings.json. */
+export const GitHubAccount = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  login: Schema.optionalKey(TrimmedNonEmptyString),
+  host: TrimmedNonEmptyString.pipe(Schema.withDecodingDefault(Effect.succeed("github.com"))),
+  tokenConfigured: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type GitHubAccount = typeof GitHubAccount.Type;
+
+/** Patch-only shape. The token is intercepted by the server and never persisted in this shape. */
+export const GitHubAccountPatch = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  login: Schema.optionalKey(TrimmedNonEmptyString),
+  host: Schema.optionalKey(TrimmedNonEmptyString),
+  token: Schema.optionalKey(TrimmedString),
+});
+export type GitHubAccountPatch = typeof GitHubAccountPatch.Type;
 
 export const SourceControlProviderKind = Schema.Literals([
   "github",

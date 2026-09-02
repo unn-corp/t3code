@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  GitHubAccountId,
   PullRequestActor,
   PullRequestComment,
   PullRequestDetailView,
@@ -20,6 +21,7 @@ import { useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
+import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -195,7 +197,12 @@ function ConversationCard({
     setSaving(true);
     const result = await updateComment({
       environmentId: reactions.environmentId,
-      input: { ...reactions.reference, commentId: editable.id, kind: editable.kind, body },
+      input: {
+        ...reactions.reference,
+        commentId: editable.id,
+        kind: editable.kind,
+        body,
+      },
     });
     setSaving(false);
     if (result._tag === "Failure") {
@@ -539,6 +546,7 @@ export function PullRequestTimelineTab({
   detail,
   environmentId,
   reference,
+  githubAccountId,
   order,
   onOpenCommit,
   onRefresh,
@@ -546,6 +554,7 @@ export function PullRequestTimelineTab({
   detail: PullRequestDetailView;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  githubAccountId?: GitHubAccountId | null;
   order: "newest" | "oldest";
   onOpenCommit: (oid: string) => void;
   onRefresh: () => void;
@@ -568,7 +577,9 @@ export function PullRequestTimelineTab({
   const orderedEvents = order === "newest" ? events : events.toReversed();
   const rows = groupPullRequestTimelineConversations(orderedEvents);
   const openOnHost = (url: string) => {
-    void readLocalApi()?.shell.openExternal(url);
+    const api = readLocalApi();
+    if (api)
+      void openExternalWithGitHubAccount(api.shell, url, githubAccountId).catch(() => undefined);
   };
 
   return (

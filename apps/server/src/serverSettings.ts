@@ -20,6 +20,7 @@ import {
   type ProviderInstanceEnvironmentVariable,
   ProviderDriverKind,
   ProviderInstanceId,
+  type GitHubAccountId,
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
@@ -61,6 +62,50 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+
+function prepareGitHubAccountsPatch(
+  current: ServerSettings,
+  patch: ServerSettingsPatch,
+): {
+  readonly patch: ServerSettingsPatch;
+  readonly tokenUpdates: ReadonlyArray<{
+    readonly accountId: string;
+    readonly token: string | null;
+  }>;
+} {
+  if (patch.githubAccounts === undefined) {
+    return { patch, tokenUpdates: [] };
+  }
+
+  const tokenUpdates: Array<{ accountId: string; token: string | null }> = [];
+  const accounts = Object.fromEntries(
+    Object.entries(patch.githubAccounts).map(([accountId, accountPatch]) => {
+      const currentAccount = current.githubAccounts[accountId as GitHubAccountId];
+      const token = accountPatch.token;
+      if (token !== undefined) {
+        tokenUpdates.push({ accountId, token: token.length > 0 ? token : null });
+      }
+      const { token: _token, ...metadata } = accountPatch;
+      return [
+        accountId,
+        {
+          ...metadata,
+          host: accountPatch.host ?? currentAccount?.host ?? "github.com",
+          tokenConfigured:
+            token !== undefined ? token.length > 0 : (currentAccount?.tokenConfigured ?? false),
+        },
+      ];
+    }),
+  );
+
+  return {
+    patch: {
+      ...patch,
+      githubAccounts: accounts as NonNullable<ServerSettingsPatch["githubAccounts"]>,
+    },
+    tokenUpdates,
+  };
+}
 
 /**
  * Fold the legacy in-config `enabled` flag into the envelope-level
@@ -133,6 +178,10 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+function githubAccountTokenSecretName(accountId: string): string {
+  return `github-account-token-${Buffer.from(accountId, "utf8").toString("base64url")}`;
+}
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -162,6 +211,11 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   return { ...settings, providerInstances };
 }
 
+export interface GitHubAccountEnvironment {
+  readonly configured: boolean;
+  readonly environment?: NodeJS.ProcessEnv;
+}
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
@@ -178,6 +232,16 @@ export class ServerSettingsService extends Context.Service<
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
+    /** Resolve a configured account's PAT into a child-process environment. */
+    readonly getGitHubAccountEnvironment: (
+      accountId: GitHubAccountId,
+    ) => Effect.Effect<GitHubAccountEnvironment, ServerSettingsError>;
+
+    /** Resolve the account selected by the project owning this exact workspace root. */
+    readonly getGitHubAccountEnvironmentForWorkspaceRoot: (
+      workspaceRoot: string,
+    ) => Effect.Effect<GitHubAccountEnvironment, ServerSettingsError>;
 
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
@@ -216,11 +280,18 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
       updateSettings: (patch) =>
         Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
+          Effect.map((currentSettings) =>
+            applyServerSettingsPatch(
+              currentSettings,
+              prepareGitHubAccountsPatch(currentSettings, patch).patch,
+            ),
+          ),
           Effect.flatMap(normalizeServerSettings),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
           Effect.map(resolveTextGenerationProvider),
         ),
+      getGitHubAccountEnvironment: () => Effect.succeed({ configured: false }),
+      getGitHubAccountEnvironmentForWorkspaceRoot: () => Effect.succeed({ configured: false }),
       streamChanges: Stream.empty,
       subscribeChanges: Effect.succeed(Stream.empty),
     } satisfies ServerSettingsService["Service"];
@@ -669,6 +740,80 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  const persistGitHubAccountTokens = (
+    current: ServerSettings,
+    next: ServerSettings,
+    tokenUpdates: ReadonlyArray<{ readonly accountId: string; readonly token: string | null }>,
+  ): Effect.Effect<void, ServerSettingsError> =>
+    Effect.gen(function* () {
+      for (const update of tokenUpdates) {
+        const secretName = githubAccountTokenSecretName(update.accountId);
+        const operation =
+          update.token === null ? "remove-github-account-token" : "write-github-account-token";
+        const result =
+          update.token === null
+            ? secretStore.remove(secretName)
+            : secretStore.set(secretName, textEncoder.encode(update.token));
+        yield* result.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation,
+                cause,
+              }),
+          ),
+        );
+      }
+
+      const nextAccountIds = new Set(Object.keys(next.githubAccounts));
+      for (const accountId of Object.keys(current.githubAccounts)) {
+        if (nextAccountIds.has(accountId)) continue;
+        yield* secretStore.remove(githubAccountTokenSecretName(accountId)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "remove-stale-github-account-token",
+                cause,
+              }),
+          ),
+        );
+      }
+    });
+
+  const readGitHubAccountEnvironment = (
+    accountId: GitHubAccountId,
+  ): Effect.Effect<GitHubAccountEnvironment, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const settings = yield* getSettingsFromCache;
+      const account = settings.githubAccounts[accountId];
+      if (!account) {
+        return { configured: false } satisfies GitHubAccountEnvironment;
+      }
+
+      const secret = yield* secretStore.get(githubAccountTokenSecretName(accountId)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "read-github-account-token",
+              cause,
+            }),
+        ),
+      );
+      if (Option.isNone(secret) || secret.value.byteLength === 0) {
+        return { configured: true } satisfies GitHubAccountEnvironment;
+      }
+      return {
+        configured: true,
+        environment: {
+          GH_TOKEN: textDecoder.decode(secret.value),
+          ...(account.host === "github.com" ? {} : { GH_HOST: account.host }),
+        },
+      } satisfies GitHubAccountEnvironment;
+    });
+
   const startWatcher = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
     const settingsFile = pathService.basename(settingsPath);
@@ -736,14 +881,41 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
+    getGitHubAccountEnvironment: readGitHubAccountEnvironment,
+    getGitHubAccountEnvironmentForWorkspaceRoot: (workspaceRoot) =>
+      sql<{ readonly githubAccountId: string | null }>`
+        SELECT github_account_id AS "githubAccountId"
+        FROM projection_projects
+        WHERE workspace_root = ${workspaceRoot}
+          AND deleted_at IS NULL
+        ORDER BY created_at ASC, project_id ASC
+        LIMIT 1
+      `.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "read-project-github-account",
+              cause,
+            }),
+        ),
+        Effect.flatMap((rows) => {
+          const accountId = rows[0]?.githubAccountId;
+          return accountId === null || accountId === undefined
+            ? Effect.succeed({ configured: false } satisfies GitHubAccountEnvironment)
+            : readGitHubAccountEnvironment(accountId as GitHubAccountId);
+        }),
+      ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
+          const prepared = prepareGitHubAccountsPatch(current, patch);
           const nextPersisted = yield* persistProviderEnvironmentSecrets(
             current,
-            applyServerSettingsPatch(current, patch),
+            applyServerSettingsPatch(current, prepared.patch),
           );
+          yield* persistGitHubAccountTokens(current, nextPersisted, prepared.tokenUpdates);
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);

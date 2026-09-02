@@ -70,6 +70,8 @@ const makeProjection = (project: OrchestrationProjectShell) =>
     searchThreads: () => Effect.succeed({ matches: [] }),
     getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
     getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 0 }),
+    getRecentActivitySummaries: () => Effect.succeed([]),
+    getEventReplayStats: () => Effect.die("unused"),
     getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
     getProjectShellById: () => Effect.succeed(Option.none()),
     getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),

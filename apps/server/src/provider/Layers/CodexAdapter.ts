@@ -535,12 +535,16 @@ function mapCollabAgentEvent(
   // finding: progress rows renamed math_one to its UUID).
   const knownName = nickname ?? pathLeaf;
   const title = knownName ?? agentThreadId;
+  const model = typeof payload.model === "string" ? payload.model.trim() : "";
+  const effort = typeof payload.effort === "string" ? payload.effort.trim() : "";
   // Identity repeated on every status patch so rows are self-describing when
   // the start row ages out of activity retention (review finding: a
   // reconstructed agent had a UUID name and no role/path).
-  const statusLinkage = {
+  const linkage = {
     role,
     ...(knownName ? { title: knownName } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
     ...(agentPath ? { agentPath } : {}),
     timelineBypass: true,
   } as const;
@@ -555,13 +559,19 @@ function mapCollabAgentEvent(
             taskId,
             description: title,
             title,
-            role,
-            ...(agentPath ? { agentPath } : {}),
+            ...linkage,
             ...(typeof payload.parentThreadId === "string"
               ? { parentAgentId: payload.parentThreadId }
               : {}),
-            timelineBypass: true,
           },
+        },
+      ];
+    case "collabAgent/metadataUpdated":
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: { taskId, ...linkage },
         },
       ];
     case "collabAgent/activity": {
@@ -571,7 +581,7 @@ function mapCollabAgentEvent(
           {
             ...base,
             type: "task.updated",
-            payload: { taskId, status: "interrupted", ...statusLinkage },
+            payload: { taskId, status: "interrupted", ...linkage },
           },
         ];
       }
@@ -588,9 +598,7 @@ function mapCollabAgentEvent(
               taskId,
               description: title,
               title,
-              role,
-              ...(agentPath ? { agentPath } : {}),
-              timelineBypass: true,
+              ...linkage,
             },
           },
         ];
@@ -604,7 +612,7 @@ function mapCollabAgentEvent(
         {
           ...base,
           type: "task.updated",
-          payload: { taskId, status: "running", ...statusLinkage },
+          payload: { taskId, status: "running", ...linkage },
         },
       ];
     case "collabAgent/turnCompleted": {
@@ -624,7 +632,7 @@ function mapCollabAgentEvent(
         {
           ...base,
           type: "task.updated",
-          payload: { taskId, status, ...statusLinkage },
+          payload: { taskId, status, ...linkage },
         },
       ];
     }
@@ -640,7 +648,7 @@ function mapCollabAgentEvent(
           {
             ...base,
             type: "task.updated",
-            payload: { taskId, status: "failed", ...statusLinkage },
+            payload: { taskId, status: "failed", ...linkage },
           },
         ];
       }
@@ -653,7 +661,7 @@ function mapCollabAgentEvent(
           {
             ...base,
             type: "task.updated",
-            payload: { taskId, status: waiting ? "waiting" : "running", ...statusLinkage },
+            payload: { taskId, status: waiting ? "waiting" : "running", ...linkage },
           },
         ];
       }
@@ -662,7 +670,7 @@ function mapCollabAgentEvent(
           {
             ...base,
             type: "task.updated",
-            payload: { taskId, status: "idle", ...statusLinkage },
+            payload: { taskId, status: "idle", ...linkage },
           },
         ];
       }
@@ -709,9 +717,8 @@ function mapCollabAgentEvent(
           payload: {
             taskId,
             description: title,
-            ...(knownName ? { title: knownName } : {}),
+            ...linkage,
             typedUsage,
-            timelineBypass: true,
           },
         },
       ];
@@ -741,9 +748,8 @@ function mapCollabAgentEvent(
           payload: {
             taskId,
             description: title,
-            ...(knownName ? { title: knownName } : {}),
+            ...linkage,
             summary,
-            timelineBypass: true,
           },
         },
       ];
@@ -753,7 +759,7 @@ function mapCollabAgentEvent(
         {
           ...base,
           type: "task.updated",
-          payload: { taskId, status: "interrupted", ...statusLinkage },
+          payload: { taskId, status: "interrupted", ...linkage },
         },
       ];
     default:
@@ -1660,6 +1666,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const sessionEnvironment = input.environment
+          ? { ...options?.environment, ...input.environment }
+          : options?.environment;
         if (input.provider !== undefined && input.provider !== PROVIDER) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -1712,8 +1721,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           providerInstanceId: boundInstanceId,
           cwd,
           binaryPath: codexConfig.binaryPath,
-          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
-          ...(options?.environment ? { environment: options.environment } : {}),
+          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, sessionEnvironment),
+          ...(sessionEnvironment ? { environment: sessionEnvironment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
@@ -1726,7 +1735,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(mcpSession
             ? {
                 environment: {
-                  ...(options?.environment ?? process.env),
+                  ...(sessionEnvironment ?? process.env),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
                 },
                 appServerArgs: [
@@ -1845,8 +1854,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   });
 
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    // Codex ingests images only. Anything else would be base64-encoded as an
+    // image and rejected or misread; generic files reach the agent through the
+    // path line ProviderService puts in the prompt.
     const codexAttachments = yield* Effect.forEach(
-      input.attachments ?? [],
+      (input.attachments ?? []).filter((attachment) => attachment.type === "image"),
       (attachment) => resolveAttachment(input, attachment),
       { concurrency: 1 },
     );

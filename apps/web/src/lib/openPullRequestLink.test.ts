@@ -3,13 +3,116 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   changeRequestRepositoryUrl,
   findProjectForChangeRequest,
+  gitHubPullRequestBrowserUrl,
   matchesLinkedPullRequestUrl,
+  openExternalWithGitHubAccount,
+  openProjectExternalLink,
   openPullRequestLink,
   parseChangeRequestUrl,
   PullRequestLinkOpenError,
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
-import { ProjectId } from "@t3tools/contracts";
+import { GitHubAccountId, ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
+
+function repositoryIdentity(
+  provider: string,
+  canonicalKey: string,
+  remoteUrl: string,
+): RepositoryIdentity {
+  return {
+    canonicalKey,
+    provider,
+    locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+  };
+}
+
+describe("gitHubPullRequestBrowserUrl", () => {
+  it("uses the requested GitHub repository instead of the project's default repository", () => {
+    const identity = repositoryIdentity(
+      "github",
+      "github.com/acme/default",
+      "https://github.com/acme/default.git",
+    );
+
+    expect(gitHubPullRequestBrowserUrl(identity, "acme/other", 42)).toBe(
+      "https://github.com/acme/other/pull/42",
+    );
+  });
+
+  it("preserves a custom GitHub HTTP origin without its credentials", () => {
+    const identity = repositoryIdentity(
+      "github",
+      "github.acme.test/team/default",
+      "http://token@github.acme.test:8443/team/default.git",
+    );
+
+    expect(gitHubPullRequestBrowserUrl(identity, "platform/api", 7)).toBe(
+      "http://github.acme.test:8443/platform/api/pull/7",
+    );
+  });
+
+  it.each([
+    {
+      name: "SSH",
+      remoteUrl: "git@github.acme.test:team/default.git",
+    },
+    {
+      name: "git protocol",
+      remoteUrl: "git://github.acme.test/team/default.git",
+    },
+  ])("uses the normalized host for a $name remote", ({ remoteUrl }) => {
+    const identity = repositoryIdentity("github", "github.acme.test/team/default", remoteUrl);
+
+    expect(gitHubPullRequestBrowserUrl(identity, "platform/api", 9)).toBe(
+      "https://github.acme.test/platform/api/pull/9",
+    );
+  });
+
+  it("returns null for missing or invalid GitHub data", () => {
+    expect(gitHubPullRequestBrowserUrl(null, "acme/repository", 1)).toBeNull();
+    expect(
+      gitHubPullRequestBrowserUrl(
+        repositoryIdentity("github", "github.com/acme/repository", "https://github.com/a/b"),
+        "acme",
+        1,
+      ),
+    ).toBeNull();
+    expect(
+      gitHubPullRequestBrowserUrl(
+        repositoryIdentity("github", "github.com/acme/repository", "https://github.com/a/b"),
+        "../repository",
+        1,
+      ),
+    ).toBeNull();
+    expect(
+      gitHubPullRequestBrowserUrl(
+        repositoryIdentity("github", "github.com/acme/repository", "https://github.com/a/b"),
+        "acme/repository",
+        0,
+      ),
+    ).toBeNull();
+    expect(
+      gitHubPullRequestBrowserUrl(
+        repositoryIdentity("github", "bad host/acme/repository", "not a remote"),
+        "acme/repository",
+        1,
+      ),
+    ).toBeNull();
+  });
+
+  it.each(["gitlab", "bitbucket", "azure-devops", "unknown"])(
+    "does not build a fallback for %s",
+    (provider) => {
+      expect(
+        gitHubPullRequestBrowserUrl(
+          repositoryIdentity(provider, "github.com/acme/repository", "https://github.com/a/b"),
+          "acme/repository",
+          1,
+        ),
+      ).toBeNull();
+    },
+  );
+});
 
 describe("changeRequestRepositoryUrl", () => {
   it("preserves repository path casing", () => {
@@ -83,6 +186,40 @@ describe("openPullRequestLink", () => {
       }),
     );
     await expect(result).rejects.not.toHaveProperty("message", expect.stringContaining("secret"));
+  });
+
+  it("uses the selected GitHub account session when one is available", async () => {
+    const openExternal = vi.fn(async () => undefined);
+    const openExternalInGitHubAccount = vi.fn(async () => undefined);
+    const accountId = GitHubAccountId.make("work");
+    const targetUrl = "https://github.com/acme/repository/pull/123";
+
+    await openPullRequestLink({ openExternal, openExternalInGitHubAccount }, targetUrl, accountId);
+
+    expect(openExternalInGitHubAccount).toHaveBeenCalledExactlyOnceWith(targetUrl, accountId);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("does not send an arbitrary research source through a GitHub account session", async () => {
+    const openExternal = vi.fn(async () => undefined);
+    const openExternalInGitHubAccount = vi.fn(async () => undefined);
+    const project = {
+      githubAccountId: GitHubAccountId.make("work"),
+      repositoryIdentity: repositoryIdentity(
+        "github",
+        "github.com/acme/repository",
+        "https://github.com/acme/repository.git",
+      ),
+    };
+
+    await openProjectExternalLink(
+      { openExternal, openExternalInGitHubAccount },
+      "https://docs.example.test/research",
+      project,
+    );
+
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith("https://docs.example.test/research");
+    expect(openExternalInGitHubAccount).not.toHaveBeenCalled();
   });
 });
 

@@ -24,7 +24,6 @@ import type {
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
 } from "./review.ts";
-import type { AgentNotificationEvent, DesktopNotificationAttempt } from "./agentNotifications.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
@@ -49,7 +48,6 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
-import type { PreviewInputEvent } from "./preview.ts";
 import * as Schema from "effect/Schema";
 import type {
   DiscoveredLocalServerList,
@@ -93,8 +91,9 @@ import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import type { ClientSettings } from "./settings.ts";
+import type { ClientSettings, QuitConfirmationMode } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
+import { GitHubAccountId } from "./sourceControl.ts";
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -103,6 +102,11 @@ import type {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import type {
+  DesktopAppActivationRequest,
+  DesktopAppActivationResponse,
+} from "./desktopAppActivation.ts";
+import type { AgentNotificationEvent, DesktopNotificationAttempt } from "./agentNotifications.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -117,6 +121,10 @@ export interface ContextMenuItem<T extends string = string> {
   separatorBefore?: boolean;
   children?: readonly ContextMenuItem<T>[];
 }
+
+export type QuitShortcutHintEvent =
+  | { readonly state: "down"; readonly mode: Exclude<QuitConfirmationMode, "direct"> }
+  | { readonly state: "up" };
 
 export interface ContextMenuItemSchemaType {
   readonly id: string;
@@ -191,12 +199,6 @@ export interface DesktopRuntimeInfo {
   appArch: DesktopRuntimeArch;
   runningUnderArm64Translation: boolean;
 }
-
-export const DesktopRuntimeInfoSchema = Schema.Struct({
-  hostArch: DesktopRuntimeArchSchema,
-  appArch: DesktopRuntimeArchSchema,
-  runningUnderArm64Translation: Schema.Boolean,
-});
 
 export interface DesktopUpdateState {
   enabled: boolean;
@@ -344,14 +346,6 @@ export interface DesktopSshPasswordPromptRequest {
   prompt: string;
   expiresAt: string;
 }
-
-export const DesktopSshPasswordPromptRequestSchema = Schema.Struct({
-  requestId: Schema.String,
-  destination: Schema.String,
-  username: Schema.NullOr(Schema.String),
-  prompt: Schema.String,
-  expiresAt: Schema.String,
-});
 
 export const DesktopSshPasswordPromptCancelledType = "ssh-password-prompt-cancelled" as const;
 
@@ -586,6 +580,12 @@ export const DesktopPreviewTabIdSchema = Schema.String.check(Schema.isTrimmed())
   Schema.isNonEmpty(),
 );
 
+export const DesktopPreviewAutomationStatusSchema = Schema.Struct({
+  ...PreviewAutomationStatus.fields,
+  tabId: Schema.NullOr(DesktopPreviewTabIdSchema),
+});
+export type DesktopPreviewAutomationStatus = typeof DesktopPreviewAutomationStatusSchema.Type;
+
 export const DesktopPreviewNavStatusSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("Idle") }),
   Schema.Struct({
@@ -607,22 +607,6 @@ export const DesktopPreviewNavStatusSchema = Schema.Union([
   }),
 ]);
 
-export const DesktopPreviewTabStateSchema: Schema.Codec<DesktopPreviewTabState> = Schema.Struct({
-  tabId: DesktopPreviewTabIdSchema,
-  webContentsId: Schema.NullOr(Schema.Int),
-  navStatus: DesktopPreviewNavStatusSchema,
-  canGoBack: Schema.Boolean,
-  canGoForward: Schema.Boolean,
-  zoomFactor: Schema.Number,
-  pictureInPicture: Schema.Boolean,
-  colorScheme: DesktopPreviewColorSchemeSchema,
-  audioMuted: Schema.Boolean,
-  audible: Schema.Boolean,
-  controller: Schema.Literals(["human", "agent", "none"]),
-  favicon: Schema.optionalKey(DesktopPreviewFaviconSchema),
-  updatedAt: Schema.String,
-});
-
 export interface DesktopPreviewPointerEvent {
   tabId: string;
   phase: "move" | "click";
@@ -631,16 +615,6 @@ export interface DesktopPreviewPointerEvent {
   sequence: number;
   createdAt: string;
 }
-
-export const DesktopPreviewPointerEventSchema: Schema.Codec<DesktopPreviewPointerEvent> =
-  Schema.Struct({
-    tabId: DesktopPreviewTabIdSchema,
-    phase: Schema.Literals(["move", "click"]),
-    x: Schema.Number,
-    y: Schema.Number,
-    sequence: Schema.Int,
-    createdAt: Schema.String,
-  });
 
 /**
  * Static config a renderer needs to mount a preview `<webview>`. Returned
@@ -720,49 +694,6 @@ export interface DesktopPreviewRecordingFrame {
   height: number;
   receivedAt: string;
 }
-
-export const DesktopPreviewRecordingFrameSchema: Schema.Codec<DesktopPreviewRecordingFrame> =
-  Schema.Struct({
-    tabId: DesktopPreviewTabIdSchema,
-    data: Schema.String,
-    width: Schema.Number,
-    height: Schema.Number,
-    receivedAt: Schema.String,
-  });
-
-/**
- * A frame headed for a viewer on another device. Carries the page's CSS size
- * alongside the encoded pixels so the viewer can map a tap back to a page
- * coordinate without knowing the host's scale factor.
- */
-export interface DesktopPreviewRemoteFrame extends DesktopPreviewRecordingFrame {
-  pageWidth: number;
-  pageHeight: number;
-}
-
-export const DesktopPreviewRemoteFrameSchema: Schema.Codec<DesktopPreviewRemoteFrame> =
-  Schema.Struct({
-    tabId: DesktopPreviewTabIdSchema,
-    data: Schema.String,
-    width: Schema.Number,
-    height: Schema.Number,
-    receivedAt: Schema.String,
-    pageWidth: Schema.Number,
-    pageHeight: Schema.Number,
-  });
-
-export interface DesktopPreviewRemoteStreamBounds {
-  maxWidth: number;
-  maxHeight: number;
-  quality: number;
-}
-
-export const DesktopPreviewRemoteStreamBoundsSchema: Schema.Codec<DesktopPreviewRemoteStreamBounds> =
-  Schema.Struct({
-    maxWidth: Schema.Number,
-    maxHeight: Schema.Number,
-    quality: Schema.Number,
-  });
 
 export interface DesktopPreviewRecordingArtifact {
   id: string;
@@ -1097,8 +1028,17 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+/** Opens a web URL in the desktop's persistent browser session for one GitHub account. */
+export const OpenExternalInGitHubAccountInputSchema = Schema.Struct({
+  url: Schema.String,
+  githubAccountId: GitHubAccountId,
+});
+export type OpenExternalInGitHubAccountInput = typeof OpenExternalInGitHubAccountInputSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
+  /** The desktop client's OS platform, read from Electron's preload process. */
+  getClientPlatform?: () => string;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so
@@ -1163,6 +1103,8 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  /** Optional while older desktop shells lack account-scoped GitHub windows. */
+  openExternalInGitHubAccount?: (url: string, githubAccountId: GitHubAccountId) => Promise<boolean>;
   /**
    * Probe this desktop machine for installed remote-capable editor CLIs
    * (used for remote open-in-editor deep links). Optional: older desktop
@@ -1171,11 +1113,10 @@ export interface DesktopBridge {
   probeRemoteEditors?: () => Promise<readonly EditorId[]>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   /**
-   * Hold-to-quit hint pushes: "down" when the quit shortcut is first pressed,
-   * "up" when it is released before the hold completes. Optional: older
-   * desktop builds never emit it.
+   * Quit-confirmation hint pushes. Optional: older desktop builds never emit
+   * them.
    */
-  onQuitShortcut?: (listener: (state: "down" | "up") => void) => () => void;
+  onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
@@ -1184,12 +1125,21 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  /** Present when the desktop shell accepts `t3 app` activation requests. */
+  appActivation?: {
+    setReady: (ready: boolean) => Promise<void>;
+    complete: (response: DesktopAppActivationResponse) => Promise<void>;
+    onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
+  };
   /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.
    */
   preview?: DesktopPreviewBridge;
 }
+
+/** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
+export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
 
 export interface DesktopPreviewBridge {
   createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;
@@ -1255,18 +1205,8 @@ export interface DesktopPreviewBridge {
     ) => Promise<DesktopPreviewRecordingArtifact>;
     onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;
   };
-  /**
-   * Serving a viewer on another device. The host renders as usual and streams
-   * scaled frames out; input comes back the same way.
-   */
-  remote: {
-    startStream: (tabId: string, bounds: DesktopPreviewRemoteStreamBounds) => Promise<void>;
-    stopStream: (tabId: string) => Promise<void>;
-    dispatchInput: (tabId: string, event: PreviewInputEvent) => Promise<void>;
-    onFrame: (listener: (frame: DesktopPreviewRemoteFrame) => void) => () => void;
-  };
   automation: {
-    status: (tabId: string) => Promise<PreviewAutomationStatus>;
+    status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
     snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
@@ -1302,6 +1242,8 @@ export interface LocalApi {
   };
   shell: {
     openExternal: (url: string) => Promise<void>;
+    /** Optional while a browser host cannot provide isolated account sessions. */
+    openExternalInGitHubAccount?: (url: string, githubAccountId: GitHubAccountId) => Promise<void>;
   };
   contextMenu: {
     show: <T extends string>(

@@ -5,15 +5,13 @@ import {
   DesktopPreviewAutomationEvaluateInputSchema,
   DesktopPreviewAutomationPressInputSchema,
   DesktopPreviewAutomationScrollInputSchema,
+  DesktopPreviewAutomationStatusSchema,
   DesktopPreviewAutomationTypeInputSchema,
   DesktopPreviewAutomationWaitForInputSchema,
   DesktopPreviewConfigInputSchema,
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
-  DesktopPreviewRemoteStreamBoundsSchema,
-  DesktopPreviewTabIdSchema,
-  PreviewInputEvent,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
@@ -23,7 +21,6 @@ import {
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewAutomationSnapshot,
-  PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -45,9 +42,6 @@ export const installPreviewEventForwarding = Effect.fn(
   );
   yield* manager.subscribeRecordingFrames((frame) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame),
-  );
-  yield* manager.subscribeRemoteFrames((frame) =>
-    electronWindow.sendAll(IpcChannels.PREVIEW_REMOTE_FRAME_CHANNEL, frame),
   );
   yield* manager.subscribePointerEvents((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event),
@@ -189,38 +183,6 @@ export const stopRecording = tabMethod(
   "desktop.ipc.preview.stopRecording",
   (manager, tabId) => manager.stopRecording(tabId),
 );
-export const startRemoteStream = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_REMOTE_STREAM_START_CHANNEL,
-  payload: Schema.Struct({
-    tabId: DesktopPreviewTabIdSchema,
-    bounds: DesktopPreviewRemoteStreamBoundsSchema,
-  }),
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.startRemoteStream")(function* ({ tabId, bounds }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.startRemoteStream(tabId, bounds);
-  }),
-});
-
-export const stopRemoteStream = tabMethod(
-  IpcChannels.PREVIEW_REMOTE_STREAM_STOP_CHANNEL,
-  "desktop.ipc.preview.stopRemoteStream",
-  (manager, tabId) => manager.stopRemoteStream(tabId),
-);
-
-export const dispatchRemoteInput = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_REMOTE_INPUT_CHANNEL,
-  payload: Schema.Struct({
-    tabId: DesktopPreviewTabIdSchema,
-    event: PreviewInputEvent,
-  }),
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.dispatchRemoteInput")(function* ({ tabId, event }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.dispatchRemoteInput(tabId, event);
-  }),
-});
-
 export const openPictureInPicture = tabMethod(
   IpcChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL,
   "desktop.ipc.preview.openPictureInPicture",
@@ -320,7 +282,7 @@ export const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
 export const automationStatus = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
-  result: PreviewAutomationStatus,
+  result: DesktopPreviewAutomationStatusSchema,
   handler: Effect.fn("desktop.ipc.preview.automationStatus")(function* ({ tabId }) {
     const manager = yield* PreviewManager.PreviewManager;
     return yield* manager.automationStatus(tabId);
@@ -444,7 +406,4 @@ export const methods = [
   startRecording,
   stopRecording,
   saveRecording,
-  startRemoteStream,
-  stopRemoteStream,
-  dispatchRemoteInput,
 ] as const;

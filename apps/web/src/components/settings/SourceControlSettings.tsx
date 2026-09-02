@@ -1,7 +1,7 @@
-import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
   SourceControlProviderKind,
@@ -10,6 +10,9 @@ import type {
   SourceControlProviderDiscoveryItem,
   VcsDriverKind,
   VcsDiscoveryItem,
+  GitHubAccount,
+  GitHubAccountPatch,
+  GitHubAccountId,
 } from "@t3tools/contracts";
 import {
   getBackgroundActivityBaseProfile,
@@ -24,6 +27,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import {
   Empty,
@@ -59,7 +63,9 @@ import {
   PolicyTooltip,
   SettingResetButton,
   SettingsPageContainer,
+  SettingsSearchTarget,
   SettingsSection,
+  useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -267,6 +273,13 @@ function DiscoveryItemRow({
   const authAccount = auth ? optionLabel(auth.account) : null;
   const [isExpanded, setIsExpanded] = useState(false);
   const hasDetails = children !== undefined;
+  const searchTargetId = useSettingsSearchTargetId();
+
+  useEffect(() => {
+    if (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) {
+      setIsExpanded(true);
+    }
+  }, [item.kind, searchTargetId]);
 
   return (
     <div
@@ -345,13 +358,14 @@ function GitFetchIntervalSettings() {
   );
   const canResetFetchInterval =
     automaticGitFetchIntervalSeconds !== defaultAutomaticGitFetchIntervalSeconds;
+  const setting = searchableSetting("git-fetch-interval");
 
   return (
-    <div className="grid gap-3">
+    <SettingsSearchTarget id={setting.id} className="grid gap-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex min-w-0 items-center gap-1">
-            <span className="text-xs font-medium text-foreground">Fetch interval</span>
+            <span className="text-xs font-medium text-foreground">{setting.title}</span>
             <PolicyTooltip>
               This interval is configured for Git only. The shared Background activity policy still
               decides whether Git refreshes may run when the timer fires. Custom intervals appear as
@@ -407,7 +421,7 @@ function GitFetchIntervalSettings() {
           <span className="text-xs text-muted-foreground">seconds</span>
         </div>
       </div>
-    </div>
+    </SettingsSearchTarget>
   );
 }
 
@@ -492,6 +506,154 @@ function EmptySourceControlDiscovery({
   );
 }
 
+function GitHubAccountSettings() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const accounts = Object.entries(settings.githubAccounts);
+
+  const persist = (next: Record<string, GitHubAccountPatch>) => {
+    updateSettings({ githubAccounts: next });
+  };
+  const toPatch = (account: GitHubAccount): GitHubAccountPatch => ({
+    label: account.label,
+    ...(account.login ? { login: account.login } : {}),
+    host: account.host,
+  });
+
+  return (
+    <SettingsSection title="GitHub accounts">
+      <div className="space-y-3 px-3 py-1 sm:px-4">
+        <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+          Add identities here, then choose one in a project’s settings. A configured PAT is kept in
+          the server secret store and is passed to GitHub operations and every agent session for
+          that project.
+        </p>
+        {accounts.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No additional GitHub accounts configured.</p>
+        ) : null}
+        {accounts.map(([id, account]) => (
+          <GitHubAccountRow
+            key={id}
+            id={id}
+            account={account}
+            onSave={(next) =>
+              persist({
+                ...Object.fromEntries(
+                  accounts
+                    .filter(([accountId]) => accountId !== id)
+                    .map(([accountId, existing]) => [accountId, toPatch(existing)]),
+                ),
+                [id]: next,
+              } as Record<string, GitHubAccountPatch>)
+            }
+            onDelete={() => {
+              const next = Object.fromEntries(
+                accounts
+                  .filter(([accountId]) => accountId !== id)
+                  .map(([accountId, existing]) => [accountId, toPatch(existing)]),
+              );
+              persist(next);
+            }}
+          />
+        ))}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            const base = "github-account";
+            let id = base;
+            let suffix = 2;
+            while (settings.githubAccounts[id as GitHubAccountId]) id = `${base}-${suffix++}`;
+            persist({
+              ...Object.fromEntries(
+                accounts.map(([accountId, existing]) => [accountId, toPatch(existing)]),
+              ),
+              [id]: { label: "New GitHub account", host: "github.com" },
+            } as Record<string, GitHubAccountPatch>);
+          }}
+        >
+          Add GitHub account
+        </Button>
+      </div>
+    </SettingsSection>
+  );
+}
+
+function GitHubAccountRow(props: {
+  readonly id: string;
+  readonly account: GitHubAccount;
+  readonly onSave: (account: GitHubAccountPatch) => void;
+  readonly onDelete: () => void;
+}) {
+  const [label, setLabel] = useState(props.account.label);
+  const [login, setLogin] = useState(props.account.login ?? "");
+  const [host, setHost] = useState(props.account.host);
+  const [token, setToken] = useState("");
+  const [tokenDirty, setTokenDirty] = useState(false);
+
+  return (
+    <div className="rounded-xl border border-border/60 p-3">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Input
+          aria-label={`${props.id} account label`}
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+        />
+        <Input
+          aria-label={`${props.id} GitHub login`}
+          placeholder="GitHub login (optional)"
+          value={login}
+          onChange={(e) => setLogin(e.target.value)}
+        />
+        <Input
+          aria-label={`${props.id} GitHub host`}
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+        />
+        <Input
+          type="password"
+          aria-label={`${props.id} personal access token`}
+          placeholder={
+            props.account.tokenConfigured
+              ? "PAT configured (leave blank to keep)"
+              : "Personal access token"
+          }
+          value={token}
+          onChange={(e) => {
+            setTokenDirty(true);
+            setToken(e.target.value);
+          }}
+        />
+      </div>
+      <div className="mt-2 flex items-center justify-end gap-2">
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          onClick={props.onDelete}
+          aria-label={`Remove ${label}`}
+        >
+          <Trash2Icon className="size-3.5" />
+          Remove
+        </Button>
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() =>
+            props.onSave({
+              label: label.trim() || props.account.label,
+              ...(login.trim() ? { login: login.trim() } : {}),
+              host: host.trim() || "github.com",
+              ...(tokenDirty ? { token } : {}),
+            })
+          }
+        >
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function SourceControlSettingsPanel() {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -538,6 +700,7 @@ export function SourceControlSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      {isPrimaryEnvironment ? <GitHubAccountSettings /> : null}
       {isInitialScanPending ? (
         <>
           <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />

@@ -2,6 +2,7 @@ import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/enviro
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
+  GitHubAccountId,
   PullRequestAction,
   PullRequestMergeMethod,
   PullRequestUpdateMethod,
@@ -16,6 +17,7 @@ import {
   BookOpenIcon,
   CircleDotIcon,
   ChevronDownIcon,
+  ExternalLinkIcon,
   FileDiffIcon,
   FolderGit2Icon,
   GitBranchIcon,
@@ -51,7 +53,11 @@ import {
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { changeRequestRepositoryUrl } from "~/lib/openPullRequestLink";
+import {
+  changeRequestRepositoryUrl,
+  gitHubPullRequestBrowserUrl,
+  openExternalWithGitHubAccount,
+} from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -96,6 +102,7 @@ import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
+import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
@@ -270,6 +277,7 @@ function ActOnEnvironmentPicker({
 const openNumberContextMenu = (
   event: ReactMouseEvent,
   detail: { readonly url: string; readonly provider: string },
+  githubAccountId?: GitHubAccountId | null,
 ): void => {
   event.preventDefault();
   event.stopPropagation();
@@ -277,6 +285,7 @@ const openNumberContextMenu = (
     url: detail.url,
     openLabel: openOnHostLabel(detail.provider),
     position: { x: event.clientX, y: event.clientY },
+    ...(githubAccountId ? { githubAccountId } : {}),
   });
 };
 
@@ -527,9 +536,10 @@ export function PullRequestDetailPanel({
     detailQuery.refresh();
     activityQuery.refresh();
   }, [activityQuery.refresh, detailQuery.refresh]);
-  const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
-    null,
-  );
+  const activityRevision = useRef<{
+    readonly key: string;
+    readonly updatedAt: string;
+  } | null>(null);
   useEffect(() => {
     if (!coreDetail) return;
     const next = { key: pullRequestKey, updatedAt: coreDetail.updatedAt };
@@ -559,7 +569,9 @@ export function PullRequestDetailPanel({
   // the answer for a reader who can see that what they are looking at is behind. The
   // invalidation goes first so the re-reads miss that cache; if it fails, the reads still run
   // and at worst answer from it.
-  const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
+  const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, {
+    reportFailure: false,
+  });
   const [refreshToken, setRefreshToken] = useState(0);
   const refreshFromHost = useCallback(async () => {
     await invalidate({ environmentId, input: { reference } });
@@ -573,12 +585,16 @@ export function PullRequestDetailPanel({
     appliedForcedToken.current = forcedRefreshToken;
     void refreshFromHost();
   }, [forcedRefreshToken, refreshFromHost]);
-  const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
+  const runAction = useAtomCommand(pullRequestEnvironment.runAction, {
+    reportFailure: false,
+  });
   // Which action is in flight, not merely that one is: every control here is disabled while any
   // of them runs, but only the button that was pressed may say what it is doing.
   const [pendingAction, setPendingAction] = useState<PullRequestAction | null>(null);
   const actionPending = pendingAction !== null;
-  const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
+  const update = useAtomCommand(pullRequestEnvironment.update, {
+    reportFailure: false,
+  });
   // Scoped to the pull request it was typed against, since this one panel shows a different one
   // every time it is opened and a half-written title must not follow it there.
   const [titleScope, setTitleScope] = useState<{
@@ -590,6 +606,27 @@ export function PullRequestDetailPanel({
   const newThread = useNewThreadHandler();
   const { environments } = useEnvironments();
   const projects = useProjects();
+  const githubAccountId =
+    detail?.provider === "github"
+      ? (projects.find(
+          (project) =>
+            project.id === reference.projectId && project.environmentId === environmentId,
+        )?.githubAccountId ?? null)
+      : null;
+  const openHostUrl = useCallback(
+    (url: string) => {
+      const api = readLocalApi();
+      if (!api) return;
+      void openExternalWithGitHubAccount(api.shell, url, githubAccountId).catch(() => undefined);
+    },
+    [githubAccountId],
+  );
+  const unavailableGitHubUrl = useMemo(() => {
+    const identity = projects.find(
+      (project) => project.id === reference.projectId && project.environmentId === environmentId,
+    )?.repositoryIdentity;
+    return gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
+  }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
   // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
   // the thread is already on one server's copy of the branch.
   const pickableEnvironments = useMemo(
@@ -679,7 +716,10 @@ export function PullRequestDetailPanel({
       return;
     }
     setTitleSaving(true);
-    const result = await update({ environmentId, input: { ...reference, title } });
+    const result = await update({
+      environmentId,
+      input: { ...reference, title },
+    });
     setTitleSaving(false);
     if (result._tag === "Failure") {
       // The draft stays open with the words still in it: retyping a title somebody has just
@@ -714,7 +754,10 @@ export function PullRequestDetailPanel({
     const draft = store.getComposerDraft(target);
     const key = composerTargetKey(target);
     const prompt = handoffPrompt(
-      { prompt: draft?.prompt ?? "", lastHandoffPrompt: lastHandoffPromptByDraft.get(key) },
+      {
+        prompt: draft?.prompt ?? "",
+        lastHandoffPrompt: lastHandoffPromptByDraft.get(key),
+      },
       task.prompt,
     );
     lastHandoffPromptByDraft.set(key, task.prompt);
@@ -797,7 +840,10 @@ export function PullRequestDetailPanel({
   // before sending. Checking out is the whole point of the ones that carry nothing.
   const startHandoff = async (
     kind: string,
-    task: { prompt: string; reviewComments?: ReadonlyArray<ReviewCommentContext> } | null,
+    task: {
+      prompt: string;
+      reviewComments?: ReadonlyArray<ReviewCommentContext>;
+    } | null,
     // A worktree leaves whatever is open alone, which is why it is the default. Checking out in
     // the repository itself is what you want when the point is to run the thing where you
     // already work — and it moves the branch under everything else that is open there.
@@ -1131,7 +1177,7 @@ export function PullRequestDetailPanel({
                       repositoryUrl ? (
                         <button
                           type="button"
-                          onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
+                          onClick={() => openHostUrl(repositoryUrl)}
                           className="min-w-0 cursor-pointer truncate text-left font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                         >
                           {detail.repository}
@@ -1152,15 +1198,18 @@ export function PullRequestDetailPanel({
                     render={
                       <button
                         type="button"
-                        onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
-                        onContextMenu={(event) => openNumberContextMenu(event, detail)}
+                        onClick={() => openHostUrl(detail.url)}
+                        onContextMenu={(event) =>
+                          openNumberContextMenu(event, detail, githubAccountId)
+                        }
                         className={cn(
-                          "shrink-0 font-medium underline-offset-2 hover:underline",
+                          "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
                           statePresentation.toneClassName,
                         )}
                         aria-label={`Open pull request #${detail.number} on host`}
                       >
                         #{detail.number}
+                        <ExternalLinkIcon aria-hidden className="size-2.5" />
                       </button>
                     }
                   />
@@ -1187,15 +1236,18 @@ export function PullRequestDetailPanel({
                       <button
                         type="button"
                         tabIndex={condensed ? 0 : -1}
-                        onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
-                        onContextMenu={(event) => openNumberContextMenu(event, detail)}
+                        onClick={() => openHostUrl(detail.url)}
+                        onContextMenu={(event) =>
+                          openNumberContextMenu(event, detail, githubAccountId)
+                        }
                         className={cn(
-                          "shrink-0 font-medium underline-offset-2 hover:underline",
+                          "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
                           statePresentation.toneClassName,
                         )}
                         aria-label={`Open pull request #${detail.number} on host`}
                       >
                         #{detail.number}
+                        <ExternalLinkIcon aria-hidden className="size-2.5" />
                       </button>
                     }
                   />
@@ -1258,7 +1310,12 @@ export function PullRequestDetailPanel({
                       <ActOnEnvironmentPicker
                         environments={pickableEnvironments}
                         value={actingEnvironmentId}
-                        onChange={(next) => setActingScope({ pullRequestKey, environmentId: next })}
+                        onChange={(next) =>
+                          setActingScope({
+                            pullRequestKey,
+                            environmentId: next,
+                          })
+                        }
                         disabled={handoff !== null}
                       />
                     ) : null}
@@ -1398,7 +1455,10 @@ export function PullRequestDetailPanel({
                         <MenuItem
                           disabled={actionPending}
                           onClick={() =>
-                            setConfirmation({ open: true, action: "enable-auto-merge" })
+                            setConfirmation({
+                              open: true,
+                              action: "enable-auto-merge",
+                            })
                           }
                         >
                           <GitMergeIcon className="size-3.5" />
@@ -1444,7 +1504,7 @@ export function PullRequestDetailPanel({
                       ) : null}
                     </>
                   ) : null}
-                  <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}>
+                  <MenuItem onClick={() => openHostUrl(detail.url)}>
                     <ArrowUpRightIcon className="size-3.5" />
                     {openOnHostLabel(detail.provider)}
                   </MenuItem>
@@ -1642,7 +1702,10 @@ export function PullRequestDetailPanel({
                       value={titleDraft}
                       aria-label="Pull request title"
                       onChange={(event) =>
-                        setTitleScope({ pullRequestKey, text: event.target.value })
+                        setTitleScope({
+                          pullRequestKey,
+                          text: event.target.value,
+                        })
                       }
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
@@ -1793,7 +1856,11 @@ export function PullRequestDetailPanel({
                 aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
               >
                 {checksState !== null ? (
-                  <PullRequestChecksPopover checks={detail.checks} checksState={checksState} />
+                  <PullRequestChecksPopover
+                    checks={detail.checks}
+                    checksState={checksState}
+                    githubAccountId={githubAccountId}
+                  />
                 ) : (
                   <CircleDotIcon aria-hidden className="size-3.5" />
                 )}
@@ -1906,15 +1973,25 @@ export function PullRequestDetailPanel({
         }}
       >
         {detailQuery.error && !detail ? (
-          <PullRequestsUnavailableState error={detailQuery.error} onRetry={refreshDetail} />
+          <PullRequestsUnavailableState
+            error={detailQuery.error}
+            onRetry={refreshDetail}
+            {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
+          />
         ) : detail ? (
-          <>
+          <PullRequestMarkdownContext
+            value={{
+              repositoryUrl: detail.provider === "github" ? repositoryUrl : null,
+              githubAccountId,
+            }}
+          >
             {mountedTabs.has("summary") ? (
               <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
                 <PullRequestSummaryTab
                   environmentId={environmentId}
                   reference={reference}
                   detail={detail}
+                  githubAccountId={githubAccountId}
                   activityPending={activityPending}
                   activityError={activityError}
                   pendingFinding={handoff}
@@ -1937,6 +2014,7 @@ export function PullRequestDetailPanel({
                 ) : (
                   <PullRequestTimelineTab
                     detail={detail}
+                    githubAccountId={githubAccountId}
                     environmentId={environmentId}
                     reference={reference}
                     order={timelineOrder}
@@ -1965,7 +2043,7 @@ export function PullRequestDetailPanel({
                 </Suspense>
               </div>
             ) : null}
-          </>
+          </PullRequestMarkdownContext>
         ) : null}
       </div>
 

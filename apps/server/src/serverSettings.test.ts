@@ -3,6 +3,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  GitHubAccountId,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -73,6 +74,40 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("keeps GitHub PATs in the secret store and resolves them by account", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const accountId = GitHubAccountId.make("work");
+
+      const next = yield* serverSettings.updateSettings({
+        githubAccounts: {
+          [accountId]: {
+            label: "Work",
+            login: "work-user",
+            host: "github.com",
+            token: "secret-token",
+          },
+        },
+      });
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      const resolved = yield* serverSettings.getGitHubAccountEnvironment(accountId);
+
+      assert.deepEqual(next.githubAccounts[accountId], {
+        label: "Work",
+        login: "work-user",
+        host: "github.com",
+        tokenConfigured: true,
+      });
+      assert.notInclude(raw, "secret-token");
+      assert.deepEqual(resolved, {
+        configured: true,
+        environment: { GH_TOKEN: "secret-token" },
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("preserves context when reading a provider environment secret fails", () => {
     const platformCause = PlatformError.systemError({
       _tag: "PermissionDenied",
@@ -299,6 +334,34 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           Option.getOrUndefined(firstChange)?.providers.codex.binaryPath,
           "/usr/local/bin/codex-next",
         );
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists and broadcasts thread settlement settings", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const changes = yield* serverSettings.subscribeChanges;
+
+        const next = yield* serverSettings.updateSettings({
+          sidebarAutoSettleAfterDays: null,
+          sidebarAutoSettleOnMerge: false,
+        });
+        const change = Option.getOrUndefined(yield* Stream.runHead(changes));
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        // Inspect raw persisted JSON before schema decoding can apply defaults.
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        const persisted = JSON.parse(raw) as Record<string, unknown>;
+
+        assert.strictEqual(next.sidebarAutoSettleAfterDays, null);
+        assert.isFalse(next.sidebarAutoSettleOnMerge);
+        assert.strictEqual(change?.sidebarAutoSettleAfterDays, null);
+        assert.isFalse(change?.sidebarAutoSettleOnMerge);
+        assert.strictEqual(persisted.sidebarAutoSettleAfterDays, null);
+        assert.isFalse(persisted.sidebarAutoSettleOnMerge);
       }),
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
