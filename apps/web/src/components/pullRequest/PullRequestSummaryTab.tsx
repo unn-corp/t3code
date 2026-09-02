@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  GitHubAccountId,
   PullRequestActor,
   PullRequestComment,
   PullRequestDetailView,
@@ -20,6 +21,7 @@ import { useRef, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
+import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -316,7 +318,9 @@ function CommentComposer({
 }) {
   const [body, setBody] = useState("");
   const [posting, setPosting] = useState(false);
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+  const postComment = useAtomCommand(pullRequestEnvironment.comment, {
+    reportFailure: false,
+  });
 
   const submit = async () => {
     const trimmed = body.trim();
@@ -377,6 +381,7 @@ export function PullRequestSummaryTab({
   environmentId,
   reference,
   detail,
+  githubAccountId,
   activityPending,
   activityError,
   pendingFinding,
@@ -388,6 +393,7 @@ export function PullRequestSummaryTab({
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
+  githubAccountId?: GitHubAccountId | null;
   activityPending: boolean;
   activityError: string | null;
   /** The hand-off currently preparing, if any, so only the finding it belongs to says so. */
@@ -454,10 +460,14 @@ export function PullRequestSummaryTab({
   );
 
   const openCheck = (url: string) => {
-    void readLocalApi()?.shell.openExternal(url);
+    const api = readLocalApi();
+    if (api)
+      void openExternalWithGitHubAccount(api.shell, url, githubAccountId).catch(() => undefined);
   };
 
-  const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
+  const update = useAtomCommand(pullRequestEnvironment.update, {
+    reportFailure: false,
+  });
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
     reportFailure: false,
   });
@@ -479,10 +489,16 @@ export function PullRequestSummaryTab({
   const saveBody = async (body: string) => {
     if (bodySaving) return;
     setBodySaving(true);
-    const result = await update({ environmentId, input: { ...reference, body } });
+    const result = await update({
+      environmentId,
+      input: { ...reference, body },
+    });
     setBodySaving(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the description" });
+      toastManager.add({
+        type: "error",
+        title: "Could not save the description",
+      });
       return;
     }
     setBodyScope(null);
@@ -504,11 +520,19 @@ export function PullRequestSummaryTab({
       setCommentSaving(true);
       const result = await updateComment({
         environmentId,
-        input: { ...reference, commentId: comment.id, kind: comment.kind, body },
+        input: {
+          ...reference,
+          commentId: comment.id,
+          kind: comment.kind,
+          body,
+        },
       });
       setCommentSaving(false);
       if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: "Could not save the comment" });
+        toastManager.add({
+          type: "error",
+          title: "Could not save the comment",
+        });
         return;
       }
       setCommentScope(null);
@@ -791,7 +815,10 @@ export function PullRequestSummaryTab({
                     variant="outline"
                     className="w-full"
                     onClick={() =>
-                      setShown({ url: detail.url, count: shownComments + COMMENT_PAGE })
+                      setShown({
+                        url: detail.url,
+                        count: shownComments + COMMENT_PAGE,
+                      })
                     }
                   >
                     Show {Math.min(hiddenCommentCount, COMMENT_PAGE)} earlier{" "}

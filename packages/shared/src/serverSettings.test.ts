@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  GitHubAccountId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -18,6 +19,27 @@ import {
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
+  it("replaces configured GitHub accounts so removed identities do not remain selectable", () => {
+    const personal = GitHubAccountId.make("personal");
+    const work = GitHubAccountId.make("work");
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      githubAccounts: {
+        [personal]: { label: "Personal", host: "github.com" },
+        [work]: { label: "Work", host: "github.com" },
+      },
+    });
+
+    const next = applyServerSettingsPatch(current, {
+      githubAccounts: {
+        [personal]: { label: "Personal", host: "github.com" },
+      },
+    });
+
+    expect(next.githubAccounts).toEqual({
+      [personal]: { label: "Personal", host: "github.com" },
+    });
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();

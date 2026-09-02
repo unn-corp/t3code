@@ -2,11 +2,14 @@ import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { DEFAULT_SERVER_SETTINGS, GitHubAccountId } from "@t3tools/contracts";
 
 const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
@@ -24,6 +27,34 @@ const layer = GitHubCli.layer.pipe(
       run: mockRun,
     }),
   ),
+  Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+);
+
+const configuredAccountLayer = GitHubCli.layer.pipe(
+  Layer.provide(
+    Layer.mock(VcsProcess.VcsProcess)({
+      run: mockRun,
+    }),
+  ),
+  Layer.provide(
+    Layer.succeed(
+      ServerSettings.ServerSettingsService,
+      ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        getGitHubAccountEnvironment: () =>
+          Effect.succeed({
+            configured: true,
+            environment: { GH_TOKEN: "work-token", GH_HOST: "github.example.com" },
+          }),
+        getGitHubAccountEnvironmentForWorkspaceRoot: () => Effect.succeed({ configured: false }),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.succeed(Stream.empty),
+      }),
+    ),
+  ),
 );
 
 afterEach(() => {
@@ -31,6 +62,48 @@ afterEach(() => {
 });
 
 describe("GitHubCli.layer", () => {
+  it.effect("uses the selected account PAT for explicit GitHub operations", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      const gh = yield* GitHubCli.GitHubCli;
+
+      yield* gh.execute({
+        cwd: "/repo",
+        githubAccountId: GitHubAccountId.make("work"),
+        args: ["auth", "status"],
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["auth", "status"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+        env: expect.objectContaining({
+          GH_TOKEN: "work-token",
+          GH_HOST: "github.example.com",
+        }),
+      });
+    }).pipe(Effect.provide(configuredAccountLayer)),
+  );
+
+  it.effect("does not fall back to ambient auth for an unconfigured selected account", () =>
+    Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+
+      const error = yield* gh
+        .execute({
+          cwd: "/repo",
+          githubAccountId: GitHubAccountId.make("missing"),
+          args: ["auth", "status"],
+        })
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("GitHubCliAuthenticationError");
+      expect(mockRun).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("merges only the reviewed pull request head commit", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));

@@ -1,4 +1,9 @@
-import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type {
+  ConfirmDialogOptions,
+  ContextMenuItem,
+  GitHubAccountId,
+  LocalApi,
+} from "@t3tools/contracts";
 
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
@@ -28,6 +33,22 @@ function createBrowserLocalApi(): LocalApi {
           return;
         }
 
+        window.open(url, "_blank", "noopener,noreferrer");
+      },
+      openExternalInGitHubAccount: async (url, githubAccountId: GitHubAccountId) => {
+        if (window.desktopBridge?.openExternalInGitHubAccount) {
+          const opened = await window.desktopBridge.openExternalInGitHubAccount(
+            url,
+            githubAccountId,
+          );
+          if (!opened) {
+            throw new Error("Unable to open link in the selected GitHub account.");
+          }
+          return;
+        }
+
+        // Browser deployments cannot create isolated Chromium profiles. Keep
+        // the link usable there; the desktop build provides the account switch.
         window.open(url, "_blank", "noopener,noreferrer");
       },
     },

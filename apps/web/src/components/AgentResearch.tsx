@@ -39,6 +39,7 @@ import {
 } from "../agentDashboardPages";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { newMessageId, newThreadId, randomHex } from "../lib/utils";
+import { openProjectExternalLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import { resolveAppModelSelectionState } from "../modelSelection";
 import { agentDashboardEnvironment, useAgentDashboardSnapshot } from "../state/agentDashboard";
@@ -121,8 +122,12 @@ export function AgentResearch() {
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const projects = useProjects();
   const dashboardSnapshot = useAgentDashboardSnapshot();
-  const collect = useAtomCommand(agentDashboardEnvironment.collect, { reportFailure: false });
-  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const collect = useAtomCommand(agentDashboardEnvironment.collect, {
+    reportFailure: false,
+  });
+  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, {
+    reportFailure: false,
+  });
   const applyFindingAction = useAtomCommand(agentDashboardEnvironment.applyFindingAction, {
     reportFailure: false,
   });
@@ -219,24 +224,27 @@ export function AgentResearch() {
     toastManager.add(stackedThreadToast({ type: "error", title, description: message }));
   }, []);
 
-  const openExternal = useCallback(async (url: string, label: string) => {
-    try {
-      const localApi = readLocalApi();
-      if (localApi) {
-        await localApi.shell.openExternal(url);
-        return;
+  const openExternal = useCallback(
+    async (url: string, label: string, project?: EnvironmentProject | null) => {
+      try {
+        const localApi = readLocalApi();
+        if (localApi) {
+          await openProjectExternalLink(localApi.shell, url, project);
+          return;
+        }
+        window.open(url, "_blank", "noopener,noreferrer");
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not open ${label}`,
+            description: error instanceof Error ? error.message : "The link could not be opened.",
+          }),
+        );
       }
-      window.open(url, "_blank", "noopener,noreferrer");
-    } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: `Could not open ${label}`,
-          description: error instanceof Error ? error.message : "The link could not be opened.",
-        }),
-      );
-    }
-  }, []);
+    },
+    [],
+  );
 
   const collectNow = async () => {
     if (!dashboardSnapshot.environmentId || isCollecting) return;
@@ -293,7 +301,11 @@ export function AgentResearch() {
     async (record: NativeResearchRecord) => {
       if (record.workflow.kind !== "finding" || !dashboardSnapshot.environmentId) return;
       if (record.workflow.githubIssueUrl) {
-        await openExternal(record.workflow.githubIssueUrl, "GitHub issue");
+        await openExternal(
+          record.workflow.githubIssueUrl,
+          "GitHub issue",
+          projectForRecord(record, dashboardSnapshot.environmentId),
+        );
         return;
       }
       if (!githubRepositoryForRecord(record) || creatingIssueId !== null) return;
@@ -468,7 +480,11 @@ export function AgentResearch() {
 
         const linkResult = await linkFindingThread({
           environmentId,
-          input: { id: record.workflow.findingId, projectId: project.id, threadId },
+          input: {
+            id: record.workflow.findingId,
+            projectId: project.id,
+            threadId,
+          },
         });
         const linkFailure = (() => {
           if (linkResult._tag === "Failure") {
@@ -765,7 +781,12 @@ export function AgentResearch() {
                             id: "source",
                             label: "Open source",
                             icon: ExternalLinkIcon,
-                            onSelect: () => void openExternal(record.remoteUrl!, "research source"),
+                            onSelect: () =>
+                              void openExternal(
+                                record.remoteUrl!,
+                                "research source",
+                                projectForRecord(record, dashboardSnapshot.environmentId!),
+                              ),
                             variant: "ghost",
                           }
                         : null,

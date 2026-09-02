@@ -1003,6 +1003,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          const sessionEnvironment = input.environment
+            ? { ...(options?.environment ?? hostEnvironment), ...input.environment }
+            : (options?.environment ?? hostEnvironment);
           if (input.provider !== undefined && input.provider !== PROVIDER) {
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
@@ -1045,7 +1048,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeGrokAcpRuntime({
             grokSettings,
-            ...(options?.environment ? { environment: options.environment } : {}),
+            environment: sessionEnvironment,
             childProcessSpawner,
             cwd,
             trustProject: true,

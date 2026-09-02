@@ -216,6 +216,9 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             defaultThreadEnvMode: null,
+            ...(payload.githubAccountId !== undefined
+              ? { githubAccountId: payload.githubAccountId }
+              : {}),
             faviconPath: payload.faviconPath ?? null,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
@@ -251,6 +254,9 @@ export function projectEvent(
                     : {}),
                   ...(payload.defaultThreadEnvMode !== undefined
                     ? { defaultThreadEnvMode: payload.defaultThreadEnvMode }
+                    : {}),
+                  ...(payload.githubAccountId !== undefined
+                    ? { githubAccountId: payload.githubAccountId }
                     : {}),
                   ...(payload.faviconPath !== undefined
                     ? { faviconPath: payload.faviconPath }

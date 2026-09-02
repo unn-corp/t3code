@@ -228,6 +228,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     ready: Effect.void,
     getSettings: Ref.get(settings),
     updateSettings,
+    getGitHubAccountEnvironment: () => Effect.succeed({ configured: false }),
+    getGitHubAccountEnvironmentForWorkspaceRoot: () => Effect.succeed({ configured: false }),
     streamChanges: Stream.fromPubSub(settingsChanges),
     subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),

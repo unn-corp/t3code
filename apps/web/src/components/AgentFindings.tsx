@@ -71,6 +71,7 @@ import {
 } from "../agentDashboardPages";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { newMessageId, newThreadId, randomHex } from "../lib/utils";
+import { openProjectExternalLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import { getAppModelOptionsForInstance, resolveAppModelSelectionState } from "../modelSelection";
 import {
@@ -229,7 +230,10 @@ const PIPELINE_PRESENTATION = {
   resolved: { label: "Resolved", variant: "outline" },
 } as const satisfies Record<
   DashboardFindingPipelineStage,
-  { readonly label: string; readonly variant: "outline" | "warning" | "success" | "info" }
+  {
+    readonly label: string;
+    readonly variant: "outline" | "warning" | "success" | "info";
+  }
 >;
 
 function severityVariant(severity: AgentDashboardFinding["severity"]) {
@@ -338,8 +342,12 @@ export function AgentFindings() {
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const projects = useProjects();
   const dashboardSnapshot = useAgentDashboardSnapshot();
-  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const collect = useAtomCommand(agentDashboardEnvironment.collect, { reportFailure: false });
+  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, {
+    reportFailure: false,
+  });
+  const collect = useAtomCommand(agentDashboardEnvironment.collect, {
+    reportFailure: false,
+  });
   const addResearchWatchItem = useAtomCommand(agentDashboardEnvironment.addResearchWatchItem, {
     reportFailure: false,
   });
@@ -598,11 +606,11 @@ export function AgentFindings() {
   );
 
   const openExternal = useCallback(
-    async (url: string) => {
+    async (url: string, project?: EnvironmentProject | null) => {
       try {
         const localApi = readLocalApi();
         if (localApi) {
-          await localApi.shell.openExternal(url);
+          await openProjectExternalLink(localApi.shell, url, project);
           return;
         }
         window.open(url, "_blank", "noopener,noreferrer");
@@ -722,7 +730,11 @@ export function AgentFindings() {
         for (const record of selected) {
           const result = await applyFindingAction({
             environmentId: dashboardSnapshot.environmentId,
-            input: { id: record.id, action, ...(snoozeUntil ? { snoozeUntil } : {}) },
+            input: {
+              id: record.id,
+              action,
+              ...(snoozeUntil ? { snoozeUntil } : {}),
+            },
           });
           if (result._tag === "Failure" || !result.value.ok) failed += 1;
         }
@@ -749,7 +761,10 @@ export function AgentFindings() {
     async (record: DashboardFindingRecord) => {
       if (!dashboardSnapshot.environmentId || creatingIssueId !== null) return;
       if (record.finding.externalIssueUrl) {
-        await openExternal(record.finding.externalIssueUrl);
+        await openExternal(
+          record.finding.externalIssueUrl,
+          projectForRecord(record, dashboardSnapshot.environmentId),
+        );
         return;
       }
       if (!githubRepositoryForRecord(record)) {
@@ -850,7 +865,10 @@ export function AgentFindings() {
       const createdAt = new Date().toISOString();
       const prompt =
         intent === "implement" && baseBranch
-          ? buildDashboardFindingPrompt(record, { kind: "implement", baseBranch })
+          ? buildDashboardFindingPrompt(record, {
+              kind: "implement",
+              baseBranch,
+            })
           : buildDashboardFindingPrompt(record, { kind: "research" });
       const title =
         `${intent === "research" ? "Research" : "Work on"}: ${record.finding.title}`.slice(0, 80);
@@ -1676,7 +1694,16 @@ export function AgentFindings() {
                             ) : null}
                             {pullRequestUrl ? (
                               <Button
-                                onClick={() => void openExternal(pullRequestUrl)}
+                                onClick={() =>
+                                  void openExternal(
+                                    pullRequestUrl,
+                                    projects.find(
+                                      (project) =>
+                                        project.environmentId === dashboardSnapshot.environmentId &&
+                                        String(project.id) === String(run.repository.projectId),
+                                    ),
+                                  )
+                                }
                                 size="sm"
                                 variant="outline"
                               >
@@ -1777,7 +1804,16 @@ export function AgentFindings() {
                             input,
                           )
                         }
-                        onOpenExternal={openExternal}
+                        onOpenExternal={(url) =>
+                          openExternal(
+                            url,
+                            projects.find(
+                              (project) =>
+                                project.environmentId === dashboardSnapshot.environmentId &&
+                                String(project.id) === group.projectId,
+                            ),
+                          )
+                        }
                         projectId={ProjectId.make(group.projectId)}
                         projectName={group.projectName}
                         providerInstanceEntries={

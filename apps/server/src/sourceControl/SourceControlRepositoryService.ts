@@ -19,6 +19,7 @@ import {
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryInfo,
   type SourceControlRepositoryLookupInput,
+  type GitHubAccountId,
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../config.ts";
@@ -42,6 +43,7 @@ export class SourceControlRepositoryService extends Context.Service<
     readonly listProjectPullRequests: (input: {
       readonly cwd: string;
       readonly repository: string;
+      readonly githubAccountId?: GitHubAccountId;
       readonly limit?: number;
     }) => Effect.Effect<
       ReadonlyArray<SourceControlProjectPullRequest>,
@@ -50,6 +52,7 @@ export class SourceControlRepositoryService extends Context.Service<
     readonly mergeProjectPullRequest: (input: {
       readonly cwd: string;
       readonly repository: string;
+      readonly githubAccountId?: GitHubAccountId;
       readonly number: number;
       readonly expectedHeadOid: string;
       readonly method: SourceControlPullRequestMergeMethod;

@@ -23,6 +23,7 @@ import serverPackageJson from "../../server/package.json" with { type: "json" };
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
+import * as GitHubAccountBrowser from "./electron/GitHubAccountBrowser.ts";
 import * as ElectronMenu from "./electron/ElectronMenu.ts";
 import * as ElectronPowerMonitor from "./electron/ElectronPowerMonitor.ts";
 import * as ElectronProtocol from "./electron/ElectronProtocol.ts";
@@ -154,7 +155,7 @@ const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
   Layer.provideMerge(desktopFoundationLayer),
 );
 
-const desktopPreviewLayer = PreviewManager.layer.pipe(
+const desktopPreviewLayer = Layer.mergeAll(PreviewManager.layer, GitHubAccountBrowser.layer).pipe(
   Layer.provideMerge(BrowserSession.layer),
   Layer.provideMerge(desktopFoundationLayer),
 );

@@ -24,6 +24,7 @@ import {
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type GitHubAccountId,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
@@ -136,6 +137,7 @@ function toRuntimePayloadFromSession(
   session: ProviderSession,
   extra?: {
     readonly modelSelection?: unknown;
+    readonly githubAccountId?: string;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
   },
@@ -146,6 +148,7 @@ function toRuntimePayloadFromSession(
     activeTurnId: session.activeTurnId ?? null,
     lastError: session.lastError ?? null,
     ...(extra?.modelSelection !== undefined ? { modelSelection: extra.modelSelection } : {}),
+    ...(extra?.githubAccountId !== undefined ? { githubAccountId: extra.githubAccountId } : {}),
     ...(extra?.lastRuntimeEvent !== undefined ? { lastRuntimeEvent: extra.lastRuntimeEvent } : {}),
     ...(extra?.lastRuntimeEventAt !== undefined
       ? { lastRuntimeEventAt: extra.lastRuntimeEventAt }
@@ -173,6 +176,16 @@ function readPersistedCwd(
   if (typeof rawCwd !== "string") return undefined;
   const trimmed = rawCwd.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readPersistedGitHubAccountId(
+  runtimePayload: ProviderSessionDirectory.ProviderRuntimeBinding["runtimePayload"],
+): string | undefined {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return undefined;
+  }
+  const raw = "githubAccountId" in runtimePayload ? runtimePayload.githubAccountId : undefined;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw : undefined;
 }
 
 const dieOnMissingBindingInstanceId = (
@@ -227,6 +240,26 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const resolveGitHubAccountEnvironment = (accountId: GitHubAccountId, operation: string) =>
+    serverSettings.getGitHubAccountEnvironment(accountId).pipe(
+      Effect.mapError((cause) =>
+        toValidationError(
+          operation,
+          `Could not read the selected GitHub account '${accountId}'.`,
+          cause,
+        ),
+      ),
+      Effect.flatMap((account) =>
+        account.environment === undefined
+          ? Effect.fail(
+              toValidationError(
+                operation,
+                `The selected GitHub account '${accountId}' is not configured with a PAT.`,
+              ),
+            )
+          : Effect.succeed(account.environment),
+      ),
+    );
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const revokeMcpCredential =
@@ -317,6 +350,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
     extra?: {
       readonly modelSelection?: unknown;
+      readonly githubAccountId?: string;
       readonly lastRuntimeEvent?: string;
       readonly lastRuntimeEventAt?: string;
     },
@@ -423,6 +457,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const adapter = yield* registry.getByInstance(bindingInstanceId);
       const hasResumeCursor =
         input.binding.resumeCursor !== null && input.binding.resumeCursor !== undefined;
+      const persistedGitHubAccountId = readPersistedGitHubAccountId(input.binding.runtimePayload);
       const hasActiveSession = yield* adapter.hasSession(input.binding.threadId);
       if (hasActiveSession) {
         const activeSessions = yield* adapter.listSessions();
@@ -433,6 +468,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           yield* upsertSessionBinding(
             { ...existing, providerInstanceId: bindingInstanceId },
             input.binding.threadId,
+            persistedGitHubAccountId === undefined
+              ? undefined
+              : { githubAccountId: persistedGitHubAccountId },
           );
           yield* analytics.record("provider.session.recovered", {
             provider: existing.provider,
@@ -452,6 +490,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
+      const githubAccountEnvironment = persistedGitHubAccountId
+        ? yield* resolveGitHubAccountEnvironment(
+            persistedGitHubAccountId as GitHubAccountId,
+            input.operation,
+          )
+        : undefined;
 
       yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
       const resumed = yield* adapter
@@ -462,6 +506,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(persistedCwd ? { cwd: persistedCwd } : {}),
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
+          ...(githubAccountEnvironment ? { environment: githubAccountEnvironment } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
         })
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
@@ -476,6 +521,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* upsertSessionBinding(
         { ...resumed, providerInstanceId: bindingInstanceId },
         input.binding.threadId,
+        persistedGitHubAccountId === undefined
+          ? undefined
+          : { githubAccountId: persistedGitHubAccountId },
       );
       yield* analytics.record("provider.session.recovered", {
         provider: resumed.provider,
@@ -508,6 +556,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     }
     const instanceId = yield* requireBindingInstanceId(input.operation, binding);
     const adapter = yield* registry.getByInstance(instanceId);
+    const githubAccountId = readPersistedGitHubAccountId(binding.runtimePayload);
 
     const hasRequestedSession = yield* adapter.hasSession(input.threadId);
     if (hasRequestedSession) {
@@ -517,6 +566,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId: input.threadId,
         runtimeMode: binding.runtimeMode,
         isActive: true,
+        ...(githubAccountId !== undefined ? { githubAccountId } : {}),
       } as const;
     }
 
@@ -527,6 +577,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId: input.threadId,
         runtimeMode: binding.runtimeMode,
         isActive: false,
+        ...(githubAccountId !== undefined ? { githubAccountId } : {}),
       } as const;
     }
 
@@ -540,6 +591,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       threadId: input.threadId,
       runtimeMode: recovered.session.runtimeMode,
       isActive: true,
+      ...(githubAccountId !== undefined ? { githubAccountId } : {}),
     } as const;
   });
 
@@ -629,6 +681,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           (persistedBinding?.providerInstanceId === resolvedInstanceId
             ? readPersistedCwd(persistedBinding.runtimePayload)
             : undefined);
+        const githubAccountEnvironment = input.githubAccountId
+          ? yield* resolveGitHubAccountEnvironment(
+              input.githubAccountId,
+              "ProviderService.startSession",
+            )
+          : undefined;
         yield* Effect.annotateCurrentSpan({
           "provider.kind": resolvedProvider,
           "provider.resume_cursor.source":
@@ -656,6 +714,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             providerInstanceId: resolvedInstanceId,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
+            ...(githubAccountEnvironment ? { environment: githubAccountEnvironment } : {}),
           })
           .pipe(Effect.onError(() => clearMcpSession(threadId)));
 
@@ -677,6 +736,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         yield* upsertSessionBinding(sessionWithInstance, threadId, {
           modelSelection: input.modelSelection,
+          ...(input.githubAccountId ? { githubAccountId: input.githubAccountId } : {}),
         });
         yield* analytics.record("provider.session.started", {
           provider: sessionWithInstance.provider,
@@ -792,6 +852,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
         runtimePayload: {
           ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+          ...(routed.githubAccountId !== undefined
+            ? { githubAccountId: routed.githubAccountId }
+            : {}),
           activeTurnId: turn.turnId,
           lastRuntimeEvent: "provider.sendTurn",
           lastRuntimeEventAt: yield* nowIso,

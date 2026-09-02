@@ -27,6 +27,11 @@ import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
+/** Server-only additions attached immediately before spawning an agent. */
+export type ProviderAdapterSessionStartInput = ProviderSessionStartInput & {
+  readonly environment?: NodeJS.ProcessEnv;
+};
+
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
@@ -55,7 +60,7 @@ export interface ProviderAdapterShape<TError> {
    * Start a provider-backed session.
    */
   readonly startSession: (
-    input: ProviderSessionStartInput,
+    input: ProviderAdapterSessionStartInput,
   ) => Effect.Effect<ProviderSession, TError>;
 
   /**

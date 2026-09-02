@@ -51,6 +51,7 @@ import type {
 } from "./terminal.ts";
 import type { PreviewInputEvent } from "./preview.ts";
 import * as Schema from "effect/Schema";
+import { GitHubAccountId } from "./sourceControl.ts";
 import type {
   DiscoveredLocalServerList,
   PreviewCloseInput,
@@ -1116,6 +1117,16 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+/**
+ * Opens a web URL in the desktop's persistent browser session for one GitHub
+ * account. The account id is a routing key only; credentials never cross IPC.
+ */
+export const OpenExternalInGitHubAccountInputSchema = Schema.Struct({
+  url: Schema.String,
+  githubAccountId: GitHubAccountId,
+});
+export type OpenExternalInGitHubAccountInput = typeof OpenExternalInGitHubAccountInputSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
@@ -1184,6 +1195,8 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  /** Optional while older desktop shells lack account-scoped GitHub windows. */
+  openExternalInGitHubAccount?: (url: string, githubAccountId: GitHubAccountId) => Promise<boolean>;
   /**
    * Probe this desktop machine for installed remote-capable editor CLIs
    * (used for remote open-in-editor deep links). Optional: older desktop
@@ -1323,6 +1336,8 @@ export interface LocalApi {
   };
   shell: {
     openExternal: (url: string) => Promise<void>;
+    /** Optional while a browser host cannot provide isolated account sessions. */
+    openExternalInGitHubAccount?: (url: string, githubAccountId: GitHubAccountId) => Promise<void>;
   };
   contextMenu: {
     show: <T extends string>(

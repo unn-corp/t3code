@@ -3805,6 +3805,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
     function* (input) {
+      const sessionEnvironment = yield* makeClaudeEnvironment(claudeSettings, {
+        ...(options?.environment ?? process.env),
+        ...input.environment,
+      }).pipe(Effect.provideService(Path.Path, path));
       if (input.provider !== undefined && input.provider !== PROVIDER) {
         return yield* new ProviderAdapterValidationError({
           provider: PROVIDER,
@@ -4312,7 +4316,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: claudeEnvironment,
+        env: sessionEnvironment,
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession

@@ -237,6 +237,7 @@ export interface AgentDashboardStoreService {
   readonly createGithubIssue: (
     id: string,
     githubRepository?: string | null,
+    githubEnvironment?: NodeJS.ProcessEnv,
   ) => Effect.Effect<boolean, AgentDashboardStoreError>;
   readonly readFindings: Effect.Effect<
     ReadonlyArray<AgentDashboardFinding>,
@@ -1661,7 +1662,11 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     await writeDocumentArray(externalActionsPath, "actions", next);
   };
 
-  const createGithubIssue = (id: string, resolvedGithubRepository: string | null = null) =>
+  const createGithubIssue = (
+    id: string,
+    resolvedGithubRepository: string | null = null,
+    githubEnvironment?: NodeJS.ProcessEnv,
+  ) =>
     run("create GitHub issue", () =>
       withMutation(async () => {
         const reviewSuggestions = await readReviewSuggestionRaw();
@@ -1719,6 +1724,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
             timeout: 30_000,
             env: {
               ...process.env,
+              ...githubEnvironment,
               GH_PROMPT_DISABLED: "1",
               GIT_TERMINAL_PROMPT: "0",
             },

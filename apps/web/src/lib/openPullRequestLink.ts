@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  GitHubAccountId,
   LocalApi,
   RepositoryIdentity,
   ScopedThreadRef,
@@ -44,14 +45,58 @@ export class PullRequestLinkOpenError extends Schema.TaggedErrorClass<PullReques
 }
 
 export async function openPullRequestLink(
-  shell: Pick<LocalApi["shell"], "openExternal">,
+  shell: Pick<LocalApi["shell"], "openExternal" | "openExternalInGitHubAccount">,
   targetUrl: string,
+  githubAccountId?: GitHubAccountId | null,
 ): Promise<void> {
   try {
-    await shell.openExternal(targetUrl);
+    if (githubAccountId && shell.openExternalInGitHubAccount) {
+      await shell.openExternalInGitHubAccount(targetUrl, githubAccountId);
+    } else {
+      await shell.openExternal(targetUrl);
+    }
   } catch (cause) {
     throw PullRequestLinkOpenError.fromCause(targetUrl, cause);
   }
+}
+
+/** Opens a known GitHub link in the selected project's account session. */
+export async function openExternalWithGitHubAccount(
+  shell: Pick<LocalApi["shell"], "openExternal" | "openExternalInGitHubAccount">,
+  targetUrl: string,
+  githubAccountId?: GitHubAccountId | null,
+): Promise<void> {
+  if (githubAccountId && shell.openExternalInGitHubAccount) {
+    await shell.openExternalInGitHubAccount(targetUrl, githubAccountId);
+    return;
+  }
+  await shell.openExternal(targetUrl);
+}
+
+/**
+ * Uses an account session only when the URL belongs to the project's GitHub
+ * host. Research sources can be arbitrary websites and must stay ordinary
+ * links even when the record came from a GitHub-backed project.
+ */
+export async function openProjectExternalLink(
+  shell: Pick<LocalApi["shell"], "openExternal" | "openExternalInGitHubAccount">,
+  targetUrl: string,
+  project: Pick<EnvironmentProject, "githubAccountId" | "repositoryIdentity"> | null | undefined,
+): Promise<void> {
+  const identity = project?.repositoryIdentity;
+  const accountId = project?.githubAccountId ?? null;
+  let isProjectGitHubUrl = false;
+  if (identity && accountId) {
+    try {
+      const host = new URL(targetUrl).hostname.toLowerCase();
+      const projectHost = pullRequestHostOf(identity, "github");
+      isProjectGitHubUrl =
+        host === projectHost || (projectHost === "github" && host === "github.com");
+    } catch {
+      isProjectGitHubUrl = false;
+    }
+  }
+  await openExternalWithGitHubAccount(shell, targetUrl, isProjectGitHubUrl ? accountId : null);
 }
 
 /** Builds a GitHub URL that remains available when the pull request API cannot be read. */
@@ -270,7 +315,6 @@ export function useOpenChangeRequestLink(
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   return useCallback(
     (event, targetUrl, targetThreadRef) => {
-      if (shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const parsed = parseChangeRequestUrl(targetUrl);
       if (parsed === null) return false;
@@ -294,6 +338,26 @@ export function useOpenChangeRequestLink(
             );
       const project = findProjectForChangeRequest(projects, parsed);
       if (project === undefined || !reads(project.environmentId)) return false;
+      if (shouldOpenPullRequestExternally(event)) {
+        if (project.repositoryIdentity?.provider !== "github" || !project.githubAccountId) {
+          return false;
+        }
+        const api = readLocalApi();
+        if (!api) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        void openPullRequestLink(api.shell, targetUrl, project.githubAccountId).catch((error) => {
+          console.error(error);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Unable to open pull request link",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        });
+        return true;
+      }
       event.preventDefault();
       event.stopPropagation();
       if (resolvedThreadRef) {
@@ -337,7 +401,9 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       // A real link already knows how to cmd/ctrl+click. Leave its default
       // action alone so the browser (or Electron's window-open handler) opens
       // the host. Buttons have no href, so they still go through openExternal.
-      if (openInBrowser && isAnchor) return false;
+      if (openInBrowser && isAnchor) {
+        return openChangeRequest(event, prUrl, targetThreadRef) ? true : false;
+      }
 
       event.preventDefault();
       if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;

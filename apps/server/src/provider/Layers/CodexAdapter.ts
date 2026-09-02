@@ -1666,6 +1666,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const sessionEnvironment = input.environment
+          ? { ...options?.environment, ...input.environment }
+          : options?.environment;
         if (input.provider !== undefined && input.provider !== PROVIDER) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -1718,8 +1721,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           providerInstanceId: boundInstanceId,
           cwd,
           binaryPath: codexConfig.binaryPath,
-          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
-          ...(options?.environment ? { environment: options.environment } : {}),
+          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, sessionEnvironment),
+          ...(sessionEnvironment ? { environment: sessionEnvironment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
@@ -1732,7 +1735,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(mcpSession
             ? {
                 environment: {
-                  ...(options?.environment ?? process.env),
+                  ...(sessionEnvironment ?? process.env),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
                 },
                 appServerArgs: [

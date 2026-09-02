@@ -5,12 +5,14 @@ import {
   findProjectForChangeRequest,
   gitHubPullRequestBrowserUrl,
   matchesLinkedPullRequestUrl,
+  openExternalWithGitHubAccount,
+  openProjectExternalLink,
   openPullRequestLink,
   parseChangeRequestUrl,
   PullRequestLinkOpenError,
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
-import { ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
+import { GitHubAccountId, ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
 
 function repositoryIdentity(
   provider: string,
@@ -184,6 +186,40 @@ describe("openPullRequestLink", () => {
       }),
     );
     await expect(result).rejects.not.toHaveProperty("message", expect.stringContaining("secret"));
+  });
+
+  it("uses the selected GitHub account session when one is available", async () => {
+    const openExternal = vi.fn(async () => undefined);
+    const openExternalInGitHubAccount = vi.fn(async () => undefined);
+    const accountId = GitHubAccountId.make("work");
+    const targetUrl = "https://github.com/acme/repository/pull/123";
+
+    await openPullRequestLink({ openExternal, openExternalInGitHubAccount }, targetUrl, accountId);
+
+    expect(openExternalInGitHubAccount).toHaveBeenCalledExactlyOnceWith(targetUrl, accountId);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("does not send an arbitrary research source through a GitHub account session", async () => {
+    const openExternal = vi.fn(async () => undefined);
+    const openExternalInGitHubAccount = vi.fn(async () => undefined);
+    const project = {
+      githubAccountId: GitHubAccountId.make("work"),
+      repositoryIdentity: repositoryIdentity(
+        "github",
+        "github.com/acme/repository",
+        "https://github.com/acme/repository.git",
+      ),
+    };
+
+    await openProjectExternalLink(
+      { openExternal, openExternalInGitHubAccount },
+      "https://docs.example.test/research",
+      project,
+    );
+
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith("https://docs.example.test/research");
+    expect(openExternalInGitHubAccount).not.toHaveBeenCalled();
   });
 });
 

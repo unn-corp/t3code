@@ -14,7 +14,9 @@ import type {
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
+  DEFAULT_SERVER_SETTINGS,
   EventId,
+  GitHubAccountId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
@@ -46,7 +48,10 @@ import {
   ProviderValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterSessionStartInput,
+  ProviderAdapterShape,
+} from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -96,7 +101,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
-  const startSession = vi.fn((input: ProviderSessionStartInput) =>
+  const startSession = vi.fn((input: ProviderAdapterSessionStartInput) =>
     Effect.sync(() => {
       const now = "2026-01-01T00:00:00.000Z";
       const session: ProviderSession = {
@@ -284,7 +289,7 @@ const hasMetricSnapshot = (
       Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
   );
 
-function makeProviderServiceLayer() {
+function makeProviderServiceLayer(serverSettingsLayer = defaultServerSettingsLayer) {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
@@ -308,7 +313,7 @@ function makeProviderServiceLayer() {
       makeProviderServiceLive().pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
-        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverSettingsLayer),
         Layer.provide(serverConfigTestLayer),
         Layer.provideMerge(AnalyticsService.layerTest),
         Layer.provide(
@@ -332,6 +337,98 @@ function makeProviderServiceLayer() {
     layer,
   };
 }
+
+const githubAccountRouting = makeProviderServiceLayer(
+  Layer.succeed(
+    ServerSettings.ServerSettingsService,
+    ServerSettings.ServerSettingsService.of({
+      start: Effect.void,
+      ready: Effect.void,
+      getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+      updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+      getGitHubAccountEnvironment: () =>
+        Effect.succeed({
+          configured: true,
+          environment: { GH_TOKEN: "work-token" },
+        }),
+      getGitHubAccountEnvironmentForWorkspaceRoot: () => Effect.succeed({ configured: false }),
+      streamChanges: Stream.empty,
+      subscribeChanges: Effect.succeed(Stream.empty),
+    }),
+  ),
+);
+
+const missingGitHubAccountRouting = makeProviderServiceLayer();
+
+githubAccountRouting.layer("ProviderServiceLive GitHub account routing", (it) => {
+  it.effect("passes the selected account environment to the provider session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* provider.startSession(asThreadId("thread-github-account"), {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-github-account"),
+        githubAccountId: GitHubAccountId.make("work"),
+        runtimeMode: "full-access",
+      });
+
+      assert.deepStrictEqual(
+        githubAccountRouting.codex.startSession.mock.calls[0]?.[0].environment,
+        {
+          GH_TOKEN: "work-token",
+        },
+      );
+    }),
+  );
+
+  it.effect("retains the selected account in the runtime binding after a turn", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-github-account-persisted");
+      const provider = yield* ProviderService.ProviderService;
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        githubAccountId: GitHubAccountId.make("work"),
+        runtimeMode: "full-access",
+      });
+      yield* provider.sendTurn({ threadId, input: "hello", attachments: [] });
+
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const binding = yield* directory.getBinding(threadId);
+      if (Option.isNone(binding)) {
+        throw new Error("Expected the provider runtime binding to be persisted.");
+      }
+      const runtimePayload = binding.value.runtimePayload;
+      assert.equal(
+        runtimePayload && typeof runtimePayload === "object" && !Array.isArray(runtimePayload)
+          ? (runtimePayload as Record<string, unknown>).githubAccountId
+          : undefined,
+        "work",
+      );
+    }),
+  );
+});
+
+missingGitHubAccountRouting.layer("ProviderServiceLive GitHub account validation", (it) => {
+  it.effect("does not start an agent with ambient auth when the selected account has no PAT", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const result = yield* Effect.exit(
+        provider.startSession(asThreadId("thread-missing-github-account"), {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId: asThreadId("thread-missing-github-account"),
+          githubAccountId: GitHubAccountId.make("missing"),
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.equal(result._tag, "Failure");
+      assert.equal(missingGitHubAccountRouting.codex.startSession.mock.calls.length, 0);
+    }),
+  );
+});
 
 it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
   Effect.gen(function* () {

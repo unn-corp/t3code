@@ -480,6 +480,9 @@ export function makeCursorAdapter(
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          const sessionEnvironment = input.environment
+            ? { ...options?.environment, ...input.environment }
+            : options?.environment;
           if (input.provider !== undefined && input.provider !== PROVIDER) {
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
@@ -534,7 +537,7 @@ export function makeCursorAdapter(
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
-            ...(options?.environment ? { environment: options.environment } : {}),
+            ...(sessionEnvironment ? { environment: sessionEnvironment } : {}),
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),

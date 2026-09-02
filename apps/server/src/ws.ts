@@ -1697,15 +1697,42 @@ const makeWsRpcLayer = (
                   finding.id === input.id ||
                   finding.id === input.id.replace(/^t3-review-/, "finding:"),
               );
+              const legacy = canonical
+                ? null
+                : (yield* dashboardStore.readReviewSuggestions).find(
+                    (suggestion) =>
+                      suggestion.id === input.id ||
+                      suggestion.id === input.id.replace(/^finding:/, "t3-review-"),
+                  );
               const project = canonical
                 ? yield* projectionSnapshotQuery.getProjectShellById(canonical.repository.projectId)
-                : Option.none();
+                : legacy
+                  ? yield* projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(
+                      legacy.repository.path,
+                    )
+                  : Option.none();
               const githubRepository = Option.isSome(project)
                 ? parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
                     project.value.repositoryIdentity?.locator.remoteUrl ?? null,
                   )
                 : null;
-              return yield* dashboardStore.createGithubIssue(input.id, githubRepository);
+              let githubEnvironment: NodeJS.ProcessEnv | undefined;
+              if (Option.isSome(project) && project.value.githubAccountId) {
+                const account = yield* serverSettings.getGitHubAccountEnvironment(
+                  project.value.githubAccountId,
+                );
+                if (!account.environment) {
+                  return yield* new AgentDashboardError({
+                    message: "The selected GitHub account is not configured with a PAT.",
+                  });
+                }
+                githubEnvironment = account.environment;
+              }
+              return yield* dashboardStore.createGithubIssue(
+                input.id,
+                githubRepository,
+                githubEnvironment,
+              );
             }).pipe(
               Effect.map((changed) =>
                 changed
@@ -1757,6 +1784,9 @@ const makeWsRpcLayer = (
               const pullRequests = yield* sourceControlRepositories.listProjectPullRequests({
                 cwd: project.value.workspaceRoot,
                 repository,
+                ...(project.value.githubAccountId
+                  ? { githubAccountId: project.value.githubAccountId }
+                  : {}),
                 limit: 50,
               });
               return {
@@ -1797,6 +1827,9 @@ const makeWsRpcLayer = (
               yield* sourceControlRepositories.mergeProjectPullRequest({
                 cwd: project.value.workspaceRoot,
                 repository,
+                ...(project.value.githubAccountId
+                  ? { githubAccountId: project.value.githubAccountId }
+                  : {}),
                 number: input.number,
                 expectedHeadOid: input.expectedHeadOid,
                 method: input.method,

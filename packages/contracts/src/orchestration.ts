@@ -23,6 +23,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { GitHubAccountId } from "./sourceControl.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -292,6 +293,8 @@ export const OrchestrationProject = Schema.Struct({
   // Per-project override for where new threads start. Null/absent means
   // "no override": clients fall back to t3.json, then the global setting.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  /** Optional configured GitHub identity used by source-control features and agent sessions. */
+  githubAccountId: Schema.optional(Schema.NullOr(GitHubAccountId)),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.Array(ProjectScript),
@@ -503,6 +506,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  githubAccountId: Schema.optional(Schema.NullOr(GitHubAccountId)),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.Array(ProjectScript),
@@ -723,6 +727,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   // Absent = leave unchanged; null = clear the override.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  githubAccountId: Schema.optional(Schema.NullOr(GitHubAccountId)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -1209,6 +1214,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Optional so persisted events from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  githubAccountId: Schema.optional(Schema.NullOr(GitHubAccountId)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -1222,6 +1228,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  githubAccountId: Schema.optional(Schema.NullOr(GitHubAccountId)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });

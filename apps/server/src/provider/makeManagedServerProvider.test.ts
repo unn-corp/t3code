@@ -300,6 +300,9 @@ describe("makeManagedServerProvider", () => {
             ready: Effect.void,
             getSettings: Ref.get(serverSettingsRef),
             updateSettings: () => Effect.die(new Error("unused in this test")),
+            getGitHubAccountEnvironment: () => Effect.succeed({ configured: false }),
+            getGitHubAccountEnvironmentForWorkspaceRoot: () =>
+              Effect.succeed({ configured: false }),
             streamChanges: Stream.empty,
             subscribeChanges: PubSub.subscribe(serverSettingsChanges).pipe(
               Effect.map((subscription) => Stream.fromSubscription(subscription)),

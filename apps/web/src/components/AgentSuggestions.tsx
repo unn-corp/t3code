@@ -32,6 +32,7 @@ import {
 } from "../agentDashboardPages";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { usePrimarySettings } from "../hooks/useSettings";
+import { openProjectExternalLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import { resolveAppModelSelectionState } from "../modelSelection";
 import { newMessageId, newThreadId, randomHex } from "../lib/utils";
@@ -240,7 +241,9 @@ export function AgentSuggestions() {
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const projects = useProjects();
   const dashboardSnapshot = useAgentDashboardSnapshot();
-  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, {
+    reportFailure: false,
+  });
   const applyFindingAction = useAtomCommand(agentDashboardEnvironment.applyFindingAction, {
     reportFailure: false,
   });
@@ -339,7 +342,10 @@ export function AgentSuggestions() {
       const project = environmentId
         ? findDashboardProject(
             projects,
-            { projectId: suggestion.projectId, repositoryPath: suggestion.repositoryPath },
+            {
+              projectId: suggestion.projectId,
+              repositoryPath: suggestion.repositoryPath,
+            },
             environmentId,
           )
         : null;
@@ -350,6 +356,26 @@ export function AgentSuggestions() {
       );
     },
     [dashboardRepositoryForSuggestion, dashboardSnapshot.environmentId, projects],
+  );
+
+  const projectForSuggestion = useCallback(
+    (suggestion: NativeSuggestion): EnvironmentProject | null => {
+      const environmentId =
+        suggestion.environmentId === "native"
+          ? dashboardSnapshot.environmentId
+          : suggestion.environmentId;
+      return environmentId
+        ? findDashboardProject(
+            projects,
+            {
+              projectId: suggestion.projectId,
+              repositoryPath: suggestion.repositoryPath,
+            },
+            environmentId,
+          )
+        : null;
+    },
+    [dashboardSnapshot.environmentId, projects],
   );
 
   const applyCanonicalDisposition = useCallback(
@@ -468,29 +494,35 @@ export function AgentSuggestions() {
   const reopen = (suggestion: NativeSuggestion) =>
     void applyCanonicalDisposition(suggestion, "reopen");
 
-  const openGithubIssue = useCallback(async (url: string) => {
-    const localApi = readLocalApi();
-    if (!localApi) return;
-    try {
-      await localApi.shell.openExternal(url);
-    } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not open GitHub issue",
-          description:
-            error instanceof Error ? error.message : "The issue link could not be opened.",
-        }),
-      );
-    }
-  }, []);
+  const openGithubIssue = useCallback(
+    async (url: string, suggestion: NativeSuggestion) => {
+      const localApi = readLocalApi();
+      if (!localApi) return;
+      try {
+        await openProjectExternalLink(localApi.shell, url, projectForSuggestion(suggestion));
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not open GitHub issue",
+            description:
+              error instanceof Error ? error.message : "The issue link could not be opened.",
+          }),
+        );
+      }
+    },
+    [projectForSuggestion],
+  );
 
   const runRepositoryInvestigation = useCallback(async () => {
     const environmentId = dashboardSnapshot.environmentId;
     if (!environmentId || isRunningInvestigation) return;
     setIsRunningInvestigation(true);
     try {
-      const result = await runInvestigationCommand({ environmentId, input: {} });
+      const result = await runInvestigationCommand({
+        environmentId,
+        input: {},
+      });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
@@ -590,7 +622,7 @@ export function AgentSuggestions() {
     async (suggestion: NativeSuggestion) => {
       if (!githubRepositoryForSuggestion(suggestion)) return;
       if (suggestion.githubIssueUrl) {
-        await openGithubIssue(suggestion.githubIssueUrl);
+        await openGithubIssue(suggestion.githubIssueUrl, suggestion);
         return;
       }
       const environmentId = dashboardSnapshot.environmentId;
@@ -665,7 +697,11 @@ export function AgentSuggestions() {
       if (startingSuggestionId !== null) return;
 
       const showStartFailure = (title: string, message: string) => {
-        setActionError({ action: "start-work", message, suggestionId: suggestion.id });
+        setActionError({
+          action: "start-work",
+          message,
+          suggestionId: suggestion.id,
+        });
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -697,7 +733,10 @@ export function AgentSuggestions() {
 
       const project = findDashboardProject(
         projects,
-        { projectId: suggestion.projectId, repositoryPath: suggestion.repositoryPath },
+        {
+          projectId: suggestion.projectId,
+          repositoryPath: suggestion.repositoryPath,
+        },
         environmentId,
       );
       if (!project) {

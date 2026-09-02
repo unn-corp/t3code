@@ -23,6 +23,7 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+import { GitHubAccount, GitHubAccountId, GitHubAccountPatch } from "./sourceControl.ts";
 import {
   AgentNotificationPreferences,
   DEFAULT_AGENT_NOTIFICATION_PREFERENCES,
@@ -872,6 +873,10 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** Configured GitHub identities. PAT values are held by the server secret store. */
+  githubAccounts: Schema.Record(GitHubAccountId, GitHubAccount).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   discordBridge: DiscordBridgeSettings,
   continuousImprovement: ContinuousImprovementSettings,
@@ -936,6 +941,11 @@ export const ServerSettingsOperation = Schema.Literals([
   "write-secret",
   "write-file",
   "prepare-directory",
+  "read-github-account-token",
+  "write-github-account-token",
+  "remove-github-account-token",
+  "remove-stale-github-account-token",
+  "read-project-github-account",
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
@@ -1104,6 +1114,8 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  /** Whole-map replacement; account tokens are consumed by the server and never merged into settings. */
+  githubAccounts: Schema.optionalKey(Schema.Record(GitHubAccountId, GitHubAccountPatch)),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

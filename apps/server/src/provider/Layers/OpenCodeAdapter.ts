@@ -2376,6 +2376,9 @@ export function makeOpenCodeAdapter(
 
     const startSession: OpenCodeAdapterShape["startSession"] = Effect.fn("startSession")(
       function* (input) {
+        const sessionEnvironment = input.environment
+          ? { ...options?.environment, ...input.environment }
+          : options?.environment;
         const binaryPath = openCodeSettings.binaryPath;
         const serverUrl = openCodeSettings.serverUrl;
         const serverPassword = openCodeSettings.serverPassword;
@@ -2402,7 +2405,7 @@ export function makeOpenCodeAdapter(
                 directory,
                 serverUrl,
                 ...(serverPassword ? { serverPassword } : {}),
-                ...(options?.environment ? { environment: options.environment } : {}),
+                ...(sessionEnvironment ? { environment: sessionEnvironment } : {}),
               });
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,

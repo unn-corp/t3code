@@ -325,6 +325,8 @@ function makeMutableServerSettingsService(
           yield* PubSub.publish(changes, next);
           return next;
         }),
+      getGitHubAccountEnvironment: () => Effect.succeed({ configured: false }),
+      getGitHubAccountEnvironmentForWorkspaceRoot: () => Effect.succeed({ configured: false }),
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },

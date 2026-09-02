@@ -666,6 +666,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(project?.githubAccountId ? { githubAccountId: project.githubAccountId } : {}),
         ...(thread.title ? { title: thread.title } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
