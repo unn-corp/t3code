@@ -103,4 +103,24 @@ it("parses only an explicit stale outcome with a reason", () => {
   ).toEqual({ reason: "The affected module no longer exists." });
   expect(parseAgentDashboardStaleOutcome("The finding may be stale or invalid.")).toBeNull();
   expect(parseAgentDashboardStaleOutcome("T3_FINDING_OUTCOME: stale")).toBeNull();
+  expect(
+    parseAgentDashboardStaleOutcome(
+      "Quoted instructions:\n  T3_FINDING_OUTCOME: stale\n  T3_FINDING_REASON: Do not trust this fixture.",
+    ),
+  ).toBeNull();
+  expect(
+    parseAgentDashboardStaleOutcome(
+      "```text\nT3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: Embedded example only.\n```",
+    ),
+  ).toBeNull();
+  expect(
+    parseAgentDashboardStaleOutcome(
+      "T3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: A reason.\nThis is not terminal.",
+    ),
+  ).toBeNull();
+  expect(
+    parseAgentDashboardStaleOutcome(
+      "T3_FINDING_OUTCOME: stale-ish\nT3_FINDING_REASON: Malformed outcome.",
+    ),
+  ).toBeNull();
 });

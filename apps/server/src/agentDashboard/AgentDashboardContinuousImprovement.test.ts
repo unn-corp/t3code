@@ -1,8 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  IsoDateTime,
   MessageId,
   ProjectId,
   ThreadId,
+  TurnId,
   type AgentDashboardFinding,
   type AgentDashboardRepositoryPolicy,
   type OrchestrationProjectShell,
@@ -13,12 +15,15 @@ import {
   CONTINUOUS_IMPROVEMENT_RUN_KIND,
   createContinuousImprovementRun,
   evaluateImplementationWatchdog,
+  findContinuousImprovementRunForStaleResolution,
   findImplementationStaleOutcome,
+  findImplementationStaleOutcomeSinceReservation,
   findImplementationPullRequest,
   hasActiveFindingImplementation,
   isFindingEligibleForContinuousImprovement,
   resolveContinuousImprovementRecovery,
   resolveReportedPullRequestUrls,
+  selectContinuousImprovementStaleCandidates,
   selectContinuousImprovementFinding,
   transitionContinuousImprovementRun,
 } from "./AgentDashboardContinuousImprovement.ts";
@@ -132,6 +137,134 @@ it("uses only the completed turn's assistant message when detecting a stale find
       ],
     }),
   ).toBeNull();
+});
+
+it("finds an unhandled stale final response after later follow-up turns", () => {
+  expect(
+    findImplementationStaleOutcomeSinceReservation({
+      reservedAt: "2026-09-02T12:00:00.000Z",
+      messages: [
+        {
+          id: MessageId.make("message-before-reservation"),
+          role: "assistant",
+          turnId: TurnId.make("turn-before-reservation"),
+          text: "T3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: This result is too old.",
+          streaming: false,
+          createdAt: IsoDateTime.make("2026-09-02T11:59:00.000Z"),
+        },
+        {
+          id: MessageId.make("message-stale"),
+          role: "assistant",
+          turnId: TurnId.make("turn-stale"),
+          text: "Verified current main.\n\nT3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: Current main already rejects revoked sessions and revokes tokens after role changes and account disabling.",
+          streaming: false,
+          createdAt: IsoDateTime.make("2026-09-02T12:10:00.000Z"),
+        },
+        {
+          id: MessageId.make("message-follow-up"),
+          role: "assistant",
+          turnId: TurnId.make("turn-follow-up"),
+          text: "No, the status did not change.",
+          streaming: false,
+          createdAt: IsoDateTime.make("2026-09-02T12:20:00.000Z"),
+        },
+        {
+          id: MessageId.make("message-quoted-prompt"),
+          role: "assistant",
+          turnId: TurnId.make("turn-prompt"),
+          text: "```text\nT3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: Quoted instructions only.\n```",
+          streaming: false,
+          createdAt: IsoDateTime.make("2026-09-02T12:30:00.000Z"),
+        },
+      ],
+    }),
+  ).toEqual({
+    assistantMessageId: MessageId.make("message-stale"),
+    reason:
+      "Current main already rejects revoked sessions and revokes tokens after role changes and account disabling.",
+  });
+});
+
+it("reconciles a completed continuation for a finding left reserved by a failed run", () => {
+  const reserved = finding("reserved", "alpha", {
+    disposition: {
+      state: "in-progress",
+      snoozeUntil: null,
+      assignee: null,
+      note: "Reserved by Continuous Improvement Mode.",
+      updatedAt: "2026-09-01T23:55:52.658Z",
+      actor: "continuous-improvement",
+    },
+    thread: {
+      projectId: ProjectId.make("alpha"),
+      threadId: ThreadId.make("thread-reserved"),
+    },
+  });
+  const completedContinuation = {
+    id: ThreadId.make("thread-reserved"),
+    projectId: ProjectId.make("alpha"),
+    latestTurn: {
+      state: "completed",
+      turnId: "turn-after-failed-run",
+      assistantMessageId: MessageId.make("message-stale"),
+    },
+    backgroundLiveness: null,
+  } as OrchestrationThreadShell;
+
+  expect(
+    selectContinuousImprovementStaleCandidates({
+      findings: [reserved],
+      threads: [completedContinuation],
+    }),
+  ).toEqual([{ finding: reserved, thread: completedContinuation }]);
+  expect(
+    selectContinuousImprovementStaleCandidates({
+      findings: [
+        { ...reserved, disposition: { ...reserved.disposition, state: "done" } },
+        { ...reserved, disposition: { ...reserved.disposition, state: "open" } },
+        { ...reserved, disposition: { ...reserved.disposition, state: "snoozed" } },
+      ],
+      threads: [completedContinuation],
+    }),
+  ).toEqual([]);
+
+  const failedRun = transitionContinuousImprovementRun(
+    transitionContinuousImprovementRun(
+      createContinuousImprovementRun({
+        id: "implementation:failed-before-continuation",
+        finding: reserved,
+        model: "gpt-5.6-luna/max",
+        createdAt: "2026-09-01T23:55:52.553Z",
+        trigger: "scheduled",
+        retryCount: 0,
+      }),
+      {
+        state: "working",
+        result: {
+          findingId: reserved.id,
+          projectId: ProjectId.make("alpha"),
+          threadId: ThreadId.make("thread-reserved"),
+          branch: "t3code/reserved",
+          baseBranch: "main",
+          worktreePath: "/workspace/reserved",
+        },
+        at: "2026-09-01T23:55:53.680Z",
+      },
+    ),
+    {
+      state: "failed",
+      error: "The original turn ended with an error.",
+      at: "2026-09-02T12:35:46.827Z",
+    },
+  );
+  expect(failedRun.status).toBe("failed");
+  expect(
+    findContinuousImprovementRunForStaleResolution({
+      runs: [failedRun],
+      findingId: reserved.id,
+      threadId: ThreadId.make("thread-reserved"),
+    }),
+  ).toBe(failedRun);
 });
 
 const project = (id: string): OrchestrationProjectShell => ({

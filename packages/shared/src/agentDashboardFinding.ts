@@ -24,13 +24,11 @@ export interface AgentDashboardStaleOutcome {
 
 /** Parse the explicit completion signal emitted when an implementation finding no longer applies. */
 export function parseAgentDashboardStaleOutcome(text: string): AgentDashboardStaleOutcome | null {
-  const lines = text.split(/\r?\n/).map((line) => line.trim());
-  const outcomeIndex = lines.findIndex((line) => line === STALE_OUTCOME_MARKER);
-  if (outcomeIndex < 0) return null;
-  const reasonLine = lines
-    .slice(outcomeIndex + 1)
-    .find((line) => line.startsWith(STALE_REASON_PREFIX));
-  const reason = reasonLine?.slice(STALE_REASON_PREFIX.length).trim() ?? "";
+  const normalized = text.replaceAll("\r\n", "\n");
+  const match = normalized.match(
+    /(?:^|\n)T3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: ([^\n\r]+)\n?$/,
+  );
+  const reason = match?.[1]?.trim() ?? "";
   return reason.length > 0 ? { reason: reason.slice(0, 1_000) } : null;
 }
 

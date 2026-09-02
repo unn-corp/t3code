@@ -179,6 +179,37 @@ export const findImplementationStaleOutcome = (input: {
   return message ? parseAgentDashboardStaleOutcome(message.text) : null;
 };
 
+export const findImplementationStaleOutcomeSinceReservation = (input: {
+  readonly reservedAt: string;
+  readonly messages: ReadonlyArray<
+    Pick<OrchestrationMessage, "id" | "role" | "text" | "turnId" | "streaming" | "createdAt">
+  >;
+}): { readonly assistantMessageId: OrchestrationMessage["id"]; readonly reason: string } | null => {
+  const reservedAtMs = Date.parse(input.reservedAt);
+  if (!Number.isFinite(reservedAtMs)) return null;
+
+  const seenTurns = new Set<string>();
+  for (const message of input.messages.toSorted(
+    (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt),
+  )) {
+    if (
+      message.role !== "assistant" ||
+      message.turnId === null ||
+      message.streaming ||
+      Date.parse(message.createdAt) < reservedAtMs
+    ) {
+      continue;
+    }
+    const turnId = String(message.turnId);
+    if (seenTurns.has(turnId)) continue;
+    seenTurns.add(turnId);
+
+    const outcome = parseAgentDashboardStaleOutcome(message.text);
+    if (outcome !== null) return { assistantMessageId: message.id, ...outcome };
+  }
+  return null;
+};
+
 export const createContinuousImprovementRun = (input: {
   readonly id: string;
   readonly finding: AgentDashboardFinding;
@@ -355,6 +386,36 @@ export const hasActiveFindingImplementation = (
     );
   });
 };
+
+export const selectContinuousImprovementStaleCandidates = (input: {
+  readonly findings: ReadonlyArray<AgentDashboardFinding>;
+  readonly threads: ReadonlyArray<OrchestrationThreadShell>;
+}): ReadonlyArray<{
+  readonly finding: AgentDashboardFinding;
+  readonly thread: OrchestrationThreadShell;
+}> => {
+  const threadsById = new Map(input.threads.map((thread) => [String(thread.id), thread]));
+  return input.findings.flatMap((finding) => {
+    if (!AgentDashboardStore.isContinuousImprovementFindingReservation(finding)) return [];
+    const thread = threadsById.get(String(finding.thread?.threadId));
+    if (thread?.latestTurn?.state !== "completed" || thread.backgroundLiveness != null) return [];
+    return [{ finding, thread }];
+  });
+};
+
+export const findContinuousImprovementRunForStaleResolution = (input: {
+  readonly runs: ReadonlyArray<AgentDashboardAutomationRun>;
+  readonly findingId: string;
+  readonly threadId: string;
+}): AgentDashboardAutomationRun | undefined =>
+  input.runs
+    .filter(
+      (run) =>
+        run.kind === CONTINUOUS_IMPROVEMENT_RUN_KIND &&
+        run.jobId === input.findingId &&
+        run.threadId === input.threadId,
+    )
+    .toSorted((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
 
 export const resolveContinuousImprovementRecovery = (input: {
   readonly run: AgentDashboardAutomationRun;
@@ -601,10 +662,11 @@ const make = Effect.gen(function* () {
           });
           if (staleOutcome !== null) {
             const dismissalResult = yield* Effect.result(
-              store.applyFindingAction({
+              store.resolveStaleFindingReservation({
                 id: input.finding.id,
-                action: "dismiss",
-                note: `Automatic implementation agent confirmed this finding is stale: ${staleOutcome.reason}`,
+                projectId: input.result.projectId,
+                threadId: input.result.threadId,
+                reason: staleOutcome.reason,
               }),
             );
             if (Result.isFailure(dismissalResult) || dismissalResult.success === "not-found") {
@@ -619,6 +681,7 @@ const make = Effect.gen(function* () {
               );
               return;
             }
+            if (dismissalResult.success === "noop") return;
             yield* persistRun(
               transitionContinuousImprovementRun(input.run, {
                 state: "finding-dismissed",
@@ -879,6 +942,122 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const reconcileStaleFindingReservations = (
+    automationSettings: ContinuousImprovementSettings,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const { findings, shell, runs } = yield* Effect.all({
+        findings: store.readFindings,
+        shell: projection.getShellSnapshot(),
+        runs: history.list,
+      });
+      const candidates = selectContinuousImprovementStaleCandidates({
+        findings,
+        threads: shell.threads,
+      });
+
+      yield* Effect.forEach(
+        candidates,
+        ({ finding, thread }) =>
+          Effect.gen(function* () {
+            const threadDetail = Option.getOrNull(yield* projection.getThreadDetailById(thread.id));
+            if (threadDetail === null) return;
+            const staleOutcome = findImplementationStaleOutcomeSinceReservation({
+              reservedAt: finding.disposition.updatedAt,
+              messages: threadDetail.messages,
+            });
+            if (staleOutcome === null) return;
+
+            const resolution = yield* store.resolveStaleFindingReservation({
+              id: finding.id,
+              projectId: finding.repository.projectId,
+              threadId: thread.id,
+              reason: staleOutcome.reason,
+            });
+            if (resolution !== "applied") return;
+
+            const completedAt = yield* nowIso;
+            const relatedRun = findContinuousImprovementRunForStaleResolution({
+              runs,
+              findingId: finding.id,
+              threadId: thread.id,
+            });
+            if (relatedRun && relatedRun.status !== "succeeded") {
+              yield* persistRun(
+                transitionContinuousImprovementRun(relatedRun, {
+                  state: "finding-dismissed",
+                  at: completedAt,
+                }),
+              );
+            }
+            yield* store
+              .appendExternalAction({
+                id: `action:continuous-improvement-stale:${thread.id}:${staleOutcome.assistantMessageId}`,
+                kind: "other",
+                status: "succeeded",
+                actor: "continuous-improvement",
+                targetId: finding.id,
+                targetUrl: null,
+                findingId: finding.id,
+                runId: relatedRun?.id ?? null,
+                result: `Finding dismissed after the implementation agent confirmed it was stale: ${staleOutcome.reason}`,
+                occurredAt: completedAt,
+              })
+              .pipe(Effect.ignore);
+
+            const project = shell.projects.find(
+              (candidate) => candidate.id === finding.repository.projectId,
+            );
+            if (project === undefined || thread.branch === null || thread.worktreePath === null)
+              return;
+            yield* runner
+              .settleCompletedFinding({
+                finding,
+                project,
+                result: {
+                  findingId: finding.id,
+                  projectId: finding.repository.projectId,
+                  threadId: thread.id,
+                  branch: thread.branch,
+                  baseBranch: thread.branch,
+                  worktreePath: thread.worktreePath,
+                },
+                runId: relatedRun?.id ?? "continuous-improvement-reconciliation",
+                removeCompletedWorktree: automationSettings.removeCompletedWorktrees,
+                outcome: { kind: "finding-stale", reason: staleOutcome.reason },
+              })
+              .pipe(
+                Effect.tapError((cause) =>
+                  Effect.logWarning(
+                    "Continuous improvement could not stop a reconciled stale-finding session",
+                    {
+                      findingId: finding.id,
+                      threadId: thread.id,
+                      cause,
+                    },
+                  ),
+                ),
+                Effect.ignore,
+              );
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Continuous improvement could not reconcile a stale finding", {
+                findingId: finding.id,
+                threadId: thread.id,
+                cause,
+              }),
+            ),
+          ),
+        { concurrency: 1, discard: true },
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Continuous improvement could not inspect stale finding reservations", {
+          cause,
+        }),
+      ),
+    );
+
   const launchSelection = (input: {
     readonly finding: AgentDashboardFinding;
     readonly project: OrchestrationProjectShell;
@@ -972,6 +1151,7 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+    yield* reconcileStaleFindingReservations(currentSettings.continuousImprovement);
     if (!currentSettings.continuousImprovement.enabled) return null;
 
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);

@@ -206,6 +206,19 @@ export const buildCanonicalGithubIssueDraft = (
 
 export type AgentDashboardStoreMutationOutcome = "applied" | "noop" | "not-found";
 
+export interface AgentDashboardStaleFindingResolutionInput extends AgentDashboardLinkFindingThreadInput {
+  readonly reason: string;
+}
+
+export const isContinuousImprovementFindingReservation = (
+  finding: AgentDashboardFinding,
+): boolean =>
+  finding.thread !== null &&
+  finding.disposition.state === "in-progress" &&
+  finding.disposition.actor === "continuous-improvement" &&
+  finding.disposition.note === "Reserved by Continuous Improvement Mode." &&
+  finding.disposition.snoozeUntil === null;
+
 export interface AgentDashboardStoreService {
   readonly readFeed: Effect.Effect<ReadonlyArray<AgentDashboardFeedCard>, AgentDashboardStoreError>;
   readonly appendFeed: (
@@ -262,6 +275,10 @@ export interface AgentDashboardStoreService {
   /** Releases only the matching reservation after a launch failure. */
   readonly releaseFindingThread: (
     input: AgentDashboardLinkFindingThreadInput,
+  ) => Effect.Effect<AgentDashboardStoreMutationOutcome, AgentDashboardStoreError>;
+  /** Atomically dismisses and releases only the matching automation-owned reservation. */
+  readonly resolveStaleFindingReservation: (
+    input: AgentDashboardStaleFindingResolutionInput,
   ) => Effect.Effect<AgentDashboardStoreMutationOutcome, AgentDashboardStoreError>;
   readonly readRepositoryPolicies: Effect.Effect<
     ReadonlyArray<AgentDashboardRepositoryPolicy>,
@@ -2154,6 +2171,62 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
       }),
     );
 
+  const resolveStaleFindingReservation = (input: AgentDashboardStaleFindingResolutionInput) =>
+    run("resolve stale finding reservation", () =>
+      withMutation(async () => {
+        const findings = await readCanonicalFindingsRaw();
+        const target = findings.find(
+          (finding) => finding.id === input.id || finding.fingerprint === input.id,
+        );
+        if (!target) return "not-found";
+
+        const reason = text(input.reason, 1_000);
+        const ownsReservation =
+          isContinuousImprovementFindingReservation(target) &&
+          target.thread?.projectId === input.projectId &&
+          target.thread.threadId === input.threadId;
+        if (!reason || !ownsReservation) return "noop";
+
+        const now = new Date().toISOString();
+        const note = `Automatic implementation agent confirmed this finding is stale: ${reason}`;
+        await writeDocumentArray(
+          findingsPath,
+          "findings",
+          findings.map(
+            (finding) =>
+              (finding.id === target.id
+                ? {
+                    ...finding,
+                    thread: null,
+                    disposition: {
+                      ...finding.disposition,
+                      state: "dismissed" as const,
+                      updatedAt: now,
+                      actor: "continuous-improvement",
+                      note,
+                      snoozeUntil: null,
+                    },
+                  }
+                : finding) as unknown as JsonObject,
+          ),
+        );
+
+        const legacy = await readReviewSuggestionRaw();
+        const legacyTarget = legacy.find((record) => {
+          const legacyId = text(record.id, 100);
+          return (
+            legacyId === target.id || legacyId === `t3-review-${target.id.replace(/^finding:/, "")}`
+          );
+        });
+        if (legacyTarget) {
+          legacyTarget.status = "dismissed";
+          legacyTarget.resolved_at = now;
+          await writeDocumentArray(suggestionsPath, "suggestions", legacy);
+        }
+        return "applied";
+      }),
+    );
+
   const readRepositoryPolicies = run("read repository policies", async () =>
     (await readDocumentArray(policiesPath, "policies"))
       .map(decodePolicy)
@@ -2406,6 +2479,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
     linkFindingThread,
     claimFindingThread,
     releaseFindingThread,
+    resolveStaleFindingReservation,
     readRepositoryPolicies,
     writeRepositoryPolicy,
     readRepositoryCoverage,

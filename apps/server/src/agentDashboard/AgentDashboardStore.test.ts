@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
 import { ProjectId, ThreadId, type AgentDashboardAutomationRun } from "@t3tools/contracts";
+import { parseAgentDashboardStaleOutcome } from "@t3tools/shared/agentDashboardFinding";
 
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 
@@ -799,6 +800,200 @@ it.effect("atomically claims and releases a ready finding for continuous impleme
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
     }
   }),
+);
+
+it.effect(
+  "atomically dismisses only the matching continuous-improvement reservation as stale",
+  () =>
+    Effect.promise(async () => {
+      const stateDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-finding-stale-"));
+      try {
+        const store = AgentDashboardStore.getStore(stateDir);
+        const inputFor = (title: string) => ({
+          kind: "review" as const,
+          title,
+          summary: `${title} summary`,
+          repository: { projectId: "project-1" },
+          source: "review",
+          actionability: {
+            readiness: "ready" as const,
+            proposal: `Resolve ${title}.`,
+            expectedValue: `Validate ${title}.`,
+            targets: [],
+            validationPlan: ["Run the focused store test."],
+            sources: [],
+            riskTier: "medium" as const,
+            estimatedEffort: "small" as const,
+            qualificationReason: "The finding is bounded and testable.",
+            qualifiedAt: "2026-09-02T12:00:00.000Z",
+            qualifiedBy: "repository-review",
+            qualifiedOccurrenceCount: 1,
+          },
+        });
+        await Effect.runPromise(
+          store.appendFindings([
+            inputFor("stale target"),
+            inputFor("done target"),
+            inputFor("open target"),
+            inputFor("snoozed target"),
+            inputFor("human-updated target"),
+          ]),
+        );
+        const findings = await Effect.runPromise(store.readFindings);
+        const byTitle = new Map(findings.map((finding) => [finding.title, finding]));
+        const stale = byTitle.get("stale target")!;
+        const staleClaim = {
+          id: stale.id,
+          projectId: ProjectId.make("project-1"),
+          threadId: ThreadId.make("thread-stale"),
+        };
+        expect(await Effect.runPromise(store.claimFindingThread(staleClaim))).toBe("applied");
+
+        const staleOutcome = parseAgentDashboardStaleOutcome(
+          "Verified against current main.\n\nT3_FINDING_OUTCOME: stale\nT3_FINDING_REASON: Current main already contains the required protection.",
+        );
+        expect(staleOutcome).not.toBeNull();
+        const reason = staleOutcome!.reason;
+        expect(
+          await Effect.runPromise(
+            store.resolveStaleFindingReservation({
+              ...staleClaim,
+              threadId: ThreadId.make("thread-unrelated"),
+              reason,
+            }),
+          ),
+        ).toBe("noop");
+        expect(
+          await Effect.runPromise(
+            store.resolveStaleFindingReservation({
+              ...staleClaim,
+              projectId: ProjectId.make("project-unrelated"),
+              reason,
+            }),
+          ),
+        ).toBe("noop");
+        expect(
+          (await Effect.runPromise(store.readFindings)).find(({ id }) => id === stale.id),
+        ).toMatchObject({
+          thread: { projectId: "project-1", threadId: "thread-stale" },
+          disposition: { state: "in-progress" },
+        });
+        expect(
+          await Effect.runPromise(store.resolveStaleFindingReservation({ ...staleClaim, reason })),
+        ).toBe("applied");
+        const resolved = (await Effect.runPromise(store.readFindings)).find(
+          (finding) => finding.id === stale.id,
+        )!;
+        expect(resolved).toMatchObject({
+          thread: null,
+          disposition: {
+            state: "dismissed",
+            actor: "continuous-improvement",
+            note: `Automatic implementation agent confirmed this finding is stale: ${reason}`,
+            snoozeUntil: null,
+          },
+        });
+
+        expect(
+          await Effect.runPromise(store.resolveStaleFindingReservation({ ...staleClaim, reason })),
+        ).toBe("noop");
+        const repeated = (await Effect.runPromise(store.readFindings)).find(
+          (finding) => finding.id === stale.id,
+        )!;
+        expect(repeated).toEqual(resolved);
+
+        const done = byTitle.get("done target")!;
+        const open = byTitle.get("open target")!;
+        const snoozed = byTitle.get("snoozed target")!;
+        await Effect.runPromise(store.applyFindingAction({ id: done.id, action: "complete" }));
+        await Effect.runPromise(
+          store.applyFindingAction({
+            id: snoozed.id,
+            action: "snooze",
+            snoozeUntil: "2026-09-03T12:00:00.000Z",
+            note: "A human deferred this finding.",
+          }),
+        );
+        for (const current of [done, open, snoozed]) {
+          expect(
+            await Effect.runPromise(
+              store.resolveStaleFindingReservation({
+                id: current.id,
+                projectId: ProjectId.make("project-1"),
+                threadId: ThreadId.make(`thread-${current.title}`),
+                reason,
+              }),
+            ),
+          ).toBe("noop");
+        }
+
+        const humanUpdated = byTitle.get("human-updated target")!;
+        const humanClaim = {
+          id: humanUpdated.id,
+          projectId: ProjectId.make("project-1"),
+          threadId: ThreadId.make("thread-human-updated"),
+        };
+        await Effect.runPromise(store.claimFindingThread(humanClaim));
+        await Effect.runPromise(
+          store.applyFindingAction({
+            id: humanUpdated.id,
+            action: "snooze",
+            snoozeUntil: "2026-09-04T12:00:00.000Z",
+            note: "Human review takes precedence.",
+          }),
+        );
+        expect(
+          await Effect.runPromise(
+            store.resolveStaleFindingReservation({ ...humanClaim, reason: "Late agent result." }),
+          ),
+        ).toBe("noop");
+
+        const finalFindings = await Effect.runPromise(store.readFindings);
+        expect(finalFindings.find((finding) => finding.id === done.id)?.disposition.state).toBe(
+          "done",
+        );
+        expect(finalFindings.find((finding) => finding.id === open.id)?.disposition.state).toBe(
+          "open",
+        );
+        expect(
+          finalFindings.find((finding) => finding.id === snoozed.id)?.disposition,
+        ).toMatchObject({
+          state: "snoozed",
+          note: "A human deferred this finding.",
+        });
+        expect(finalFindings.find((finding) => finding.id === humanUpdated.id)).toMatchObject({
+          thread: { threadId: "thread-human-updated" },
+          disposition: {
+            state: "snoozed",
+            actor: "dashboard",
+            note: "Human review takes precedence.",
+          },
+        });
+
+        const persisted = JSON.parse(
+          await NodeFSP.readFile(
+            NodePath.join(stateDir, "agent-dashboard", "findings.json"),
+            "utf8",
+          ),
+        ) as {
+          findings: Array<{
+            id: string;
+            disposition: { state: string; actor: string | null; note: string | null };
+            thread: unknown;
+          }>;
+        };
+        expect(persisted.findings.find((finding) => finding.id === stale.id)).toMatchObject({
+          thread: null,
+          disposition: {
+            state: "dismissed",
+            actor: "continuous-improvement",
+            note: `Automatic implementation agent confirmed this finding is stale: ${reason}`,
+          },
+        });
+      } finally {
+        await NodeFSP.rm(stateDir, { recursive: true, force: true });
+      }
+    }),
 );
 
 it.effect("copies accepted images into owned assets and rejects foreign paths", () =>
