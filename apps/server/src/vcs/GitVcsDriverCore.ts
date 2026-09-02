@@ -3066,8 +3066,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const removeWorktree: GitVcsDriver.GitVcsDriver["Service"]["removeWorktree"] = Effect.fn(
     "removeWorktree",
   )(function* (input) {
+    if (
+      input.forceIfClean &&
+      (yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false)))
+    ) {
+      const statusArgs = [
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+      ];
+      const statusResult = yield* executeGitWithStableDiagnostics(
+        "GitVcsDriver.removeWorktree.status",
+        input.path,
+        statusArgs,
+        { timeoutMs: 15_000, allowNonZeroExit: true },
+      );
+      if (statusResult.exitCode !== 0 || statusResult.stdout.trim().length > 0) {
+        return yield* new GitCommandError({
+          ...gitCommandContext({
+            operation: "GitVcsDriver.removeWorktree",
+            cwd: input.cwd,
+            args: ["worktree", "remove", input.path],
+          }),
+          detail:
+            statusResult.exitCode === 0
+              ? "Refusing to remove a worktree with local changes."
+              : "Could not verify that the worktree is clean before removal.",
+          ...(statusResult.exitCode === null ? {} : { exitCode: statusResult.exitCode }),
+          stdoutLength: statusResult.stdout.length,
+          stderrLength: statusResult.stderr.length,
+        });
+      }
+    }
     const args = ["worktree", "remove"];
-    if (input.force) {
+    if (input.force || input.forceIfClean) {
       args.push("--force");
     }
     args.push(input.path);

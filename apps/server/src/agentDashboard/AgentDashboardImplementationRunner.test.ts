@@ -3,6 +3,7 @@ import { CommandId, ThreadId, type VcsListRefsResult } from "@t3tools/contracts"
 
 import {
   buildCompletedImplementationWorktreeRemovalInput,
+  buildCompletedImplementationCleanupAudit,
   buildCompletedImplementationCleanupCommands,
   buildAgentDashboardImplementationNudgePrompt,
   defaultBranchFromRefs,
@@ -42,6 +43,7 @@ it("builds a bounded progress prompt that requires the pull request handoff", ()
     reason: "missing-pull-request",
     attempt: 2,
     maxAttempts: 3,
+    consolidatePullRequests: false,
   });
 
   expect(prompt).toContain("Automated progress check 2 of 3");
@@ -57,12 +59,26 @@ it("asks an agent to convert an active pull request instead of opening another o
     reason: "pull-request-not-draft",
     attempt: 1,
     maxAttempts: 3,
+    consolidatePullRequests: false,
   });
 
   expect(prompt).toContain("ready for review instead of draft");
   expect(prompt).toContain("gh pr ready --undo");
   expect(prompt).toContain("Do not create another pull request");
   expect(prompt).not.toContain("gh pr create --draft");
+});
+
+it("nudges consolidated runs to update a related pull request before opening another", () => {
+  const prompt = buildAgentDashboardImplementationNudgePrompt({
+    reason: "missing-pull-request",
+    attempt: 1,
+    maxAttempts: 3,
+    consolidatePullRequests: true,
+  });
+
+  expect(prompt).toContain("Inspect open pull requests first");
+  expect(prompt).toContain("push to that same head branch");
+  expect(prompt).toContain("instead of opening a duplicate");
 });
 
 it("settles a completed implementation before requesting a race-safe session stop", () => {
@@ -88,7 +104,7 @@ it("settles a completed implementation before requesting a race-safe session sto
   });
 });
 
-it("removes a completed implementation worktree without forcing dirty changes away", () => {
+it("conditionally forces clean completed-worktree removal for submodule repositories", () => {
   expect(
     buildCompletedImplementationWorktreeRemovalInput({
       projectCwd: "/workspace/project",
@@ -97,6 +113,30 @@ it("removes a completed implementation worktree without forcing dirty changes aw
   ).toEqual({
     cwd: "/workspace/project",
     path: "/workspace/.t3/worktrees/project/t3code-f00dcafe",
-    force: false,
+    forceIfClean: true,
+  });
+});
+
+it("records whether completed-worktree cleanup was disabled or failed safely", () => {
+  expect(
+    buildCompletedImplementationCleanupAudit({
+      completionResult: "Pull request delivered.",
+      removeCompletedWorktree: false,
+      worktreeRemovalFailed: false,
+    }),
+  ).toEqual({
+    status: "succeeded",
+    result: "Pull request delivered. The worktree was retained by the cleanup setting.",
+  });
+  expect(
+    buildCompletedImplementationCleanupAudit({
+      completionResult: "Pull request delivered.",
+      removeCompletedWorktree: true,
+      worktreeRemovalFailed: true,
+    }),
+  ).toEqual({
+    status: "failed",
+    result:
+      "Pull request delivered. The worktree was retained because safe removal failed; inspect it for local changes.",
   });
 });

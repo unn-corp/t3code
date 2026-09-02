@@ -169,6 +169,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/automation",
   },
   {
+    id: "continuous-improvement-consolidate-prs",
+    title: "Consolidate pull requests",
+    to: "/settings/automation",
+  },
+  {
+    id: "continuous-improvement-remove-worktrees",
+    title: "Remove completed worktrees",
+    to: "/settings/automation",
+  },
+  {
     id: "continuous-improvement-max-risk",
     title: "Maximum automation risk",
     to: "/settings/automation",

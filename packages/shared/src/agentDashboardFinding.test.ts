@@ -49,7 +49,7 @@ it("requires implementation agents to open pull requests as drafts", () => {
       projectName: "Draft Delivery",
       repositoryPath: "/workspace/project-draft-delivery",
     },
-    { kind: "implement", baseBranch: "main" },
+    { kind: "implement", baseBranch: "main", pullRequestStrategy: "new-draft" },
   );
 
   expect(prompt).toContain("Open one draft pull request targeting `main`");
@@ -68,13 +68,31 @@ it("gives stale findings a structured completion path without repository deliver
       projectName: "Draft Delivery",
       repositoryPath: "/workspace/project-draft-delivery",
     },
-    { kind: "implement", baseBranch: "main" },
+    { kind: "implement", baseBranch: "main", pullRequestStrategy: "new-draft" },
   );
 
   expect(prompt).toContain("T3_FINDING_OUTCOME: stale");
   expect(prompt).toContain("T3_FINDING_REASON: <one-line reason>");
   expect(prompt).toContain("do not commit, push, or open a pull request");
   expect(prompt).toContain("T3 will dismiss the finding automatically");
+});
+
+it("instructs automated implementations to extend a coherently related pull request", () => {
+  const prompt = buildAgentDashboardFindingPrompt(
+    {
+      finding,
+      type: finding.type,
+      projectName: "Consolidated Delivery",
+      repositoryPath: "/workspace/project-consolidated-delivery",
+    },
+    { kind: "implement", baseBranch: "main", pullRequestStrategy: "consolidate-related" },
+  );
+
+  expect(prompt).toContain("inspect the repository's open pull requests");
+  expect(prompt).toContain("coherently related");
+  expect(prompt).toContain("push the finished commits to that same head branch");
+  expect(prompt).toContain("Do not open a duplicate pull request");
+  expect(prompt).toContain("When no relevant pull request exists");
 });
 
 it("parses only an explicit stale outcome with a reason", () => {

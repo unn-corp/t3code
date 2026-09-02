@@ -77,6 +77,8 @@ describe("ServerSettings continuous improvement", () => {
   it("is off by default and keeps its automation model configurable", () => {
     expect(decodeServerSettings({}).continuousImprovement).toEqual({
       enabled: false,
+      consolidatePullRequests: false,
+      removeCompletedWorktrees: true,
       maxRiskTier: "medium",
       minimumConfidence: "medium",
       modelSelection: {
@@ -86,8 +88,18 @@ describe("ServerSettings continuous improvement", () => {
       },
     });
     expect(
-      decodeServerSettingsPatch({ continuousImprovement: { enabled: true } }).continuousImprovement,
-    ).toEqual({ enabled: true });
+      decodeServerSettingsPatch({
+        continuousImprovement: {
+          enabled: true,
+          consolidatePullRequests: true,
+          removeCompletedWorktrees: false,
+        },
+      }).continuousImprovement,
+    ).toEqual({
+      enabled: true,
+      consolidatePullRequests: true,
+      removeCompletedWorktrees: false,
+    });
   });
 
   it("defaults scheduled reviews to their existing model policy", () => {

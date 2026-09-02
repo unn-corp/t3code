@@ -108,6 +108,14 @@ describe("searchSettings", () => {
       id: "continuous-improvement-max-risk",
       to: "/settings/automation",
     });
+    expect(searchSettings("consolidate pull requests")[0]).toMatchObject({
+      id: "continuous-improvement-consolidate-prs",
+      to: "/settings/automation",
+    });
+    expect(searchSettings("remove completed worktrees")[0]).toMatchObject({
+      id: "continuous-improvement-remove-worktrees",
+      to: "/settings/automation",
+    });
     expect(searchSettings("background activity")[0]).toMatchObject({
       id: "background-activity",
       to: "/settings/automation",

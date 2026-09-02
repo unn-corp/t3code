@@ -127,13 +127,42 @@ export const evaluateImplementationWatchdog = (input: {
   return { kind: "nudge", attempt: cappedNudgeCount + 1 };
 };
 
+const normalizePullRequestUrl = (value: string): string | null => {
+  try {
+    const url = new URL(value);
+    const match = url.pathname.match(/^(.*\/pull\/\d+)\/?$/);
+    return match ? `${url.origin}${match[1]}` : null;
+  } catch {
+    return null;
+  }
+};
+
+export const extractReportedPullRequestUrls = (text: string): ReadonlyArray<string> =>
+  (text.match(/https?:\/\/[^\s<>"'`]+/g) ?? [])
+    .map((candidate) => candidate.replace(/[),.;!?\]}]+$/g, ""))
+    .flatMap((candidate) => {
+      const normalized = normalizePullRequestUrl(candidate);
+      return normalized === null ? [] : [normalized];
+    });
+
+export const resolveReportedPullRequestUrls = (input: {
+  readonly consolidatePullRequests: boolean;
+  readonly assistantMessage: string;
+}): ReadonlyArray<string> =>
+  input.consolidatePullRequests ? extractReportedPullRequestUrls(input.assistantMessage) : [];
+
 export const findImplementationPullRequest = <
-  PullRequest extends { readonly headRefName: string },
+  PullRequest extends { readonly headRefName: string; readonly url: string },
 >(input: {
   readonly pullRequests: ReadonlyArray<PullRequest>;
   readonly launchBranch: string;
   readonly currentBranch: string | null;
+  readonly reportedPullRequestUrls: ReadonlyArray<string>;
 }): PullRequest | undefined =>
+  input.pullRequests.find((candidate) => {
+    const normalized = normalizePullRequestUrl(candidate.url);
+    return normalized !== null && input.reportedPullRequestUrls.includes(normalized);
+  }) ??
   (input.currentBranch
     ? input.pullRequests.find((candidate) => candidate.headRefName === input.currentBranch)
     : undefined) ??
@@ -461,6 +490,7 @@ const make = Effect.gen(function* () {
               reason,
               attempt,
               maxAttempts: MAX_IMPLEMENTATION_NUDGES,
+              consolidatePullRequests: input.automationSettings.consolidatePullRequests,
             }),
           );
           if (Result.isFailure(nudgeResult)) {
@@ -615,6 +645,7 @@ const make = Effect.gen(function* () {
                 project: input.project,
                 result: input.result,
                 runId: input.run.id,
+                removeCompletedWorktree: input.automationSettings.removeCompletedWorktrees,
                 outcome: { kind: "finding-stale", reason: staleOutcome.reason },
               })
               .pipe(
@@ -668,6 +699,15 @@ const make = Effect.gen(function* () {
             pullRequests: pullRequestExit.value,
             launchBranch: input.result.branch,
             currentBranch: thread?.branch ?? null,
+            reportedPullRequestUrls: resolveReportedPullRequestUrls({
+              consolidatePullRequests: input.automationSettings.consolidatePullRequests,
+              assistantMessage:
+                threadDetail.messages.find(
+                  (candidate) =>
+                    candidate.id === threadDetail.latestTurn?.assistantMessageId &&
+                    candidate.role === "assistant",
+                )?.text ?? "",
+            }),
           });
           if (!pullRequest) {
             if (nudgeCount < MAX_IMPLEMENTATION_NUDGES) {
@@ -729,6 +769,7 @@ const make = Effect.gen(function* () {
               project: input.project,
               result: { ...input.result, branch: pullRequest.headRefName },
               runId: input.run.id,
+              removeCompletedWorktree: input.automationSettings.removeCompletedWorktrees,
               outcome: { kind: "pull-request-delivered" },
             })
             .pipe(
@@ -861,6 +902,7 @@ const make = Effect.gen(function* () {
           finding: input.finding,
           project: input.project,
           modelSelection: input.automationSettings.modelSelection,
+          consolidatePullRequests: input.automationSettings.consolidatePullRequests,
         }),
       );
       if (Result.isFailure(launchResult)) {

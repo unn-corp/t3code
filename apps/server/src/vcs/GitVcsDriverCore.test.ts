@@ -1501,6 +1501,77 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("safely forces removal of a clean worktree containing an initialized submodule", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const submoduleCwd = yield* makeTmpDir("git-submodule-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* initRepoWithCommit(submoduleCwd);
+        yield* git(cwd, [
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "add",
+          submoduleCwd,
+          "vendor/example",
+        ]);
+        yield* git(cwd, ["commit", "-am", "add local submodule"]);
+
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "submodule-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/submodule-worktree",
+        });
+        yield* git(worktreePath, [
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "update",
+          "--init",
+        ]);
+
+        yield* driver.removeWorktree({ cwd, path: worktreePath, forceIfClean: true });
+
+        assert.equal(yield* fileSystem.exists(worktreePath), false);
+      }),
+    );
+
+    it.effect("retains a dirty worktree when conditional force removal is requested", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "dirty-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/dirty-worktree",
+        });
+        yield* writeTextFile(worktreePath, "uncommitted.txt", "keep me\n");
+
+        const error = yield* driver
+          .removeWorktree({ cwd, path: worktreePath, forceIfClean: true })
+          .pipe(Effect.flip);
+
+        assert.equal(error._tag, "GitCommandError");
+        assert.equal(yield* fileSystem.exists(worktreePath), true);
+      }),
+    );
+
     it.effect("removes the same worktree path twice without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

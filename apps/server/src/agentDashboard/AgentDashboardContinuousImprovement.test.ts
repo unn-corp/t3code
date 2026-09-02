@@ -18,6 +18,7 @@ import {
   hasActiveFindingImplementation,
   isFindingEligibleForContinuousImprovement,
   resolveContinuousImprovementRecovery,
+  resolveReportedPullRequestUrls,
   selectContinuousImprovementFinding,
   transitionContinuousImprovementRun,
 } from "./AgentDashboardContinuousImprovement.ts";
@@ -25,11 +26,20 @@ import {
 it("finds the pull request after an implementation agent renames its branch", () => {
   const pullRequest = findImplementationPullRequest({
     pullRequests: [
-      { number: 201, headRefName: "t3code/optimize-cursor-search-counts" },
-      { number: 200, headRefName: "t3code/other-work" },
+      {
+        number: 201,
+        headRefName: "t3code/optimize-cursor-search-counts",
+        url: "https://github.com/t3tools/t3code/pull/201",
+      },
+      {
+        number: 200,
+        headRefName: "t3code/other-work",
+        url: "https://github.com/t3tools/t3code/pull/200",
+      },
     ],
     launchBranch: "t3code/ddaab7c1",
     currentBranch: "t3code/optimize-cursor-search-counts",
+    reportedPullRequestUrls: [],
   });
 
   expect(pullRequest?.number).toBe(201);
@@ -37,12 +47,53 @@ it("finds the pull request after an implementation agent renames its branch", ()
 
 it("falls back to the launch branch while the projected branch is unavailable", () => {
   const pullRequest = findImplementationPullRequest({
-    pullRequests: [{ number: 200, headRefName: "t3code/e966c90d" }],
+    pullRequests: [
+      {
+        number: 200,
+        headRefName: "t3code/e966c90d",
+        url: "https://github.com/t3tools/t3code/pull/200",
+      },
+    ],
     launchBranch: "t3code/e966c90d",
     currentBranch: null,
+    reportedPullRequestUrls: [],
   });
 
   expect(pullRequest?.number).toBe(200);
+});
+
+it("recognizes a consolidated pull request reported by URL", () => {
+  const assistantMessage = "Updated https://github.com/t3tools/t3code/pull/201. Validation passed.";
+  const reportedPullRequestUrls = resolveReportedPullRequestUrls({
+    consolidatePullRequests: true,
+    assistantMessage,
+  });
+  const pullRequest = findImplementationPullRequest({
+    pullRequests: [
+      {
+        number: 201,
+        headRefName: "existing-improvement",
+        url: "https://github.com/t3tools/t3code/pull/201",
+      },
+      {
+        number: 200,
+        headRefName: "t3code/launch-branch",
+        url: "https://github.com/t3tools/t3code/pull/200",
+      },
+    ],
+    launchBranch: "t3code/launch-branch",
+    currentBranch: "t3code/launch-branch",
+    reportedPullRequestUrls,
+  });
+
+  expect(reportedPullRequestUrls).toEqual(["https://github.com/t3tools/t3code/pull/201"]);
+  expect(pullRequest?.number).toBe(201);
+  expect(
+    resolveReportedPullRequestUrls({
+      consolidatePullRequests: false,
+      assistantMessage,
+    }),
+  ).toEqual([]);
 });
 
 it("uses only the completed turn's assistant message when detecting a stale finding", () => {

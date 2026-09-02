@@ -44,6 +44,7 @@ export const buildAgentDashboardImplementationNudgePrompt = (input: {
   readonly reason: AgentDashboardImplementationNudgeReason;
   readonly attempt: number;
   readonly maxAttempts: number;
+  readonly consolidatePullRequests: boolean;
 }): string => {
   const progressContext = (() => {
     switch (input.reason) {
@@ -60,10 +61,15 @@ export const buildAgentDashboardImplementationNudgePrompt = (input: {
     }
   })();
 
-  const requiredAction =
-    input.reason === "pull-request-not-draft"
-      ? "Convert the existing pull request to draft. With GitHub CLI, use gh pr ready --undo. Do not create another pull request."
-      : "Continue the assigned finding until it is fully complete. Finish the required code changes, run focused validation, commit the result, push the branch, and open the pull request as a draft. With GitHub CLI, use gh pr create --draft and leave it in draft until a user explicitly marks it ready for review.";
+  const requiredAction = (() => {
+    if (input.reason === "pull-request-not-draft") {
+      return "Convert the existing pull request to draft. With GitHub CLI, use gh pr ready --undo. Do not create another pull request.";
+    }
+    if (input.consolidatePullRequests) {
+      return "Continue the assigned finding until it is fully complete. Inspect open pull requests first. If one is coherently related, build on its head commit, push to that same head branch, update the existing draft pull request, and report its URL instead of opening a duplicate. Otherwise finish the required code changes, run focused validation, commit the result, push the current branch, and open one draft pull request with gh pr create --draft.";
+    }
+    return "Continue the assigned finding until it is fully complete. Finish the required code changes, run focused validation, commit the result, push the branch, and open the pull request as a draft. With GitHub CLI, use gh pr create --draft and leave it in draft until a user explicitly marks it ready for review.";
+  })();
 
   return [
     `Automated progress check ${input.attempt} of ${input.maxAttempts}.`,
@@ -88,6 +94,7 @@ export interface AgentDashboardImplementationRunnerService {
     readonly finding: AgentDashboardFinding;
     readonly project: OrchestrationProjectShell;
     readonly modelSelection: ModelSelection;
+    readonly consolidatePullRequests: boolean;
   }) => Effect.Effect<
     AgentDashboardImplementationRunResult | null,
     AgentDashboardImplementationRunnerError
@@ -100,12 +107,14 @@ export interface AgentDashboardImplementationRunnerService {
     readonly reason: AgentDashboardImplementationNudgeReason;
     readonly attempt: number;
     readonly maxAttempts: number;
+    readonly consolidatePullRequests: boolean;
   }) => Effect.Effect<void, AgentDashboardImplementationRunnerError>;
   readonly settleCompletedFinding: (input: {
     readonly finding: AgentDashboardFinding;
     readonly project: OrchestrationProjectShell;
     readonly result: AgentDashboardImplementationRunResult;
     readonly runId: string;
+    readonly removeCompletedWorktree: boolean;
     readonly outcome:
       | { readonly kind: "pull-request-delivered" }
       | { readonly kind: "finding-stale"; readonly reason: string };
@@ -163,10 +172,33 @@ export const buildCompletedImplementationWorktreeRemovalInput = (input: {
 }) => ({
   cwd: input.projectCwd,
   path: input.worktreePath,
-  // A completed agent should have committed its work before delivery. Never
-  // discard unexpected local changes just to reclaim the checkout.
-  force: false,
+  // Git requires --force for a worktree containing initialized submodules,
+  // even when it is clean. The driver verifies tracked, untracked, and
+  // submodule state first so unexpected local work is never discarded.
+  forceIfClean: true,
 });
+
+export const buildCompletedImplementationCleanupAudit = (input: {
+  readonly completionResult: string;
+  readonly removeCompletedWorktree: boolean;
+  readonly worktreeRemovalFailed: boolean;
+}): { readonly status: "succeeded" | "failed"; readonly result: string } => {
+  if (!input.removeCompletedWorktree) {
+    return {
+      status: "succeeded",
+      result: `${input.completionResult} The worktree was retained by the cleanup setting.`,
+    };
+  }
+  return input.worktreeRemovalFailed
+    ? {
+        status: "failed",
+        result: `${input.completionResult} The worktree was retained because safe removal failed; inspect it for local changes.`,
+      }
+    : {
+        status: "succeeded",
+        result: `${input.completionResult} The completed worktree was removed.`,
+      };
+};
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -369,7 +401,13 @@ const make = Effect.gen(function* () {
                 projectName: input.project.title,
                 repositoryPath: input.project.workspaceRoot,
               },
-              { kind: "implement", baseBranch },
+              {
+                kind: "implement",
+                baseBranch,
+                pullRequestStrategy: input.consolidatePullRequests
+                  ? "consolidate-related"
+                  : "new-draft",
+              },
             ),
             attachments: [],
           },
@@ -514,41 +552,46 @@ const make = Effect.gen(function* () {
         yield* dispatch(commands.settle);
         yield* dispatch(commands.stop);
 
-        const worktreeRemovalResult = yield* Effect.result(
-          git.removeWorktree(
-            buildCompletedImplementationWorktreeRemovalInput({
-              projectCwd: input.project.workspaceRoot,
-              worktreePath: input.result.worktreePath,
-            }),
-          ),
-        );
-        const worktreeRemovalFailed = Result.isFailure(worktreeRemovalResult);
-        if (worktreeRemovalFailed) {
-          yield* Effect.logWarning(
-            "Continuous improvement retained a completed worktree because safe removal failed",
-            {
-              findingId: input.finding.id,
-              threadId: input.result.threadId,
-              worktreePath: input.result.worktreePath,
-              cause: worktreeRemovalResult.failure,
-            },
+        let worktreeRemovalFailed = false;
+        if (input.removeCompletedWorktree) {
+          const worktreeRemovalResult = yield* Effect.result(
+            git.removeWorktree(
+              buildCompletedImplementationWorktreeRemovalInput({
+                projectCwd: input.project.workspaceRoot,
+                worktreePath: input.result.worktreePath,
+              }),
+            ),
           );
+          if (Result.isFailure(worktreeRemovalResult)) {
+            worktreeRemovalFailed = true;
+            yield* Effect.logWarning(
+              "Continuous improvement retained a completed worktree because safe removal failed",
+              {
+                findingId: input.finding.id,
+                threadId: input.result.threadId,
+                worktreePath: input.result.worktreePath,
+                cause: worktreeRemovalResult.failure,
+              },
+            );
+          }
         }
-        const auditResult = worktreeRemovalFailed
-          ? `${completionResult} The worktree was retained because safe removal failed; inspect it for local changes.`
-          : `${completionResult} The completed worktree was removed.`;
+        const cleanupAudit = buildCompletedImplementationCleanupAudit({
+          completionResult,
+          removeCompletedWorktree: input.removeCompletedWorktree,
+          worktreeRemovalFailed,
+        });
 
         yield* store
           .appendExternalAction({
             id: `action:continuous-improvement-finished:${yield* randomUuid}`,
             kind: "other",
-            status: worktreeRemovalFailed ? "failed" : "succeeded",
+            status: cleanupAudit.status,
             actor: "continuous-improvement",
             targetId: input.result.threadId,
             targetUrl: null,
             findingId: input.finding.id,
             runId: input.runId,
-            result: auditResult,
+            result: cleanupAudit.result,
             occurredAt: createdAt,
           })
           .pipe(

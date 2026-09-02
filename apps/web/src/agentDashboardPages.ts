@@ -499,7 +499,7 @@ export function buildDashboardFindingPrompt(
       projectName: record.projectName,
       repositoryPath: record.repositoryPath,
     },
-    intent,
+    intent.kind === "research" ? intent : { ...intent, pullRequestStrategy: "new-draft" as const },
   );
 }
 

@@ -707,6 +707,8 @@ export type DiscordBridgeSettings = typeof DiscordBridgeSettings.Type;
  */
 export const ContinuousImprovementSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  consolidatePullRequests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  removeCompletedWorktrees: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   maxRiskTier: Schema.Literals(["low", "medium", "high", "critical"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("medium")),
   ),
@@ -1042,6 +1044,8 @@ export const ServerSettingsPatch = Schema.Struct({
   continuousImprovement: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.optionalKey(Schema.Boolean),
+      consolidatePullRequests: Schema.optionalKey(Schema.Boolean),
+      removeCompletedWorktrees: Schema.optionalKey(Schema.Boolean),
       maxRiskTier: Schema.optionalKey(Schema.Literals(["low", "medium", "high", "critical"])),
       minimumConfidence: Schema.optionalKey(Schema.Literals(["low", "medium", "high"])),
       modelSelection: Schema.optionalKey(ModelSelection),

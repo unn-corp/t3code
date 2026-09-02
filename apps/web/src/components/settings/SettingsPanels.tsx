@@ -2441,6 +2441,12 @@ export function AutomationSettingsPanel() {
   const continuousConfidenceDirty =
     settings.continuousImprovement.minimumConfidence !==
     DEFAULT_UNIFIED_SETTINGS.continuousImprovement.minimumConfidence;
+  const continuousConsolidatePullRequestsDirty =
+    settings.continuousImprovement.consolidatePullRequests !==
+    DEFAULT_UNIFIED_SETTINGS.continuousImprovement.consolidatePullRequests;
+  const continuousRemoveCompletedWorktreesDirty =
+    settings.continuousImprovement.removeCompletedWorktrees !==
+    DEFAULT_UNIFIED_SETTINGS.continuousImprovement.removeCompletedWorktrees;
   const repositoryReviewEnabledDirty =
     settings.repositoryReview.enabled !== DEFAULT_UNIFIED_SETTINGS.repositoryReview.enabled;
   const repositoryReviewIntervalDirty =
@@ -2452,7 +2458,7 @@ export function AutomationSettingsPanel() {
       <SettingsSection title="Agent automations">
         <SettingsRow
           {...searchableSetting("continuous-improvement")}
-          description="Continuously starts one implementation agent at a time for open, ready-to-act findings. Each run works in an isolated branch and must open a pull request against the repository's default branch. T3 never merges it automatically."
+          description="Continuously starts one implementation agent at a time for open, ready-to-act findings. Each run works in an isolated branch and must deliver through a draft pull request. T3 never merges it automatically."
           resetAction={
             settings.continuousImprovement.enabled !==
             DEFAULT_UNIFIED_SETTINGS.continuousImprovement.enabled ? (
@@ -2481,6 +2487,78 @@ export function AutomationSettingsPanel() {
                 })
               }
               aria-label="Continuous Improvement Mode"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("continuous-improvement-consolidate-prs")}
+          className="bg-muted/20 sm:pl-9"
+          description="Before starting work, asks the implementation agent to inspect open pull requests and extend one when its goal and affected code are coherently related. Otherwise the agent opens a new draft pull request."
+          resetAction={
+            continuousConsolidatePullRequestsDirty ? (
+              <SettingResetButton
+                label="consolidate pull requests"
+                onClick={() =>
+                  updateSettings({
+                    continuousImprovement: {
+                      ...settings.continuousImprovement,
+                      consolidatePullRequests:
+                        DEFAULT_UNIFIED_SETTINGS.continuousImprovement.consolidatePullRequests,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.continuousImprovement.consolidatePullRequests}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  continuousImprovement: {
+                    ...settings.continuousImprovement,
+                    consolidatePullRequests: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Consolidate pull requests"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("continuous-improvement-remove-worktrees")}
+          className="bg-muted/20 sm:pl-9"
+          description="Safely removes an automation worktree after its draft pull request is delivered or its finding is confirmed stale. Worktrees with uncommitted changes are retained."
+          resetAction={
+            continuousRemoveCompletedWorktreesDirty ? (
+              <SettingResetButton
+                label="remove completed worktrees"
+                onClick={() =>
+                  updateSettings({
+                    continuousImprovement: {
+                      ...settings.continuousImprovement,
+                      removeCompletedWorktrees:
+                        DEFAULT_UNIFIED_SETTINGS.continuousImprovement.removeCompletedWorktrees,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.continuousImprovement.removeCompletedWorktrees}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  continuousImprovement: {
+                    ...settings.continuousImprovement,
+                    removeCompletedWorktrees: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Remove completed worktrees"
             />
           }
         />
