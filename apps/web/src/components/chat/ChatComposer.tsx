@@ -45,12 +45,6 @@ import {
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
-import { imageFilesFromDataTransfer } from "./composerImageClipboard";
-import {
-  CONVERSATION_REFERENCE_CLIPBOARD_MIME,
-  decodeConversationReference,
-  type ConversationReference,
-} from "../../conversationReference";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -85,14 +79,6 @@ import {
   type ComposerTaskStep,
   type ComposerTasksProgress,
 } from "./ComposerTasksBadge";
-import { OpenWhisprVoiceInput } from "./OpenWhisprVoiceInput";
-import { type VoiceInputAudioSource, VoiceInputWaveform } from "./VoiceInputWaveform";
-import {
-  compressImageForStash,
-  compressImageToByteLimit,
-  isHeicImageFile,
-  prepareImageForAttachment,
-} from "../../lib/imageCompression";
 import { ComposerActivityRow } from "./ComposerActivityStatus";
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
@@ -102,6 +88,7 @@ import {
   type ComposerBannerStackContent,
   type ComposerBannerStackItem,
 } from "./ComposerBannerStack";
+import { compressImageForStash, prepareImageForAttachment } from "../../lib/imageCompression";
 import {
   fileAttachmentTooLargeMessage,
   formatAttachmentSize,
@@ -185,7 +172,7 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
-import { RUNTIME_MODE_OPTIONS, RUNTIME_MODE_PRESENTATION } from "./runtimeModePresentation";
+import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
   const setVideo = useCallback(
@@ -203,9 +190,7 @@ function ComposerVideoThumbnail({ file }: { file: File }) {
       playsInline
       preload="metadata"
       aria-hidden="true"
-      onLoadedMetadata={(event) => {
-        event.currentTarget.currentTime = Math.min(0.1, event.currentTarget.duration || 0);
-      }}
+      onLoadedMetadata={(event) => prepareVideoFirstFrame(event.currentTarget)}
       className="pointer-events-none absolute inset-0 size-full object-cover"
     />
   );
@@ -313,6 +298,7 @@ import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
+  EyeIcon,
   FileIcon,
   PaperclipIcon,
   PencilRulerIcon,
@@ -326,7 +312,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../providerModels";
+import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -351,6 +337,38 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
+const runtimeModeConfig: Record<
+  RuntimeMode,
+  { label: string; description: string; icon: LucideIcon }
+> = {
+  "approval-required": {
+    label: "Supervised",
+    description: "Ask before commands and file changes.",
+    icon: LockIcon,
+  },
+  "auto-accept-edits": {
+    label: "Auto-accept edits",
+    description: "Auto-approve edits, ask before other actions.",
+    icon: PenLineIcon,
+  },
+  auto: {
+    label: "Auto",
+    description: "Supported providers approve routine actions; others still ask.",
+    icon: SparklesIcon,
+  },
+  "automated-review": {
+    label: "Read-only automation",
+    description: "Run autonomous inspections without file or network writes.",
+    icon: EyeIcon,
+  },
+  "full-access": {
+    label: "Full access",
+    description: "Allow commands and edits without prompts.",
+    icon: LockOpenIcon,
+  },
+};
+
+const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-composer-drawer-layer="true"]',
   '[data-slot="popover-popup"]',
@@ -399,7 +417,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
-  const runtimeModeOption = RUNTIME_MODE_PRESENTATION[props.runtimeMode];
+  const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
   const interactionModeTooltip =
     props.interactionMode === "plan"
@@ -455,8 +473,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             <SelectValue>{runtimeModeOption.label}</SelectValue>
           </TooltipTrigger>
           <SelectPopup alignItemWithTrigger={false}>
-            {RUNTIME_MODE_OPTIONS.map((mode) => {
-              const option = RUNTIME_MODE_PRESENTATION[mode];
+            {runtimeModeOptions.map((mode) => {
+              const option = runtimeModeConfig[mode];
               const OptionIcon = option.icon;
               return (
                 <SelectItem key={mode} value={mode} hideIndicator className="min-w-64 py-2">
@@ -580,7 +598,6 @@ export interface ChatComposerHandle {
     files: ComposerFileAttachment[];
     terminalContexts: TerminalContextDraft[];
     elementContexts: ElementContextDraft[];
-    conversationContexts: ConversationReference[];
     previewAnnotations: PreviewAnnotationPayload[];
     reviewComments: ReviewCommentContext[];
     selectedPromptEffort: string | null;
@@ -708,25 +725,11 @@ export interface ChatComposerProps {
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
-  /** List Codex sessions on disk that this thread could resume (/resume). */
-  listCodexSessions?: () => Promise<
-    ReadonlyArray<{
-      readonly sessionId: string;
-      readonly originator?: string;
-      readonly startedAt?: string;
-      readonly preview?: string;
-    }>
-  >;
-  /** Rebind this thread to a chosen Codex session. */
-  resumeCodexSession?: (sessionId: string, preview?: string) => void;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
-  onVoicePhaseChange: (
-    phase: "idle" | "recording" | "transcribing" | "success" | "no-audio",
-  ) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   openingVideoAttachmentId: string | null;
 }
@@ -802,33 +805,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     toggleInteractionMode,
     handleRuntimeModeChange,
     handleInteractionModeChange,
-    listCodexSessions,
-    resumeCodexSession,
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
     onExpandImage,
-    onVoicePhaseChange,
     onFileOpen,
     openingVideoAttachmentId,
   } = props;
-  const [voiceInputPhase, setVoiceInputPhase] = useState<
-    "idle" | "recording" | "transcribing" | "success" | "no-audio"
-  >("idle");
-  const [voiceInputAudioSource, setVoiceInputAudioSource] = useState<VoiceInputAudioSource | null>(
-    null,
-  );
-  const simulateVoiceInputLevel =
-    import.meta.env.DEV &&
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("simulateMic") === "1";
-  const handleVoicePhaseChange = useCallback(
-    (phase: "idle" | "recording" | "transcribing" | "success" | "no-audio") => {
-      setVoiceInputPhase(phase);
-      onVoicePhaseChange(phase);
-    },
-    [onVoicePhaseChange],
-  );
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------
@@ -852,7 +835,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerElementContexts = composerDraft.elementContexts;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
-  const composerConversationContexts = composerDraft.conversationContexts;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const needsReattachFileCount = composerFiles.filter(composerFileNeedsReattach).length;
@@ -908,9 +890,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const removeComposerDraftReviewComment = useComposerDraftStore(
     (store) => store.removeReviewComment,
-  );
-  const addComposerDraftConversationContext = useComposerDraftStore(
-    (store) => store.addConversationContext,
   );
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
@@ -1119,7 +1098,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // disabled.
   const selectedProvider: ProviderDriverKind =
     selectedProviderEntry?.driverKind ?? requestedDriverKind;
-  const hideSessionAllow = selectedProvider === ProviderDriverKind.make("grok");
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
@@ -1235,15 +1213,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
-  const [codexSessionOptions, setCodexSessionOptions] = useState<
-    ReadonlyArray<{
-      readonly sessionId: string;
-      readonly originator?: string;
-      readonly startedAt?: string;
-      readonly preview?: string;
-    }>
-  >([]);
-  const [resumeListedEmpty, setResumeListedEmpty] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
@@ -1341,20 +1310,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
       }));
     }
-    if (codexSessionOptions.length > 0) {
-      return codexSessionOptions.map((session) => ({
-        id: `codex-session:${session.sessionId}`,
-        type: "codex-session" as const,
-        sessionId: session.sessionId,
-        label: session.preview ?? session.sessionId.slice(0, 8),
-        description: [
-          session.originator === "t3code_desktop" ? "from this app" : "from the terminal",
-          session.startedAt?.slice(0, 16).replace("T", " "),
-        ]
-          .filter((part): part is string => Boolean(part))
-          .join(" · "),
-      }));
-    }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
         {
@@ -1382,13 +1337,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               },
             ] as const)
           : []),
-        {
-          id: "slash:resume",
-          type: "slash-command",
-          command: "resume",
-          label: "/resume",
-          description: "Continue a Codex conversation started in the terminal",
-        },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderStatus?.skills ?? [],
@@ -1440,7 +1388,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     return [];
   }, [
-    codexSessionOptions,
     composerTrigger,
     planModeUiEnabled,
     selectedProvider,
@@ -1516,14 +1463,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
     }
-    if (resumeListedEmpty) {
-      const provider = getProviderDisplayName(providerStatuses, selectedProvider);
-      return `No ${provider} conversations found for this project.`;
-    }
     return composerTriggerKind === "path"
       ? "No matching files or folders."
       : "No matching command.";
-  }, [composerTriggerKind, resumeListedEmpty, providerStatuses, selectedProvider]);
+  }, [composerTriggerKind]);
 
   // ------------------------------------------------------------------
   // Provider traits UI
@@ -1703,12 +1646,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     composerImagesRef.current = composerImages;
   }, [composerImages, composerImagesRef]);
-
-  useEffect(() => {
-    if (composerMenuOpen) return;
-    setCodexSessionOptions((existing) => (existing.length === 0 ? existing : []));
-    setResumeListedEmpty(false);
-  }, [composerMenuOpen]);
 
   useEffect(() => {
     composerFilesRef.current = composerFiles;
@@ -2093,16 +2030,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
-        if (item.command === "resume") {
-          setComposerHighlightedItemId(null);
-          setResumeListedEmpty(false);
-          void (async () => {
-            const sessions = (await listCodexSessions?.()) ?? [];
-            setCodexSessionOptions(sessions);
-            setResumeListedEmpty(sessions.length === 0);
-          })();
-          return;
-        }
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -2110,16 +2037,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (applied) {
           setComposerHighlightedItemId(null);
         }
-        return;
-      }
-      if (item.type === "codex-session") {
-        resumeCodexSession?.(item.sessionId, item.label);
-        setCodexSessionOptions([]);
-        setResumeListedEmpty(false);
-        setComposerHighlightedItemId(null);
-        applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
-        });
         return;
       }
       if (item.type === "provider-slash-command") {
@@ -2159,13 +2076,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
     },
-    [
-      applyPromptReplacement,
-      handleInteractionModeChange,
-      listCodexSessions,
-      resumeCodexSession,
-      resolveActiveComposerTrigger,
-    ],
+    [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
   );
 
   const onComposerMenuItemHighlighted = useCallback(
@@ -3222,67 +3133,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Callbacks: paste / drag
   // ------------------------------------------------------------------
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
-    if (event.defaultPrevented) return;
-    const reference = decodeConversationReference(
-      event.clipboardData.getData(CONVERSATION_REFERENCE_CLIPBOARD_MIME),
-    );
-    if (reference) {
-      event.preventDefault();
-      addConversationReferenceToDraft(reference);
-      return;
-    }
     const files = Array.from(event.clipboardData.files);
-    const imageFiles =
-      files.length > 0
-        ? files.filter((file) => file.type.startsWith("image/") || isHeicImageFile(file))
-        : imageFilesFromDataTransfer(event.clipboardData);
-    const attachmentFiles = files.length > 0 ? files : imageFiles;
     // Claimable pastes go through even when plan questions are pending or the
     // composer is at its attachment limit: `addComposerAttachments` surfaces
     // those as a toast and a thread error. An early return here would swallow
     // the paste with no feedback.
     if (
-      attachmentFiles.length === 0 ||
+      files.length === 0 ||
       !activeThreadId ||
       !shouldHandleComposerAttachmentPaste({
-        files: attachmentFiles,
+        files,
         plainText: event.clipboardData.getData("text/plain"),
       })
     ) {
       return;
     }
     event.preventDefault();
-    void addComposerAttachments(attachmentFiles);
-  };
-
-  const addConversationReferenceToDraft = (reference: ConversationReference) => {
-    addComposerDraftConversationContext(composerDraftTarget, reference);
-    if (reference.images.length === 0) return;
-    void Promise.all(
-      [...reference.images].reverse().map(async (image) => {
-        const response = await fetch(image.dataUrl);
-        const blob = await response.blob();
-        return new File([blob], image.name, { type: image.mimeType });
-      }),
-    )
-      .then((files) => addComposerAttachments(files))
-      .catch(() => {
-        setThreadError(activeThreadId, "Copied conversation images could not be restored.");
-      });
-  };
-
-  const onStructuredComposerPaste = (clipboardData: DataTransfer): boolean => {
-    const reference = decodeConversationReference(
-      clipboardData.getData(CONVERSATION_REFERENCE_CLIPBOARD_MIME),
-    );
-    if (reference) {
-      addConversationReferenceToDraft(reference);
-      return true;
-    }
-    const imageFiles = imageFilesFromDataTransfer(clipboardData);
-    if (imageFiles.length === 0) return false;
-    void addComposerAttachments(imageFiles);
-    return true;
+    void addComposerAttachments(files);
   };
 
   const insertComposerTextAtEnd = (
@@ -3482,7 +3349,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         files: composerFilesRef.current,
         terminalContexts: composerTerminalContextsRef.current,
         elementContexts: composerElementContextsRef.current,
-        conversationContexts: composerConversationContexts,
         previewAnnotations: composerPreviewAnnotations,
         reviewComments: composerReviewComments,
         selectedPromptEffort,
@@ -3516,7 +3382,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerFilesRef,
       composerTerminalContextsRef,
       composerElementContextsRef,
-      composerConversationContexts,
       composerPreviewAnnotations,
       composerReviewComments,
       focusComposer,
@@ -3611,7 +3476,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         isResponding={respondingRequestIds.includes(
                           activePendingApproval.requestId,
                         )}
-                        hideSessionAllow={hideSessionAllow}
                         options={activePendingApproval.options}
                         onRespondToApproval={onRespondToApproval}
                       />
@@ -3817,10 +3681,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     resolvedTheme={resolvedTheme}
                     isLoading={isComposerMenuLoading}
                     triggerKind={composerTriggerKind}
-                    groupSlashCommandSections={
-                      composerTrigger?.kind === "slash-command" &&
-                      composerTrigger.query.trim().length === 0
-                    }
                     emptyStateText={composerMenuEmptyState}
                     activeItemId={activeComposerMenuItem?.id ?? null}
                     onHighlightedItemChange={onComposerMenuItemHighlighted}
@@ -4165,84 +4025,46 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </div>
                 )}
 
-              <div className="relative grid grid-cols-[minmax(0,1fr)_4.25rem] overflow-visible rounded-[18px]">
-                {voiceInputPhase === "recording" || voiceInputPhase === "transcribing" ? (
-                  <VoiceInputWaveform
-                    key="voice-waveform"
-                    audioSource={voiceInputAudioSource}
-                    simulateInputLevel={simulateVoiceInputLevel}
-                  />
-                ) : null}
-                {voiceInputPhase === "no-audio" ? (
-                  <div className="sr-only" role="status">
-                    no audio detected
-                  </div>
-                ) : null}
-                <div key="composer-editor" className="min-w-0">
-                  <ComposerPromptEditor
-                    editorRef={composerEditorRef}
-                    value={
-                      isComposerApprovalState
-                        ? ""
-                        : activePendingProgress
-                          ? activePendingProgress.customAnswer
-                          : prompt
-                    }
-                    cursor={composerCursor}
-                    terminalContexts={
-                      !isComposerApprovalState && pendingUserInputs.length === 0
-                        ? composerTerminalContexts
-                        : []
-                    }
-                    skills={selectedProviderStatus?.skills ?? []}
-                    className={cn("ps-1 pe-2", showMobilePendingAnswerActions && "max-sm:pb-11")}
-                    onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
-                    onChange={onPromptChange}
-                    onCommandKeyDown={onComposerCommandKey}
-                    onPaste={onComposerPaste}
-                    onStructuredPaste={onStructuredComposerPaste}
-                    placeholder={
-                      isComposerApprovalState
-                        ? (activePendingApproval?.detail ??
-                          "Resolve this approval request to continue")
-                        : activePendingProgress
-                          ? "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
-                              : noProviderAvailable
-                                ? "Enable a provider in Settings to send a message"
-                                : phase === "disconnected"
-                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
-                    }
-                    disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
-                  />
-                </div>
-                <div
-                  key="voice-control"
-                  className="relative z-10 flex h-17.5 items-center justify-center"
-                >
-                  <OpenWhisprVoiceInput
-                    phase={voiceInputPhase}
-                    disabled={
-                      isConnecting ||
-                      isComposerApprovalState ||
-                      projectSelectionRequired ||
-                      pendingUserInputs.length > 0
-                    }
-                    onTranscript={(transcript) => {
-                      insertComposerTextAtEnd(transcript, { ensureLeadingBoundary: true });
-                    }}
-                    onPhaseChange={handleVoicePhaseChange}
-                    onRecordingAudioSourceChange={setVoiceInputAudioSource}
-                    simulateInputLevel={simulateVoiceInputLevel}
-                    dictationMicrophoneDeviceId={settings.dictationMicrophoneDeviceId}
-                    dictationStartKeybinds={settings.dictationStartKeybinds}
-                    dictationEndKeybinds={settings.dictationEndKeybinds}
-                  />
-                </div>
+              <div className="relative">
+                <ComposerPromptEditor
+                  editorRef={composerEditorRef}
+                  value={
+                    isComposerApprovalState
+                      ? ""
+                      : activePendingProgress
+                        ? activePendingProgress.customAnswer
+                        : prompt
+                  }
+                  cursor={composerCursor}
+                  terminalContexts={
+                    !isComposerApprovalState && pendingUserInputs.length === 0
+                      ? composerTerminalContexts
+                      : []
+                  }
+                  skills={selectedProviderStatus?.skills ?? []}
+                  {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
+                  onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
+                  onChange={onPromptChange}
+                  onCommandKeyDown={onComposerCommandKey}
+                  onPaste={onComposerPaste}
+                  placeholder={
+                    isComposerApprovalState
+                      ? (activePendingApproval?.detail ??
+                        "Resolve this approval request to continue")
+                      : activePendingProgress
+                        ? "Type your own answer, or leave this blank to use the selected option"
+                        : showPlanFollowUpPrompt && activeProposedPlan
+                          ? "Add feedback to refine the plan, or leave this blank to implement it"
+                          : projectSelectionRequired
+                            ? "Choose a project above to start a thread"
+                            : noProviderAvailable
+                              ? "Enable a provider in Settings to send a message"
+                              : phase === "disconnected"
+                                ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                  }
+                  disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                />
                 {showMobilePendingAnswerActions ? (
                   <div
                     data-chat-composer-mobile-pending-actions="true"

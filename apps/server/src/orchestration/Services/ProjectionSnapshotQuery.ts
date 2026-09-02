@@ -15,8 +15,8 @@ import type {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
-  OrchestrationThread,
   OrchestrationThreadActivity,
+  OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
@@ -45,6 +45,11 @@ export type ProjectionActivitySummary = Pick<
 > & {
   readonly threadId: ThreadId;
 };
+
+export interface ProjectionEventReplayStats {
+  readonly eventCount: number;
+  readonly payloadBytes: number;
+}
 
 export interface ProjectionThreadCheckpointContext {
   readonly threadId: ThreadId;
@@ -105,14 +110,6 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
-   * Read the newest activity summaries for aggregate views without hydrating
-   * activity payload JSON or full thread snapshots.
-   */
-  readonly getRecentActivitySummaries?: (
-    limit: number,
-  ) => Effect.Effect<ReadonlyArray<ProjectionActivitySummary>, ProjectionRepositoryError>;
-
-  /**
    * Read archived thread shell summaries for the archive page.
    *
    * This query is separate from the main shell snapshot so archived threads
@@ -144,6 +141,19 @@ export interface ProjectionSnapshotQueryShape {
    * Read aggregate projection counts without hydrating the full read model.
    */
   readonly getCounts: () => Effect.Effect<ProjectionSnapshotCounts, ProjectionRepositoryError>;
+
+  /** Read compact recent activity rows for the agent dashboard feed. */
+  readonly getRecentActivitySummaries?: (
+    limit: number,
+  ) => Effect.Effect<ReadonlyArray<ProjectionActivitySummary>, ProjectionRepositoryError>;
+
+  /**
+   * Measure a persisted event range without decoding its payload bodies.
+   */
+  readonly getEventReplayStats: (input: {
+    readonly fromSequenceExclusive: number;
+    readonly toSequenceInclusive: number;
+  }) => Effect.Effect<ProjectionEventReplayStats, ProjectionRepositoryError>;
 
   /**
    * Read the active project for an exact workspace root match.

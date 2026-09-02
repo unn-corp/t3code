@@ -8,10 +8,8 @@ import {
   type EnvironmentId,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationOpenInput,
-  type PreviewAutomationDispatchInputInput,
   type PreviewAutomationResizeInput,
   type PreviewAutomationResizeResult,
-  type PreviewAutomationStreamStartInput,
   type PreviewAutomationSetColorSchemeInput,
   type PreviewAutomationSetColorSchemeResult,
   type PreviewAutomationHost as PreviewAutomationHostState,
@@ -54,12 +52,6 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
 import {
-  nextRemoteFrameSequence,
-  readRemoteStreamTarget,
-  registerRemoteStreamTab,
-  unregisterRemoteStreamTab,
-} from "./remoteStreamRegistry";
-import {
   PreviewAutomationOperationError,
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationRecordingNotActiveError,
@@ -69,7 +61,6 @@ import {
 import {
   previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
-  shouldAttachAutomationOverlay,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 import {
@@ -318,9 +309,6 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
     previewEnvironment.focusAutomationHost,
     "preview automation host focus",
   );
-  const publishFrame = useAtomCommand(previewEnvironment.publishFrame, {
-    reportFailure: false,
-  });
   const [automationConnectionAtom] = useState(() => Atom.make<string | null>(null));
   const automationConnectionId = useAtomValue(automationConnectionAtom);
 
@@ -359,24 +347,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         };
         const requireReadyTab = async () => {
           const bridge = previewBridge;
-          const readyState = readThreadPreviewState(threadRef);
-          const resolved = resolvePreviewAutomationTarget(readyState, tabId);
-          const readyTabId = resolved.tabId;
+          const readyTabId = tabId;
           if (!bridge || !readyTabId) {
-            throw new PreviewAutomationTargetUnavailableError({
-              ...unavailableTarget,
-              tabId: readyTabId,
-            });
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
           }
+          const readyState = readThreadPreviewState(threadRef);
           const runtimeTabId = previewRuntimeTabId(threadRef, readyState.serverEpoch, readyTabId);
           browserActivity.release ??= acquireBrowserSurfaceActivity(runtimeTabId);
-          // Interaction (snapshot/click/type/evaluate) talks to the desktop
-          // webview. If the pane or mini player was closed, desktopByTabId is
-          // empty and waitForDesktopOverlay hangs until the tool timeout.
-          if (!readyState.desktopByTabId[readyTabId]) {
-            usePreviewMiniPlayerStore.getState().open(threadRef, readyTabId);
-            await waitForPreviewPresentation(runtimeTabId);
-          }
           await waitForDesktopOverlay(
             threadRef,
             request.requestId,
@@ -473,18 +450,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               input,
               (await resolveBrowserDefaults()).autoShowFloatingPreview,
             );
-            const latestState = readThreadPreviewState(threadRef);
-            const snapshotForOverlay = activeSnapshot;
-            const needsOverlay =
-              snapshotForOverlay !== undefined &&
-              previewAutomationOpenNeedsOverlay(input, snapshotForOverlay);
-            if (
-              shouldAttachAutomationOverlay({
-                presentToUser: shouldPresentPreview,
-                needsOverlay,
-                overlayAttached: Boolean(latestState.desktopByTabId[activeTabId]),
-              })
-            ) {
+            if (shouldPresentPreview) {
               usePreviewMiniPlayerStore.getState().open(threadRef, activeTabId);
             }
             if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
@@ -669,32 +635,6 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               request.input as Parameters<typeof ready.bridge.automation.waitFor>[1],
             );
           }
-          case "streamStart": {
-            const ready = await requireReadyTab();
-            const bounds = request.input as PreviewAutomationStreamStartInput;
-            await ready.bridge.remote.startStream(ready.runtimeTabId, {
-              maxWidth: bounds.maxWidth,
-              maxHeight: bounds.maxHeight,
-              quality: bounds.quality,
-            });
-            registerRemoteStreamTab(ready.runtimeTabId, {
-              threadId: request.threadId,
-              tabId: ready.tabId,
-            });
-            return { tabId: ready.tabId, streaming: true };
-          }
-          case "streamStop": {
-            const ready = await requireReadyTab();
-            await ready.bridge.remote.stopStream(ready.runtimeTabId);
-            unregisterRemoteStreamTab(ready.runtimeTabId);
-            return { tabId: ready.tabId, streaming: false };
-          }
-          case "dispatchInput": {
-            const ready = await requireReadyTab();
-            const dispatch = request.input as PreviewAutomationDispatchInputInput;
-            await ready.bridge.remote.dispatchInput(ready.runtimeTabId, dispatch.event);
-            return { tabId: ready.tabId };
-          }
           case "recordingStart": {
             const ready = await requireReadyTab();
             const startedAt = await startBrowserRecording(
@@ -782,32 +722,6 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
     ],
   );
   useAtomValue(automationRequestConsumerAtom);
-
-  // Frames only leave this machine while a remote viewer is attached: the host
-  // starts its screencast on a streamStart request and stops on streamStop, so
-  // an idle desktop publishes nothing.
-  useEffect(() => {
-    const bridge = previewBridge;
-    if (!bridge?.remote) return;
-    return bridge.remote.onFrame((frame) => {
-      const target = readRemoteStreamTarget(frame.tabId);
-      if (!target) return;
-      void publishFrame({
-        environmentId,
-        input: {
-          threadId: target.threadId,
-          tabId: target.tabId,
-          seq: nextRemoteFrameSequence(),
-          data: frame.data,
-          width: frame.width,
-          height: frame.height,
-          pageWidth: frame.pageWidth,
-          pageHeight: frame.pageHeight,
-          capturedAt: frame.receivedAt,
-        },
-      });
-    });
-  }, [environmentId, publishFrame]);
 
   useEffect(() => {
     const report = () => {
