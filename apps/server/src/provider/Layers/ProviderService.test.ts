@@ -15,6 +15,7 @@ import type {
 import {
   ApprovalRequestId,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   EventId,
   GitHubAccountId,
   ProviderDriverKind,
