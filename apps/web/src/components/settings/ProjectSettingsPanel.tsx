@@ -14,6 +14,7 @@ import {
 } from "../../logicalProject";
 import type {
   ContextMenuItem,
+  AgentDashboardAutomationKind,
   GitHubAccountId,
   ModelSelection,
   ProviderDriverKind,
@@ -69,7 +70,9 @@ import {
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { agentDashboardEnvironment } from "../../state/agentDashboard";
 import { projectEnvironment } from "../../state/projects";
+import { useEnvironmentQuery } from "../../state/query";
 import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -96,6 +99,7 @@ import {
 } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
+import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -114,7 +118,39 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
-import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import {
+  enabledProjectAutomationKinds,
+  PROJECT_AUTOMATION_KINDS,
+  projectGroupTitleNeedsUpdate,
+} from "./ProjectSettingsPanel.logic";
+
+const PROJECT_AUTOMATION_SETTINGS = [
+  {
+    kind: "repository-review",
+    title: "Repository reviews",
+    description: "Periodically reviews this project's repository and records actionable findings.",
+  },
+  {
+    kind: "continuous-improvement",
+    title: "Continuous improvement",
+    description: "Starts implementation work from eligible review findings for this project.",
+  },
+  {
+    kind: "pull-request-rollup",
+    title: "Pull request rollups",
+    description: "Reviews outstanding pull requests and prepares them for a pre-release rollup.",
+  },
+  {
+    kind: "inactive-worktree-cleanup",
+    title: "Inactive worktree cleanup",
+    description:
+      "Removes inactive, clean worktrees only after confirming their current commit is saved on the configured remote.",
+  },
+] as const satisfies ReadonlyArray<{
+  kind: AgentDashboardAutomationKind;
+  title: string;
+  description: string;
+}>;
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -299,6 +335,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const threads = useThreadShells();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
+  const updateAutomationPolicy = useAtomCommand(agentDashboardEnvironment.updateRepositoryPolicy, {
+    reportFailure: false,
+  });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
@@ -326,6 +365,16 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     group.memberProjects.find(
       (member) => member.environmentId === group.environmentId && member.id === group.id,
     ) ?? group.memberProjects[0]!;
+  const automationSnapshot = useEnvironmentQuery(
+    agentDashboardEnvironment.snapshot({
+      environmentId: representative.environmentId,
+      input: {},
+    }),
+  );
+  const automationPolicy = automationSnapshot.data?.repositoryPolicies.find(
+    (policy) => String(policy.repository.projectId) === String(representative.id),
+  );
+  const enabledAutomationKinds = enabledProjectAutomationKinds(automationPolicy);
   const faviconPath = representative.faviconPath ?? null;
   const pickProjectFavicon =
     typeof window !== "undefined" &&
@@ -356,6 +405,66 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       }),
     );
   }, []);
+
+  const [isSavingAutomations, setIsSavingAutomations] = useState(false);
+  const savingAutomationsRef = useRef(false);
+  const setAutomationTypeEnabled = useCallback(
+    async (automationKind: AgentDashboardAutomationKind, enabled: boolean) => {
+      if (savingAutomationsRef.current) return;
+      savingAutomationsRef.current = true;
+      setIsSavingAutomations(true);
+      try {
+        const nextEnabledAutomationKinds = new Set(enabledProjectAutomationKinds(automationPolicy));
+        if (enabled) {
+          nextEnabledAutomationKinds.add(automationKind);
+        } else {
+          nextEnabledAutomationKinds.delete(automationKind);
+        }
+        const enabledAutomations = PROJECT_AUTOMATION_KINDS.filter((kind) =>
+          nextEnabledAutomationKinds.has(kind),
+        );
+        const disabledAutomations = PROJECT_AUTOMATION_KINDS.filter(
+          (kind) => !nextEnabledAutomationKinds.has(kind),
+        );
+        const updatedAt = new Date().toISOString();
+        for (const member of group.memberProjects) {
+          const result = mapAtomCommandResult(
+            await updateAutomationPolicy({
+              environmentId: member.environmentId,
+              input: {
+                repository: { projectId: member.id },
+                enabled: enabledAutomations.length > 0,
+                enabledAutomations,
+                disabledAutomations,
+                updatedAt,
+              },
+            }),
+            () => undefined,
+          );
+          if (result._tag === "Failure") {
+            reportFailure(
+              group.memberProjects.length > 1
+                ? `Failed to update automations on ${member.environmentLabel ?? "the current environment"}`
+                : "Failed to update project automations",
+              result,
+            );
+            return;
+          }
+        }
+        await automationSnapshot.refresh();
+      } finally {
+        savingAutomationsRef.current = false;
+        setIsSavingAutomations(false);
+      }
+    },
+    [
+      automationSnapshot,
+      automationPolicy,
+      group.memberProjects,
+      reportFailure,
+      updateAutomationPolicy,
+    ],
+  );
 
   // Group-shared fields live on each physical project record, so a
   // group-level edit fans out to every member.
@@ -837,6 +946,26 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               </div>
             }
           />
+        </SettingsSection>
+
+        <SettingsSection title="Automations">
+          {PROJECT_AUTOMATION_SETTINGS.map((automation) => (
+            <SettingsRow
+              key={automation.kind}
+              title={automation.title}
+              description={`${automation.description} Manual actions remain available. This applies to every checkout in the project group.`}
+              control={
+                <Switch
+                  checked={enabledAutomationKinds.includes(automation.kind)}
+                  disabled={isSavingAutomations}
+                  onCheckedChange={(checked) =>
+                    void setAutomationTypeEnabled(automation.kind, Boolean(checked))
+                  }
+                  aria-label={`Allow ${automation.title.toLowerCase()} for this project`}
+                />
+              }
+            />
+          ))}
         </SettingsSection>
 
         <SettingsSection title="New threads">

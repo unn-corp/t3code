@@ -223,6 +223,22 @@ describe("searchSettings", () => {
       id: "continuous-improvement-remove-worktrees",
       to: "/settings/automation",
     });
+    expect(searchSettings("outstanding draft")[0]).toMatchObject({
+      id: "pull-request-rollup",
+      to: "/settings/automation",
+    });
+    expect(searchSettings("repair failing pull request checks")[0]).toMatchObject({
+      id: "pull-request-rollup-failing-checks",
+      to: "/settings/automation",
+    });
+    expect(searchSettings("rollup target branch")[0]).toMatchObject({
+      id: "pull-request-rollup-target",
+      to: "/settings/automation",
+    });
+    expect(searchSettings("saved remote worktree")[0]).toMatchObject({
+      id: "inactive-worktree-cleanup",
+      to: "/settings/automation",
+    });
     expect(searchSettings("background activity")[0]).toMatchObject({
       id: "background-activity",
       to: "/settings/automation",

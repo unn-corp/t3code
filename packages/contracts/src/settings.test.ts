@@ -126,6 +126,96 @@ describe("ServerSettings continuous improvement", () => {
       continuousImprovement: { maxRiskTier: "high", minimumConfidence: "high" },
     });
   });
+
+  it("keeps pull request rollups opt-in with a configurable N-day policy", () => {
+    expect(decodeServerSettings({}).pullRequestRollup).toEqual({
+      enabled: false,
+      intervalDays: 7,
+      includeDrafts: true,
+      includeReady: true,
+      minimumIdleDays: 0,
+      maximumPullRequests: 100,
+      fixFailingChecks: true,
+      fixMergeConflicts: true,
+      repairAttempts: 2,
+      targetBranch: "",
+      branchPrefix: "pre-release",
+      pullRequestTitle: "Pre-release rollup",
+      openAsDraft: true,
+      removeCompletedWorktrees: true,
+      customInstructions: "",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "max" }],
+      },
+    });
+
+    expect(
+      decodeServerSettingsPatch({
+        pullRequestRollup: {
+          enabled: true,
+          intervalDays: 14,
+          includeDrafts: false,
+          minimumIdleDays: 3,
+          maximumPullRequests: 25,
+          repairAttempts: 4,
+          targetBranch: "release/next",
+          branchPrefix: "release-candidate",
+          pullRequestTitle: "Release candidate",
+          openAsDraft: false,
+          customInstructions: "Preserve the changelog entries from every source PR.",
+        },
+      }).pullRequestRollup,
+    ).toMatchObject({
+      enabled: true,
+      intervalDays: 14,
+      includeDrafts: false,
+      minimumIdleDays: 3,
+      maximumPullRequests: 25,
+      repairAttempts: 4,
+      targetBranch: "release/next",
+      branchPrefix: "release-candidate",
+      pullRequestTitle: "Release candidate",
+      openAsDraft: false,
+    });
+  });
+
+  it.each([
+    { intervalDays: 0 },
+    { intervalDays: 91 },
+    { minimumIdleDays: -1 },
+    { maximumPullRequests: 101 },
+    { repairAttempts: 6 },
+  ])("rejects an invalid pull request rollup policy: %o", (pullRequestRollup) => {
+    expect(() => decodeServerSettingsPatch({ pullRequestRollup })).toThrow();
+  });
+
+  it("keeps inactive worktree cleanup opt-in with configurable timing", () => {
+    expect(decodeServerSettings({}).inactiveWorktreeCleanup).toEqual({
+      enabled: false,
+      intervalDays: 1,
+      minimumInactiveDays: 14,
+    });
+    expect(
+      decodeServerSettingsPatch({
+        inactiveWorktreeCleanup: {
+          enabled: true,
+          intervalDays: 7,
+          minimumInactiveDays: 30,
+        },
+      }).inactiveWorktreeCleanup,
+    ).toEqual({ enabled: true, intervalDays: 7, minimumInactiveDays: 30 });
+  });
+
+  it.each([
+    { intervalDays: 0 },
+    { intervalDays: 31 },
+    { minimumInactiveDays: 0 },
+    { minimumInactiveDays: 366 },
+  ])("rejects an invalid inactive worktree cleanup policy: %o", (inactiveWorktreeCleanup) => {
+    expect(() => decodeServerSettingsPatch({ inactiveWorktreeCleanup })).toThrow();
+  });
 });
 
 describe("ClientSettings quit confirmation", () => {

@@ -83,11 +83,22 @@ function runStage(status: AgentDashboardAutomationRun["status"]): number {
 }
 
 function runTitle(run: AgentDashboardAutomationRun): string {
-  return run.kind === "continuous-improvement" ? "Continuous improvement" : run.kind;
+  switch (run.kind) {
+    case "continuous-improvement":
+      return "Continuous improvement";
+    case "pull-request-rollup":
+      return "Pull request rollup";
+    case "inactive-worktree-cleanup":
+      return "Inactive worktree cleanup";
+    default:
+      return run.kind;
+  }
 }
 
 function runStatusLabel(run: AgentDashboardAutomationRun): string {
-  if (run.kind !== "continuous-improvement") return run.status;
+  if (run.kind !== "continuous-improvement" && run.kind !== "pull-request-rollup") {
+    return run.status;
+  }
   switch (run.status) {
     case "queued":
       return "Starting";
@@ -96,7 +107,7 @@ function runStatusLabel(run: AgentDashboardAutomationRun): string {
     case "ingesting":
       return "Checking pull request";
     case "succeeded":
-      return "PR opened";
+      return run.kind === "pull-request-rollup" ? "Rollup PR opened" : "PR opened";
     case "partial":
       return "Needs attention";
     case "failed":
@@ -299,9 +310,10 @@ export function AgentRuns({
 
       <Card>
         <CardHeader className="p-4 sm:p-5">
-          <CardTitle className="text-base">Repository policy</CardTitle>
+          <CardTitle className="text-base">Repository automation policy</CardTitle>
           <CardDescription>
-            Scheduling is deterministic and policy-driven. Disabled repositories are skipped.
+            Disabled repositories are skipped by scheduled reviews, continuous improvement, and pull
+            request rollups.
           </CardDescription>
         </CardHeader>
         <CardPanel className="grid gap-2 border-t border-border/60 p-4 sm:p-5">
@@ -384,7 +396,7 @@ export function AgentRuns({
                     variant={policy.enabled ? "outline" : "ghost"}
                   >
                     {updatingPolicyId === id ? <LoaderIcon className="animate-spin" /> : null}
-                    {policy.enabled ? "Pause reviews" : "Resume reviews"}
+                    {policy.enabled ? "Pause automations" : "Resume automations"}
                   </Button>
                 </div>
               </div>
@@ -455,7 +467,9 @@ export function AgentRuns({
                         {run.target ? `, ${run.target}` : ""}
                       </CardDescription>
                     </div>
-                    {run.status === "failed" || run.status === "partial" ? (
+                    {(run.status === "failed" || run.status === "partial") &&
+                    run.kind !== "pull-request-rollup" &&
+                    run.kind !== "inactive-worktree-cleanup" ? (
                       <Button
                         disabled={retryingRunId !== null}
                         onClick={() => void retry(run)}

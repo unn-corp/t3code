@@ -239,6 +239,103 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/automation",
   },
   {
+    id: "pull-request-rollup",
+    title: "Pull request rollup",
+    to: "/settings/automation",
+    searchTerms: ["pre-release outstanding draft ready interval automation"],
+  },
+  {
+    id: "inactive-worktree-cleanup",
+    title: "Inactive worktree cleanup",
+    to: "/settings/automation",
+    searchTerms: ["remove clean saved remote github stale settled branches"],
+  },
+  {
+    id: "inactive-worktree-cleanup-interval",
+    title: "Worktree cleanup interval",
+    to: "/settings/automation",
+  },
+  {
+    id: "inactive-worktree-cleanup-age",
+    title: "Minimum inactive worktree age",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-interval",
+    title: "Rollup interval",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-drafts",
+    title: "Include draft pull requests",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-ready",
+    title: "Include ready pull requests",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-idle-days",
+    title: "Minimum pull request inactivity",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-limit",
+    title: "Maximum pull requests per rollup",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-failing-checks",
+    title: "Repair failing pull request checks",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-conflicts",
+    title: "Resolve pull request conflicts",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-repair-attempts",
+    title: "Pull request repair attempts",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-target",
+    title: "Rollup target branch",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-branch-prefix",
+    title: "Rollup branch prefix",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-title",
+    title: "Pre-release pull request title",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-draft-output",
+    title: "Open pre-release pull request as draft",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-remove-worktrees",
+    title: "Remove completed rollup worktrees",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-instructions",
+    title: "Pull request rollup instructions",
+    to: "/settings/automation",
+  },
+  {
+    id: "pull-request-rollup-model",
+    title: "Pull request rollup model",
+    to: "/settings/automation",
+  },
+  {
     id: "repository-review",
     title: "Scheduled discovery and qualification",
     to: "/settings/automation",

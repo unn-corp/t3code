@@ -37,6 +37,12 @@ import {
   MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
   MAX_INTERFACE_FONT_SIZE,
+  MAX_INACTIVE_WORKTREE_AGE_DAYS,
+  MAX_INACTIVE_WORKTREE_CLEANUP_INTERVAL_DAYS,
+  MAX_PULL_REQUEST_ROLLUP_IDLE_DAYS,
+  MAX_PULL_REQUEST_ROLLUP_INTERVAL_DAYS,
+  MAX_PULL_REQUEST_ROLLUP_LIMIT,
+  MAX_PULL_REQUEST_ROLLUP_REPAIR_ATTEMPTS,
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
@@ -44,6 +50,12 @@ import {
   MIN_APPEARANCE_CONTRAST,
   MIN_GLASS_OPACITY,
   MIN_INTERFACE_FONT_SIZE,
+  MIN_INACTIVE_WORKTREE_AGE_DAYS,
+  MIN_INACTIVE_WORKTREE_CLEANUP_INTERVAL_DAYS,
+  MIN_PULL_REQUEST_ROLLUP_IDLE_DAYS,
+  MIN_PULL_REQUEST_ROLLUP_INTERVAL_DAYS,
+  MIN_PULL_REQUEST_ROLLUP_LIMIT,
+  MIN_PULL_REQUEST_ROLLUP_REPAIR_ATTEMPTS,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_TERMINAL_FONT_SIZE,
@@ -585,6 +597,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       )
         ? ["Continuous Improvement Mode"]
         : []),
+      ...(!Equal.equals(settings.pullRequestRollup, DEFAULT_UNIFIED_SETTINGS.pullRequestRollup)
+        ? ["Pull request rollup"]
+        : []),
       ...(!Equal.equals(settings.repositoryReview, DEFAULT_UNIFIED_SETTINGS.repositoryReview)
         ? ["Repository review model"]
         : []),
@@ -650,6 +665,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
       settings.continuousImprovement,
+      settings.pullRequestRollup,
       settings.repositoryReview,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
@@ -745,6 +761,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continuousImprovement: DEFAULT_UNIFIED_SETTINGS.continuousImprovement,
+      pullRequestRollup: DEFAULT_UNIFIED_SETTINGS.pullRequestRollup,
       repositoryReview: DEFAULT_UNIFIED_SETTINGS.repositoryReview,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -2428,6 +2445,46 @@ function AutomationModelControl({
   );
 }
 
+function AutomationIntegerControl({
+  value,
+  min,
+  max,
+  label,
+  unit,
+  onChange,
+}: {
+  readonly value: number;
+  readonly min: number;
+  readonly max: number;
+  readonly label: string;
+  readonly unit: string;
+  readonly onChange: (value: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <NumberField
+        value={value}
+        min={min}
+        max={max}
+        step={1}
+        size="sm"
+        className="w-28"
+        onValueChange={(next) => {
+          if (next === null || !Number.isInteger(next) || next < min || next > max) return;
+          onChange(next);
+        }}
+      >
+        <NumberFieldGroup>
+          <NumberFieldDecrement aria-label={`Decrease ${label}`} />
+          <NumberFieldInput aria-label={label} />
+          <NumberFieldIncrement aria-label={`Increase ${label}`} />
+        </NumberFieldGroup>
+      </NumberField>
+      <span className="text-xs text-muted-foreground">{unit}</span>
+    </div>
+  );
+}
+
 export function AutomationSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -2465,6 +2522,19 @@ export function AutomationSettingsPanel() {
   const continuousRemoveCompletedWorktreesDirty =
     settings.continuousImprovement.removeCompletedWorktrees !==
     DEFAULT_UNIFIED_SETTINGS.continuousImprovement.removeCompletedWorktrees;
+  const pullRequestRollupModelDirty = !Equal.equals(
+    settings.pullRequestRollup.modelSelection,
+    DEFAULT_UNIFIED_SETTINGS.pullRequestRollup.modelSelection,
+  );
+  const inactiveWorktreeCleanupEnabledDirty =
+    settings.inactiveWorktreeCleanup.enabled !==
+    DEFAULT_UNIFIED_SETTINGS.inactiveWorktreeCleanup.enabled;
+  const inactiveWorktreeCleanupIntervalDirty =
+    settings.inactiveWorktreeCleanup.intervalDays !==
+    DEFAULT_UNIFIED_SETTINGS.inactiveWorktreeCleanup.intervalDays;
+  const inactiveWorktreeCleanupAgeDirty =
+    settings.inactiveWorktreeCleanup.minimumInactiveDays !==
+    DEFAULT_UNIFIED_SETTINGS.inactiveWorktreeCleanup.minimumInactiveDays;
   const repositoryReviewEnabledDirty =
     settings.repositoryReview.enabled !== DEFAULT_UNIFIED_SETTINGS.repositoryReview.enabled;
   const repositoryReviewIntervalDirty =
@@ -2710,6 +2780,481 @@ export function AutomationSettingsPanel() {
                 <SelectItem value="high">High</SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("inactive-worktree-cleanup")}
+          description="Periodically removes inactive T3 worktrees only when they are settled, clean, and their current commit is confirmed on the branch's configured remote after a fetch. Local and remote branches are retained."
+          resetAction={
+            inactiveWorktreeCleanupEnabledDirty ? (
+              <SettingResetButton
+                label="inactive worktree cleanup"
+                onClick={() =>
+                  updateSettings({
+                    inactiveWorktreeCleanup: {
+                      ...settings.inactiveWorktreeCleanup,
+                      enabled: DEFAULT_UNIFIED_SETTINGS.inactiveWorktreeCleanup.enabled,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.inactiveWorktreeCleanup.enabled}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  inactiveWorktreeCleanup: {
+                    ...settings.inactiveWorktreeCleanup,
+                    enabled: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Inactive worktree cleanup"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("inactive-worktree-cleanup-interval")}
+          className="bg-muted/20 sm:pl-9"
+          description="Number of days between cleanup scans. Turning the automation on makes its first scan due immediately."
+          resetAction={
+            inactiveWorktreeCleanupIntervalDirty ? (
+              <SettingResetButton
+                label="inactive worktree cleanup interval"
+                onClick={() =>
+                  updateSettings({
+                    inactiveWorktreeCleanup: {
+                      ...settings.inactiveWorktreeCleanup,
+                      intervalDays: DEFAULT_UNIFIED_SETTINGS.inactiveWorktreeCleanup.intervalDays,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <AutomationIntegerControl
+              value={settings.inactiveWorktreeCleanup.intervalDays}
+              min={MIN_INACTIVE_WORKTREE_CLEANUP_INTERVAL_DAYS}
+              max={MAX_INACTIVE_WORKTREE_CLEANUP_INTERVAL_DAYS}
+              label="Inactive worktree cleanup interval in days"
+              unit="days"
+              onChange={(intervalDays) =>
+                updateSettings({
+                  inactiveWorktreeCleanup: {
+                    ...settings.inactiveWorktreeCleanup,
+                    intervalDays,
+                  },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("inactive-worktree-cleanup-age")}
+          className="bg-muted/20 sm:pl-9"
+          description="Minimum age of both the worktree's latest T3 activity and its current commit before removal is allowed."
+          resetAction={
+            inactiveWorktreeCleanupAgeDirty ? (
+              <SettingResetButton
+                label="minimum inactive worktree age"
+                onClick={() =>
+                  updateSettings({
+                    inactiveWorktreeCleanup: {
+                      ...settings.inactiveWorktreeCleanup,
+                      minimumInactiveDays:
+                        DEFAULT_UNIFIED_SETTINGS.inactiveWorktreeCleanup.minimumInactiveDays,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <AutomationIntegerControl
+              value={settings.inactiveWorktreeCleanup.minimumInactiveDays}
+              min={MIN_INACTIVE_WORKTREE_AGE_DAYS}
+              max={MAX_INACTIVE_WORKTREE_AGE_DAYS}
+              label="Minimum inactive worktree age in days"
+              unit="days"
+              onChange={(minimumInactiveDays) =>
+                updateSettings({
+                  inactiveWorktreeCleanup: {
+                    ...settings.inactiveWorktreeCleanup,
+                    minimumInactiveDays,
+                  },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup")}
+          description="On an N-day interval, starts an isolated agent for each GitHub repository with eligible open pull requests. The agent reviews the combined changes, repairs allowed problems, and opens one pre-release pull request. It never merges the source or rollup pull requests. Turning this off prevents future scans but does not cancel active work sessions."
+          resetAction={
+            settings.pullRequestRollup.enabled !==
+            DEFAULT_UNIFIED_SETTINGS.pullRequestRollup.enabled ? (
+              <SettingResetButton
+                label="pull request rollup"
+                onClick={() =>
+                  updateSettings({
+                    pullRequestRollup: {
+                      ...settings.pullRequestRollup,
+                      enabled: DEFAULT_UNIFIED_SETTINGS.pullRequestRollup.enabled,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.pullRequestRollup.enabled}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  pullRequestRollup: {
+                    ...settings.pullRequestRollup,
+                    enabled: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Pull request rollup"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-interval")}
+          className="bg-muted/20 sm:pl-9"
+          description="Number of days between portfolio-wide pull request scans. Turning the automation on makes the first scan due immediately."
+          resetAction={
+            settings.pullRequestRollup.intervalDays !==
+            DEFAULT_UNIFIED_SETTINGS.pullRequestRollup.intervalDays ? (
+              <SettingResetButton
+                label="pull request rollup interval"
+                onClick={() =>
+                  updateSettings({
+                    pullRequestRollup: {
+                      ...settings.pullRequestRollup,
+                      intervalDays: DEFAULT_UNIFIED_SETTINGS.pullRequestRollup.intervalDays,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <AutomationIntegerControl
+              value={settings.pullRequestRollup.intervalDays}
+              min={MIN_PULL_REQUEST_ROLLUP_INTERVAL_DAYS}
+              max={MAX_PULL_REQUEST_ROLLUP_INTERVAL_DAYS}
+              label="Pull request rollup interval in days"
+              unit="days"
+              onChange={(intervalDays) =>
+                updateSettings({
+                  pullRequestRollup: { ...settings.pullRequestRollup, intervalDays },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-drafts")}
+          className="bg-muted/20 sm:pl-9"
+          description="Include draft pull requests in the review and rollup pass."
+          control={
+            <Switch
+              checked={settings.pullRequestRollup.includeDrafts}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  pullRequestRollup: {
+                    ...settings.pullRequestRollup,
+                    includeDrafts: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Include draft pull requests"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-ready")}
+          className="bg-muted/20 sm:pl-9"
+          description="Include pull requests that are ready for review."
+          control={
+            <Switch
+              checked={settings.pullRequestRollup.includeReady}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  pullRequestRollup: {
+                    ...settings.pullRequestRollup,
+                    includeReady: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Include ready pull requests"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-idle-days")}
+          className="bg-muted/20 sm:pl-9"
+          description="Only include pull requests that have not changed for this many days. Use 0 to include newly updated work."
+          control={
+            <AutomationIntegerControl
+              value={settings.pullRequestRollup.minimumIdleDays}
+              min={MIN_PULL_REQUEST_ROLLUP_IDLE_DAYS}
+              max={MAX_PULL_REQUEST_ROLLUP_IDLE_DAYS}
+              label="Minimum pull request inactivity in days"
+              unit="days"
+              onChange={(minimumIdleDays) =>
+                updateSettings({
+                  pullRequestRollup: { ...settings.pullRequestRollup, minimumIdleDays },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-limit")}
+          className="bg-muted/20 sm:pl-9"
+          description="Maximum number of pull requests handled per repository in one rollup. The oldest eligible updates are handled first."
+          control={
+            <AutomationIntegerControl
+              value={settings.pullRequestRollup.maximumPullRequests}
+              min={MIN_PULL_REQUEST_ROLLUP_LIMIT}
+              max={MAX_PULL_REQUEST_ROLLUP_LIMIT}
+              label="Maximum pull requests per rollup"
+              unit="PRs"
+              onChange={(maximumPullRequests) =>
+                updateSettings({
+                  pullRequestRollup: { ...settings.pullRequestRollup, maximumPullRequests },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-failing-checks")}
+          className="bg-muted/20 sm:pl-9"
+          description="Allow the agent to diagnose failing checks and push safe repairs to a source pull request branch. Otherwise failing pull requests are excluded."
+          control={
+            <Switch
+              checked={settings.pullRequestRollup.fixFailingChecks}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  pullRequestRollup: {
+                    ...settings.pullRequestRollup,
+                    fixFailingChecks: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Repair failing pull request checks"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-conflicts")}
+          className="bg-muted/20 sm:pl-9"
+          description="Allow the agent to resolve source pull request conflicts on the isolated rollup branch. Otherwise conflicting pull requests are excluded."
+          control={
+            <Switch
+              checked={settings.pullRequestRollup.fixMergeConflicts}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  pullRequestRollup: {
+                    ...settings.pullRequestRollup,
+                    fixMergeConflicts: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Resolve pull request conflicts"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-repair-attempts")}
+          className="bg-muted/20 sm:pl-9"
+          description="Maximum focused repair attempts for each failing or conflicting source pull request. Use 0 to inspect and exclude without repair."
+          control={
+            <AutomationIntegerControl
+              value={settings.pullRequestRollup.repairAttempts}
+              min={MIN_PULL_REQUEST_ROLLUP_REPAIR_ATTEMPTS}
+              max={MAX_PULL_REQUEST_ROLLUP_REPAIR_ATTEMPTS}
+              label="Repair attempts per pull request"
+              unit="attempts"
+              onChange={(repairAttempts) =>
+                updateSettings({
+                  pullRequestRollup: { ...settings.pullRequestRollup, repairAttempts },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-target")}
+          className="bg-muted/20 sm:pl-9"
+          description="Base branch for eligible source pull requests and the pre-release pull request. Leave empty to use each repository's default branch."
+          control={
+            <DraftInput
+              className="w-full sm:w-56"
+              value={settings.pullRequestRollup.targetBranch}
+              onCommit={(targetBranch) =>
+                updateSettings({
+                  pullRequestRollup: { ...settings.pullRequestRollup, targetBranch },
+                })
+              }
+              placeholder="Default branch"
+              spellCheck={false}
+              aria-label="Pull request rollup target branch"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-branch-prefix")}
+          className="bg-muted/20 sm:pl-9"
+          description="Prefix used for isolated pre-release rollup branches. T3 appends the date and a unique identifier."
+          control={
+            <DraftInput
+              className="w-full sm:w-56"
+              value={settings.pullRequestRollup.branchPrefix}
+              maxLength={48}
+              onCommit={(branchPrefix) => {
+                if (branchPrefix.trim().length === 0) return;
+                updateSettings({
+                  pullRequestRollup: { ...settings.pullRequestRollup, branchPrefix },
+                });
+              }}
+              spellCheck={false}
+              aria-label="Pull request rollup branch prefix"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-title")}
+          className="bg-muted/20 sm:pl-9"
+          description="Title used for the generated pre-release pull request."
+          control={
+            <DraftInput
+              className="w-full sm:w-72"
+              value={settings.pullRequestRollup.pullRequestTitle}
+              maxLength={120}
+              onCommit={(pullRequestTitle) => {
+                if (pullRequestTitle.trim().length === 0) return;
+                updateSettings({
+                  pullRequestRollup: { ...settings.pullRequestRollup, pullRequestTitle },
+                });
+              }}
+              aria-label="Pre-release pull request title"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-draft-output")}
+          className="bg-muted/20 sm:pl-9"
+          description="Keep the generated pre-release pull request in draft until a user explicitly marks it ready."
+          control={
+            <Switch
+              checked={settings.pullRequestRollup.openAsDraft}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  pullRequestRollup: {
+                    ...settings.pullRequestRollup,
+                    openAsDraft: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Open pre-release pull request as draft"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-remove-worktrees")}
+          className="bg-muted/20 sm:pl-9"
+          description="Safely remove a clean rollup worktree after T3 verifies the generated pull request."
+          control={
+            <Switch
+              checked={settings.pullRequestRollup.removeCompletedWorktrees}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  pullRequestRollup: {
+                    ...settings.pullRequestRollup,
+                    removeCompletedWorktrees: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Remove completed rollup worktrees"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-instructions")}
+          className="bg-muted/20 sm:pl-9"
+          description="Optional repository-agnostic instructions added to every rollup agent, such as release-note or validation requirements."
+          control={
+            <DraftInput
+              className="w-full sm:w-80"
+              value={settings.pullRequestRollup.customInstructions}
+              maxLength={4000}
+              onCommit={(customInstructions) =>
+                updateSettings({
+                  pullRequestRollup: { ...settings.pullRequestRollup, customInstructions },
+                })
+              }
+              placeholder="No additional instructions"
+              aria-label="Pull request rollup instructions"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("pull-request-rollup-model")}
+          className="bg-muted/20 sm:pl-9"
+          description="Provider account, model, and effort used to review, repair, and roll up pull requests."
+          resetAction={
+            pullRequestRollupModelDirty ? (
+              <SettingResetButton
+                label="pull request rollup model"
+                onClick={() =>
+                  updateSettings({
+                    pullRequestRollup: {
+                      ...settings.pullRequestRollup,
+                      modelSelection: DEFAULT_UNIFIED_SETTINGS.pullRequestRollup.modelSelection,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <AutomationModelControl
+              selection={settings.pullRequestRollup.modelSelection}
+              ariaLabel="Pull request rollup"
+              onChange={(modelSelection) =>
+                updateSettings({
+                  pullRequestRollup: { ...settings.pullRequestRollup, modelSelection },
+                })
+              }
+            />
           }
         />
 

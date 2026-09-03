@@ -291,7 +291,13 @@ export const selectNextRepository = (input: {
       return { project, policy: effectivePolicy, coverage, due, nextDueMs };
     })
     .filter(
-      (candidate) => candidate.policy.enabled && (input.allowNotDue === true || candidate.due),
+      (candidate) =>
+        AgentDashboardStore.repositoryAutomationsEnabled(
+          input.policies,
+          candidate.project.id,
+          "repository-review",
+        ) &&
+        (input.allowNotDue === true || candidate.due),
     )
     .toSorted(
       (left, right) =>

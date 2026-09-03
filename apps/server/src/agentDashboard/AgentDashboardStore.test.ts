@@ -10,10 +10,134 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
-import { ProjectId, ThreadId, type AgentDashboardAutomationRun } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ThreadId,
+  type AgentDashboardAutomationRun,
+  type AgentDashboardRepositoryPolicy,
+} from "@t3tools/contracts";
 import { parseAgentDashboardStaleOutcome } from "@t3tools/shared/agentDashboardFinding";
 
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
+
+it("merges a project automation toggle without replacing repository policy details", () => {
+  const existing = {
+    repository: { projectId: ProjectId.make("project-1") },
+    enabled: true,
+    enabledAutomations: ["repository-review", "pull-request-rollup"],
+    disabledAutomations: ["continuous-improvement"],
+    cadenceMinutes: 360,
+    priority: 4,
+    riskTier: "high",
+    branch: "release/next",
+    owner: "release-team",
+    enabledChecks: ["repository-review", "security"],
+    model: "gpt-5.6-sol",
+    budgetMinutes: 45,
+    maxConcurrentRuns: 2,
+    exclusions: ["vendor/**"],
+    updatedAt: "2026-09-01T12:00:00.000Z",
+  } satisfies AgentDashboardRepositoryPolicy;
+
+  expect(
+    AgentDashboardStore.mergeRepositoryPolicyInput(
+      {
+        repository: existing.repository,
+        enabled: false,
+        updatedAt: "2026-09-02T12:00:00.000Z",
+      },
+      existing,
+    ),
+  ).toEqual({
+    ...existing,
+    enabled: false,
+    updatedAt: "2026-09-02T12:00:00.000Z",
+  });
+});
+
+it("gates repository automations independently by type", () => {
+  const repository = { projectId: ProjectId.make("project-1") };
+  const repositoryPolicy = {
+    repository,
+    enabled: true,
+    enabledAutomations: ["repository-review", "pull-request-rollup"],
+    cadenceMinutes: 120,
+    priority: 0,
+    riskTier: "low",
+    branch: null,
+    owner: null,
+    enabledChecks: ["repository-review"],
+    model: null,
+    budgetMinutes: null,
+    maxConcurrentRuns: 1,
+    exclusions: [],
+    updatedAt: "2026-09-02T12:00:00.000Z",
+  } satisfies AgentDashboardRepositoryPolicy;
+
+  expect(
+    AgentDashboardStore.repositoryAutomationsEnabled(
+      [repositoryPolicy],
+      repository.projectId,
+      "repository-review",
+    ),
+  ).toBe(true);
+  expect(
+    AgentDashboardStore.repositoryAutomationsEnabled(
+      [repositoryPolicy],
+      repository.projectId,
+      "continuous-improvement",
+    ),
+  ).toBe(false);
+  expect(
+    AgentDashboardStore.repositoryAutomationsEnabled(
+      [repositoryPolicy],
+      repository.projectId,
+      "pull-request-rollup",
+    ),
+  ).toBe(true);
+  expect(
+    AgentDashboardStore.repositoryAutomationsEnabled(
+      [{ ...repositoryPolicy, enabled: false }],
+      repository.projectId,
+      "repository-review",
+    ),
+  ).toBe(false);
+});
+
+it("uses explicit automation exclusions while treating new kinds as enabled", () => {
+  const repository = { projectId: ProjectId.make("project-1") };
+  const base = {
+    repository,
+    enabled: true,
+    enabledAutomations: ["repository-review"],
+    cadenceMinutes: 120,
+    priority: 0,
+    riskTier: "low",
+    branch: null,
+    owner: null,
+    enabledChecks: ["repository-review"],
+    model: null,
+    budgetMinutes: null,
+    maxConcurrentRuns: 1,
+    exclusions: [],
+    updatedAt: "2026-09-02T12:00:00.000Z",
+  } satisfies AgentDashboardRepositoryPolicy;
+
+  expect(
+    AgentDashboardStore.repositoryAutomationsEnabled(
+      [base],
+      repository.projectId,
+      "inactive-worktree-cleanup",
+    ),
+  ).toBe(true);
+  expect(
+    AgentDashboardStore.repositoryAutomationsEnabled(
+      [{ ...base, disabledAutomations: ["inactive-worktree-cleanup"] }],
+      repository.projectId,
+      "inactive-worktree-cleanup",
+    ),
+  ).toBe(false);
+});
 
 const initializeGitRepository = async (path: string): Promise<void> => {
   await NodeFSP.mkdir(path, { recursive: true });

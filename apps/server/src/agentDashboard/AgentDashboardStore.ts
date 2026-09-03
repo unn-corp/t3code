@@ -12,6 +12,7 @@ import * as NodeCrypto from "node:crypto";
 
 import type {
   AgentDashboardAutomationRun,
+  AgentDashboardAutomationKind,
   AgentDashboardCollectorState,
   AgentDashboardExternalAction,
   AgentDashboardFinding,
@@ -27,6 +28,7 @@ import type {
   AgentDashboardLinkFindingThreadInput,
   AgentDashboardRepositoryCoverage,
   AgentDashboardRepositoryPolicy,
+  AgentDashboardRepositoryPolicyInput,
   AgentDashboardResearchWatchItemInput,
   AgentDashboardResearchFinding,
   AgentDashboardReviewSuggestion,
@@ -83,6 +85,55 @@ export class AgentDashboardStoreError extends Schema.TaggedErrorClass<AgentDashb
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+export const mergeRepositoryPolicyInput = (
+  input: AgentDashboardRepositoryPolicyInput,
+  existing: AgentDashboardRepositoryPolicy | undefined,
+): AgentDashboardRepositoryPolicy => ({
+  repository: input.repository,
+  enabled: input.enabled ?? existing?.enabled ?? true,
+  ...(input.enabledAutomations !== undefined
+    ? { enabledAutomations: input.enabledAutomations }
+    : existing?.enabledAutomations !== undefined
+      ? { enabledAutomations: existing.enabledAutomations }
+      : {}),
+  ...(input.disabledAutomations !== undefined
+    ? { disabledAutomations: input.disabledAutomations }
+    : existing?.disabledAutomations !== undefined
+      ? { disabledAutomations: existing.disabledAutomations }
+      : {}),
+  cadenceMinutes: input.cadenceMinutes ?? existing?.cadenceMinutes ?? 120,
+  priority: input.priority ?? existing?.priority ?? 0,
+  riskTier: input.riskTier ?? existing?.riskTier ?? "low",
+  branch: input.branch !== undefined ? input.branch : (existing?.branch ?? null),
+  owner: input.owner !== undefined ? input.owner : (existing?.owner ?? null),
+  enabledChecks: input.enabledChecks ?? existing?.enabledChecks ?? ["repository-review"],
+  model: input.model !== undefined ? input.model : (existing?.model ?? null),
+  budgetMinutes:
+    input.budgetMinutes !== undefined ? input.budgetMinutes : (existing?.budgetMinutes ?? null),
+  maxConcurrentRuns: input.maxConcurrentRuns ?? existing?.maxConcurrentRuns ?? 1,
+  exclusions: input.exclusions ?? existing?.exclusions ?? [],
+  updatedAt: input.updatedAt,
+});
+
+export const repositoryAutomationsEnabled = (
+  policies: ReadonlyArray<AgentDashboardRepositoryPolicy>,
+  projectId: ProjectId,
+  automationKind?: AgentDashboardAutomationKind,
+): boolean => {
+  const policy = policies.find(
+    (candidate) => String(candidate.repository.projectId) === String(projectId),
+  );
+  if (policy?.enabled === false) return false;
+  if (automationKind !== undefined && policy?.disabledAutomations !== undefined) {
+    return !policy.disabledAutomations.includes(automationKind);
+  }
+  if (automationKind === undefined || policy?.enabledAutomations === undefined) return true;
+  return (
+    policy.enabledAutomations.includes(automationKind) ||
+    automationKind === "inactive-worktree-cleanup"
+  );
+};
 
 export interface AgentDashboardFeedImage {
   readonly contentType: string;

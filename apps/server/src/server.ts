@@ -14,8 +14,11 @@ import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardRevi
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
 import * as AgentDashboardRunHistory from "./agentDashboard/AgentDashboardRunHistory.ts";
+import * as AgentDashboardStore from "./agentDashboard/AgentDashboardStore.ts";
 import * as AgentDashboardImplementationRunner from "./agentDashboard/AgentDashboardImplementationRunner.ts";
 import * as AgentDashboardContinuousImprovement from "./agentDashboard/AgentDashboardContinuousImprovement.ts";
+import * as AgentDashboardPullRequestRollup from "./agentDashboard/AgentDashboardPullRequestRollup.ts";
+import * as AgentDashboardInactiveWorktreeCleanup from "./agentDashboard/AgentDashboardInactiveWorktreeCleanup.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
@@ -739,10 +742,22 @@ export const makeServerLayer = Layer.unwrap(
       Layer.provide(automationRunHistoryLayer),
       Layer.provide(runtimeServicesLive),
     );
+    const pullRequestRollupLayer = AgentDashboardPullRequestRollup.layer.pipe(
+      Layer.provide(automationRunHistoryLayer),
+      Layer.provide(AgentDashboardStore.layer),
+      Layer.provide(runtimeServicesLive),
+    );
+    const inactiveWorktreeCleanupLayer = AgentDashboardInactiveWorktreeCleanup.layer.pipe(
+      Layer.provide(automationRunHistoryLayer),
+      Layer.provide(AgentDashboardStore.layer),
+      Layer.provide(runtimeServicesLive),
+    );
     const dashboardAutomationLayer = Layer.mergeAll(
       automationRunHistoryLayer,
       reviewOrchestrationLayer,
       continuousImprovementLayer,
+      pullRequestRollupLayer,
+      inactiveWorktreeCleanupLayer,
     );
     const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
       disableLogger: !config.logWebSocketEvents,

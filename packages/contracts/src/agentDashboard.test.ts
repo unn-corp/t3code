@@ -5,6 +5,7 @@ import {
   AgentDashboardDispositionActionInput,
   AgentDashboardFinding,
   AgentDashboardMutationResult,
+  AgentDashboardRepositoryPolicyInput,
   AgentDashboardSnapshot,
 } from "./agentDashboard.ts";
 import {
@@ -16,8 +17,29 @@ const decodeSnapshot = Schema.decodeUnknownSync(AgentDashboardSnapshot);
 const decodeMutationResult = Schema.decodeUnknownSync(AgentDashboardMutationResult);
 const decodeFinding = Schema.decodeUnknownSync(AgentDashboardFinding);
 const decodeDispositionAction = Schema.decodeUnknownSync(AgentDashboardDispositionActionInput);
+const decodeRepositoryPolicyInput = Schema.decodeUnknownSync(AgentDashboardRepositoryPolicyInput);
 const decodeProjectPullRequests = Schema.decodeUnknownSync(SourceControlProjectPullRequestsResult);
 const decodePullRequestMerge = Schema.decodeUnknownSync(SourceControlMergeProjectPullRequestInput);
+
+describe("Agent Dashboard repository policy input", () => {
+  it("accepts a project automation toggle without replacing the rest of the policy", () => {
+    expect(
+      decodeRepositoryPolicyInput({
+        repository: { projectId: "project-1" },
+        enabled: false,
+        enabledAutomations: ["pull-request-rollup"],
+        disabledAutomations: ["continuous-improvement"],
+        updatedAt: "2026-09-02T12:00:00.000Z",
+      }),
+    ).toEqual({
+      repository: { projectId: "project-1" },
+      enabled: false,
+      enabledAutomations: ["pull-request-rollup"],
+      disabledAutomations: ["continuous-improvement"],
+      updatedAt: "2026-09-02T12:00:00.000Z",
+    });
+  });
+});
 
 describe("Agent Dashboard pull requests", () => {
   it("decodes project-scoped review and merge signals", () => {

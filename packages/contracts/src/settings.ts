@@ -760,6 +760,120 @@ export const ContinuousImprovementSettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type ContinuousImprovementSettings = typeof ContinuousImprovementSettings.Type;
 
+export const MIN_PULL_REQUEST_ROLLUP_INTERVAL_DAYS = 1;
+export const MAX_PULL_REQUEST_ROLLUP_INTERVAL_DAYS = 90;
+export const PullRequestRollupIntervalDays = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_PULL_REQUEST_ROLLUP_INTERVAL_DAYS,
+    maximum: MAX_PULL_REQUEST_ROLLUP_INTERVAL_DAYS,
+  }),
+);
+export type PullRequestRollupIntervalDays = typeof PullRequestRollupIntervalDays.Type;
+
+export const MIN_PULL_REQUEST_ROLLUP_IDLE_DAYS = 0;
+export const MAX_PULL_REQUEST_ROLLUP_IDLE_DAYS = 365;
+export const PullRequestRollupIdleDays = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_PULL_REQUEST_ROLLUP_IDLE_DAYS,
+    maximum: MAX_PULL_REQUEST_ROLLUP_IDLE_DAYS,
+  }),
+);
+export type PullRequestRollupIdleDays = typeof PullRequestRollupIdleDays.Type;
+
+export const MIN_PULL_REQUEST_ROLLUP_LIMIT = 1;
+export const MAX_PULL_REQUEST_ROLLUP_LIMIT = 100;
+export const PullRequestRollupLimit = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_PULL_REQUEST_ROLLUP_LIMIT,
+    maximum: MAX_PULL_REQUEST_ROLLUP_LIMIT,
+  }),
+);
+export type PullRequestRollupLimit = typeof PullRequestRollupLimit.Type;
+
+export const MIN_PULL_REQUEST_ROLLUP_REPAIR_ATTEMPTS = 0;
+export const MAX_PULL_REQUEST_ROLLUP_REPAIR_ATTEMPTS = 5;
+export const PullRequestRollupRepairAttempts = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_PULL_REQUEST_ROLLUP_REPAIR_ATTEMPTS,
+    maximum: MAX_PULL_REQUEST_ROLLUP_REPAIR_ATTEMPTS,
+  }),
+);
+export type PullRequestRollupRepairAttempts = typeof PullRequestRollupRepairAttempts.Type;
+
+/**
+ * Opt-in policy for periodically turning outstanding GitHub pull requests into
+ * one pre-release pull request per repository. The agent works from an
+ * isolated branch and never merges the source pull requests or the rollup PR.
+ */
+export const PullRequestRollupSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  intervalDays: PullRequestRollupIntervalDays.pipe(Schema.withDecodingDefault(Effect.succeed(7))),
+  includeDrafts: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  includeReady: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  minimumIdleDays: PullRequestRollupIdleDays.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  maximumPullRequests: PullRequestRollupLimit.pipe(Schema.withDecodingDefault(Effect.succeed(100))),
+  fixFailingChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  fixMergeConflicts: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  repairAttempts: PullRequestRollupRepairAttempts.pipe(
+    Schema.withDecodingDefault(Effect.succeed(2)),
+  ),
+  targetBranch: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  branchPrefix: TrimmedNonEmptyString.check(Schema.isMaxLength(48)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("pre-release")),
+  ),
+  pullRequestTitle: TrimmedNonEmptyString.check(Schema.isMaxLength(120)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("Pre-release rollup")),
+  ),
+  openAsDraft: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  removeCompletedWorktrees: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  customInstructions: TrimmedString.check(Schema.isMaxLength(4_000)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+  modelSelection: ModelSelection.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "max" }],
+      }),
+    ),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type PullRequestRollupSettings = typeof PullRequestRollupSettings.Type;
+
+export const MIN_INACTIVE_WORKTREE_CLEANUP_INTERVAL_DAYS = 1;
+export const MAX_INACTIVE_WORKTREE_CLEANUP_INTERVAL_DAYS = 30;
+export const InactiveWorktreeCleanupIntervalDays = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_INACTIVE_WORKTREE_CLEANUP_INTERVAL_DAYS,
+    maximum: MAX_INACTIVE_WORKTREE_CLEANUP_INTERVAL_DAYS,
+  }),
+);
+export type InactiveWorktreeCleanupIntervalDays = typeof InactiveWorktreeCleanupIntervalDays.Type;
+
+export const MIN_INACTIVE_WORKTREE_AGE_DAYS = 1;
+export const MAX_INACTIVE_WORKTREE_AGE_DAYS = 365;
+export const InactiveWorktreeAgeDays = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_INACTIVE_WORKTREE_AGE_DAYS,
+    maximum: MAX_INACTIVE_WORKTREE_AGE_DAYS,
+  }),
+);
+export type InactiveWorktreeAgeDays = typeof InactiveWorktreeAgeDays.Type;
+
+/**
+ * Opt-in cleanup for inactive T3 worktrees whose clean HEAD is confirmed on
+ * the worktree branch's configured remote after a fetch.
+ */
+export const InactiveWorktreeCleanupSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  intervalDays: InactiveWorktreeCleanupIntervalDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(1)),
+  ),
+  minimumInactiveDays: InactiveWorktreeAgeDays.pipe(Schema.withDecodingDefault(Effect.succeed(14))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type InactiveWorktreeCleanupSettings = typeof InactiveWorktreeCleanupSettings.Type;
+
 export const MIN_REPOSITORY_REVIEW_INTERVAL_MINUTES = 15;
 export const MAX_REPOSITORY_REVIEW_INTERVAL_MINUTES = 24 * 60;
 export const RepositoryReviewIntervalMinutes = Schema.Int.check(
@@ -896,6 +1010,8 @@ export const ServerSettings = Schema.Struct({
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   discordBridge: DiscordBridgeSettings,
   continuousImprovement: ContinuousImprovementSettings,
+  pullRequestRollup: PullRequestRollupSettings,
+  inactiveWorktreeCleanup: InactiveWorktreeCleanupSettings,
   repositoryReview: RepositoryReviewSettings,
 });
 export type ServerSettings = typeof ServerSettings.Type;
@@ -1108,6 +1224,33 @@ export const ServerSettingsPatch = Schema.Struct({
       maxRiskTier: Schema.optionalKey(Schema.Literals(["low", "medium", "high", "critical"])),
       minimumConfidence: Schema.optionalKey(Schema.Literals(["low", "medium", "high"])),
       modelSelection: Schema.optionalKey(ModelSelection),
+    }),
+  ),
+  pullRequestRollup: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      intervalDays: Schema.optionalKey(PullRequestRollupIntervalDays),
+      includeDrafts: Schema.optionalKey(Schema.Boolean),
+      includeReady: Schema.optionalKey(Schema.Boolean),
+      minimumIdleDays: Schema.optionalKey(PullRequestRollupIdleDays),
+      maximumPullRequests: Schema.optionalKey(PullRequestRollupLimit),
+      fixFailingChecks: Schema.optionalKey(Schema.Boolean),
+      fixMergeConflicts: Schema.optionalKey(Schema.Boolean),
+      repairAttempts: Schema.optionalKey(PullRequestRollupRepairAttempts),
+      targetBranch: Schema.optionalKey(TrimmedString),
+      branchPrefix: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(48))),
+      pullRequestTitle: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(120))),
+      openAsDraft: Schema.optionalKey(Schema.Boolean),
+      removeCompletedWorktrees: Schema.optionalKey(Schema.Boolean),
+      customInstructions: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(4_000))),
+      modelSelection: Schema.optionalKey(ModelSelection),
+    }),
+  ),
+  inactiveWorktreeCleanup: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      intervalDays: Schema.optionalKey(InactiveWorktreeCleanupIntervalDays),
+      minimumInactiveDays: Schema.optionalKey(InactiveWorktreeAgeDays),
     }),
   ),
   repositoryReview: Schema.optionalKey(

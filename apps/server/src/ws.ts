@@ -1476,6 +1476,13 @@ const makeWsRpcLayer = (
                   policyByRepository.get(String(repository.projectId)) ?? {
                     repository: { projectId: repository.projectId },
                     enabled: true,
+                    enabledAutomations: [
+                      "repository-review" as const,
+                      "continuous-improvement" as const,
+                      "pull-request-rollup" as const,
+                      "inactive-worktree-cleanup" as const,
+                    ],
+                    disabledAutomations: [],
                     cadenceMinutes: AgentDashboardReviewRunner.REVIEW_INTERVAL_MINUTES,
                     priority: 0,
                     riskTier: "low" as const,
@@ -1964,8 +1971,17 @@ const makeWsRpcLayer = (
         [WS_METHODS.agentDashboardUpdateRepositoryPolicy]: (input) =>
           observeRpcEffect(
             WS_METHODS.agentDashboardUpdateRepositoryPolicy,
-            dashboardStore.writeRepositoryPolicy(input).pipe(
-              Effect.map(() => appliedMutation(String(input.repository.projectId))),
+            Effect.gen(function* () {
+              const policies = yield* dashboardStore.readRepositoryPolicies;
+              const existing = policies.find(
+                (policy) =>
+                  String(policy.repository.projectId) === String(input.repository.projectId),
+              );
+              yield* dashboardStore.writeRepositoryPolicy(
+                AgentDashboardStore.mergeRepositoryPolicyInput(input, existing),
+              );
+              return appliedMutation(String(input.repository.projectId));
+            }).pipe(
               Effect.mapError(
                 (cause) =>
                   new AgentDashboardError({

@@ -324,9 +324,6 @@ export const selectContinuousImprovementFinding = (input: {
   readonly project: OrchestrationProjectShell;
 } | null => {
   const projects = new Map(input.projects.map((project) => [String(project.id), project]));
-  const policies = new Map(
-    input.policies.map((policy) => [String(policy.repository.projectId), policy]),
-  );
   const guardrails = input.guardrails ?? {
     maxRiskTier: "medium",
     minimumConfidence: "medium",
@@ -353,7 +350,11 @@ export const selectContinuousImprovementFinding = (input: {
           finding.disposition.state === "open" &&
           isFindingEligibleForContinuousImprovement(finding, guardrails) &&
           projects.has(String(finding.repository.projectId)) &&
-          policies.get(String(finding.repository.projectId))?.enabled !== false,
+          AgentDashboardStore.repositoryAutomationsEnabled(
+            input.policies,
+            finding.repository.projectId,
+            "continuous-improvement",
+          ),
       )
       .toSorted(
         (left, right) =>

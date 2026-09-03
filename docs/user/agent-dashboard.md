@@ -43,6 +43,8 @@ that need attention. Repository sections remain closed until you choose one to i
 Only evidence-backed findings are created, so a successful cycle may produce zero items for a type
 when the project does not contain a defensible issue.
 
+To control one project independently, open its **Project settings**, then **Automations**. Repository reviews, continuous improvement, pull request rollups, and inactive worktree cleanup each have their own switch. Turning off a type prevents only that scheduled automation from selecting the project, applies to every checkout in the project group, and leaves manual actions available.
+
 ## Continuous Improvement Mode
 
 Open **Settings**, then **Automation**, and turn on **Continuous Improvement Mode** to let T3 work through pending **Ready for automation** findings while T3 is open. The mode is off by default. The same section lets you choose the implementation agent's provider account, model, and effort independently from discovery and qualification. Set the highest allowed risk tier and minimum evidence confidence to define which qualified findings may launch unattended.
@@ -54,6 +56,20 @@ Turn on **Consolidate pull requests** to have each automated implementation insp
 T3 also watches the linked work session for progress. If the agent remains inactive, T3 sends up to three progress checks with increasing wait times. If a turn finishes without the expected pull request, T3 asks the same agent to finish the delivery handoff. When the agent verifies that the finding is stale or invalid, T3 dismisses the finding with the reported reason instead of requesting a pull request. Runs that still do not progress are moved to **Needs attention**. Approval and user-input requests are surfaced immediately instead of receiving an automated response. After T3 verifies the pull request or closes a stale finding and confirms that background work is complete, it settles the thread and stops its provider session while keeping the thread available for review.
 
 **Remove completed worktrees** is on by default. After a draft pull request is delivered or a stale finding is closed, T3 safely removes the automation worktree. It never forces removal, so a worktree with unexpected uncommitted changes is retained and the failed cleanup is recorded for inspection. Turn the setting off when you want completed automation worktrees to remain available on disk.
+
+## Pull request rollups
+
+Open **Settings**, then **Automation**, and turn on **Pull request rollup** to periodically review outstanding GitHub pull requests across connected repositories. The first scan starts after the setting is enabled, then repeats on the configured N-day interval. Each eligible repository gets an isolated agent worktree and one pre-release rollup pull request. T3 never merges or closes the source pull requests, pushes directly to the target branch, or merges the generated rollup pull request.
+
+The automation can include draft pull requests, ready pull requests, or both. You can also require a period of inactivity, cap the number handled per repository, choose the target branch, branch prefix, pull request title, draft state, model, and completed-worktree cleanup. Repair controls determine whether the agent may fix failing checks on source branches or resolve conflicts on the isolated rollup branch, with a configurable attempt limit. Additional instructions can add validation or release-note requirements to every run.
+
+Rollup runs appear in **Agent Dashboard**, then **Runs**, alongside the generated work session. A run succeeds only after T3 verifies a pull request from the isolated rollup branch in the configured draft state. Runs that need approval, user input, or manual follow-up remain visible as partial or failed work instead of being reported as complete.
+
+## Inactive worktree cleanup
+
+Open **Settings**, then **Automation**, and turn on **Inactive worktree cleanup** to remove old T3 worktrees on a configurable schedule. Set both the number of days between scans and the minimum inactive age. You can exclude an individual project from this automation in its **Project settings**.
+
+Cleanup is intentionally conservative. Every thread using the worktree must be settled and inactive, with no running turn, provider session, background work, approval, or user-input request. T3 requires a clean Git status, a normal branch with a configured upstream, and a successful remote fetch. It then confirms that the exact remote branch still exists and contains the worktree's current commit before using Git's clean-only worktree removal. Dirty worktrees, detached heads, unpushed commits, missing or deleted upstream branches, and unavailable remotes are retained. Cleanup removes only the worktree; local and remote branches remain available.
 
 T3 starts at most one finding-linked implementation agent at a time across the portfolio. It skips dismissed, blocked, snoozed, completed, unqualified, already-linked, repository-disabled, and policy-held findings. Higher severity and confidence are selected first; repository rotation then prevents one project from monopolizing the queue before older findings break remaining ties. If launch setup fails, T3 releases the finding for a later retry and applies a cooldown so it does not create a retry storm.
 

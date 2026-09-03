@@ -504,9 +504,21 @@ export const AgentDashboardFinding = Schema.Struct({
 export type AgentDashboardFinding = typeof AgentDashboardFinding.Type;
 
 /** Per-repository scheduling and runtime policy (consumed by ADW-06). */
+export const AgentDashboardAutomationKind = Schema.Literals([
+  "repository-review",
+  "continuous-improvement",
+  "pull-request-rollup",
+  "inactive-worktree-cleanup",
+]);
+export type AgentDashboardAutomationKind = typeof AgentDashboardAutomationKind.Type;
+
 export const AgentDashboardRepositoryPolicy = Schema.Struct({
   repository: AgentDashboardRepositoryRef,
   enabled: Schema.Boolean,
+  /** Missing on older policies means every automation type is enabled. */
+  enabledAutomations: Schema.optional(Schema.Array(AgentDashboardAutomationKind)),
+  /** Explicit exclusions; when present, newly introduced automation kinds stay enabled. */
+  disabledAutomations: Schema.optional(Schema.Array(AgentDashboardAutomationKind)),
   cadenceMinutes: NonNegativeInt,
   /** Higher values win ties when selecting the next overdue repository. */
   priority: NonNegativeInt,
@@ -822,7 +834,28 @@ export const AgentDashboardLinkFindingThreadInput = Schema.Struct({
 });
 export type AgentDashboardLinkFindingThreadInput = typeof AgentDashboardLinkFindingThreadInput.Type;
 
-export const AgentDashboardRepositoryPolicyInput = AgentDashboardRepositoryPolicy;
+/**
+ * Patch semantics for repository automation policy writes. Repository and
+ * timestamp identify the target and mutation; omitted policy fields retain
+ * their current values or receive the server default when first created.
+ */
+export const AgentDashboardRepositoryPolicyInput = Schema.Struct({
+  repository: AgentDashboardRepositoryRef,
+  enabled: Schema.optional(Schema.Boolean),
+  enabledAutomations: Schema.optional(Schema.Array(AgentDashboardAutomationKind)),
+  disabledAutomations: Schema.optional(Schema.Array(AgentDashboardAutomationKind)),
+  cadenceMinutes: Schema.optional(NonNegativeInt),
+  priority: Schema.optional(NonNegativeInt),
+  riskTier: Schema.optional(AgentDashboardRiskTier),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  owner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  enabledChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  model: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  budgetMinutes: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  maxConcurrentRuns: Schema.optional(NonNegativeInt),
+  exclusions: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  updatedAt: IsoDateTime,
+});
 export type AgentDashboardRepositoryPolicyInput = typeof AgentDashboardRepositoryPolicyInput.Type;
 
 export const AgentDashboardRunInvestigationInput = Schema.Struct({
