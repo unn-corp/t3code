@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  VcsListRefsResult,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -16,6 +17,42 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeListRefsResult = Schema.decodeUnknownSync(VcsListRefsResult);
+
+describe("VcsListRefsResult", () => {
+  it("decodes a physical worktree inventory including detached entries", () => {
+    const parsed = decodeListRefsResult({
+      refs: [],
+      worktrees: [
+        { path: "/repo", refName: "main", isMain: true },
+        { path: "/repo-detached", refName: null, isMain: false },
+      ],
+      isRepo: true,
+      hasPrimaryRemote: true,
+      nextCursor: null,
+      totalCount: 0,
+    });
+
+    expect(parsed.worktrees).toHaveLength(2);
+    expect(parsed.worktrees?.[1]).toEqual({
+      path: "/repo-detached",
+      refName: null,
+      isMain: false,
+    });
+  });
+
+  it("keeps worktrees optional for older servers", () => {
+    const parsed = decodeListRefsResult({
+      refs: [],
+      isRepo: true,
+      hasPrimaryRemote: true,
+      nextCursor: null,
+      totalCount: 0,
+    });
+
+    expect(parsed.worktrees).toBeUndefined();
+  });
+});
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {

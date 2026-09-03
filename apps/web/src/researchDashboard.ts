@@ -9,6 +9,7 @@ import type {
   AgentDashboardVcsStatus,
   EnvironmentId,
   VcsStatusResult,
+  VcsWorktreeEntry,
 } from "@t3tools/contracts";
 
 import { buildProjectGroups, type ProjectGroup } from "./logicalProject";
@@ -56,6 +57,8 @@ export interface DashboardThreadRecord {
   readonly worktreePath: string | null;
   readonly updatedAt: string;
   readonly archivedAt: string | null;
+  /** Present on live thread shells; server dashboard snapshots omit settlement metadata. */
+  readonly settledOverride?: EnvironmentThreadShell["settledOverride"];
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
   readonly modelSelection: {
@@ -178,46 +181,28 @@ function scopedProjectKey(environmentId: string, projectId: string): string {
   return `${environmentId}:${projectId}`;
 }
 
-/** Groups active thread associations by worktree path within one repository. */
+/** Builds linked-worktree rows from Git's physical registry, then attaches live agents by path. */
 export function buildDashboardWorktreeGroups(input: {
+  readonly environmentId: string;
+  readonly worktrees: ReadonlyArray<VcsWorktreeEntry>;
   readonly threads: ReadonlyArray<DashboardThreadRecord>;
-  readonly projectRefs: ReadonlyArray<{
-    readonly environmentId: string;
-    readonly projectId: string;
-  }>;
 }): ReadonlyArray<DashboardWorktreeGroup> {
-  const projectKeys = new Set(
-    input.projectRefs.map((ref) => scopedProjectKey(ref.environmentId, ref.projectId)),
-  );
-  const groups = new Map<string, DashboardThreadRecord[]>();
-
-  for (const thread of input.threads) {
-    if (
-      thread.archivedAt !== null ||
-      thread.worktreePath === null ||
-      !projectKeys.has(scopedProjectKey(thread.environmentId, thread.projectId))
-    ) {
-      continue;
-    }
-
-    const key = scopedProjectKey(thread.environmentId, thread.worktreePath);
-    const existing = groups.get(key);
-    if (existing) {
-      existing.push(thread);
-    } else {
-      groups.set(key, [thread]);
-    }
-  }
-
-  return [...groups.entries()]
-    .map(([key, threads]) => ({
-      key,
-      environmentId: threads[0]!.environmentId,
-      path: threads[0]!.worktreePath!,
-      branch: threads.find((thread) => thread.branch !== null)?.branch ?? null,
-      threads: [...threads].toSorted((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt),
-      ),
+  return input.worktrees
+    .filter((worktree) => !worktree.isMain)
+    .map((worktree) => ({
+      key: scopedProjectKey(input.environmentId, worktree.path),
+      environmentId: input.environmentId,
+      path: worktree.path,
+      branch: worktree.refName,
+      threads: input.threads
+        .filter(
+          (thread) =>
+            thread.environmentId === input.environmentId &&
+            thread.worktreePath === worktree.path &&
+            thread.archivedAt === null &&
+            thread.settledOverride !== "settled",
+        )
+        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     }))
     .toSorted((left, right) => left.path.localeCompare(right.path));
 }
@@ -233,6 +218,7 @@ export function selectDashboardThreadsForRepository(
     .filter(
       (thread) =>
         thread.archivedAt === null &&
+        thread.settledOverride !== "settled" &&
         projectKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
     )
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));

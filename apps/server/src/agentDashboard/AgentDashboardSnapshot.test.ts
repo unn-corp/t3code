@@ -132,6 +132,11 @@ const refs: VcsListRefsResult = {
       worktreePath: null,
     },
   ],
+  worktrees: [
+    { path: "/repo", refName: "main", isMain: true },
+    { path: "/repo-worktree", refName: "feature/dashboard", isMain: false },
+    { path: "/repo-detached", refName: null, isMain: false },
+  ],
   isRepo: true,
   hasPrimaryRemote: true,
   nextCursor: null,
@@ -229,9 +234,16 @@ it.effect("builds one project card and nests projected worktrees", () => {
     assert.equal(repository?.vcs.defaultBranch, "main");
     assert.equal(repository?.vcs.behindCount, 1);
     assert.equal(repository?.threads.length, 1);
-    assert.equal(repository?.worktrees.length, 1);
-    assert.equal(repository?.worktrees[0]?.path, "/repo-worktree");
-    assert.equal(repository?.worktrees[0]?.threads[0]?.agent?.providerName, "codex");
+    assert.equal(repository?.worktrees.length, 2);
+    const linkedWorktree = repository?.worktrees.find(
+      (worktree) => worktree.path === "/repo-worktree",
+    );
+    const detachedWorktree = repository?.worktrees.find(
+      (worktree) => worktree.path === "/repo-detached",
+    );
+    assert.equal(linkedWorktree?.threads[0]?.agent?.providerName, "codex");
+    assert.equal(detachedWorktree?.branch, null);
+    assert.deepStrictEqual(detachedWorktree?.threads, []);
   });
 });
 
@@ -260,7 +272,7 @@ it.effect("returns unavailable VCS state without scanning unprojected paths", ()
 
     assert.equal(snapshot.repositories[0]?.vcs.availability, "unavailable");
     assert.equal(snapshot.repositories[0]?.vcs.state, "unknown");
-    assert.equal(snapshot.repositories[0]?.worktrees[0]?.path, "/repo-worktree");
+    assert.deepStrictEqual(snapshot.repositories[0]?.worktrees, []);
   }),
 );
 

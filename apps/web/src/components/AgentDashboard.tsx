@@ -429,6 +429,17 @@ function RepositoryOverviewRow({
       input: { cwd: group.representative.workspaceRoot },
     }),
   );
+  const worktreeInventoryQuery = useEnvironmentQuery(
+    vcsEnvironment.listRefs({
+      environmentId: group.representative.environmentId,
+      input: {
+        cwd: group.representative.workspaceRoot,
+        refKind: "local",
+        refresh: true,
+        limit: 1,
+      },
+    }),
+  );
   const status = serverRepository?.vcs ?? statusQuery.data;
   const statusError = serverRepository === null ? statusQuery.error : null;
   const statusPending = serverRepository === null ? statusQuery.isPending : serverSnapshotPending;
@@ -438,13 +449,15 @@ function RepositoryOverviewRow({
     [group.memberProjectRefs, threads],
   );
   const mainThreads = repositoryThreads.filter((thread) => thread.worktreePath === null);
+  const registeredWorktrees = worktreeInventoryQuery.data?.worktrees;
   const worktrees = useMemo(
     () =>
       buildDashboardWorktreeGroups({
+        environmentId: group.representative.environmentId,
+        worktrees: registeredWorktrees ?? [],
         threads: repositoryThreads,
-        projectRefs: group.memberProjectRefs,
       }),
-    [group.memberProjectRefs, repositoryThreads],
+    [group.representative.environmentId, registeredWorktrees, repositoryThreads],
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
   const primaryEnvironmentLabel =
@@ -461,6 +474,11 @@ function RepositoryOverviewRow({
         : "Clean";
   const activeThreadCount = repositoryThreads.filter(isDashboardThreadActive).length;
   const repositoryName = resolveDashboardRepositoryName(group.representative);
+  const worktreeCountLabel = worktreeInventoryQuery.isPending
+    ? "Loading worktrees"
+    : registeredWorktrees === undefined
+      ? "Worktrees unavailable"
+      : `${registeredWorktrees.length} Git ${registeredWorktrees.length === 1 ? "worktree" : "worktrees"}`;
 
   return (
     <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
@@ -489,9 +507,7 @@ function RepositoryOverviewRow({
               <span className="whitespace-nowrap">
                 {group.members.length} {group.members.length === 1 ? "checkout" : "checkouts"}
               </span>
-              <span className="whitespace-nowrap">
-                {worktrees.length} {worktrees.length === 1 ? "worktree" : "worktrees"}
-              </span>
+              <span className="whitespace-nowrap">{worktreeCountLabel}</span>
             </div>
             <RepositoryStatusBadge state={repositoryStatus.state} label={repositoryStatus.label} />
             <ChevronDownIcon
@@ -531,9 +547,7 @@ function RepositoryOverviewRow({
               <span>
                 {group.members.length} {group.members.length === 1 ? "checkout" : "checkouts"}
               </span>
-              <span>
-                {worktrees.length} {worktrees.length === 1 ? "worktree" : "worktrees"}
-              </span>
+              <span>{worktreeCountLabel}</span>
             </div>
 
             {statusError ? (
@@ -589,7 +603,8 @@ function RepositoryOverviewRow({
             {worktrees.length > 0 ? (
               <section className="overflow-hidden rounded-xl border border-border/70 bg-background">
                 <div className="border-b border-border/60 px-3 py-2.5 text-sm font-medium">
-                  Worktrees <span className="text-muted-foreground">({worktrees.length})</span>
+                  Linked worktrees{" "}
+                  <span className="text-muted-foreground">({worktrees.length})</span>
                 </div>
                 {worktrees.map((worktree) => (
                   <DashboardWorktree

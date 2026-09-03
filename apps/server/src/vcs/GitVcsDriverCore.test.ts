@@ -518,6 +518,7 @@ it.effect("ignores worktree metadata for directories that no longer exist", () =
       const refs = yield* driver.listRefs({ cwd, refresh: true });
 
       assert.equal(refs.refs.find((ref) => ref.name === "stale-worktree")?.worktreePath, null);
+      assert.deepStrictEqual(refs.worktrees, []);
     }),
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
@@ -1348,6 +1349,55 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect("returns the physical worktree inventory, including detached worktrees", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const linkedPath = pathService.join(worktreesRoot, "linked");
+        const detachedPath = pathService.join(worktreesRoot, "detached");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* git(cwd, ["worktree", "add", "-b", "feature/linked", linkedPath]);
+        yield* git(cwd, ["worktree", "add", "--detach", detachedPath, "HEAD"]);
+
+        const refs = yield* driver.listRefs({ cwd, refresh: true });
+        const worktrees = refs.worktrees ?? [];
+        const realPath = (value: string) => fileSystem.realPath(value);
+        const mainPath = yield* realPath(cwd);
+        const linkedRealPath = yield* realPath(linkedPath);
+        const detachedRealPath = yield* realPath(detachedPath);
+
+        assert.equal(worktrees.length, 3);
+        assert.deepInclude(
+          worktrees.find((worktree) => worktree.path === mainPath),
+          {
+            path: mainPath,
+            refName: yield* git(cwd, ["branch", "--show-current"]),
+            isMain: true,
+          },
+        );
+        assert.deepInclude(
+          worktrees.find((worktree) => worktree.path === linkedRealPath),
+          {
+            path: linkedRealPath,
+            refName: "feature/linked",
+            isMain: false,
+          },
+        );
+        assert.deepInclude(
+          worktrees.find((worktree) => worktree.path === detachedRealPath),
+          {
+            path: detachedRealPath,
+            refName: null,
+            isMain: false,
+          },
+        );
+      }),
+    );
+
     it.effect("preserves newline characters in worktree paths when listing refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

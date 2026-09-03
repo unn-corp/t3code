@@ -83,6 +83,14 @@ export const VcsRef = Schema.Struct({
 });
 export type VcsRef = typeof VcsRef.Type;
 
+/** A physical working tree registered in Git's shared repository metadata. */
+export const VcsWorktreeEntry = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  isMain: Schema.Boolean,
+});
+export type VcsWorktreeEntry = typeof VcsWorktreeEntry.Type;
+
 const VcsWorktree = Schema.Struct({
   path: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,
@@ -264,6 +272,8 @@ export type VcsStatusStreamEvent = typeof VcsStatusStreamEvent.Type;
 
 export const VcsListRefsResult = Schema.Struct({
   refs: Schema.Array(VcsRef),
+  /** Optional for compatibility with servers that predate physical worktree inventory. */
+  worktrees: Schema.optional(Schema.Array(VcsWorktreeEntry)),
   isRepo: Schema.Boolean,
   hasPrimaryRemote: Schema.Boolean,
   nextCursor: NonNegativeInt.pipe(Schema.NullOr),

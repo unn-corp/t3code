@@ -20,6 +20,7 @@ import type {
   OrchestrationThreadShell,
   VcsListRefsInput,
   VcsListRefsResult,
+  VcsWorktreeEntry,
   VcsStatusLocalResult,
   VcsStatusResult,
 } from "@t3tools/contracts";
@@ -198,34 +199,27 @@ const toDashboardThread = (thread: OrchestrationThreadShell): AgentDashboardThre
 const toRepository = (input: {
   readonly project: OrchestrationShellSnapshot["projects"][number];
   readonly threads: ReadonlyArray<OrchestrationThreadShell>;
+  readonly worktrees: ReadonlyArray<VcsWorktreeEntry>;
   readonly vcs: AgentDashboardVcsStatus;
 }): AgentDashboardRepository => {
-  const rootThreads: Array<AgentDashboardThread> = [];
-  const worktreeThreads = new Map<string, Array<AgentDashboardThread>>();
-
-  for (const thread of input.threads) {
-    const dashboardThread = toDashboardThread(thread);
-    if (thread.worktreePath === null) {
-      rootThreads.push(dashboardThread);
-      continue;
-    }
-
-    const threads = worktreeThreads.get(thread.worktreePath) ?? [];
-    threads.push(dashboardThread);
-    worktreeThreads.set(thread.worktreePath, threads);
-  }
-
-  const worktrees: Array<AgentDashboardWorktree> = [...worktreeThreads.entries()]
-    .toSorted(([leftPath], [rightPath]) => leftPath.localeCompare(rightPath))
-    .map(([path, threads]) => ({
-      path,
-      branch: threads.find((thread) => thread.branch !== null)?.branch ?? null,
-      threads: threads.toSorted(
-        (left, right) =>
-          timestampMs(right.updatedAt) - timestampMs(left.updatedAt) ||
-          right.threadId.localeCompare(left.threadId),
-      ),
-    }));
+  const rootThreads = input.threads
+    .filter((thread) => thread.worktreePath === null)
+    .map(toDashboardThread);
+  const worktrees: Array<AgentDashboardWorktree> = input.worktrees
+    .filter((worktree) => !worktree.isMain)
+    .map((worktree) => ({
+      path: worktree.path,
+      branch: worktree.refName,
+      threads: input.threads
+        .filter((thread) => thread.worktreePath === worktree.path)
+        .map(toDashboardThread)
+        .toSorted(
+          (left, right) =>
+            timestampMs(right.updatedAt) - timestampMs(left.updatedAt) ||
+            right.threadId.localeCompare(left.threadId),
+        ),
+    }))
+    .toSorted((left, right) => left.path.localeCompare(right.path));
 
   return {
     projectId: input.project.id,
@@ -484,8 +478,8 @@ const toResearchRecord = (input: {
 
 /**
  * Load the dashboard's read model from T3's active project/thread shell and
- * VCS primitives. The only paths read are projected project roots; worktree
- * paths are returned as metadata from projected threads rather than scanned.
+ * VCS primitives. The only paths read are projected project roots; registered
+ * worktrees come from Git's shared repository metadata.
  */
 export const loadAgentDashboardSnapshot = Effect.fn("loadAgentDashboardSnapshot")(function* (
   input: LoadAgentDashboardSnapshotInput,
@@ -505,7 +499,7 @@ export const loadAgentDashboardSnapshot = Effect.fn("loadAgentDashboardSnapshot"
   );
   const statuses = new Map(statusEntries);
 
-  const defaultBranchEntries = yield* Effect.forEach(
+  const refsEntries = yield* Effect.forEach(
     projectRoots,
     (cwd) =>
       input.readers
@@ -515,23 +509,25 @@ export const loadAgentDashboardSnapshot = Effect.fn("loadAgentDashboardSnapshot"
           limit: 200,
         })
         .pipe(
-          Effect.map((result) => [cwd, defaultBranchFromRefs(result)] as const),
+          Effect.map((result) => [cwd, result] as const),
           Effect.orElseSucceed(() => [cwd, null] as const),
         ),
     { concurrency: 4 },
   );
-  const defaultBranches = new Map(defaultBranchEntries);
+  const refsByRoot = new Map(refsEntries);
 
   const repositories = input.shellSnapshot.projects.map((project) => {
     const projectThreads = input.shellSnapshot.threads.filter(
       (thread) => thread.projectId === project.id,
     );
     const rootStatus = statuses.get(project.workspaceRoot) ?? null;
-    const defaultBranch = defaultBranches.get(project.workspaceRoot) ?? null;
+    const refs = refsByRoot.get(project.workspaceRoot) ?? null;
+    const defaultBranch = refs === null ? null : defaultBranchFromRefs(refs);
 
     return toRepository({
       project,
       threads: projectThreads,
+      worktrees: refs?.worktrees ?? [],
       vcs: toDashboardVcsStatus(rootStatus, defaultBranch),
     });
   });

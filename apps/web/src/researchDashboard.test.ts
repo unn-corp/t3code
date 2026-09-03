@@ -25,6 +25,7 @@ function makeThread(overrides: Partial<DashboardThreadRecord> = {}): DashboardTh
     worktreePath: null,
     updatedAt: "2026-08-09T12:00:00.000Z",
     archivedAt: null,
+    settledOverride: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     modelSelection: { instanceId: "codex", model: "gpt-5" },
@@ -187,7 +188,7 @@ describe("dashboard repository questions", () => {
 });
 
 describe("dashboard worktree grouping", () => {
-  it("groups active threads by worktree and ignores archived or primary-checkout threads", () => {
+  it("uses Git's physical worktree inventory and only attaches matching active threads", () => {
     const currentWorktree = makeThread({
       id: "thread-current",
       worktreePath: "/repo/.t3/worktrees/current",
@@ -199,29 +200,26 @@ describe("dashboard worktree grouping", () => {
       worktreePath: "/repo/.t3/worktrees/current",
       updatedAt: "2026-08-09T12:01:00.000Z",
     });
-    const otherProjectWorktree = makeThread({
-      id: "thread-other-project",
-      projectId: "project-2",
-      worktreePath: "/other/worktree",
-    });
-    const archivedWorktree = makeThread({
-      id: "thread-archived",
-      worktreePath: "/repo/.t3/worktrees/archived",
-      archivedAt: "2026-08-09T12:03:00.000Z",
+    const staleThread = makeThread({
+      id: "thread-stale",
+      worktreePath: "/repo/.t3/worktrees/removed",
     });
 
     const worktrees = buildDashboardWorktreeGroups({
-      threads: [
-        currentWorktree,
-        olderWorktreeThread,
-        makeThread(),
-        otherProjectWorktree,
-        archivedWorktree,
+      environmentId: "environment-1",
+      worktrees: [
+        { path: "/repo", refName: "main", isMain: true },
+        {
+          path: "/repo/.t3/worktrees/current",
+          refName: "feature/current",
+          isMain: false,
+        },
+        { path: "/repo/.t3/worktrees/detached", refName: null, isMain: false },
       ],
-      projectRefs: [{ environmentId: "environment-1", projectId: "project-1" }],
+      threads: [currentWorktree, olderWorktreeThread, staleThread],
     });
 
-    expect(worktrees).toHaveLength(1);
+    expect(worktrees).toHaveLength(2);
     expect(worktrees[0]).toMatchObject({
       path: "/repo/.t3/worktrees/current",
       branch: "feature/current",
@@ -230,14 +228,20 @@ describe("dashboard worktree grouping", () => {
       "thread-current",
       "thread-older",
     ]);
+    expect(worktrees[1]).toMatchObject({
+      path: "/repo/.t3/worktrees/detached",
+      branch: null,
+      threads: [],
+    });
   });
 
-  it("selects active threads for a repository without duplicating other projects", () => {
+  it("selects unsettled threads for a repository without duplicating other projects", () => {
     const selected = selectDashboardThreadsForRepository(
       [
         makeThread({ id: "selected" }),
         makeThread({ id: "other", projectId: "project-2" }),
         makeThread({ id: "archived", archivedAt: "2026-08-09T12:03:00.000Z" }),
+        makeThread({ id: "settled", settledOverride: "settled" }),
       ],
       [{ environmentId: "environment-1", projectId: "project-1" }],
     );

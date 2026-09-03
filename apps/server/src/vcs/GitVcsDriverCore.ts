@@ -25,6 +25,7 @@ import {
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
   type VcsRef,
+  type VcsWorktreeEntry,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
@@ -139,6 +140,7 @@ interface GitRepositoryPaths {
 interface GitRefsSnapshot {
   readonly localBranches: ReadonlyArray<VcsRef>;
   readonly remoteBranches: ReadonlyArray<VcsRef>;
+  readonly worktrees: ReadonlyArray<VcsWorktreeEntry>;
   readonly hasPrimaryRemote: boolean;
 }
 
@@ -242,18 +244,24 @@ function paginateBranches(input: {
   };
 }
 
-function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
-  const worktreePaths = new Map<string, string>();
+function parseWorktreeEntries(
+  stdout: string,
+): ReadonlyArray<Omit<VcsWorktreeEntry, "isMain"> & { readonly prunable: boolean }> {
+  const worktrees: Array<Omit<VcsWorktreeEntry, "isMain"> & { readonly prunable: boolean }> = [];
   let currentPath: string | null = null;
-  let currentBranch: string | null = null;
+  let currentRefName: string | null = null;
   let currentPrunable = false;
 
   const flush = () => {
-    if (currentPath !== null && currentBranch !== null && !currentPrunable) {
-      worktreePaths.set(currentBranch, currentPath);
+    if (currentPath !== null) {
+      worktrees.push({
+        path: currentPath,
+        refName: currentRefName,
+        prunable: currentPrunable,
+      });
     }
     currentPath = null;
-    currentBranch = null;
+    currentRefName = null;
     currentPrunable = false;
   };
 
@@ -263,14 +271,14 @@ function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
     } else if (field.startsWith("worktree ")) {
       currentPath = field.slice("worktree ".length);
     } else if (field.startsWith("branch refs/heads/")) {
-      currentBranch = field.slice("branch refs/heads/".length);
+      currentRefName = field.slice("branch refs/heads/".length);
     } else if (field === "prunable" || field.startsWith("prunable ")) {
       currentPrunable = true;
     }
   }
   flush();
 
-  return worktreePaths;
+  return worktrees;
 }
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
@@ -2583,21 +2591,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : null;
     const parsedWorktreeEntries =
       worktreeListResult.exitCode === 0
-        ? [...parseWorktreeBranchPaths(worktreeListResult.stdout)].map(
-            ([branchName, worktreePath]) =>
-              [branchName, path.normalize(path.resolve(worktreePath))] as const,
-          )
+        ? parseWorktreeEntries(worktreeListResult.stdout)
+            .filter((worktree) => !worktree.prunable)
+            .map((worktree) => ({
+              path: path.normalize(path.resolve(worktree.path)),
+              refName: worktree.refName,
+            }))
         : [];
     const existingWorktreeEntries = yield* Effect.filter(
       parsedWorktreeEntries,
-      ([, worktreePath]) =>
-        fileSystem.stat(worktreePath).pipe(
+      (worktree) =>
+        fileSystem.stat(worktree.path).pipe(
           Effect.as(true),
           Effect.orElseSucceed(() => false),
         ),
       { concurrency: 16 },
     );
-    const worktreeMap = new Map(existingWorktreeEntries);
+    const mainWorktreePath =
+      path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : null;
+    const worktrees = yield* Effect.forEach(
+      existingWorktreeEntries,
+      (worktree) =>
+        fileSystem.realPath(worktree.path).pipe(
+          Effect.orElseSucceed(() => worktree.path),
+          Effect.map((realPath) => ({
+            ...worktree,
+            isMain: mainWorktreePath !== null && realPath === mainWorktreePath,
+          })),
+        ),
+      { concurrency: 16 },
+    );
+    const worktreeMap = new Map(
+      worktrees.flatMap((worktree) =>
+        worktree.refName === null ? [] : [[worktree.refName, worktree.path] as const],
+      ),
+    );
     const localBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
     const remoteBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
 
@@ -2651,6 +2679,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return {
       localBranches: localBranches.toSorted(byRecencyThenName).map(({ ref }) => ref),
       remoteBranches: remoteBranches.toSorted(byRecencyThenName).map(({ ref }) => ref),
+      worktrees,
       hasPrimaryRemote: remoteNames.includes("origin"),
     } satisfies GitRefsSnapshot;
   });
@@ -2813,6 +2842,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
       return {
         refs: [...refs.refs],
+        worktrees: [...snapshot.worktrees],
         isRepo: true,
         hasPrimaryRemote: snapshot.hasPrimaryRemote,
         nextCursor: refs.nextCursor,
