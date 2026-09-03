@@ -259,7 +259,7 @@ export const parseReviewMetadata = (text: string): ParsedReviewMetadata => {
       .map(asObject)
       .filter((finding): finding is JsonObject => finding !== null)
       .slice(0, 6)
-      .map((finding) => {
+      .map((finding): AgentDashboardStore.AgentDashboardReviewFindingInput | null => {
         const title = stringValue(finding.title) ?? "";
         const summary = stringValue(finding.summary) ?? title;
         const markdown = stringValue(finding.markdown);
@@ -272,27 +272,67 @@ export const parseReviewMetadata = (text: string): ParsedReviewMetadata => {
           rawType === "operations"
             ? rawType
             : "review";
+        const category = stringValue(finding.category) ?? "insight";
+        const productOpportunity = asObject(finding.product_opportunity);
+        const productOpportunityFields =
+          category === "product-opportunity"
+            ? {
+                user: stringValue(productOpportunity?.user),
+                currentExperience: stringValue(productOpportunity?.current_experience),
+                proposedExperience: stringValue(productOpportunity?.proposed_experience),
+                expectedValue: stringValue(productOpportunity?.expected_value),
+                productContextEvidence: stringList(productOpportunity?.product_context_evidence),
+              }
+            : null;
+        if (
+          productOpportunityFields !== null &&
+          (rawType !== "improvement" ||
+            !productOpportunityFields.user ||
+            !productOpportunityFields.currentExperience ||
+            !productOpportunityFields.proposedExperience ||
+            !productOpportunityFields.expectedValue ||
+            productOpportunityFields.productContextEvidence.length === 0)
+        ) {
+          return null;
+        }
+        const opportunityEvidence = productOpportunityFields
+          ? [
+              `Affected user: ${productOpportunityFields.user}`,
+              `Current experience: ${productOpportunityFields.currentExperience}`,
+              `Proposed experience: ${productOpportunityFields.proposedExperience}`,
+              ...productOpportunityFields.productContextEvidence.map(
+                (item) => `Product context: ${item}`,
+              ),
+            ]
+          : [];
         return {
           title,
           type,
-          category: stringValue(finding.category) ?? "insight",
+          category,
           summary,
-          impact: stringValue(finding.impact) ?? "",
+          impact: productOpportunityFields?.expectedValue ?? stringValue(finding.impact) ?? "",
           confidence: stringValue(finding.confidence) ?? "medium",
-          evidence: stringList(finding.evidence),
+          evidence: [...stringList(finding.evidence), ...opportunityEvidence],
           nextStep: stringValue(finding.next_step) ?? "",
           targets: findingTargets(finding.targets),
           validationPlan: stringList(finding.validation_plan),
           sources: findingSources(finding.sources),
           automationRisk: riskTier(finding.automation_risk),
           estimatedEffort: estimatedEffort(finding.estimated_effort),
-          qualificationReason: stringValue(finding.qualification_reason),
+          qualificationReason:
+            productOpportunityFields !== null
+              ? (stringValue(finding.qualification_reason) ??
+                "Product opportunity requires user direction before implementation.")
+              : stringValue(finding.qualification_reason),
           githubIssueTitle: stringValue(finding.github_issue_title) ?? title,
           githubIssueBody: stringValue(finding.github_issue_body) ?? markdown ?? summary,
           ...(markdown ? { markdown } : {}),
         } satisfies AgentDashboardStore.AgentDashboardReviewFindingInput;
       })
-      .filter((finding) => finding.title.length > 0);
+      .filter(
+        (finding): finding is AgentDashboardStore.AgentDashboardReviewFindingInput =>
+          finding !== null && finding.title.length > 0,
+      );
     const qualifications = Array.isArray(rawQualifications)
       ? rawQualifications.map(parseQualification).filter((item) => item !== null)
       : [];

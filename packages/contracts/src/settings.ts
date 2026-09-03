@@ -902,6 +902,76 @@ export const RepositoryReviewSettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type RepositoryReviewSettings = typeof RepositoryReviewSettings.Type;
 
+export const MIN_PRODUCT_OPPORTUNITY_CANDIDATES = 1;
+export const MAX_PRODUCT_OPPORTUNITY_CANDIDATES = 6;
+export const ProductOpportunityCandidateLimit = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_PRODUCT_OPPORTUNITY_CANDIDATES,
+    maximum: MAX_PRODUCT_OPPORTUNITY_CANDIDATES,
+  }),
+);
+
+/** Adds an evidence-backed product and UX opportunity lane to repository reviews. */
+export const ProductOpportunityDiscoverySettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  maximumCandidates: ProductOpportunityCandidateLimit.pipe(
+    Schema.withDecodingDefault(Effect.succeed(2)),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type ProductOpportunityDiscoverySettings = typeof ProductOpportunityDiscoverySettings.Type;
+
+export const MIN_DECISION_FOLLOW_UP_INTERVAL_MINUTES = 15;
+export const MAX_DECISION_FOLLOW_UP_INTERVAL_MINUTES = 24 * 60;
+export const DecisionFollowUpIntervalMinutes = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_DECISION_FOLLOW_UP_INTERVAL_MINUTES,
+    maximum: MAX_DECISION_FOLLOW_UP_INTERVAL_MINUTES,
+  }),
+);
+export const MIN_DECISION_FOLLOW_UP_REMINDER_DAYS = 1;
+export const MAX_DECISION_FOLLOW_UP_REMINDER_DAYS = 90;
+export const DecisionFollowUpReminderDays = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_DECISION_FOLLOW_UP_REMINDER_DAYS,
+    maximum: MAX_DECISION_FOLLOW_UP_REMINDER_DAYS,
+  }),
+);
+export const MIN_DECISION_FOLLOW_UP_LIMIT = 1;
+export const MAX_DECISION_FOLLOW_UP_LIMIT = 10;
+export const DecisionFollowUpLimit = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_DECISION_FOLLOW_UP_LIMIT,
+    maximum: MAX_DECISION_FOLLOW_UP_LIMIT,
+  }),
+);
+
+/** Starts read-only conversations for findings that require a user decision. */
+export const DecisionFollowUpSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  intervalMinutes: DecisionFollowUpIntervalMinutes.pipe(
+    Schema.withDecodingDefault(Effect.succeed(360)),
+  ),
+  reminderDays: DecisionFollowUpReminderDays.pipe(Schema.withDecodingDefault(Effect.succeed(7))),
+  maximumConversationsPerRun: DecisionFollowUpLimit.pipe(
+    Schema.withDecodingDefault(Effect.succeed(3)),
+  ),
+  minimumSeverity: Schema.Literals(["info", "low", "medium", "high", "critical"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("medium")),
+  ),
+  includeNeedsResearch: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  includeAboveRisk: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  modelSelection: ModelSelection.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "xhigh" }],
+      }),
+    ),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type DecisionFollowUpSettings = typeof DecisionFollowUpSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
   // `enableAssistantStreaming`): decoding drops the old key, so everyone,
@@ -1013,6 +1083,8 @@ export const ServerSettings = Schema.Struct({
   pullRequestRollup: PullRequestRollupSettings,
   inactiveWorktreeCleanup: InactiveWorktreeCleanupSettings,
   repositoryReview: RepositoryReviewSettings,
+  productOpportunityDiscovery: ProductOpportunityDiscoverySettings,
+  decisionFollowUp: DecisionFollowUpSettings,
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1257,6 +1329,26 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       enabled: Schema.optionalKey(Schema.Boolean),
       intervalMinutes: Schema.optionalKey(RepositoryReviewIntervalMinutes),
+      modelSelection: Schema.optionalKey(ModelSelection),
+    }),
+  ),
+  productOpportunityDiscovery: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      maximumCandidates: Schema.optionalKey(ProductOpportunityCandidateLimit),
+    }),
+  ),
+  decisionFollowUp: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      intervalMinutes: Schema.optionalKey(DecisionFollowUpIntervalMinutes),
+      reminderDays: Schema.optionalKey(DecisionFollowUpReminderDays),
+      maximumConversationsPerRun: Schema.optionalKey(DecisionFollowUpLimit),
+      minimumSeverity: Schema.optionalKey(
+        Schema.Literals(["info", "low", "medium", "high", "critical"]),
+      ),
+      includeNeedsResearch: Schema.optionalKey(Schema.Boolean),
+      includeAboveRisk: Schema.optionalKey(Schema.Boolean),
       modelSelection: Schema.optionalKey(ModelSelection),
     }),
   ),

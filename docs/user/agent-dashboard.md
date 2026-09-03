@@ -43,7 +43,23 @@ that need attention. Repository sections remain closed until you choose one to i
 Only evidence-backed findings are created, so a successful cycle may produce zero items for a type
 when the project does not contain a defensible issue.
 
-To control one project independently, open its **Project settings**, then **Automations**. Repository reviews, continuous improvement, pull request rollups, and inactive worktree cleanup each have their own switch. Turning off a type prevents only that scheduled automation from selecting the project, applies to every checkout in the project group, and leaves manual actions available.
+To control one project independently, open its **Project settings**, then **Automations**. Repository reviews, continuous improvement, product opportunity discovery, decision follow-up, pull request rollups, and inactive worktree cleanup each have their own switch. Turning off a type prevents only that scheduled automation from selecting the project, applies to every checkout in the project group, and leaves manual actions available.
+
+## Product opportunity discovery
+
+Product opportunity discovery adds a dedicated product and UX lane to scheduled repository reviews. It traces real user and operator workflows, then applies a second product-value critique that rejects bugs, security issues, refactors, test-only work, dependency updates, generic performance claims, and code cleanup. A review can return zero opportunities when the evidence does not support one.
+
+Before enabling it for a project, open **Project settings**, then **Product context**. Choose a repository-relative Markdown document, such as `PRODUCT.md`, and select **Start conversation**. The agent first inspects the repository, separates evidence from assumptions, and interviews you about users, workflows, direction, UX principles, constraints, non-goals, terminology, and success signals. It shows the complete document and asks for approval before writing it. Mark the document **Confirmed for automation** when it represents the product accurately.
+
+Confirmed context is required for scheduled opportunity discovery. Each opportunity records the affected user, current experience, proposed experience, expected value, repository evidence, and relevant product context. Product opportunities remain **Needs research** until a user chooses a direction; they never enter unattended Continuous Improvement directly.
+
+## Decision Follow-up
+
+Turn on **Decision follow-up** under **Settings**, then **Automation** to have T3 start read-only conversations about important findings that automation cannot safely resolve. You can configure the scan interval, reminder window, number of conversations per scan, minimum severity, eligible reasons, and the conversation model. Product opportunities remain eligible regardless of their severity.
+
+Decision Follow-up handles findings that need product context or human judgment and ready findings above the Continuous Improvement risk limit. Each conversation explains what T3 found, why automation stopped, what remains uncertain, and concrete options with tradeoffs before asking one focused question. Project settings can disable these conversations independently.
+
+Approving a product direction does not lower technical risk. Work above the unattended risk limit must continue in a separately authorized, supervised implementation thread. Reminder windows prevent duplicate conversations about the same unresolved finding.
 
 ## Continuous Improvement Mode
 

@@ -102,6 +102,16 @@ export const mergeRepositoryPolicyInput = (
     : existing?.disabledAutomations !== undefined
       ? { disabledAutomations: existing.disabledAutomations }
       : {}),
+  ...(input.productContextPath !== undefined
+    ? { productContextPath: input.productContextPath }
+    : existing?.productContextPath !== undefined
+      ? { productContextPath: existing.productContextPath }
+      : {}),
+  ...(input.productContextConfirmedAt !== undefined
+    ? { productContextConfirmedAt: input.productContextConfirmedAt }
+    : existing?.productContextConfirmedAt !== undefined
+      ? { productContextConfirmedAt: existing.productContextConfirmedAt }
+      : {}),
   cadenceMinutes: input.cadenceMinutes ?? existing?.cadenceMinutes ?? 120,
   priority: input.priority ?? existing?.priority ?? 0,
   riskTier: input.riskTier ?? existing?.riskTier ?? "low",
@@ -131,7 +141,9 @@ export const repositoryAutomationsEnabled = (
   if (automationKind === undefined || policy?.enabledAutomations === undefined) return true;
   return (
     policy.enabledAutomations.includes(automationKind) ||
-    automationKind === "inactive-worktree-cleanup"
+    automationKind === "inactive-worktree-cleanup" ||
+    automationKind === "product-opportunity-discovery" ||
+    automationKind === "decision-follow-up"
   );
 };
 
@@ -402,7 +414,7 @@ const reviewFindingActionability = (
   const expectedValue = text(expectedValueValue, 1_200);
   if (!proposal || !expectedValue) return null;
   return {
-    readiness: "ready",
+    readiness: input.category === "product-opportunity" ? "needs-research" : "ready",
     proposal,
     expectedValue,
     targets: input.targets ?? [],
@@ -1956,7 +1968,10 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           return {
             ...finding,
             actionability: {
-              readiness: qualification.outcome,
+              readiness:
+                finding.category === "product-opportunity"
+                  ? ("needs-research" as const)
+                  : qualification.outcome,
               proposal,
               expectedValue,
               targets: qualification.targets.slice(0, 24).map((target) => ({

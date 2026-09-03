@@ -143,6 +143,36 @@ describe("parseReviewMetadata", () => {
     });
   });
 
+  it("accepts only product opportunities with complete user-value evidence", () => {
+    const accepted = AgentDashboardReviewJobService.parseReviewMetadata(
+      'T3_REVIEW_METADATA: {"findings":[{"title":"Retry only failed automation stages","type":"improvement","category":"product-opportunity","summary":"Users must rerun an entire workflow","impact":"ignored","confidence":"high","evidence":["src/workflow.ts:42"],"next_step":"Add retry controls","qualification_reason":"Choose retry semantics","product_opportunity":{"user":"automation operator","current_experience":"reruns every stage","proposed_experience":"retries one failed stage","expected_value":"faster recovery with less repeated work","product_context_evidence":["Primary workflow is supervising automations"]},"github_issue_title":"Add stage retry","github_issue_body":"## Opportunity"}],"qualifications":[]}',
+    );
+    expect(accepted).toMatchObject({
+      kind: "parsed",
+      findings: [
+        {
+          category: "product-opportunity",
+          impact: "faster recovery with less repeated work",
+          qualificationReason: "Choose retry semantics",
+        },
+      ],
+    });
+    if (accepted.kind === "parsed") {
+      expect(accepted.findings[0]?.evidence).toContain("Current experience: reruns every stage");
+    }
+
+    expect(
+      AgentDashboardReviewJobService.parseReviewMetadata(
+        'T3_REVIEW_METADATA: {"findings":[{"title":"Generic refactor","type":"improvement","category":"product-opportunity","summary":"Clean up code","impact":"Cleaner code","confidence":"medium","evidence":[],"next_step":"Refactor","product_opportunity":{"user":"developer"}}]}',
+      ),
+    ).toEqual({ kind: "parsed", findings: [], qualifications: [] });
+    expect(
+      AgentDashboardReviewJobService.parseReviewMetadata(
+        'T3_REVIEW_METADATA: {"findings":[{"title":"A mislabeled bug","type":"bug","category":"product-opportunity","summary":"A control crashes","confidence":"high","evidence":["src/control.ts:10"],"product_opportunity":{"user":"operator","current_experience":"the control crashes","proposed_experience":"the control works","expected_value":"the task completes","product_context_evidence":["Operators use this control"]}}]}',
+      ),
+    ).toEqual({ kind: "parsed", findings: [], qualifications: [] });
+  });
+
   it("treats missing metadata, silent, empty and parse failure distinctly", () => {
     expect(AgentDashboardReviewJobService.parseReviewMetadata("no metadata here")).toEqual({
       kind: "missing",

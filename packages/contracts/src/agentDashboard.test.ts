@@ -39,6 +39,31 @@ describe("Agent Dashboard repository policy input", () => {
       updatedAt: "2026-09-02T12:00:00.000Z",
     });
   });
+
+  it("accepts only repository-relative Markdown product context paths", () => {
+    expect(
+      decodeRepositoryPolicyInput({
+        repository: { projectId: "project-1" },
+        productContextPath: "docs/product/context.md",
+        productContextConfirmedAt: "2026-09-03T12:00:00.000Z",
+        updatedAt: "2026-09-03T12:00:00.000Z",
+      }),
+    ).toMatchObject({ productContextPath: "docs/product/context.md" });
+    for (const productContextPath of [
+      "/tmp/PRODUCT.md",
+      "C:\\temp\\PRODUCT.md",
+      "../PRODUCT.md",
+      "PRODUCT.txt",
+    ]) {
+      expect(() =>
+        decodeRepositoryPolicyInput({
+          repository: { projectId: "project-1" },
+          productContextPath,
+          updatedAt: "2026-09-03T12:00:00.000Z",
+        }),
+      ).toThrow();
+    }
+  });
 });
 
 describe("Agent Dashboard pull requests", () => {

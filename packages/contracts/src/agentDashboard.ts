@@ -509,8 +509,16 @@ export const AgentDashboardAutomationKind = Schema.Literals([
   "continuous-improvement",
   "pull-request-rollup",
   "inactive-worktree-cleanup",
+  "product-opportunity-discovery",
+  "decision-follow-up",
 ]);
 export type AgentDashboardAutomationKind = typeof AgentDashboardAutomationKind.Type;
+
+export const AgentDashboardProductContextPath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(500),
+  Schema.isPattern(/^(?![\\/])(?![a-z]:[\\/])(?!.*(?:^|[\\/])\.\.(?:[\\/]|$))[^\r\n]+\.md$/iu),
+);
+export type AgentDashboardProductContextPath = typeof AgentDashboardProductContextPath.Type;
 
 export const AgentDashboardRepositoryPolicy = Schema.Struct({
   repository: AgentDashboardRepositoryRef,
@@ -519,6 +527,10 @@ export const AgentDashboardRepositoryPolicy = Schema.Struct({
   enabledAutomations: Schema.optional(Schema.Array(AgentDashboardAutomationKind)),
   /** Explicit exclusions; when present, newly introduced automation kinds stay enabled. */
   disabledAutomations: Schema.optional(Schema.Array(AgentDashboardAutomationKind)),
+  /** Repository-relative Markdown document used as confirmed product context. */
+  productContextPath: Schema.optional(AgentDashboardProductContextPath),
+  /** Null until a user confirms that the product context is suitable for automation. */
+  productContextConfirmedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   cadenceMinutes: NonNegativeInt,
   /** Higher values win ties when selecting the next overdue repository. */
   priority: NonNegativeInt,
@@ -844,6 +856,8 @@ export const AgentDashboardRepositoryPolicyInput = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),
   enabledAutomations: Schema.optional(Schema.Array(AgentDashboardAutomationKind)),
   disabledAutomations: Schema.optional(Schema.Array(AgentDashboardAutomationKind)),
+  productContextPath: Schema.optional(AgentDashboardProductContextPath),
+  productContextConfirmedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   cadenceMinutes: Schema.optional(NonNegativeInt),
   priority: Schema.optional(NonNegativeInt),
   riskTier: Schema.optional(AgentDashboardRiskTier),

@@ -132,6 +132,20 @@ it("uses explicit automation exclusions while treating new kinds as enabled", ()
   ).toBe(true);
   expect(
     AgentDashboardStore.repositoryAutomationsEnabled(
+      [base],
+      repository.projectId,
+      "product-opportunity-discovery",
+    ),
+  ).toBe(true);
+  expect(
+    AgentDashboardStore.repositoryAutomationsEnabled(
+      [base],
+      repository.projectId,
+      "decision-follow-up",
+    ),
+  ).toBe(true);
+  expect(
+    AgentDashboardStore.repositoryAutomationsEnabled(
       [{ ...base, disabledAutomations: ["inactive-worktree-cleanup"] }],
       repository.projectId,
       "inactive-worktree-cleanup",
@@ -489,6 +503,68 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
         actionability: { readiness: "ready" },
         thread: { threadId: "thread-legacy-implementation" },
       });
+    } finally {
+      await NodeFSP.rm(stateDir, { recursive: true, force: true });
+    }
+  }),
+);
+
+it.effect("keeps product opportunities out of unattended implementation", () =>
+  Effect.promise(async () => {
+    const stateDir = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "t3-product-opportunity-"),
+    );
+    try {
+      const store = AgentDashboardStore.getStore(stateDir);
+      await Effect.runPromise(
+        store.appendReviewSuggestions({
+          jobId: "review-product-1",
+          projectId: "project-1",
+          repository: { name: "repository", path: "/workspace/repository" },
+          findings: [
+            {
+              type: "improvement",
+              title: "Retry a failed automation stage",
+              category: "product-opportunity",
+              summary: "Users currently repeat successful work after one stage fails.",
+              impact: "Reduce recovery time and repeated work.",
+              confidence: "high",
+              evidence: ["src/workflow.ts:42"],
+              nextStep: "Choose stage retry semantics before implementation.",
+              automationRisk: "low",
+              estimatedEffort: "medium",
+              qualificationReason: "The product behavior requires user direction.",
+              githubIssueTitle: "Add stage-level retry",
+              githubIssueBody: "## Opportunity\nChoose retry semantics.",
+            },
+          ],
+        }),
+      );
+      const [finding] = await Effect.runPromise(store.readFindings);
+      expect(finding?.actionability).toMatchObject({
+        readiness: "needs-research",
+        riskTier: "low",
+      });
+
+      await Effect.runPromise(
+        store.applyFindingQualifications([
+          {
+            id: finding!.id,
+            outcome: "ready",
+            proposal: "Implement stage-level retry.",
+            expectedValue: "Reduce repeated work.",
+            targets: [],
+            validationPlan: [],
+            sources: [],
+            riskTier: "low",
+            estimatedEffort: "medium",
+            reason: "The design appears bounded.",
+          },
+        ]),
+      );
+      expect((await Effect.runPromise(store.readFindings))[0]?.actionability?.readiness).toBe(
+        "needs-research",
+      );
     } finally {
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
     }

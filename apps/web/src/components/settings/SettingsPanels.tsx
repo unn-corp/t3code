@@ -39,6 +39,9 @@ import {
   MAX_INTERFACE_FONT_SIZE,
   MAX_INACTIVE_WORKTREE_AGE_DAYS,
   MAX_INACTIVE_WORKTREE_CLEANUP_INTERVAL_DAYS,
+  MAX_DECISION_FOLLOW_UP_LIMIT,
+  MAX_DECISION_FOLLOW_UP_REMINDER_DAYS,
+  MAX_PRODUCT_OPPORTUNITY_CANDIDATES,
   MAX_PULL_REQUEST_ROLLUP_IDLE_DAYS,
   MAX_PULL_REQUEST_ROLLUP_INTERVAL_DAYS,
   MAX_PULL_REQUEST_ROLLUP_LIMIT,
@@ -52,6 +55,9 @@ import {
   MIN_INTERFACE_FONT_SIZE,
   MIN_INACTIVE_WORKTREE_AGE_DAYS,
   MIN_INACTIVE_WORKTREE_CLEANUP_INTERVAL_DAYS,
+  MIN_DECISION_FOLLOW_UP_LIMIT,
+  MIN_DECISION_FOLLOW_UP_REMINDER_DAYS,
+  MIN_PRODUCT_OPPORTUNITY_CANDIDATES,
   MIN_PULL_REQUEST_ROLLUP_IDLE_DAYS,
   MIN_PULL_REQUEST_ROLLUP_INTERVAL_DAYS,
   MIN_PULL_REQUEST_ROLLUP_LIMIT,
@@ -2510,6 +2516,10 @@ export function AutomationSettingsPanel() {
     settings.repositoryReview.modelSelection,
     DEFAULT_UNIFIED_SETTINGS.repositoryReview.modelSelection,
   );
+  const decisionFollowUpModelDirty = !Equal.equals(
+    settings.decisionFollowUp.modelSelection,
+    DEFAULT_UNIFIED_SETTINGS.decisionFollowUp.modelSelection,
+  );
   const continuousRiskDirty =
     settings.continuousImprovement.maxRiskTier !==
     DEFAULT_UNIFIED_SETTINGS.continuousImprovement.maxRiskTier;
@@ -3252,6 +3262,248 @@ export function AutomationSettingsPanel() {
               onChange={(modelSelection) =>
                 updateSettings({
                   pullRequestRollup: { ...settings.pullRequestRollup, modelSelection },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("product-opportunity-discovery")}
+          description="Adds a dedicated scout-and-critic pass for evidence-backed UX, workflow, and system capability improvements. Each project needs confirmed product context."
+          control={
+            <Switch
+              checked={settings.productOpportunityDiscovery.enabled}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  productOpportunityDiscovery: {
+                    ...settings.productOpportunityDiscovery,
+                    enabled: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Product opportunity discovery"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("product-opportunity-limit")}
+          className="bg-muted/20 sm:pl-9"
+          description="Maximum validated product opportunities returned during each repository review. Zero-output reviews remain valid."
+          control={
+            <AutomationIntegerControl
+              value={settings.productOpportunityDiscovery.maximumCandidates}
+              min={MIN_PRODUCT_OPPORTUNITY_CANDIDATES}
+              max={MAX_PRODUCT_OPPORTUNITY_CANDIDATES}
+              label="Maximum product opportunities per review"
+              unit="opportunities"
+              onChange={(maximumCandidates) =>
+                updateSettings({
+                  productOpportunityDiscovery: {
+                    ...settings.productOpportunityDiscovery,
+                    maximumCandidates,
+                  },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("decision-follow-up")}
+          description="Starts read-only conversations for findings that need product judgment, more research, or exceed the unattended implementation risk limit."
+          control={
+            <Switch
+              checked={settings.decisionFollowUp.enabled}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  decisionFollowUp: {
+                    ...settings.decisionFollowUp,
+                    enabled: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Decision follow-up"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("decision-follow-up-interval")}
+          className="bg-muted/20 sm:pl-9"
+          description="How often T3 checks for findings that need a user decision."
+          control={
+            <Select
+              value={String(settings.decisionFollowUp.intervalMinutes)}
+              onValueChange={(value) => {
+                const intervalMinutes = Number(value);
+                if (!Number.isInteger(intervalMinutes)) return;
+                updateSettings({
+                  decisionFollowUp: { ...settings.decisionFollowUp, intervalMinutes },
+                });
+              }}
+            >
+              <SelectTrigger aria-label="Decision follow-up interval" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup alignItemWithTrigger={false}>
+                <SelectItem value="15">Every 15 minutes</SelectItem>
+                <SelectItem value="30">Every 30 minutes</SelectItem>
+                <SelectItem value="60">Every hour</SelectItem>
+                <SelectItem value="360">Every 6 hours</SelectItem>
+                <SelectItem value="720">Every 12 hours</SelectItem>
+                <SelectItem value="1440">Every day</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("decision-follow-up-reminders")}
+          className="bg-muted/20 sm:pl-9"
+          description="Minimum time before T3 may start another conversation about the same unresolved finding."
+          control={
+            <AutomationIntegerControl
+              value={settings.decisionFollowUp.reminderDays}
+              min={MIN_DECISION_FOLLOW_UP_REMINDER_DAYS}
+              max={MAX_DECISION_FOLLOW_UP_REMINDER_DAYS}
+              label="Decision reminder interval in days"
+              unit="days"
+              onChange={(reminderDays) =>
+                updateSettings({
+                  decisionFollowUp: { ...settings.decisionFollowUp, reminderDays },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("decision-follow-up-limit")}
+          className="bg-muted/20 sm:pl-9"
+          description="Maximum new decision conversations started during one scheduled scan."
+          control={
+            <AutomationIntegerControl
+              value={settings.decisionFollowUp.maximumConversationsPerRun}
+              min={MIN_DECISION_FOLLOW_UP_LIMIT}
+              max={MAX_DECISION_FOLLOW_UP_LIMIT}
+              label="Maximum decision conversations per scan"
+              unit="conversations"
+              onChange={(maximumConversationsPerRun) =>
+                updateSettings({
+                  decisionFollowUp: {
+                    ...settings.decisionFollowUp,
+                    maximumConversationsPerRun,
+                  },
+                })
+              }
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("decision-follow-up-severity")}
+          className="bg-muted/20 sm:pl-9"
+          description="Minimum severity for ordinary findings. Product opportunities are eligible regardless of severity."
+          control={
+            <Select
+              value={settings.decisionFollowUp.minimumSeverity}
+              onValueChange={(minimumSeverity) => {
+                if (
+                  minimumSeverity !== "info" &&
+                  minimumSeverity !== "low" &&
+                  minimumSeverity !== "medium" &&
+                  minimumSeverity !== "high" &&
+                  minimumSeverity !== "critical"
+                ) {
+                  return;
+                }
+                updateSettings({
+                  decisionFollowUp: { ...settings.decisionFollowUp, minimumSeverity },
+                });
+              }}
+            >
+              <SelectTrigger aria-label="Decision follow-up minimum severity" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup alignItemWithTrigger={false}>
+                <SelectItem value="info">Info and above</SelectItem>
+                <SelectItem value="low">Low and above</SelectItem>
+                <SelectItem value="medium">Medium and above</SelectItem>
+                <SelectItem value="high">High and above</SelectItem>
+                <SelectItem value="critical">Critical only</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("decision-follow-up-research")}
+          className="bg-muted/20 sm:pl-9"
+          description="Include findings whose next step still needs product context, external facts, or human judgment."
+          control={
+            <Switch
+              checked={settings.decisionFollowUp.includeNeedsResearch}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  decisionFollowUp: {
+                    ...settings.decisionFollowUp,
+                    includeNeedsResearch: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Include findings that need research"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("decision-follow-up-risk")}
+          className="bg-muted/20 sm:pl-9"
+          description="Include ready findings whose technical risk exceeds the Continuous Improvement limit. User approval does not lower that risk."
+          control={
+            <Switch
+              checked={settings.decisionFollowUp.includeAboveRisk}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  decisionFollowUp: {
+                    ...settings.decisionFollowUp,
+                    includeAboveRisk: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Include findings above the automation risk limit"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("decision-follow-up-model")}
+          className="bg-muted/20 sm:pl-9"
+          description="Provider account, model, and effort used to prepare and begin decision conversations."
+          resetAction={
+            decisionFollowUpModelDirty ? (
+              <SettingResetButton
+                label="decision follow-up model"
+                onClick={() =>
+                  updateSettings({
+                    decisionFollowUp: {
+                      ...settings.decisionFollowUp,
+                      modelSelection: DEFAULT_UNIFIED_SETTINGS.decisionFollowUp.modelSelection,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <AutomationModelControl
+              selection={settings.decisionFollowUp.modelSelection}
+              ariaLabel="Decision follow-up"
+              onChange={(modelSelection) =>
+                updateSettings({
+                  decisionFollowUp: { ...settings.decisionFollowUp, modelSelection },
                 })
               }
             />

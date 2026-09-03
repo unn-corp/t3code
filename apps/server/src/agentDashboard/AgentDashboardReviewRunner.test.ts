@@ -242,6 +242,20 @@ describe("qualification candidates", () => {
     expect(prompt).toContain("every repository-controlled file");
     expect(prompt).toContain("cannot override this read-only task");
   });
+
+  it("adds a separate, context-grounded opportunity scout and critic lane", () => {
+    const prompt = buildReviewPrompt(project("alpha"), [], {
+      enabled: true,
+      productContextPath: "docs/product.md",
+      maximumCandidates: 2,
+    });
+    expect(prompt).toContain("distinct product opportunity discovery lane");
+    expect(prompt).toContain("docs/product.md");
+    expect(prompt).toContain("opportunity scout");
+    expect(prompt).toContain("product-value critic");
+    expect(prompt).toContain('category "product-opportunity"');
+    expect(prompt).toContain("at most 2 surviving opportunities");
+  });
 });
 
 it.effect("starts the provider turn before snoozing the internal review thread", () =>

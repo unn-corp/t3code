@@ -115,6 +115,61 @@ describe("ServerSettings continuous improvement", () => {
     });
   });
 
+  it("keeps product opportunity discovery and decision follow-up opt-in", () => {
+    expect(decodeServerSettings({}).productOpportunityDiscovery).toEqual({
+      enabled: false,
+      maximumCandidates: 2,
+    });
+    expect(decodeServerSettings({}).decisionFollowUp).toEqual({
+      enabled: false,
+      intervalMinutes: 360,
+      reminderDays: 7,
+      maximumConversationsPerRun: 3,
+      minimumSeverity: "medium",
+      includeNeedsResearch: true,
+      includeAboveRisk: true,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoningEffort", value: "xhigh" }],
+      },
+    });
+
+    expect(
+      decodeServerSettingsPatch({
+        productOpportunityDiscovery: { enabled: true, maximumCandidates: 4 },
+        decisionFollowUp: {
+          enabled: true,
+          intervalMinutes: 60,
+          reminderDays: 14,
+          maximumConversationsPerRun: 5,
+          minimumSeverity: "high",
+          includeNeedsResearch: false,
+        },
+      }),
+    ).toMatchObject({
+      productOpportunityDiscovery: { enabled: true, maximumCandidates: 4 },
+      decisionFollowUp: {
+        enabled: true,
+        intervalMinutes: 60,
+        reminderDays: 14,
+        maximumConversationsPerRun: 5,
+        minimumSeverity: "high",
+        includeNeedsResearch: false,
+      },
+    });
+  });
+
+  it.each([
+    { productOpportunityDiscovery: { maximumCandidates: 0 } },
+    { productOpportunityDiscovery: { maximumCandidates: 7 } },
+    { decisionFollowUp: { intervalMinutes: 14 } },
+    { decisionFollowUp: { reminderDays: 0 } },
+    { decisionFollowUp: { maximumConversationsPerRun: 11 } },
+  ])("rejects an invalid discovery or decision policy: %o", (patch) => {
+    expect(() => decodeServerSettingsPatch(patch)).toThrow();
+  });
+
   it("accepts qualification cadence and implementation guardrails", () => {
     expect(
       decodeServerSettingsPatch({

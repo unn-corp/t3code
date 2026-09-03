@@ -12,22 +12,30 @@ import {
   deriveProjectGroupingOverrideKey,
   selectProjectGroupingSettings,
 } from "../../logicalProject";
-import type {
-  ContextMenuItem,
-  AgentDashboardAutomationKind,
-  GitHubAccountId,
-  ModelSelection,
-  ProviderDriverKind,
-  SidebarProjectGroupingMode,
-  T3ProjectFileScript,
-  ThreadEnvMode,
+import {
+  DEFAULT_RUNTIME_MODE,
+  type AgentDashboardAutomationKind,
+  type ContextMenuItem,
+  type GitHubAccountId,
+  type ModelSelection,
+  type ProviderDriverKind,
+  type SidebarProjectGroupingMode,
+  type T3ProjectFileScript,
+  type ThreadEnvMode,
 } from "@t3tools/contracts";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CopyIcon,
+  MessageCircleQuestionIcon,
+  PlusIcon,
+  SettingsIcon,
+  Trash2Icon,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -49,6 +57,7 @@ import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
+import { newMessageId, newThreadId } from "../../lib/utils";
 import { readLocalApi } from "../../localApi";
 import {
   buildProjectScript,
@@ -73,6 +82,7 @@ import { useProjects, useThreadShells } from "../../state/entities";
 import { agentDashboardEnvironment } from "../../state/agentDashboard";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
+import { threadEnvironment } from "../../state/threads";
 import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -120,6 +130,8 @@ import {
 } from "./ProjectFaviconPickerDialog";
 import {
   enabledProjectAutomationKinds,
+  buildProductDiscoveryConversationPrompt,
+  isValidProductContextPath,
   PROJECT_AUTOMATION_KINDS,
   projectGroupTitleNeedsUpdate,
 } from "./ProjectSettingsPanel.logic";
@@ -145,6 +157,18 @@ const PROJECT_AUTOMATION_SETTINGS = [
     title: "Inactive worktree cleanup",
     description:
       "Removes inactive, clean worktrees only after confirming their current commit is saved on the configured remote.",
+  },
+  {
+    kind: "product-opportunity-discovery",
+    title: "Product opportunity discovery",
+    description:
+      "Uses confirmed product context to find evidence-backed UX, workflow, and capability improvements.",
+  },
+  {
+    kind: "decision-follow-up",
+    title: "Decision follow-up",
+    description:
+      "Starts read-only conversations about findings that need product direction or exceed automation risk.",
   },
 ] as const satisfies ReadonlyArray<{
   kind: AgentDashboardAutomationKind;
@@ -338,6 +362,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const updateAutomationPolicy = useAtomCommand(agentDashboardEnvironment.updateRepositoryPolicy, {
     reportFailure: false,
   });
+  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
@@ -375,6 +400,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     (policy) => String(policy.repository.projectId) === String(representative.id),
   );
   const enabledAutomationKinds = enabledProjectAutomationKinds(automationPolicy);
+  const productContextPath = automationPolicy?.productContextPath ?? "PRODUCT.md";
+  const productContextConfirmedAt = automationPolicy?.productContextConfirmedAt ?? null;
   const faviconPath = representative.faviconPath ?? null;
   const pickProjectFavicon =
     typeof window !== "undefined" &&
@@ -394,17 +421,20 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     }
     return counts;
   }, [threads]);
-  const reportFailure = useCallback((title: string, result: AtomCommandResult<void, unknown>) => {
-    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-    const error = squashAtomCommandFailure(result);
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title,
-        description: error instanceof Error ? error.message : "An error occurred.",
-      }),
-    );
-  }, []);
+  const reportFailure = useCallback(
+    (title: string, result: AtomCommandResult<unknown, unknown>) => {
+      if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title,
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+    [],
+  );
 
   const [isSavingAutomations, setIsSavingAutomations] = useState(false);
   const savingAutomationsRef = useRef(false);
@@ -464,6 +494,45 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       reportFailure,
       updateAutomationPolicy,
     ],
+  );
+
+  const [isSavingProductContext, setIsSavingProductContext] = useState(false);
+  const savingProductContextRef = useRef(false);
+  const [isStartingProductDiscovery, setIsStartingProductDiscovery] = useState(false);
+  const updateProductContextPolicy = useCallback(
+    async (input: {
+      readonly productContextPath?: string;
+      readonly productContextConfirmedAt?: string | null;
+    }) => {
+      if (savingProductContextRef.current) return;
+      savingProductContextRef.current = true;
+      setIsSavingProductContext(true);
+      try {
+        const updatedAt = new Date().toISOString();
+        for (const member of group.memberProjects) {
+          const result = mapAtomCommandResult(
+            await updateAutomationPolicy({
+              environmentId: member.environmentId,
+              input: {
+                repository: { projectId: member.id },
+                ...input,
+                updatedAt,
+              },
+            }),
+            () => undefined,
+          );
+          if (result._tag === "Failure") {
+            reportFailure("Failed to update product context", result);
+            return;
+          }
+        }
+        await automationSnapshot.refresh();
+      } finally {
+        savingProductContextRef.current = false;
+        setIsSavingProductContext(false);
+      }
+    },
+    [automationSnapshot, group.memberProjects, reportFailure, updateAutomationPolicy],
   );
 
   // Group-shared fields live on each physical project record, so a
@@ -543,6 +612,78 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     [resolvedInstanceId, resolvedModel, serverProviders, settings],
   );
   const activeEntry = instanceEntries.find((entry) => entry.instanceId === resolvedInstanceId);
+  const startProductDiscoveryConversation = useCallback(async () => {
+    if (isStartingProductDiscovery) return;
+    if (!resolvedSelection || resolvedSelection.model.trim().length === 0) {
+      toastManager.add({
+        type: "error",
+        title: "Enable an agent provider first",
+        description: "Choose and authenticate a provider before starting product discovery.",
+      });
+      return;
+    }
+    setIsStartingProductDiscovery(true);
+    try {
+      const threadId = newThreadId();
+      const createdAt = new Date().toISOString();
+      const title = `Discover product: ${representative.title}`.slice(0, 80);
+      const result = await startThreadTurn({
+        environmentId: representative.environmentId,
+        input: {
+          threadId,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: buildProductDiscoveryConversationPrompt({
+              projectName: representative.title,
+              workspaceRoot: representative.workspaceRoot,
+              productContextPath,
+              hasConfirmedContext: productContextConfirmedAt !== null,
+            }),
+            attachments: [],
+          },
+          modelSelection: resolvedSelection,
+          titleSeed: title,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: "default",
+          bootstrap: {
+            createThread: {
+              projectId: representative.id,
+              title,
+              modelSelection: resolvedSelection,
+              runtimeMode: DEFAULT_RUNTIME_MODE,
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+            },
+          },
+          createdAt,
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          reportFailure("Could not start product discovery", result);
+        }
+        return;
+      }
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: representative.environmentId, threadId },
+      });
+    } finally {
+      setIsStartingProductDiscovery(false);
+    }
+  }, [
+    isStartingProductDiscovery,
+    navigate,
+    productContextConfirmedAt,
+    productContextPath,
+    representative,
+    reportFailure,
+    resolvedSelection,
+    startThreadTurn,
+  ]);
   const setDefaultModel = useCallback(
     (selection: ModelSelection | null) =>
       void updateAllMembers({ defaultModelSelection: selection }, "Failed to update default model"),
@@ -944,6 +1085,76 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   Choose file
                 </Button>
               </div>
+            }
+          />
+        </SettingsSection>
+
+        <SettingsSection title="Product context">
+          <SettingsRow
+            title="Product document"
+            description="Repository-relative Markdown used to ground product opportunity discovery. Changing the path clears confirmation."
+            control={
+              <Input
+                key={`${group.projectKey}:${productContextPath}`}
+                className="w-full font-mono sm:w-64"
+                aria-label="Product context document path"
+                defaultValue={productContextPath}
+                disabled={isSavingProductContext}
+                onBlur={(event) => {
+                  const nextPath = event.currentTarget.value.trim();
+                  if (nextPath === productContextPath) return;
+                  if (!isValidProductContextPath(nextPath)) {
+                    event.currentTarget.value = productContextPath;
+                    toastManager.add({
+                      type: "warning",
+                      title: "Use a repository-relative Markdown path",
+                    });
+                    return;
+                  }
+                  void updateProductContextPolicy({
+                    productContextPath: nextPath,
+                    productContextConfirmedAt: null,
+                  });
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
+            }
+          />
+          <SettingsRow
+            title="Confirmed for automation"
+            description={
+              productContextConfirmedAt
+                ? `Confirmed ${new Date(productContextConfirmedAt).toLocaleString()}.`
+                : "Opportunity discovery stays inactive until a user confirms this document."
+            }
+            control={
+              <Switch
+                checked={productContextConfirmedAt !== null}
+                disabled={isSavingProductContext}
+                onCheckedChange={(checked) =>
+                  void updateProductContextPolicy({
+                    productContextConfirmedAt: checked ? new Date().toISOString() : null,
+                  })
+                }
+                aria-label="Confirm product context for automation"
+              />
+            }
+          />
+          <SettingsRow
+            title="Discover with AI"
+            description="Starts a repository-informed interview, maintains a living draft, and asks before writing the product document."
+            control={
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={isStartingProductDiscovery}
+                onClick={() => void startProductDiscoveryConversation()}
+              >
+                <MessageCircleQuestionIcon className="size-3.5" />
+                {productContextConfirmedAt ? "Review with AI" : "Start conversation"}
+              </Button>
             }
           />
         </SettingsSection>

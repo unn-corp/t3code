@@ -336,6 +336,58 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/automation",
   },
   {
+    id: "product-opportunity-discovery",
+    title: "Product opportunity discovery",
+    to: "/settings/automation",
+    searchTerms: ["product ux workflow capability improvement PRODUCT.md"],
+  },
+  {
+    id: "product-opportunity-limit",
+    title: "Product opportunities per review",
+    to: "/settings/automation",
+  },
+  {
+    id: "decision-follow-up",
+    title: "Decision follow-up",
+    to: "/settings/automation",
+    searchTerms: ["conversation human input risk opportunity finding"],
+  },
+  {
+    id: "decision-follow-up-interval",
+    title: "Decision follow-up interval",
+    to: "/settings/automation",
+  },
+  {
+    id: "decision-follow-up-reminders",
+    title: "Decision reminder interval",
+    to: "/settings/automation",
+  },
+  {
+    id: "decision-follow-up-limit",
+    title: "Decision conversations per scan",
+    to: "/settings/automation",
+  },
+  {
+    id: "decision-follow-up-severity",
+    title: "Decision follow-up minimum severity",
+    to: "/settings/automation",
+  },
+  {
+    id: "decision-follow-up-research",
+    title: "Decision follow-up for research",
+    to: "/settings/automation",
+  },
+  {
+    id: "decision-follow-up-risk",
+    title: "Decision follow-up for risk",
+    to: "/settings/automation",
+  },
+  {
+    id: "decision-follow-up-model",
+    title: "Decision follow-up model",
+    to: "/settings/automation",
+  },
+  {
     id: "repository-review",
     title: "Scheduled discovery and qualification",
     to: "/settings/automation",
