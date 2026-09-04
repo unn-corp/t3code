@@ -1,4 +1,8 @@
 // @effect-diagnostics globalDate:off - schedule normalization is intentionally tested with fixed timestamps.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { it } from "@effect/vitest";
 import {
   ProjectId,
@@ -9,6 +13,7 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
 import * as Ref from "effect/Ref";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { expect } from "vite-plus/test";
@@ -29,6 +34,76 @@ it("starts consolidated portfolio coverage immediately on a two-hour cadence", (
     lastSuccessfulTypes: [],
   });
 });
+
+it.effect("preserves malformed schedule bytes and reports paused recovery", () =>
+  Effect.gen(function* () {
+    const logs: Array<{ readonly message: unknown }> = [];
+    const logger = Logger.make(({ message }) => {
+      logs.push({ message });
+    });
+
+    const stateDir = yield* Effect.promise(() =>
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-review-schedule-")),
+    );
+    const schedulePath = NodePath.join(stateDir, "agent-dashboard", "review-schedule.json");
+    const malformed = '{"lastStatus":"completed",';
+
+    yield* Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.dirname(schedulePath), { recursive: true }),
+      );
+      yield* Effect.promise(() => NodeFSP.writeFile(schedulePath, malformed, "utf8"));
+
+      const schedule = yield* AgentDashboardReviewScheduler.readPersistedStatus(stateDir).pipe(
+        Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+      );
+
+      expect(schedule).toMatchObject({
+        enabled: false,
+        lastStatus: "failed",
+        lastError: expect.stringContaining("decode"),
+      });
+      expect(Date.parse(schedule.nextRunAt)).toBeGreaterThan(Date.now());
+      expect(yield* Effect.promise(() => NodeFSP.readFile(schedulePath, "utf8"))).toBe(malformed);
+      expect(logs.map(({ message }) => String(message)).join("\n")).toContain("decode");
+    }).pipe(
+      Effect.ensuring(Effect.promise(() => NodeFSP.rm(stateDir, { recursive: true, force: true }))),
+    );
+  }),
+);
+
+it.effect("preserves unreadable schedule state and reports paused recovery", () =>
+  Effect.gen(function* () {
+    const logs: Array<{ readonly message: unknown }> = [];
+    const logger = Logger.make(({ message }) => {
+      logs.push({ message });
+    });
+
+    const stateDir = yield* Effect.promise(() =>
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-review-schedule-")),
+    );
+    const schedulePath = NodePath.join(stateDir, "agent-dashboard", "review-schedule.json");
+
+    yield* Effect.gen(function* () {
+      yield* Effect.promise(() => NodeFSP.mkdir(schedulePath, { recursive: true }));
+
+      const schedule = yield* AgentDashboardReviewScheduler.readPersistedStatus(stateDir).pipe(
+        Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+      );
+
+      expect(schedule).toMatchObject({
+        enabled: false,
+        lastStatus: "failed",
+        lastError: expect.stringContaining("read"),
+      });
+      expect(Date.parse(schedule.nextRunAt)).toBeGreaterThan(Date.now());
+      expect((yield* Effect.promise(() => NodeFSP.stat(schedulePath))).isDirectory()).toBe(true);
+      expect(logs.map(({ message }) => String(message)).join("\n")).toContain("read");
+    }).pipe(
+      Effect.ensuring(Effect.promise(() => NodeFSP.rm(stateDir, { recursive: true, force: true }))),
+    );
+  }),
+);
 
 it("makes an interrupted T3 review due immediately after restart", () => {
   const schedule = AgentDashboardReviewScheduler.__testing.normalizeSchedule(

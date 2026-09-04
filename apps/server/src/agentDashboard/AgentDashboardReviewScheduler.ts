@@ -124,6 +124,30 @@ const defaultSchedule = (now = Date.now()): AgentDashboardReviewSchedule => ({
   lastUnavailableCollectorCount: 0,
 });
 
+type ScheduleRecoveryKind = "malformed" | "unreadable";
+
+type ScheduleReadResult =
+  | { readonly kind: "missing"; readonly schedule: AgentDashboardReviewSchedule }
+  | { readonly kind: "valid"; readonly schedule: AgentDashboardReviewSchedule }
+  | { readonly kind: "malformed"; readonly cause: unknown }
+  | { readonly kind: "unreadable"; readonly cause: unknown };
+
+const scheduleRecoveryMessage = (kind: ScheduleRecoveryKind): string =>
+  kind === "malformed"
+    ? "T3 could not decode the findings portfolio schedule; scheduling is paused until the file is repaired."
+    : "T3 could not read the findings portfolio schedule; scheduling is paused until the file is readable.";
+
+const recoverySchedule = (
+  kind: ScheduleRecoveryKind,
+  now = Date.now(),
+): AgentDashboardReviewSchedule => ({
+  ...defaultSchedule(now),
+  enabled: false,
+  nextRunAt: isoAt(now + DEFAULT_INTERVAL_MS),
+  lastStatus: "failed",
+  lastError: scheduleRecoveryMessage(kind),
+});
+
 const normalizeSchedule = (value: unknown, now = Date.now()): AgentDashboardReviewSchedule => {
   const raw = asObject(value);
   if (!raw) return defaultSchedule(now);
@@ -179,25 +203,74 @@ const writeAtomic = async (path: string, value: AgentDashboardReviewSchedule): P
   await NodeFSP.rename(temporary, path);
 };
 
-const readSchedule = async (path: string): Promise<AgentDashboardReviewSchedule> => {
+const readSchedule = async (path: string): Promise<ScheduleReadResult> => {
+  let raw: string;
   try {
-    return normalizeSchedule(JSON.parse(await NodeFSP.readFile(path, "utf8")));
+    raw = await NodeFSP.readFile(path, "utf8");
   } catch (cause) {
     const code = asObject(cause)?.code;
-    if (code === "ENOENT") return defaultSchedule();
-    // A truncated or hand-edited schedule must not disable the job forever.
-    return defaultSchedule();
+    if (code === "ENOENT") return { kind: "missing", schedule: defaultSchedule() };
+    return { kind: "unreadable", cause };
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (asObject(parsed) === null) {
+      throw new TypeError("The findings portfolio schedule must contain a JSON object.");
+    }
+    return { kind: "valid", schedule: normalizeSchedule(parsed) };
+  } catch (cause) {
+    return { kind: "malformed", cause };
   }
 };
+
+const reportScheduleRecovery = (
+  path: string,
+  result: Extract<ScheduleReadResult, { readonly kind: ScheduleRecoveryKind }>,
+) =>
+  Effect.logWarning(scheduleRecoveryMessage(result.kind), {
+    path,
+    recovery: result.kind,
+    scheduling: "paused",
+    cause: result.cause,
+  });
+
+const scheduleFromReadResult = (path: string, result: ScheduleReadResult) =>
+  Effect.gen(function* () {
+    switch (result.kind) {
+      case "missing":
+      case "valid":
+        return result.schedule;
+      case "malformed":
+      case "unreadable":
+        yield* reportScheduleRecovery(path, result);
+        return recoverySchedule(result.kind);
+      default: {
+        const exhaustive: never = result;
+        return exhaustive;
+      }
+    }
+  });
+
+const isScheduleRecovery = (
+  result: ScheduleReadResult,
+): result is Extract<ScheduleReadResult, { readonly kind: ScheduleRecoveryKind }> =>
+  result.kind === "malformed" || result.kind === "unreadable";
 
 /** Read-only status access for dashboard snapshots; the scheduler itself owns writes. */
 export const readPersistedStatus = (
   stateDir: string,
 ): Effect.Effect<AgentDashboardReviewSchedule> =>
-  Effect.tryPromise({
-    try: () => readSchedule(NodePath.join(stateDir, "agent-dashboard", "review-schedule.json")),
-    catch: () => undefined,
-  }).pipe(Effect.orElseSucceed(() => defaultSchedule()));
+  Effect.promise(() =>
+    readSchedule(NodePath.join(stateDir, "agent-dashboard", "review-schedule.json")),
+  ).pipe(
+    Effect.flatMap((result) =>
+      scheduleFromReadResult(
+        NodePath.join(stateDir, "agent-dashboard", "review-schedule.json"),
+        result,
+      ),
+    ),
+  );
 
 const scheduleStatusFromRun = (
   run: AgentDashboardAutomationRun,
@@ -304,17 +377,18 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const schedulerScope = yield* Effect.scope;
   const schedulePath = NodePath.join(config.stateDir, "agent-dashboard", "review-schedule.json");
-  const stateRef = yield* SynchronizedRef.make<AgentDashboardReviewSchedule>(
-    yield* Effect.tryPromise({
-      try: () => readSchedule(schedulePath),
-      catch: (cause) =>
-        new AgentDashboardReviewSchedulerError({
-          operation: "read schedule",
-          message: "Failed to initialize the T3 findings portfolio schedule.",
-          cause,
-        }),
-    }),
-  );
+  const initialRead = yield* Effect.tryPromise({
+    try: () => readSchedule(schedulePath),
+    catch: (cause) =>
+      new AgentDashboardReviewSchedulerError({
+        operation: "read schedule",
+        message: "Failed to initialize the T3 findings portfolio schedule.",
+        cause,
+      }),
+  });
+  const recoveryBlocked = isScheduleRecovery(initialRead);
+  const initial = yield* scheduleFromReadResult(schedulePath, initialRead);
+  const stateRef = yield* SynchronizedRef.make<AgentDashboardReviewSchedule>(initial);
 
   const persist = (state: AgentDashboardReviewSchedule) =>
     Effect.tryPromise({
@@ -327,8 +401,7 @@ const make = Effect.gen(function* () {
         }),
     });
 
-  const initial = yield* SynchronizedRef.get(stateRef);
-  yield* persist(initial);
+  if (!recoveryBlocked) yield* persist(yield* SynchronizedRef.get(stateRef));
 
   const collectPortfolio = (observedAt: string) =>
     Effect.gen(function* () {
@@ -404,6 +477,7 @@ const make = Effect.gen(function* () {
 
   const run = (force: boolean): AgentDashboardReviewSchedulerService["runNow"] =>
     Effect.gen(function* () {
+      if (recoveryBlocked) return null;
       const automationSettings = yield* settings.getSettings.pipe(
         Effect.map((current) => current.repositoryReview),
         Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.repositoryReview),
@@ -547,6 +621,7 @@ const make = Effect.gen(function* () {
   const runScheduled = run(false).pipe(Effect.asVoid);
 
   const touchHeartbeat = Effect.gen(function* () {
+    if (recoveryBlocked) return;
     const automationSettings = yield* settings.getSettings.pipe(
       Effect.map((current) => current.repositoryReview),
       Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.repositoryReview),

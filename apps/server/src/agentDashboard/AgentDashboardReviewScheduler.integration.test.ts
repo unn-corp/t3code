@@ -199,4 +199,96 @@ describe("AgentDashboardReviewScheduler portfolio collection", () => {
       }
     }),
   );
+
+  it.effect("pauses on corrupt state and resumes a repaired schedule without enqueueing", () =>
+    Effect.promise(async () => {
+      const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-review-schedule-"));
+      const stateDir = NodePath.join(baseDir, "userdata");
+      const schedulePath = NodePath.join(stateDir, "agent-dashboard", "review-schedule.json");
+      const repositoryPath = NodePath.join(baseDir, "repository");
+      const malformed = '{"lastStatus":"completed",';
+      const project = makeProject(repositoryPath);
+      const run = completedReviewRun();
+      let enqueueCount = 0;
+      const reviewJobs = Layer.succeed(
+        AgentDashboardReviewJobService.AgentDashboardReviewJobService,
+        {
+          listRuns: Effect.succeed([]),
+          enqueueReview: () => {
+            enqueueCount += 1;
+            return Effect.succeed(run);
+          },
+          retryRun: () => Effect.succeed(run),
+        },
+      );
+
+      const makeSchedulerLayer = () =>
+        AgentDashboardReviewScheduler.layer.pipe(
+          Layer.provide(reviewJobs),
+          Layer.provide(makeProjection(project)),
+          Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provideMerge(NodeServices.layer),
+        );
+
+      try {
+        await NodeFSP.mkdir(NodePath.dirname(schedulePath), { recursive: true });
+        await NodeFSP.writeFile(schedulePath, malformed, "utf8");
+
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            const scheduler = yield* AgentDashboardReviewScheduler.AgentDashboardReviewScheduler;
+            expect(yield* scheduler.runNow).toBeNull();
+            expect(yield* scheduler.getStatus).toMatchObject({
+              enabled: false,
+              lastStatus: "failed",
+            });
+          }).pipe(Effect.scoped, Effect.provide(makeSchedulerLayer())),
+        );
+
+        expect(await NodeFSP.readFile(schedulePath, "utf8")).toBe(malformed);
+        expect(enqueueCount).toBe(0);
+
+        await NodeFSP.writeFile(
+          schedulePath,
+          `${JSON.stringify({
+            id: "t3-findings-portfolio",
+            enabled: true,
+            nextRunAt: "2099-01-01T00:00:00.000Z",
+            lastStatus: "completed",
+            lastError: "The previous portfolio cycle completed.",
+            lastTarget: "Portfolio",
+            heartbeatAt: "2098-12-31T23:00:00.000Z",
+            runCount: 7,
+            lastCoveredTypes: ["operations"],
+            lastSuccessfulTypes: ["operations"],
+            lastFindingCount: 4,
+            lastReviewRunId: "previous-review-run",
+            lastUnavailableCollectorCount: 1,
+          })}\n`,
+          "utf8",
+        );
+
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            const scheduler = yield* AgentDashboardReviewScheduler.AgentDashboardReviewScheduler;
+            expect(yield* scheduler.getStatus).toMatchObject({
+              enabled: true,
+              nextRunAt: "2099-01-01T00:00:00.000Z",
+              runCount: 7,
+              lastReviewRunId: "previous-review-run",
+            });
+          }).pipe(Effect.scoped, Effect.provide(makeSchedulerLayer())),
+        );
+
+        expect(enqueueCount).toBe(0);
+        expect(await NodeFSP.readFile(schedulePath, "utf8")).toContain('"runCount": 7');
+        expect(await NodeFSP.readFile(schedulePath, "utf8")).toContain(
+          '"lastReviewRunId": "previous-review-run"',
+        );
+      } finally {
+        await NodeFSP.rm(baseDir, { recursive: true, force: true });
+      }
+    }),
+  );
 });
