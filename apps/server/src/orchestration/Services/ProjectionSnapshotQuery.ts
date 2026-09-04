@@ -18,7 +18,6 @@ import type {
   OrchestrationShellSnapshot,
   OrchestrationThreadActivity,
   OrchestrationThread,
-  OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,

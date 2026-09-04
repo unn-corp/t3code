@@ -1,6 +1,7 @@
 import {
   EventId,
   MessageId,
+  UserInputRequestedPayload,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
