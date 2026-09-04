@@ -308,7 +308,7 @@ export function OpenWhisprVoiceInput({
   return (
     <ComposerControl
       type="button"
-      size="icon-sm"
+      size="sm"
       variant="ghost"
       className="chat-voice-control size-14 overflow-visible rounded-full"
       disabled={

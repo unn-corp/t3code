@@ -18,6 +18,7 @@ const RIGHT_PANEL_SHEET_DEFAULT_WIDTH = 420;
 const RIGHT_PANEL_SHEET_MAX_WIDTH_FRACTION = 0.96;
 
 export function RightPanelSheet(props: {
+  animationDurationMs: number;
   children: ReactNode;
   open: boolean;
   maximized: boolean;
@@ -42,6 +43,7 @@ export function RightPanelSheet(props: {
       }}
     >
       <SheetPopup
+        transitionDurationMs={props.animationDurationMs}
         side="right"
         showCloseButton={false}
         keepMounted

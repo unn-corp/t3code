@@ -1,5 +1,5 @@
 import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
-import type { EnvironmentId, GitHubAccountId } from "@t3tools/contracts";
+import type { EnvironmentId, GitHubAccountId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
@@ -31,11 +31,14 @@ export function PullRequestMarkdown({
   text,
   cwd,
   environmentId,
+  threadRef,
   className,
 }: {
   text: string;
   cwd: string;
   environmentId: EnvironmentId;
+  /** Thread the body is shown beside, so its links can open in that thread's in-app browser. */
+  threadRef?: ScopedThreadRef | null;
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
@@ -53,6 +56,7 @@ export function PullRequestMarkdown({
               key={segment.id}
               text={segment.text}
               cwd={cwd}
+              threadRef={threadRef ?? undefined}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
             />

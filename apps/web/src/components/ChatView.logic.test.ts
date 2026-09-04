@@ -1,36 +1,45 @@
 import {
+  CheckpointRef,
   EnvironmentId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { Thread, ThreadShell } from "../types";
+import type { Thread, ThreadShell, TurnDiffSummary } from "../types";
+import type { TimelineEntry } from "../session-logic";
+import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import type { RightPanelSurface } from "../rightPanelStore";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  agentControlledBrowserCloseConfirmation,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
+  buildRevertTurnCountByUserMessageId,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   deriveLockedProvider,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
+  getAntigravitySendBlockReason,
   getStartedThreadModelChangeBlockReason,
-  isVideoPreviewRequestCurrent,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
+  resolveComposerInteractionMode,
+  resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
@@ -41,16 +50,243 @@ import {
   codexArtifactTemplatePromptToAppend,
   shouldDockDraftHeroForSubmission,
   shouldReleaseTimelineAnchorForToolActivity,
+  shouldOpenProactivePullRequest,
+  shouldOpenProactiveTurnDiff,
+  shouldRenderPreviewMiniPlayer,
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
+  toolGroupConsumesUpwardNavigation,
 } from "./ChatView.logic";
 
-describe("isVideoPreviewRequestCurrent", () => {
-  it("rejects changed threads and replaced previews", () => {
-    expect(isVideoPreviewRequestCurrent("thread-1", "thread-2", 1, 1)).toBe(false);
-    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 1, 2)).toBe(false);
-    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 2, 2)).toBe(true);
+describe("agent browser close confirmation", () => {
+  const surfaces = [
+    { id: "browser:one", kind: "preview", resourceId: "tab-1" },
+    { id: "browser:two", kind: "preview", resourceId: "tab-2" },
+    { id: "diff", kind: "diff" },
+  ] satisfies RightPanelSurface[];
+
+  it("only warns for browsers under active agent control", () => {
+    expect(
+      agentControlledBrowserCloseConfirmation(surfaces, {
+        "tab-1": { controller: "none" },
+        "tab-2": { controller: "human" },
+      }),
+    ).toBeNull();
+
+    expect(
+      agentControlledBrowserCloseConfirmation([surfaces[0]!], {
+        "tab-1": { controller: "agent" },
+      }),
+    ).toBe(
+      [
+        "Close browser while the agent is using it?",
+        "The agent is actively controlling this browser. Closing it may interrupt the current browser action.",
+      ].join("\n"),
+    );
+  });
+
+  it("counts every agent-controlled browser in a bulk close", () => {
+    expect(
+      agentControlledBrowserCloseConfirmation(surfaces, {
+        "tab-1": { controller: "agent" },
+        "tab-2": { controller: "agent" },
+      }),
+    ).toContain("Close 2 browsers");
+  });
+});
+
+describe("floating browser preview", () => {
+  it("only hides the duplicate while the same browser is rendered in the panel", () => {
+    expect(shouldRenderPreviewMiniPlayer(null, null)).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayer("tab-1", {
+        id: "browser:one",
+        kind: "preview",
+        resourceId: "tab-1",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayer("tab-1", {
+        id: "browser:two",
+        kind: "preview",
+        resourceId: "tab-2",
+      }),
+    ).toBe(true);
+    expect(shouldRenderPreviewMiniPlayer("tab-1", { id: "diff", kind: "diff" })).toBe(true);
+  });
+});
+
+describe("proactive panels", () => {
+  it("opens a pull request only after a newly observed link appears", () => {
+    expect(shouldOpenProactivePullRequest(undefined, "project:repo:42")).toBe(false);
+    expect(shouldOpenProactivePullRequest(null, "project:repo:42")).toBe(true);
+    expect(shouldOpenProactivePullRequest("project:repo:42", "project:repo:42")).toBe(false);
+    expect(shouldOpenProactivePullRequest("project:repo:42", null)).toBe(false);
+  });
+
+  it("opens the diff only when the observed running turn settles", () => {
+    const turnId = TurnId.make("turn-1");
+    expect(
+      shouldOpenProactiveTurnDiff({
+        previousRunningTurnId: undefined,
+        runningTurnId: null,
+        settledTurnId: turnId,
+        turnCompleted: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldOpenProactiveTurnDiff({
+        previousRunningTurnId: turnId,
+        runningTurnId: null,
+        settledTurnId: turnId,
+        turnCompleted: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldOpenProactiveTurnDiff({
+        previousRunningTurnId: turnId,
+        runningTurnId: TurnId.make("turn-2"),
+        settledTurnId: turnId,
+        turnCompleted: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldOpenProactiveTurnDiff({
+        previousRunningTurnId: turnId,
+        runningTurnId: null,
+        settledTurnId: turnId,
+        turnCompleted: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("toolGroupConsumesUpwardNavigation", () => {
+  class ScrollElement extends EventTarget {
+    scrollTop = 0;
+    scrollHeight = 100;
+    clientHeight = 100;
+    overflowY = "visible";
+
+    constructor(
+      readonly parentElement: ScrollElement | null = null,
+      readonly isToolGroup = false,
+    ) {
+      super();
+    }
+
+    closest(selector: string): ScrollElement | null {
+      if (selector !== "[data-tool-group-scroll]") return null;
+      return this.isToolGroup ? this : (this.parentElement?.closest(selector) ?? null);
+    }
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("Element", ScrollElement);
+    vi.stubGlobal("getComputedStyle", (element: ScrollElement) => ({
+      overflowY: element.overflowY,
+    }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("releases upward navigation when an overflowing group is at the top", () => {
+    const group = Object.assign(new ScrollElement(null, true), {
+      overflowY: "auto",
+      scrollHeight: 300,
+    });
+
+    expect(toolGroupConsumesUpwardNavigation(new ScrollElement(group))).toBe(false);
+  });
+
+  it.each([
+    { overflowY: "auto", scrollTop: 1 },
+    { overflowY: "auto", scrollTop: 0.25 },
+    { overflowY: "scroll", scrollTop: 80 },
+  ])("consumes upward navigation within a scrolled group: %j", (scroll) => {
+    const group = Object.assign(new ScrollElement(null, true), {
+      scrollHeight: 300,
+      ...scroll,
+    });
+
+    expect(toolGroupConsumesUpwardNavigation(group)).toBe(true);
+  });
+
+  it.each([100, 300])(
+    "consumes scrolling in a nested result with a group content height of %i",
+    (scrollHeight) => {
+      const group = Object.assign(new ScrollElement(null, true), {
+        overflowY: "auto",
+        scrollHeight,
+      });
+      const result = Object.assign(new ScrollElement(group), {
+        overflowY: "auto",
+        scrollHeight: 300,
+        scrollTop: 0.25,
+      });
+
+      expect(toolGroupConsumesUpwardNavigation(new ScrollElement(result))).toBe(true);
+    },
+  );
+
+  it("releases upward navigation when the group and nested result are both at the top", () => {
+    const group = Object.assign(new ScrollElement(null, true), {
+      overflowY: "auto",
+      scrollHeight: 300,
+    });
+    const result = Object.assign(new ScrollElement(group), {
+      overflowY: "scroll",
+      scrollHeight: 300,
+    });
+
+    expect(toolGroupConsumesUpwardNavigation(new ScrollElement(result))).toBe(false);
+  });
+
+  it("ignores targets outside a tool group and non-element targets", () => {
+    const outside = Object.assign(new ScrollElement(), {
+      overflowY: "auto",
+      scrollHeight: 300,
+      scrollTop: 40,
+    });
+
+    expect(toolGroupConsumesUpwardNavigation(outside)).toBe(false);
+    expect(toolGroupConsumesUpwardNavigation(new EventTarget())).toBe(false);
+    expect(toolGroupConsumesUpwardNavigation(null)).toBe(false);
+  });
+
+  it("does not consume scrolling from an ancestor beyond the tool group", () => {
+    const timeline = Object.assign(new ScrollElement(), {
+      overflowY: "auto",
+      scrollHeight: 300,
+      scrollTop: 40,
+    });
+    const group = new ScrollElement(timeline, true);
+
+    expect(toolGroupConsumesUpwardNavigation(new ScrollElement(group))).toBe(false);
+  });
+
+  it.each(["hidden", "clip", "visible"])(
+    "ignores a non-scrollable child with overflow-y %s",
+    (overflowY) => {
+      const group = new ScrollElement(null, true);
+      const result = Object.assign(new ScrollElement(group), {
+        overflowY,
+        scrollHeight: 300,
+        scrollTop: 40,
+      });
+
+      expect(toolGroupConsumesUpwardNavigation(new ScrollElement(result))).toBe(false);
+    },
+  );
+
+  it("does not consume programmatic scrolling on an overflow-hidden group", () => {
+    const group = Object.assign(new ScrollElement(null, true), {
+      overflowY: "hidden",
+      scrollHeight: 300,
+      scrollTop: 40,
+    });
+
+    expect(toolGroupConsumesUpwardNavigation(group)).toBe(false);
   });
 });
 
@@ -1136,6 +1372,42 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
 
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        ...common,
+        latestTurnStartFailureId: "turn-start-failure-1",
+      }),
+    ).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+
+  it("acknowledges only a new turn-start failure", () => {
+    const localDispatch = {
+      ...createLocalDispatchSnapshot(makeThread()),
+      latestTurnStartFailureId: "turn-start-failure-old",
+    };
+    const common = {
+      localDispatch,
+      phase: "ready" as const,
+      latestTurn: null,
+      latestUserMessageId: localDispatch.latestUserMessageId,
+      session: null,
+      hasPendingApproval: false,
+      hasPendingUserInput: false,
+      threadError: null,
+    };
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        ...common,
+        latestTurnStartFailureId: "turn-start-failure-old",
+      }),
+    ).toBe(false);
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        ...common,
+        latestTurnStartFailureId: "turn-start-failure-new",
+      }),
+    ).toBe(true);
   });
 });

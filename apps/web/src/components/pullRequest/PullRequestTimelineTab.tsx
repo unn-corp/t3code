@@ -5,6 +5,7 @@ import type {
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -57,6 +58,8 @@ import {
 interface ReactionSurface {
   readonly canReact: boolean;
   readonly environmentId: EnvironmentId;
+  /** Thread the timeline is shown beside, so body links can open in its in-app browser. */
+  readonly threadRef: ScopedThreadRef | null;
   readonly reference: PullRequestRef;
   readonly onRefresh: () => void;
 }
@@ -66,16 +69,23 @@ function TimelineBody({
   markdown,
   cwd,
   environmentId,
+  threadRef,
 }: {
   body: string;
   markdown: boolean;
   cwd: string;
   environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef | null;
 }) {
   return (
     <div className="mt-3">
       {markdown ? (
-        <PullRequestMarkdown text={body} cwd={cwd} environmentId={environmentId} />
+        <PullRequestMarkdown
+          text={body}
+          cwd={cwd}
+          environmentId={environmentId}
+          threadRef={threadRef}
+        />
       ) : (
         <p className="whitespace-pre-wrap text-xs text-muted-foreground">{body}</p>
       )}
@@ -253,6 +263,7 @@ function ConversationCard({
             value={editable.body}
             cwd={cwd}
             environmentId={reactions.environmentId}
+            threadRef={reactions.threadRef}
             label="Edit comment"
             saving={saving}
             onSave={(body) => void save(body)}
@@ -266,6 +277,7 @@ function ConversationCard({
             markdown={event.markdown}
             cwd={cwd}
             environmentId={reactions.environmentId}
+            threadRef={reactions.threadRef}
           />
         </div>
       ) : null}
@@ -533,6 +545,7 @@ function ReviewVerdictEvent({
               markdown={event.markdown}
               cwd={cwd}
               environmentId={reactions.environmentId}
+              threadRef={reactions.threadRef}
             />
           ) : null}
         </div>
@@ -545,6 +558,7 @@ function ReviewVerdictEvent({
 export function PullRequestTimelineTab({
   detail,
   environmentId,
+  threadRef = null,
   reference,
   githubAccountId,
   order,
@@ -553,6 +567,7 @@ export function PullRequestTimelineTab({
 }: {
   detail: PullRequestDetailView;
   environmentId: EnvironmentId;
+  threadRef?: ScopedThreadRef | null;
   reference: PullRequestRef;
   githubAccountId?: GitHubAccountId | null;
   order: "newest" | "oldest";
@@ -564,6 +579,7 @@ export function PullRequestTimelineTab({
   const reactions: ReactionSurface = {
     canReact: detail.capabilities.reactions === true,
     environmentId,
+    threadRef,
     reference,
     onRefresh,
   };

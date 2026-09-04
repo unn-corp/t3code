@@ -156,3 +156,50 @@ export function buildSidebarProjectPickerEntries(input: {
     ...entries.slice(preferredIndex + 1),
   ];
 }
+
+/**
+ * Returns one new-thread destination for every physical project member.
+ * Logical grouping is still reflected in the entry metadata, but selecting a
+ * member must retain its environment and project id or clones of one repo
+ * become indistinguishable in the picker.
+ */
+export function buildSidebarProjectMemberPickerEntries(input: {
+  groups: ReadonlyArray<SidebarProjectSnapshot>;
+  preferredProjectRef: ScopedProjectRef | null;
+}): SidebarProjectPickerEntry[] {
+  const preferredProjectRef = input.preferredProjectRef;
+  const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
+    const preferredGroup = preferredProjectRef
+      ? group.memberProjectRefs.some(
+          (projectRef) =>
+            projectRef.environmentId === preferredProjectRef.environmentId &&
+            projectRef.projectId === preferredProjectRef.projectId,
+        )
+      : false;
+    const preferredMember = preferredProjectRef
+      ? (group.memberProjects.find(
+          (project) =>
+            project.environmentId === preferredProjectRef.environmentId &&
+            project.id === preferredProjectRef.projectId,
+        ) ??
+        group.memberProjects.find(
+          (project) => project.environmentId === preferredProjectRef.environmentId,
+        ) ??
+        group.memberProjects[0])
+      : undefined;
+
+    return group.memberProjects.map((targetProject) => ({
+      group,
+      targetProject,
+      isPreferred: preferredGroup && targetProject === preferredMember,
+    }));
+  });
+  const preferredIndex = entries.findIndex((entry) => entry.isPreferred);
+  if (preferredIndex <= 0) return entries;
+
+  return [
+    entries[preferredIndex]!,
+    ...entries.slice(0, preferredIndex),
+    ...entries.slice(preferredIndex + 1),
+  ];
+}

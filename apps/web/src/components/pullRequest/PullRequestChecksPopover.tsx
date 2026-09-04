@@ -4,8 +4,10 @@ import type {
   PullRequestCheck,
   PullRequestChecksState,
   PullRequestRef,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { useOpenLink } from "~/browser/useOpenLink";
 import { readLocalApi } from "~/localApi";
 import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
@@ -15,6 +17,7 @@ import { useProjects } from "~/state/entities";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { toastManager } from "../ui/toast";
 import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
@@ -31,10 +34,12 @@ function LazyChecksBody({
   environmentId,
   reference,
   githubAccountId,
+  threadRef,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   githubAccountId?: GitHubAccountId | null;
+  threadRef: ScopedThreadRef | null;
 }) {
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
@@ -53,6 +58,7 @@ function LazyChecksBody({
     <ChecksBody
       checks={detailQuery.data.checks}
       {...(githubAccountId === undefined ? {} : { githubAccountId })}
+      threadRef={threadRef}
     />
   );
 }
@@ -60,10 +66,13 @@ function LazyChecksBody({
 function ChecksBody({
   checks,
   githubAccountId,
+  threadRef,
 }: {
   checks: ReadonlyArray<PullRequestCheck>;
   githubAccountId?: GitHubAccountId | null;
+  threadRef: ScopedThreadRef | null;
 }) {
+  const openLink = useOpenLink(threadRef);
   if (checks.length === 0) {
     return <p className="text-muted-foreground text-xs">No checks reported</p>;
   }
@@ -81,13 +90,17 @@ function ChecksBody({
             <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
           </Tooltip>
           <span className="shrink-0 text-muted-foreground">
-            {pullRequestCheckStatusLabel(check.status)}
+            {pullRequestCheckStatusLabel(check)}
           </span>
           {check.url === null ? null : (
             <button
               type="button"
               className="shrink-0 text-primary hover:underline"
               onClick={() => {
+                if (threadRef !== null) {
+                  void openLink(check.url ?? "").catch(() => undefined);
+                  return;
+                }
                 const api = readLocalApi();
                 if (api) {
                   void openExternalWithGitHubAccount(
@@ -120,6 +133,7 @@ export function PullRequestChecksPopover({
   environmentId,
   reference,
   githubAccountId,
+  threadRef = null,
   className,
 }: {
   checksState: PullRequestChecksState;
@@ -127,6 +141,8 @@ export function PullRequestChecksPopover({
   checks?: ReadonlyArray<PullRequestCheck>;
   environmentId?: EnvironmentId;
   reference?: PullRequestRef;
+  /** Thread the popover sits beside; a listing row has none. */
+  threadRef?: ScopedThreadRef | null;
   githubAccountId?: GitHubAccountId | null;
   className?: string;
 }) {
@@ -148,6 +164,7 @@ export function PullRequestChecksPopover({
           not valid inside one. The click is stopped here so opening the checks does not also
           select the row it sits on. */}
       <PopoverTrigger
+        nativeButton={false}
         render={
           <span
             role="button"
@@ -164,12 +181,17 @@ export function PullRequestChecksPopover({
         <p className="mb-2 font-medium text-sm">{presentation.label}</p>
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
         {checks !== undefined ? (
-          <ChecksBody checks={checks} githubAccountId={resolvedGitHubAccountId} />
+          <ChecksBody
+            checks={checks}
+            githubAccountId={resolvedGitHubAccountId}
+            threadRef={threadRef}
+          />
         ) : environmentId !== undefined && reference !== undefined ? (
           <LazyChecksBody
             environmentId={environmentId}
             reference={reference}
             githubAccountId={resolvedGitHubAccountId}
+            threadRef={threadRef}
           />
         ) : null}
       </PopoverPopup>

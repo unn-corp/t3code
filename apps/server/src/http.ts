@@ -56,6 +56,10 @@ const isImmutableAssetPath = (requestPath: string): boolean => requestPath.start
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+// HTML previews are agent output, not the app. The sandbox gives the document an
+// opaque origin: scripts run, but same-origin cookies, storage, and API calls are
+// out of reach. Relative sibling assets still load through their signed URLs.
+const HTML_CONTENT_SECURITY_POLICY = "sandbox allow-scripts allow-forms allow-popups allow-modals";
 
 // Types a browser may render as a document if a proxy strips the disposition
 // header. Downloads of these fall back to octet-stream.
@@ -65,6 +69,8 @@ const isSafeDownloadMimeType = (mimeType: string): boolean =>
   !/(?:^text\/html$|\/xml(?:$|-)|\+xml$)/i.test(mimeType.trim().toLowerCase());
 const isSafeInlineVideoMimeType = (mimeType: string): boolean =>
   DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && mimeType.toLowerCase().startsWith("video/");
+const isSafeInlineDocumentMimeType = (mimeType: string): boolean =>
+  mimeType.toLowerCase() === "application/pdf" || mimeType.toLowerCase() === "text/html";
 
 /** RFC 6266 disposition with an ASCII fallback name plus a UTF-8 `filename*`. */
 export function downloadContentDisposition(fileName?: string): string {
@@ -72,8 +78,7 @@ export function downloadContentDisposition(fileName?: string): string {
     return "attachment";
   }
   // toWellFormed: encodeURIComponent throws URIError on unpaired surrogates.
-  // eslint-disable-next-line no-control-regex -- Header filenames must strip ASCII controls.
-  const sanitized = fileName.toWellFormed().replace(/[\u0000-\u001f"\\]/g, "_");
+  const sanitized = fileName.toWellFormed().replace(/[\p{Cc}"\\]/gu, "_");
   const asciiFallback = sanitized.replace(/[^\u0020-\u007e]/g, "_");
   const needsExtended = asciiFallback !== sanitized;
   const extendedName = encodeURIComponent(sanitized).replace(
@@ -94,7 +99,7 @@ export function assetResponseHeaders(
   },
 ): Record<string, string> {
   const lowerPath = filePath.toLowerCase();
-  const inlineVideoMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
+  const inlineMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
   return {
     "Cache-Control": "private, max-age=3600",
     "X-Content-Type-Options": "nosniff",
@@ -107,11 +112,24 @@ export function assetResponseHeaders(
               ? options.mimeType
               : "application/octet-stream",
         }
-      : inlineVideoMimeType !== undefined && isSafeInlineVideoMimeType(inlineVideoMimeType)
-        ? { "Content-Type": inlineVideoMimeType }
-        : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
-          ? { "Content-Type": "text/html; charset=utf-8" }
-          : {}),
+      : inlineMimeType !== undefined && isSafeInlineVideoMimeType(inlineMimeType)
+        ? { "Content-Type": inlineMimeType }
+        : inlineMimeType !== undefined && isSafeInlineDocumentMimeType(inlineMimeType)
+          ? {
+              "Content-Type":
+                inlineMimeType.toLowerCase() === "text/html"
+                  ? "text/html; charset=utf-8"
+                  : "application/pdf",
+              ...(inlineMimeType.toLowerCase() === "text/html"
+                ? { "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY }
+                : {}),
+            }
+          : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+            ? {
+                "Content-Type": "text/html; charset=utf-8",
+                "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+              }
+            : {}),
     ...(!options?.download && lowerPath.endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
