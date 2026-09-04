@@ -599,25 +599,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           projectionPendingApprovalRepository.countPendingByThreadId({ threadId }),
         ]);
 
-      let latestUserMessageAt: string | null = null;
-      for (const message of messages) {
-        if (message.role !== "user") continue;
-        // Imported messages keep the real transcript time in createdAt for display,
-        // but count as activity at resume time (stored in updatedAt) so the recency
-        // sort treats a resume like any fresh user action instead of sorting the
-        // project back to the old conversation's time.
-        const activityAt =
-          message.turnId !== null && message.turnId.startsWith("import:")
-            ? message.updatedAt
-            : message.createdAt;
-        if (latestUserMessageAt === null || activityAt > latestUserMessageAt) {
-          latestUserMessageAt = activityAt;
-        }
-      }
-
-      const pendingApprovalCount = pendingApprovals.filter(
-        (approval) => approval.status === "pending",
-      ).length;
       const pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
       const hasActionableProposedPlan = deriveHasActionableProposedPlan({
         latestTurnId: existingRow.value.latestTurnId,
