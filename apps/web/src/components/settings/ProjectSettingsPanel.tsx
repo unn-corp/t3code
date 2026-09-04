@@ -565,6 +565,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         title: string;
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
+        autoPull: boolean;
         githubAccountId: GitHubAccountId | null;
         faviconPath: string | null;
         projectIcon: ProjectIconOverride | null;
@@ -729,6 +730,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         { defaultThreadEnvMode: mode },
         "Failed to update new-thread workspace",
       ),
+    [updateAllMembers],
+  );
+
+  const autoPull = representative.autoPull ?? false;
+  const setAutoPull = useCallback(
+    (enabled: boolean) =>
+      void updateAllMembers({ autoPull: enabled }, "Failed to update automatic pull setting"),
     [updateAllMembers],
   );
 
@@ -1365,6 +1373,22 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   ))}
                 </SelectPopup>
               </Select>
+            }
+          />
+          <SettingsRow
+            title="Automatically pull"
+            description="Keeps the default branch current in the background when the checkout has no local changes or commits."
+            resetAction={
+              autoPull ? (
+                <SettingResetButton label="automatic pull" onClick={() => setAutoPull(false)} />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={autoPull}
+                aria-label="Automatically pull the default branch"
+                onCheckedChange={setAutoPull}
+              />
             }
           />
         </SettingsSection>

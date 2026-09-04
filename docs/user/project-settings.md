@@ -1,25 +1,12 @@
-# Customize a project icon
+# Project settings
 
-T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
-paths, and icon links in project HTML files. If it does not find an image, it chooses a built-in
-icon from the saved project name. In web and desktop, this icon stays the same when the sidebar
-shows a repository label such as `owner/repo`.
+Open **Settings → Projects** and select a project to change its preferences.
 
-To choose a different icon or emoji:
+## Project icons
 
-1. Open **Settings** and select **Projects**.
-2. Select the project.
-3. Next to **Project icon**, select **Choose icon**.
-4. Search the full Lucide icon set and choose a color, or switch to **Emoji** and choose or paste
-   an emoji.
-
-To use an image from the project instead, select **Choose file**, search for an image, and select
-it.
-
-T3 Code supports SVG, PNG, ICO, JPEG, GIF, AVIF, and WebP files. The selected path applies to
-each checkout in the project group and appears on your connected clients.
-
-To use automatic detection again, select **Automatic**.
+Choose an icon, emoji, or image from the project to make it easier to recognize. The choice applies
+to every checkout in the project group and appears on connected clients. Choose **Automatic** to
+let T3 Code detect an icon again.
 
 # Add product context
 
@@ -32,3 +19,12 @@ After reviewing the saved document, turn on **Confirmed for automation**. Schedu
 # Control project automations
 
 The **Automations** section lets you independently allow or pause repository reviews, continuous improvement, product opportunity discovery, decision follow-up, pull request rollups, and inactive worktree cleanup. These controls apply to every checkout grouped under the project. Global automation settings still determine whether an allowed automation is running and how it is scheduled.
+
+## Automatically pull
+
+Enable **Automatically pull** to keep the default-branch checkout up to date with its configured
+upstream.
+
+T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
+or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
+local work, resolve it yourself before automatic pulls can resume.

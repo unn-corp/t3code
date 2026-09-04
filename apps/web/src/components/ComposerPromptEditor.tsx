@@ -1945,52 +1945,94 @@ function ComposerPromptEditorInner({
 
   return (
     <ComposerTerminalContextActionsContext value={terminalContextActions}>
-      <div
-        className={cn(
-          "relative [font-family:var(--font-composer,var(--font-sans))] [font-size:var(--font-size-prompt,0.875rem)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]",
-          containerClassName,
-        )}
-      >
-        <PlainTextPlugin
-          contentEditable={
-            <ContentEditable
-              className={cn(
-                // The wrapper owns the appearance preference; keep everything else here.
-                "block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
-                className,
-              )}
-              data-testid="composer-editor"
-              aria-placeholder={placeholder}
-              placeholder={<span />}
-              onPaste={onPaste}
-            />
-          }
-          placeholder={
-            terminalContexts.length > 0 ? null : (
-              <div
+      <ComposerCitationCommentContext value={citationCommentActions}>
+        <div
+          className={cn(
+            "relative [font-family:var(--font-composer,var(--font-sans))] [font-size:var(--font-size-prompt,0.875rem)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]",
+            containerClassName,
+          )}
+        >
+          <PlainTextPlugin
+            contentEditable={
+              <ContentEditable
                 className={cn(
-                  "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",
-                  placeholderClassName,
+                  // The wrapper owns the appearance preference; keep everything else here.
+                  "block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+                  className,
                 )}
-              >
-                {placeholder}
-              </div>
-            )
-          }
-          ErrorBoundary={LexicalErrorBoundary}
-        />
-        <OnChangePlugin onChange={handleEditorChange} />
-        <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
-        <ComposerStructuredPastePlugin {...(onStructuredPaste ? { onStructuredPaste } : {})} />
-        <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
-        <ComposerHomeEndKeyPlugin />
-        <ComposerInlineTokenArrowPlugin />
-        <ComposerInlineTokenSelectionNormalizePlugin />
-        <ComposerInlineTokenBackspacePlugin />
-        <ComposerInlineTokenPastePlugin />
-        <ComposerChipSelectionPlugin />
-        <HistoryPlugin />
-      </div>
+                data-testid="composer-editor"
+                aria-placeholder={placeholder}
+                placeholder={<span />}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Control" ||
+                    event.key === "Meta" ||
+                    event.key === "Alt" ||
+                    event.key === "Shift"
+                  ) {
+                    onPageScrollRelease?.();
+                  }
+
+                  if (event.key !== "PageUp" && event.key !== "PageDown") {
+                    return;
+                  }
+
+                  const pageScrollKey = getTimelinePageScrollKey({
+                    altKey: event.altKey,
+                    clientHeight: event.currentTarget.clientHeight,
+                    ctrlKey: event.ctrlKey,
+                    defaultPrevented: event.defaultPrevented,
+                    isComposing: event.nativeEvent.isComposing,
+                    key: event.key,
+                    keyCode: event.keyCode,
+                    metaKey: event.metaKey,
+                    scrollHeight: event.currentTarget.scrollHeight,
+                    scrollTop: event.currentTarget.scrollTop,
+                    shiftKey: event.shiftKey,
+                  });
+                  if (!pageScrollKey) {
+                    onPageScrollRelease?.();
+                    return;
+                  }
+                  if (!onPageScrollKeyDown) {
+                    return;
+                  }
+
+                  event.preventDefault();
+                  onPageScrollKeyDown(pageScrollKey);
+                }}
+                onKeyUp={(event) => onPageScrollKeyUp?.(event.key)}
+                onBlur={onPageScrollRelease}
+                onPaste={onPaste}
+              />
+            }
+            placeholder={
+              terminalContexts.length > 0 ? null : (
+                <div
+                  className={cn(
+                    "pointer-events-none absolute inset-0 leading-relaxed text-placeholder/75",
+                    placeholderClassName,
+                  )}
+                >
+                  {placeholder}
+                </div>
+              )
+            }
+            ErrorBoundary={LexicalErrorBoundary}
+          />
+          <OnChangePlugin onChange={handleEditorChange} />
+          <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+          <ComposerStructuredPastePlugin {...(onStructuredPaste ? { onStructuredPaste } : {})} />
+          <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
+          <ComposerHomeEndKeyPlugin />
+          <ComposerInlineTokenArrowPlugin />
+          <ComposerInlineTokenSelectionNormalizePlugin />
+          <ComposerInlineTokenBackspacePlugin />
+          <ComposerInlineTokenPastePlugin />
+          <ComposerChipSelectionPlugin />
+          <HistoryPlugin />
+        </div>
+      </ComposerCitationCommentContext>
     </ComposerTerminalContextActionsContext>
   );
 }
