@@ -188,7 +188,9 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       latestUserMessageAt: Schema.NullOr(ProjectionThreadMessage.fields.createdAt),
     }),
     execute: ({ threadId }) => sql`
-      SELECT MAX(created_at) AS "latestUserMessageAt"
+      SELECT MAX(
+        CASE WHEN turn_id LIKE 'import:%' THEN updated_at ELSE created_at END
+      ) AS "latestUserMessageAt"
       FROM projection_thread_messages
       WHERE thread_id = ${threadId} AND role = 'user'
     `,

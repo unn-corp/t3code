@@ -902,13 +902,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
           const previousLatest = existingRow.value.latestUserMessageAt;
+          const userMessageAt =
+            event.payload.role === "user" && event.payload.turnId?.startsWith("import:")
+              ? event.payload.updatedAt
+              : event.payload.createdAt;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             updatedAt: event.occurredAt,
             latestUserMessageAt:
               event.payload.role === "user" &&
-              (previousLatest === null || event.payload.createdAt > previousLatest)
-                ? event.payload.createdAt
+              (previousLatest === null || userMessageAt > previousLatest)
+                ? userMessageAt
                 : previousLatest,
           });
           return;
