@@ -2089,8 +2089,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
-  const showCollapsedMobilePromptRow =
-    isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
   const showComposerAttachAction = fileStagingLimit !== null && pendingUserInputs.length === 0;
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   const composerFooterActionLayoutKey = useMemo(() => {
@@ -2190,16 +2188,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : null,
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
-  const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
-    isSendBusy ||
-    isSendDisabled ||
-    isConnecting ||
-    noProviderAvailable ||
-    projectSelectionRequired ||
-    environmentUnavailable !== null ||
-    !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -3647,18 +3635,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerSubmissionError !== null ||
     providerInputSubmissionError !== null ||
     hasImageAttachmentAttention;
-  const isComposerResting = shouldUseRestingComposerLayout({
-    isExistingThread: routeKind === "server" && activeThreadId !== null,
-    isMobileViewport,
-    isFocused: isComposerFocused,
-    isScrollCollapsed: isComposerScrollCollapsed,
-    hasExpandedChrome: composerHasExpandedChrome,
-    collapseOnBlur: settings.composerCollapseOnBlur,
-  });
-  // The relocated controls live in the context strip whenever the composer is
-  // collapsed for any reason, the desktop resting layout or the phone
-  // collapse. Both leave the footer unrendered, so the strip is the only place
-  // to see or change the model without expanding the composer.
+  const isComposerResting =
+    isComposerCollapsedMobile ||
+    shouldUseRestingComposerLayout({
+      isExistingThread: routeKind === "server" && activeThreadId !== null,
+      isMobileViewport,
+      isFocused: isComposerFocused,
+      isScrollCollapsed: isComposerScrollCollapsed,
+      hasExpandedChrome: composerHasExpandedChrome,
+      collapseOnBlur: settings.composerCollapseOnBlur,
+    });
+  // The model and composer controls live in the context strip whenever the
+  // composer is resting or phone-collapsed. The compact primary actions remain
+  // anchored to the surface so the collapsed composer stays actionable.
   const composerControlsInStrip = isComposerResting || isComposerCollapsedMobile;
   const composerControlsVisibleInStrip = composerControlsInStrip && restingControlsVisible;
   const composerControlsHidden = composerControlsInStrip && !restingControlsVisible;
@@ -4984,56 +4973,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 no audio detected
               </div>
             ) : null}
-            {showCollapsedMobilePromptRow ? (
-              <div className="flex items-center justify-between gap-2 px-3 py-2">
-                <button
-                  type="button"
-                  data-chat-composer-transition-prompt="true"
-                  className={cn(
-                    "min-w-0 flex-1 truncate bg-transparent p-0 text-left text-[14px] focus:outline-none",
-                    (activePendingProgress ? activePendingProgress.customAnswer : prompt.trim())
-                      ? "text-foreground"
-                      : "text-placeholder",
-                  )}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={isChoiceOnlyPendingQuestion ? undefined : expandMobileComposer}
-                  disabled={isChoiceOnlyPendingQuestion}
-                  aria-label="Expand composer"
-                >
-                  {activePendingProgress
-                    ? isChoiceOnlyPendingQuestion
-                      ? "Choose an option above"
-                      : activePendingProgress.customAnswer ||
-                        "Type your own answer, or leave this blank to use the selected option"
-                    : prompt.trim() ||
-                      (noProviderAvailable ? "Enable a provider in Settings" : "Ask anything...")}
-                </button>
-                {collapsedComposerImagePreviews}
-                <button
-                  type="button"
-                  data-chat-composer-transition-actions="true"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-30"
-                  disabled={collapsedComposerPrimaryActionDisabled}
-                  aria-label={collapsedComposerPrimaryActionLabel}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    submitComposer();
-                  }}
-                >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path
-                      d="M8 3L8 13M8 3L4 7M8 3L12 7"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              </div>
-            ) : null}
-
             <div
               ref={setComposerMenuAnchor}
               data-chat-composer-body="true"
@@ -5041,7 +4980,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 "relative px-3 pb-2 sm:px-4",
                 "pt-3.5 sm:pt-4",
                 isComposerApprovalState && "pb-3 sm:pb-4",
-                isComposerCollapsedMobile && "hidden",
                 isComposerResting && "py-2 sm:py-2",
               )}
             >
@@ -5407,7 +5345,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <div
                 className={cn(
                   "relative",
-                  isComposerResting && "flex min-w-0 items-center gap-1",
+                  isComposerResting && "flex min-w-0 flex-row flex-nowrap items-center gap-1",
                   isComposerResting &&
                     (settings.contextWindowMeterEnabled && activeContextWindow
                       ? "pr-28"
@@ -5436,10 +5374,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className={cn(
                     showMobilePendingAnswerActions && "max-sm:pb-11",
                     isComposerResting &&
-                      "max-h-8 min-h-8 overflow-hidden whitespace-nowrap! leading-8",
+                      (isComposerCollapsedMobile
+                        ? "max-h-17.5 min-h-8 overflow-y-auto whitespace-pre-wrap wrap-break-word leading-relaxed"
+                        : "max-h-8 min-h-8 overflow-hidden whitespace-nowrap! leading-8"),
                   )}
                   placeholderClassName={cn(
-                    isComposerResting && "flex min-w-0 items-center truncate leading-8",
+                    isComposerResting &&
+                      (isComposerCollapsedMobile
+                        ? "min-w-0 overflow-hidden whitespace-normal wrap-break-word leading-relaxed"
+                        : "flex min-w-0 items-center truncate leading-8"),
                   )}
                   onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                   onChange={onPromptChange}
@@ -5512,7 +5455,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             />
 
             {/* Bottom toolbar */}
-            {isComposerCollapsedMobile || isComposerApprovalState ? null : (
+            {isComposerApprovalState ? null : (
               <div
                 data-chat-composer-footer="true"
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
