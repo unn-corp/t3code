@@ -163,6 +163,11 @@ export const HTTP_ROUTER_CONFIG = {
 // already closes the websocket gracefully. Do not add an artificial drain before
 // those finalizers get a chance to run.
 const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
+// Auxiliary roots normally park before activation. A supplied root can itself
+// depend on command readiness, though, creating a cycle where the listener is
+// bound but every request remains gated. Preserve the normal ordering while
+// bounding that wait so startup can break the cycle.
+const AUXILIARY_ROOTS_READY_FALLBACK_DELAY = Duration.seconds(2);
 const ResourceAttributionLayerLive = ResourceAttribution.layer;
 const ApplicationObservabilityLive = ObservabilityLive.pipe(
   Layer.provideMerge(ResourceAttributionLayerLive),
@@ -768,15 +773,24 @@ export const makeServerLayer = Layer.unwrap(
     const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
       abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),
-      awaitAuxiliaryParked: Effect.all(
-        [
-          Deferred.await(runtimeStateParked),
-          Deferred.await(cloudLinkParked),
-          Deferred.await(routesReady),
-          ...(config.tailscaleServeEnabled ? [Deferred.await(tailscaleParked)] : []),
-        ],
-        { concurrency: "unbounded" },
-      ).pipe(Effect.asVoid),
+      awaitAuxiliaryParked: Effect.raceFirst(
+        Effect.all(
+          [
+            Deferred.await(runtimeStateParked),
+            Deferred.await(cloudLinkParked),
+            Deferred.await(routesReady),
+            ...(config.tailscaleServeEnabled ? [Deferred.await(tailscaleParked)] : []),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(Effect.asVoid),
+        Effect.sleep(AUXILIARY_ROOTS_READY_FALLBACK_DELAY).pipe(
+          Effect.andThen(
+            Effect.logWarning(
+              "Server roots did not park before activation; releasing command readiness to break the startup cycle",
+            ),
+          ),
+        ),
+      ),
     }).pipe(Layer.provideMerge(RuntimeDependenciesLive), Layer.provide(launcherLayer));
 
     // The portfolio scheduler and manual reviews share one server-scoped job
