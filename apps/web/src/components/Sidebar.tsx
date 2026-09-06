@@ -458,11 +458,9 @@ function SnoozePopoverButton(props: {
   );
 }
 
-// Subset of useSortable applied to a pinned card's root <li>. Listeners go
-// on the whole card (no dedicated handle): the pointer sensor's distance
-// constraint keeps plain clicks working, and we skip dnd-kit's aria
-// attributes since there is no keyboard sensor and the card body already
-// carries its own button semantics.
+// Subset of useSortable applied to a sortable card. The listeners are passed
+// to a dedicated left-side handle so the rest of the card remains a native
+// touch-scrolling surface.
 type SortableSidebarRowBag = Pick<
   ReturnType<typeof useSortable>,
   "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
@@ -797,9 +795,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // rows. The marker can unpin the thread when the server supports pinning.
   pinningSupported: boolean;
   isPinned: boolean;
-  // Present only on pinned cards whose server supports reordering: dnd-kit
-  // sortable bag applied to the card root so the whole card drags (the
-  // pointer sensor's distance constraint keeps plain clicks working).
+  // Present only on reorderable cards: dnd-kit transform state stays on the
+  // card root, while its listeners are attached to the dedicated left handle.
   sortable?: SortableSidebarRowBag | undefined;
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
@@ -1505,7 +1502,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             }
           : undefined
       }
-      {...(sortable?.listeners ?? {})}
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]",
         sortable?.isDragging && "z-20 opacity-80",
@@ -1528,7 +1524,28 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             />
           }
         >
-          <div className="relative z-10 h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
+          <div
+            className={cn(
+              "relative z-10 h-[4.875rem] py-[var(--sidebar-content-inset)]",
+              sortable
+                ? "pe-[var(--sidebar-row-content-inset)] ps-11 sm:ps-8"
+                : "px-[var(--sidebar-row-content-inset)]",
+            )}
+          >
+            {sortable ? (
+              <div
+                {...sortable.listeners}
+                data-testid="sidebar-thread-drag-handle"
+                aria-label={`Reorder ${thread.title} conversation`}
+                className="absolute inset-y-0 start-0 z-20 flex w-11 touch-none cursor-grab items-center justify-center text-sidebar-muted-foreground/45 active:cursor-grabbing sm:w-8"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <GripVerticalIcon
+                  aria-hidden
+                  className="size-3.5 opacity-60 transition-opacity group-hover/sidebar-row:opacity-90"
+                />
+              </div>
+            ) : null}
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {props.projectDisplayName ? (
