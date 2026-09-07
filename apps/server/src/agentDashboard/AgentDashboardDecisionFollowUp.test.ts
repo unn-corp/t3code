@@ -1,18 +1,26 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  IsoDateTime,
   ProjectId,
   ProviderInstanceId,
+  ThreadId,
+  TurnId,
   type AgentDashboardAutomationRun,
   type AgentDashboardFinding,
   type ContinuousImprovementSettings,
   type DecisionFollowUpSettings,
   type OrchestrationProjectShell,
+  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 
 import {
   buildDecisionFollowUpPrompt,
+  createDecisionFollowUpRun,
+  observeDecisionFollowUpThread,
+  resolveDecisionFollowUpRecovery,
   selectDecisionFollowUpCandidates,
+  transitionDecisionFollowUpRun,
 } from "./AgentDashboardDecisionFollowUp.ts";
 
 const NOW = Date.parse("2026-09-03T12:00:00.000Z");
@@ -176,6 +184,170 @@ describe("decision follow-up selection", () => {
         nowMs: NOW,
       }),
     ).toEqual([]);
+  });
+
+  it("keeps reminders eligible while a follow-up is still running", () => {
+    const running = {
+      ...createDecisionFollowUpRun({
+        id: "decision:running",
+        finding: finding("above-risk"),
+        model: null,
+        createdAt: "2026-09-02T12:00:00.000Z",
+      }),
+      status: "running",
+      startedAt: "2026-09-02T12:00:01.000Z",
+    } satisfies AgentDashboardAutomationRun;
+
+    expect(
+      selectDecisionFollowUpCandidates({
+        findings: [finding("above-risk")],
+        projects: [project],
+        policies: [],
+        recentRuns: [running],
+        settings,
+        continuousImprovement,
+        nowMs: NOW,
+      }).map((item) => item.finding.id),
+    ).toEqual(["above-risk"]);
+  });
+
+  const turn = (
+    state: "running" | "completed" | "error" | "interrupted",
+    completedAt: string | null,
+  ): NonNullable<OrchestrationThreadShell["latestTurn"]> => ({
+    turnId: TurnId.make(`turn-${state}`),
+    state,
+    requestedAt: IsoDateTime.make("2026-09-03T12:00:00.000Z"),
+    startedAt: IsoDateTime.make("2026-09-03T12:00:01.000Z"),
+    completedAt: completedAt === null ? null : IsoDateTime.make(completedAt),
+    assistantMessageId: null,
+  });
+
+  const followUpThread = (
+    latestTurn: OrchestrationThreadShell["latestTurn"],
+  ): OrchestrationThreadShell => ({
+    id: ThreadId.make("thread-follow-up"),
+    projectId: project.id,
+    title: "Decision follow-up",
+    modelSelection: settings.modelSelection,
+    runtimeMode: "automated-review",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    latestTurn,
+    createdAt: "2026-09-03T12:00:00.000Z",
+    updatedAt: "2026-09-03T12:00:01.000Z",
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    session: null,
+    latestUserMessageAt: "2026-09-03T12:00:00.000Z",
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+  });
+
+  it("finalizes completed, failed, and interrupted turns with distinct outcomes", () => {
+    const running = transitionDecisionFollowUpRun(
+      {
+        ...createDecisionFollowUpRun({
+          id: "decision:terminal",
+          finding: finding("terminal"),
+          model: null,
+          createdAt: "2026-09-03T12:00:00.000Z",
+        }),
+        threadId: ThreadId.make("thread-terminal"),
+      },
+      { state: "running", at: "2026-09-03T12:00:01.000Z" },
+    );
+    const completed = transitionDecisionFollowUpRun(
+      running,
+      observeDecisionFollowUpThread({
+        latestTurn: turn("completed", "2026-09-03T12:01:00.000Z"),
+        session: null,
+        nowIso: "2026-09-03T12:01:01.000Z",
+      }),
+    );
+    const failed = transitionDecisionFollowUpRun(
+      running,
+      observeDecisionFollowUpThread({
+        latestTurn: turn("error", "2026-09-03T12:02:00.000Z"),
+        session: {
+          threadId: ThreadId.make("thread-terminal"),
+          status: "error",
+          providerName: "codex",
+          runtimeMode: "automated-review",
+          activeTurnId: null,
+          lastError: "The provider exited unexpectedly.",
+          updatedAt: IsoDateTime.make("2026-09-03T12:02:00.000Z"),
+        },
+        nowIso: "2026-09-03T12:02:01.000Z",
+      }),
+    );
+    const interrupted = transitionDecisionFollowUpRun(
+      running,
+      observeDecisionFollowUpThread({
+        latestTurn: turn("interrupted", "2026-09-03T12:03:00.000Z"),
+        session: null,
+        nowIso: "2026-09-03T12:03:01.000Z",
+      }),
+    );
+
+    expect(completed.status).toBe("succeeded");
+    expect(completed.completedAt).toBe("2026-09-03T12:01:00.000Z");
+    expect(failed.status).toBe("failed");
+    expect(failed.error).toBe("The provider exited unexpectedly.");
+    expect(interrupted.status).toBe("cancelled");
+    expect(interrupted.error).toContain("interrupted");
+    expect(
+      observeDecisionFollowUpThread({
+        latestTurn: null,
+        session: {
+          threadId: ThreadId.make("thread-terminal"),
+          status: "error",
+          providerName: "codex",
+          runtimeMode: "automated-review",
+          activeTurnId: null,
+          lastError: "The provider rejected the turn before it started.",
+          updatedAt: IsoDateTime.make("2026-09-03T12:04:00.000Z"),
+        },
+        nowIso: "2026-09-03T12:04:01.000Z",
+      }),
+    ).toEqual({
+      state: "error",
+      at: "2026-09-03T12:04:00.000Z",
+      error: "The provider rejected the turn before it started.",
+    });
+  });
+
+  it("leaves a hanging turn pending and recovers it after restart", () => {
+    const thread = followUpThread(turn("running", null));
+    const queued = {
+      ...createDecisionFollowUpRun({
+        id: "decision:recovery",
+        finding: finding("recovery"),
+        model: null,
+        createdAt: "2026-09-03T12:00:00.000Z",
+      }),
+      threadId: thread.id,
+    } satisfies AgentDashboardAutomationRun;
+    const recovery = resolveDecisionFollowUpRecovery({
+      run: queued,
+      threads: [thread],
+      at: "2026-09-03T12:05:00.000Z",
+    });
+
+    expect(queued.status).toBe("queued");
+    expect(
+      observeDecisionFollowUpThread({
+        latestTurn: thread.latestTurn,
+        session: thread.session,
+        nowIso: "2026-09-03T12:05:00.000Z",
+      }),
+    ).toEqual({ state: "pending" });
+    expect(recovery?.run.status).toBe("running");
+    expect(recovery?.run.completedAt).toBeNull();
+    expect(recovery?.run.startedAt).toBe("2026-09-03T12:05:00.000Z");
   });
 
   it("builds a read-only decision brief that explicitly asks the user", () => {
