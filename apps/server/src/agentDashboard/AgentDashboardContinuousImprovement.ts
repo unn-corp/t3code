@@ -1152,8 +1152,8 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
-    yield* reconcileStaleFindingReservations(currentSettings.continuousImprovement);
     if (!currentSettings.continuousImprovement.enabled) return null;
+    yield* reconcileStaleFindingReservations(currentSettings.continuousImprovement);
 
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const failedAt = yield* Ref.get(lastFailureAt);
