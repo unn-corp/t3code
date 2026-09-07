@@ -558,10 +558,11 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
     }),
   );
 
-  it.effect("keeps monitoring a healthy running review without a wall-clock limit", () =>
+  it.effect("fails a stalled review after exhausting progress nudges", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
-      const activityCount = yield* Ref.make(0);
+      const nudgeCount = yield* Ref.make(0);
+      const stopCount = yield* Ref.make(0);
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
@@ -578,36 +579,118 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
           yield* Effect.yieldNow;
           yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
         }
-        yield* TestClock.adjust(Duration.hours(2));
-        yield* Effect.yieldNow;
-        const current = (yield* jobService.listRuns).find((run) => run.id === enqueued.id);
-        expect(current?.status).toBe("running");
-        expect(current?.completedAt).toBeNull();
+        for (let minute = 0; minute < 120; minute += 1) {
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* Effect.yieldNow;
+        }
+        const terminal = yield* waitForTerminal(jobService, enqueued.id);
+        expect(terminal?.status).toBe("failed");
+        expect(terminal?.error).toContain("remained inactive after");
+        expect(yield* Ref.get(nudgeCount)).toBe(
+          AgentDashboardReviewJobService.MAX_REVIEW_PROGRESS_NUDGES,
+        );
+        expect(yield* Ref.get(stopCount)).toBe(1);
       }).pipe(
         Effect.provide(
           jobServiceLayer({
             baseDir,
             runner: {
               runReview: () => Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+              nudgeReview: () => Ref.update(nudgeCount, (count) => count + 1),
+              stopReview: () => Ref.update(stopCount, (count) => count + 1),
               runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
             },
             getThreadDetailById: () =>
-              Ref.updateAndGet(activityCount, (count) => count + 1).pipe(
-                Effect.map((count) =>
-                  Option.some({
-                    latestTurn: {
-                      turnId: "turn-timeout",
-                      state: "running",
-                      assistantMessageId: null,
-                      requestedAt: "2026-08-10T00:00:00.000Z",
-                      startedAt: "2026-08-10T00:00:00.000Z",
-                      completedAt: null,
-                    },
-                    messages: [],
-                    activities: Array.from({ length: count }, (_, index) => ({ id: index })),
-                  } as never),
-                ),
+              Effect.succeed(
+                Option.some({
+                  latestTurn: {
+                    turnId: "turn-timeout",
+                    state: "running",
+                    assistantMessageId: null,
+                    requestedAt: "2026-08-10T00:00:00.000Z",
+                    startedAt: "2026-08-10T00:00:00.000Z",
+                    completedAt: null,
+                  },
+                  messages: [],
+                  activities: [{ id: "activity-stable" }],
+                } as never),
               ),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
+
+  it.effect("resets the watchdog when a running review reports new activity", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* makeTempStateDir();
+      const activityCount = yield* Ref.make(1);
+      const activityReads = yield* Ref.make(0);
+      const nudgeCount = yield* Ref.make(0);
+
+      yield* Effect.gen(function* () {
+        const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        const enqueued = yield* jobService.enqueueReview({
+          trigger: "scheduled",
+          projectId: PROJECT_ID,
+          idempotencyKey: "progress-case",
+        });
+
+        for (let step = 0; step < 10; step += 1) {
+          const current = (yield* jobService.listRuns).find((run) => run.id === enqueued.id);
+          if (current?.status === "running") break;
+          yield* TestClock.adjust(Duration.seconds(1));
+          yield* Effect.yieldNow;
+          yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        }
+
+        for (let step = 0; step < 10; step += 1) {
+          if ((yield* Ref.get(activityReads)) > 0) break;
+          yield* TestClock.adjust(Duration.seconds(1));
+          yield* Effect.yieldNow;
+          yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        }
+        expect(yield* Ref.get(activityReads)).toBeGreaterThan(0);
+        yield* TestClock.adjust(Duration.minutes(9));
+        yield* Effect.yieldNow;
+        yield* Ref.set(activityCount, 2);
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Effect.yieldNow;
+        yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        yield* TestClock.adjust(Duration.minutes(9));
+        yield* Effect.yieldNow;
+
+        const current = (yield* jobService.listRuns).find((run) => run.id === enqueued.id);
+        expect(current?.status).toBe("running");
+        expect(current?.completedAt).toBeNull();
+        expect(yield* Ref.get(nudgeCount)).toBe(0);
+      }).pipe(
+        Effect.provide(
+          jobServiceLayer({
+            baseDir,
+            runner: {
+              runReview: () => Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+              nudgeReview: () => Ref.update(nudgeCount, (count) => count + 1),
+              runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+            },
+            getThreadDetailById: () =>
+              Effect.gen(function* () {
+                yield* Ref.update(activityReads, (count) => count + 1);
+                const count = yield* Ref.get(activityCount);
+                return Option.some({
+                  latestTurn: {
+                    turnId: "turn-progress",
+                    state: "running",
+                    assistantMessageId: null,
+                    requestedAt: "2026-08-10T00:00:00.000Z",
+                    startedAt: "2026-08-10T00:00:00.000Z",
+                    completedAt: null,
+                  },
+                  messages: [],
+                  activities: Array.from({ length: count }, (_, index) => ({ id: index })),
+                } as never);
+              }),
           }),
         ),
         Effect.scoped,
