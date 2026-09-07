@@ -156,6 +156,7 @@ export interface AgentDashboardFeedImage {
 export interface AgentDashboardReviewFindingInput {
   readonly title: string;
   readonly type: AgentDashboardFindingType;
+  readonly readiness?: "ready" | "needs-research" | undefined;
   readonly category: string;
   readonly summary: string;
   readonly impact: string;
@@ -399,6 +400,7 @@ const reviewFindingActionability = (
   proposalValue: unknown,
   expectedValueValue: unknown,
   input: {
+    readonly readiness?: "ready" | "needs-research" | undefined;
     readonly type: AgentDashboardFindingType;
     readonly category?: string | null | undefined;
     readonly qualifiedAt: string;
@@ -414,12 +416,20 @@ const reviewFindingActionability = (
   const proposal = text(proposalValue, 1_200);
   const expectedValue = text(expectedValueValue, 1_200);
   if (!proposal || !expectedValue) return null;
+  const targets = input.targets ?? [];
+  const validationPlan = input.validationPlan ?? [];
+  const qualificationReason = text(input.qualificationReason, 1_200);
+  const ready =
+    input.readiness === "ready" &&
+    targets.length > 0 &&
+    validationPlan.length > 0 &&
+    qualificationReason !== null;
   return {
-    readiness: input.category === "product-opportunity" ? "needs-research" : "ready",
+    readiness: input.category === "product-opportunity" || !ready ? "needs-research" : "ready",
     proposal,
     expectedValue,
-    targets: input.targets ?? [],
-    validationPlan: input.validationPlan ?? [],
+    targets,
+    validationPlan,
     sources: input.sources ?? [],
     riskTier:
       input.riskTier ??
@@ -427,12 +437,23 @@ const reviewFindingActionability = (
         ? "high"
         : "medium"),
     estimatedEffort: input.estimatedEffort ?? "medium",
-    qualificationReason: input.qualificationReason?.trim() || null,
-    qualifiedAt: input.qualifiedAt,
-    qualifiedBy: "repository-review",
-    qualifiedOccurrenceCount: input.occurrenceCount,
+    qualificationReason,
+    qualifiedAt: ready ? input.qualifiedAt : null,
+    qualifiedBy: ready ? "repository-review" : null,
+    qualifiedOccurrenceCount: ready ? input.occurrenceCount : 0,
   };
 };
+
+export const hasQualifiedFindingActionability = (
+  actionability: AgentDashboardFinding["actionability"],
+): actionability is AgentDashboardFindingActionability =>
+  actionability !== null &&
+  actionability.readiness === "ready" &&
+  actionability.targets.length > 0 &&
+  actionability.validationPlan.length > 0 &&
+  actionability.qualificationReason !== null &&
+  actionability.qualifiedAt !== null &&
+  actionability.qualifiedBy !== null;
 
 const reviewSuggestionKey = (repositoryPath: string, title: string): string =>
   `${repositoryPath.trim()}\u0000${title.trim().toLocaleLowerCase()}`;
@@ -1616,6 +1637,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
             runId: input.runId ?? input.jobId,
             threadId: input.threadId ?? null,
             actionability: reviewFindingActionability(finding.nextStep, finding.impact, {
+              readiness: finding.readiness,
               type: finding.type,
               category: finding.category,
               qualifiedAt: createdAt,

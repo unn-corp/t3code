@@ -174,7 +174,7 @@ it("keeps review-controlled prose out of an approved implementation prompt", () 
       projectName: "Draft Delivery",
       repositoryPath: "/workspace/project-draft-delivery",
     },
-    { kind: "implement", baseBranch: "main" },
+    { kind: "implement", baseBranch: "main", pullRequestStrategy: "new-draft" },
   );
 
   expect(prompt).not.toContain(promptInjection);
@@ -191,7 +191,7 @@ it("rejects implementation prompts without trusted qualification", () => {
         projectName: "Draft Delivery",
         repositoryPath: "/workspace/project-draft-delivery",
       },
-      { kind: "implement", baseBranch: "main" },
+      { kind: "implement", baseBranch: "main", pullRequestStrategy: "new-draft" },
     ),
   ).toThrow("trusted qualification");
 });

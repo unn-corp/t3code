@@ -472,7 +472,7 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
       });
       const [finding] = await Effect.runPromise(store.readFindings);
       expect(finding?.actionability).toMatchObject({
-        readiness: "ready",
+        readiness: "needs-research",
         proposal: "Flush the buffer before returning and add an end-of-input test.",
         expectedValue: "The last item silently disappears from imports.",
       });
@@ -486,7 +486,7 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
 
       const [legacyFinding] = await Effect.runPromise(store.readFindings);
       expect(legacyFinding?.actionability).toMatchObject({
-        readiness: "ready",
+        readiness: "needs-research",
         proposal: "Flush the buffer before returning and add an end-of-input test.",
         expectedValue: "The last item silently disappears from imports.",
       });
@@ -498,10 +498,10 @@ it.effect("ingests native T3 review findings with GitHub issue drafts", () =>
             threadId: ThreadId.make("thread-legacy-implementation"),
           }),
         ),
-      ).toBe("applied");
+      ).toBe("noop");
       expect((await Effect.runPromise(store.readFindings))[0]).toMatchObject({
-        actionability: { readiness: "ready" },
-        thread: { threadId: "thread-legacy-implementation" },
+        actionability: { readiness: "needs-research" },
+        thread: null,
       });
     } finally {
       await NodeFSP.rm(stateDir, { recursive: true, force: true });
@@ -962,7 +962,13 @@ it.effect("atomically claims and releases a ready finding for continuous impleme
               readiness: "ready",
               proposal: "Reuse the first projection result.",
               expectedValue: "Avoid redundant work.",
-              targets: [],
+              targets: [
+                {
+                  path: "apps/server/src/orchestration/Services/ProjectionSnapshotQuery.ts",
+                  symbol: "getSnapshot",
+                  evidence: "The same projection is loaded twice.",
+                },
+              ],
               validationPlan: ["Run the focused store test."],
               sources: [],
               riskTier: "medium",
@@ -1032,14 +1038,20 @@ it.effect(
             readiness: "ready" as const,
             proposal: `Resolve ${title}.`,
             expectedValue: `Validate ${title}.`,
-            targets: [],
+            targets: [
+              {
+                path: "apps/server/src/agentDashboard/AgentDashboardStore.ts",
+                symbol: "resolveStaleFindingReservation",
+                evidence: "The focused test exercises stale reservation handling.",
+              },
+            ],
             validationPlan: ["Run the focused store test."],
             sources: [],
             riskTier: "medium" as const,
             estimatedEffort: "small" as const,
             qualificationReason: "The finding is bounded and testable.",
             qualifiedAt: "2026-09-02T12:00:00.000Z",
-            qualifiedBy: "repository-review",
+            qualifiedBy: "human",
             qualifiedOccurrenceCount: 1,
           },
         });

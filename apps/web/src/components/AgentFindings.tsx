@@ -1962,9 +1962,9 @@ export function AgentFindings({
                                           setManageNote(finding.disposition.note ?? "");
                                           setSnoozeDays("3");
                                           setManageRecord(record);
+                                        },
+                                        variant: "outline",
                                       },
-                                      variant: "outline",
-                                    },
                                       requiresApproval
                                         ? {
                                             id: "approve",

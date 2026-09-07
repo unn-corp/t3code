@@ -17,8 +17,11 @@ import {
   AssistantCitation,
   ApprovalRequestId,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   EventId,
   GitHubAccountId,
+  MessageId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
@@ -405,7 +408,7 @@ function makeProviderServiceLayer(
   } = {},
 ) {
   const serverSettingsLayer = input.serverSettingsLayer ?? defaultServerSettingsLayer;
-  const codex = makeFakeCodexAdapter();
+  const codex = makeFakeCodexAdapter(CODEX_DRIVER, input.supportsConversationRollback);
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
   const registry =
