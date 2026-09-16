@@ -260,7 +260,7 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
-    /** Resolve a configured account's PAT into a child-process environment. */
+    /** Resolve a configured account's secret credential into a child-process environment. */
     readonly getGitHubAccountEnvironment: (
       accountId: GitHubAccountId,
     ) => Effect.Effect<GitHubAccountEnvironment, ServerSettingsError>;

@@ -506,7 +506,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ? Effect.fail(
               toValidationError(
                 operation,
-                `The selected GitHub account '${accountId}' is not configured with a PAT.`,
+                `The selected GitHub account '${accountId}' is not signed in.`,
               ),
             )
           : Effect.succeed(account.environment),

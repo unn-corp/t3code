@@ -1496,7 +1496,7 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
-  /** Configured GitHub identities. PAT values are held by the server secret store. */
+  /** Configured GitHub identities. Credentials are held by the server secret store. */
   githubAccounts: Schema.Record(GitHubAccountId, GitHubAccount).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),

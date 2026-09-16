@@ -438,13 +438,13 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((account) => {
         // A selected project account must never silently fall back to the
         // server's ambient gh login. This also protects projects whose
-        // account profile was deleted or has not received a PAT yet.
+        // account profile was deleted or has not received a credential yet.
         if ((input.githubAccountId !== undefined || account.configured) && !account.environment) {
           return Effect.fail(
             new GitHubCliAuthenticationError({
               command: "gh",
               cwd: input.cwd,
-              cause: new Error("The selected GitHub account is not configured with a PAT."),
+              cause: new Error("The selected GitHub account is not signed in."),
             }),
           );
         }
