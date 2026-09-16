@@ -5,17 +5,18 @@ repositories, create pull requests, and review changes.
 
 ## Connect an account
 
-Install Git and configure authentication on the machine running your T3 Code server. For a remote
-environment, do this on the remote machine. After signing in, open **Settings → Source Control**
-and choose **Rescan**.
+Install Git and the provider CLI on the machine running your T3 Code server. After signing in, open
+**Settings → Source Control** and choose **Rescan**.
 
 ### GitHub
 
-Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
-
-```bash
-gh auth login
-```
+Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer. In **Settings → Source Control**,
+choose **Sign in with GitHub**, open the GitHub authorization page, and enter the displayed one-time
+code. Repeat for each identity you use, then select the appropriate GitHub account in each project's
+Source Control settings. This works when the client and server are on different machines; the OAuth
+credential remains in the server's secret store. T3 checks `gh --version` before starting sign-in and
+uses the CLI's stable `LANG=C` output contract; older, prerelease, or unrecognized versions are
+rejected with an upgrade message. GitHub Enterprise hosts use the same checked boundary.
 
 ### Forgejo and Gitea
 
@@ -120,8 +121,8 @@ reopening a declined pull request.
 
 ## Troubleshooting
 
-- **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
-  confirm the running server received the environment variables.
+- **Not authenticated:** connect GitHub in T3 Code or run the provider's login command on the
+  server, then rescan. For Bitbucket, confirm the running server received the environment variables.
 - **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.
