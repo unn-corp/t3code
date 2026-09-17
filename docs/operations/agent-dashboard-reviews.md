@@ -33,12 +33,14 @@ Each review now moves through this sequence:
 
 `queued` -> `running` -> `ingesting` -> `succeeded`, `partial`, or `failed`
 
-The review is not successful until structured findings have been written to the canonical finding
-store. A missing assistant message, malformed metadata after bounded correction attempts, an
-exhausted idle-progress lease, or a failed finding write produces a non-success terminal state.
-There is no total run-duration limit. The job service advances `updatedAt` only when provider
-messages, activities, or turn state demonstrate progress, so polling alone cannot create a false
-heartbeat.
+Deep-review type coverage starts only after the review thread is dispatched. A dispatched review
+counts as completed coverage when it reaches `succeeded` or a valid `partial` no-op result, even
+when deduplication means no new finding is written. A missing assistant message, malformed
+metadata after bounded correction attempts, an exhausted idle-progress lease, or a failed finding
+write produces a non-success terminal state. A dispatch failure preserves the previous deep-review
+coverage. There is no total run-duration limit. The job service advances `updatedAt` only when
+provider messages, activities, or turn state demonstrate progress, so polling alone cannot create
+a false heartbeat.
 
 Finding dispositions use a separate reversible lifecycle. Starting linked work moves a finding to
 `in-progress`; completing verified work moves it to `done`; and Reopen returns it to `open`. Done
