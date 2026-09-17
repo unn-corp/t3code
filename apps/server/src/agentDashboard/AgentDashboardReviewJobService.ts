@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import type {
   AgentDashboardAutomationRun,
@@ -493,6 +494,9 @@ const make = Effect.gen(function* () {
 
   // In-memory mirror for concurrency decisions without thrashing disk on every claim.
   const runsRef = yield* Ref.make<ReadonlyArray<AgentDashboardAutomationRun>>([]);
+  // Serialize admission through persistence so idempotency and queue-cap checks
+  // observe the in-memory claim made by the preceding enqueue.
+  const enqueueMutex = yield* Semaphore.make(1);
   const workerSlots = yield* Ref.make(0);
   // Coverage writes are best-effort so disk latency cannot stall lifecycle
   // transitions, but they remain ordered so an older heartbeat cannot overwrite
@@ -983,69 +987,71 @@ const make = Effect.gen(function* () {
     );
 
   const enqueueReview: AgentDashboardReviewJobServiceService["enqueueReview"] = (input) =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(runsRef);
-      const idempotencyKey =
-        stringValue(input.idempotencyKey) ??
-        (input.trigger === "manual" && !input.projectId
-          ? `manual:${REVIEW_KIND}`
-          : input.trigger === "scheduled"
-            ? `scheduled:${REVIEW_KIND}`
-            : null);
+    enqueueMutex.withPermit(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(runsRef);
+        const idempotencyKey =
+          stringValue(input.idempotencyKey) ??
+          (input.trigger === "manual" && !input.projectId
+            ? `manual:${REVIEW_KIND}`
+            : input.trigger === "scheduled"
+              ? `scheduled:${REVIEW_KIND}`
+              : null);
 
-      if (idempotencyKey) {
-        const existing = findIdempotentMatch(current, idempotencyKey);
-        if (existing) return existing;
-      }
+        if (idempotencyKey) {
+          const existing = findIdempotentMatch(current, idempotencyKey);
+          if (existing) return existing;
+        }
 
-      // Bound total in-flight work: refuse enqueue when the queue is already full
-      // of active runs at the concurrency limit *and* more are waiting... For
-      // simplicity with maxConcurrent=1, any active run with the same kind for
-      // scheduled/manual default keys is already handled. Additional targeted
-      // runs may still queue; cap absolute active+queued depth.
-      const active = activeCount(current.filter((run) => run.kind === REVIEW_KIND));
-      if (active >= MAX_CONCURRENT_REVIEW_RUNS * 4) {
-        return yield* new AgentDashboardReviewJobServiceError({
-          operation: "enqueue review",
-          message: "Too many repository reviews are already queued or running.",
-        });
-      }
+        // Bound total in-flight work: refuse enqueue when the queue is already full
+        // of active runs at the concurrency limit *and* more are waiting... For
+        // simplicity with maxConcurrent=1, any active run with the same kind for
+        // scheduled/manual default keys is already handled. Additional targeted
+        // runs may still queue; cap absolute active+queued depth.
+        const active = activeCount(current.filter((run) => run.kind === REVIEW_KIND));
+        if (active >= MAX_CONCURRENT_REVIEW_RUNS * 4) {
+          return yield* new AgentDashboardReviewJobServiceError({
+            operation: "enqueue review",
+            message: "Too many repository reviews are already queued or running.",
+          });
+        }
 
-      const createdAt = yield* nowIso;
-      const reviewModelSelection = yield* settings.getSettings.pipe(
-        Effect.map((currentSettings) => currentSettings.repositoryReview.modelSelection),
-        Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.repositoryReview.modelSelection),
-      );
-      const id = yield* randomId;
-      const projectId =
-        input.projectId ??
-        // Placeholder until dispatch selects a project; still satisfies the contract.
-        ProjectId.make("pending-selection");
+        const createdAt = yield* nowIso;
+        const reviewModelSelection = yield* settings.getSettings.pipe(
+          Effect.map((currentSettings) => currentSettings.repositoryReview.modelSelection),
+          Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.repositoryReview.modelSelection),
+        );
+        const id = yield* randomId;
+        const projectId =
+          input.projectId ??
+          // Placeholder until dispatch selects a project; still satisfies the contract.
+          ProjectId.make("pending-selection");
 
-      const run: AgentDashboardAutomationRun = {
-        id,
-        status: "queued",
-        trigger: input.trigger,
-        kind: REVIEW_KIND,
-        repository: { projectId },
-        target: stringValue(input.target),
-        threadId: null,
-        jobId: idempotencyKey ?? id,
-        model: modelLabel(reviewModelSelection),
-        retryCount: input.retryCount ?? 0,
-        findingCount: 0,
-        costUnits: null,
-        error: null,
-        createdAt,
-        startedAt: null,
-        updatedAt: createdAt,
-        completedAt: null,
-      };
+        const run: AgentDashboardAutomationRun = {
+          id,
+          status: "queued",
+          trigger: input.trigger,
+          kind: REVIEW_KIND,
+          repository: { projectId },
+          target: stringValue(input.target),
+          threadId: null,
+          jobId: idempotencyKey ?? id,
+          model: modelLabel(reviewModelSelection),
+          retryCount: input.retryCount ?? 0,
+          findingCount: 0,
+          costUnits: null,
+          error: null,
+          createdAt,
+          startedAt: null,
+          updatedAt: createdAt,
+          completedAt: null,
+        };
 
-      const saved = yield* persist(run);
-      yield* executeRun(saved).pipe(Effect.forkIn(scope));
-      return saved;
-    });
+        const saved = yield* persist(run);
+        yield* executeRun(saved).pipe(Effect.forkIn(scope));
+        return saved;
+      }),
+    );
 
   const retryRun: AgentDashboardReviewJobServiceService["retryRun"] = (runId) =>
     Effect.gen(function* () {
