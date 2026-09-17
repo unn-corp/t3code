@@ -33,6 +33,7 @@ import {
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type RuntimeMode,
   type GitHubAccountId,
   type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
@@ -973,10 +974,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     } satisfies Record<string, string>;
   });
 
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+  const prepareMcpSession = (
+    threadId: ThreadId,
+    providerInstanceId: ProviderInstanceId,
+    runtimeMode: RuntimeMode,
+  ) =>
     Effect.gen(function* () {
+      if (runtimeMode === "automated-review") {
+        yield* McpSessionRegistry.revokeActiveMcpThread(threadId);
+        yield* Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
+        return undefined;
+      }
       const capabilities = yield* agentAccessCapabilities(threadId);
-      const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
+      const credential = yield* issueMcpCredential({
+        threadId,
+        providerInstanceId,
+        capabilities,
+        runtimeMode,
+      });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")
           ? yield* agentDeviceEnvironment
@@ -1313,7 +1328,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           )
         : undefined;
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      const runtimeMode = input.binding.runtimeMode ?? "full-access";
+      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId, runtimeMode);
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -1323,7 +1339,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           ...(githubAccountEnvironment ? { environment: githubAccountEnvironment } : {}),
-          runtimeMode: input.binding.runtimeMode ?? "full-access",
+          runtimeMode,
         })
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
       if (resumed.provider !== adapter.provider) {
@@ -1558,7 +1574,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId);
+        yield* prepareMcpSession(threadId, resolvedInstanceId, input.runtimeMode);
         const session = yield* adapter
           .startSession({
             ...input,

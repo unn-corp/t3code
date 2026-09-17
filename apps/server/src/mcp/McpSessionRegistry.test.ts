@@ -40,6 +40,7 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
       threadId,
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(["preview"]),
+      runtimeMode: "full-access",
     });
     expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp");
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
@@ -55,6 +56,22 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
+it.effect("rejects credentials issued for automated reviews at the MCP boundary", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-automated-review"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["preview"]),
+      runtimeMode: "automated-review",
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    expect(yield* registry.resolve(token)).toBeUndefined();
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
 it.effect("always grants pull-requests and gates browser and device access independently", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);
@@ -62,16 +79,19 @@ it.effect("always grants pull-requests and gates browser and device access indep
       threadId: ThreadId.make("thread-preview"),
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(["preview"]),
+      runtimeMode: "full-access",
     });
     const withoutPreview = yield* registry.issue({
       threadId: ThreadId.make("thread-no-preview"),
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(),
+      runtimeMode: "full-access",
     });
     const withDevice = yield* registry.issue({
       threadId: ThreadId.make("thread-device"),
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(["device"]),
+      runtimeMode: "full-access",
     });
     const capabilitiesOf = (issued: typeof withPreview) =>
       registry
@@ -99,6 +119,7 @@ it.effect("builds MCP endpoints from the bound server host", () =>
         threadId: ThreadId.make(`thread-${hostname}`),
         providerInstanceId: ProviderInstanceId.make("codex"),
         capabilities: new Set(["preview"]),
+        runtimeMode: "full-access",
       });
       expect(issued.config.endpoint).toBe(expectedEndpoint);
     }
@@ -113,6 +134,7 @@ it.effect("expires credentials once their session stops showing signs of life", 
       threadId: ThreadId.make("thread-2"),
       providerInstanceId: ProviderInstanceId.make("claude"),
       capabilities: new Set(["preview"]),
+      runtimeMode: "full-access",
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     timestamp += 101;
@@ -129,6 +151,7 @@ it.effect("keeps a credential alive across turns that never touch an MCP tool", 
       threadId,
       providerInstanceId: ProviderInstanceId.make("claude"),
       capabilities: new Set(["preview"]),
+      runtimeMode: "full-access",
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 
@@ -151,6 +174,7 @@ it.effect("does not keep credentials of other threads alive", () =>
       threadId: ThreadId.make("thread-4"),
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(["preview"]),
+      runtimeMode: "full-access",
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 

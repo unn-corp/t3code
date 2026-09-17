@@ -27,6 +27,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  type RuntimeMode,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -79,6 +80,7 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerConfig from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
@@ -5043,7 +5045,7 @@ describe("agent browser access", () => {
     access: boolean | { readonly browser: boolean; readonly device: boolean },
     threadId: ThreadId,
     projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
-    options?: { readonly withoutOrchestration?: boolean },
+    options?: { readonly withoutOrchestration?: boolean; readonly runtimeMode?: RuntimeMode },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -5155,7 +5157,7 @@ describe("agent browser access", () => {
           provider: CODEX_DRIVER,
           providerInstanceId: codexInstanceId,
           threadId,
-          runtimeMode: "full-access",
+          runtimeMode: options?.runtimeMode ?? "full-access",
         });
       }).pipe(Effect.provide(providerLayer));
 
@@ -5184,6 +5186,28 @@ describe("agent browser access", () => {
       assert.deepEqual(issued, [
         { threadId, capabilities: ["device", "preview", "pull-requests"] },
       ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("requests no MCP credential for automated reviews even when access is on", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-browser-automated-review");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-browser-automated-review"),
+        threadId,
+        providerSessionId: "stale-provider-session",
+        providerInstanceId: codexInstanceId,
+        endpoint: "http://127.0.0.1/mcp",
+        authorizationHeader: "Bearer stale-token",
+        capabilities: new Set(["preview"]),
+      });
+
+      const issued = yield* startSessionWith(true, threadId, undefined, {
+        runtimeMode: "automated-review",
+      });
+
+      assert.deepEqual(issued, []);
+      assert.equal(McpProviderSession.readMcpProviderSession(threadId), undefined);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
