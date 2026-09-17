@@ -4,6 +4,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
+  filterAutomatedReviewProviderEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -203,6 +204,25 @@ describe("deriveProviderInstanceEntries", () => {
     expect(entry?.instanceId).toBe("codex_personal");
     expect(entry?.driverKind).toBe("codex");
     expect(entry?.isDefault).toBe(false);
+  });
+});
+
+describe("filterAutomatedReviewProviderEntries", () => {
+  it("keeps every Codex instance and excludes non-Codex review runtimes", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claudeAgent" }),
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex_work" }),
+      provider({ provider: ProviderDriverKind.make("cursor"), instanceId: "cursor" }),
+      provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" }),
+      provider({ provider: ProviderDriverKind.make("hermes"), instanceId: "hermes" }),
+      provider({ provider: ProviderDriverKind.make("opencode"), instanceId: "opencode" }),
+    ]);
+
+    expect(filterAutomatedReviewProviderEntries(entries).map((entry) => entry.instanceId)).toEqual([
+      "codex",
+      "codex_work",
+    ]);
   });
 });
 

@@ -15,6 +15,7 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  isAutomatedReviewCapableDriver,
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProviderDriverKind,
@@ -208,6 +209,13 @@ export function sortProviderInstanceEntries(
     sorted.push(...defaults, ...customs);
   }
   return sorted;
+}
+
+/** Only drivers with an unattended read-only review runtime may be selected for repository reviews. */
+export function filterAutomatedReviewProviderEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return entries.filter((entry) => isAutomatedReviewCapableDriver(entry.driverKind));
 }
 
 /**

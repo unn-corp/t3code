@@ -147,3 +147,15 @@ export type ProviderInstanceConfigMap = typeof ProviderInstanceConfigMap.Type;
  */
 export const defaultInstanceIdForDriver = (driver: ProviderDriverKind): ProviderInstanceId =>
   ProviderInstanceId.make(driver);
+
+/**
+ * Provider drivers that guarantee unattended, read-only `automated-review`
+ * execution. Keep this list aligned with the runtime adapters that enforce
+ * the review sandbox and never wait for interactive approval.
+ */
+export const AUTOMATED_REVIEW_CAPABLE_DRIVER_KINDS = [
+  ProviderDriverKind.make("codex"),
+] as const satisfies ReadonlyArray<ProviderDriverKind>;
+
+export const isAutomatedReviewCapableDriver = (driver: ProviderDriverKind): boolean =>
+  AUTOMATED_REVIEW_CAPABLE_DRIVER_KINDS.some((candidate) => candidate === driver);

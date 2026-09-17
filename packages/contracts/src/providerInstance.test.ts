@@ -7,6 +7,8 @@ import {
   ProviderInstanceConfigMap,
   ProviderInstanceId,
   ProviderInstanceRef,
+  AUTOMATED_REVIEW_CAPABLE_DRIVER_KINDS,
+  isAutomatedReviewCapableDriver,
 } from "./providerInstance.ts";
 
 const decodeProviderDriverKind = Schema.decodeUnknownSync(ProviderDriverKind);
@@ -82,6 +84,18 @@ describe("ProviderInstanceRef", () => {
         driver: "1nope",
       }),
     ).toThrow();
+  });
+});
+
+describe("automated-review provider capabilities", () => {
+  it("allows only Codex drivers to start unattended repository reviews", () => {
+    expect(AUTOMATED_REVIEW_CAPABLE_DRIVER_KINDS).toEqual([ProviderDriverKind.make("codex")]);
+
+    for (const driver of ["codex", "claudeAgent", "cursor", "hermes", "grok", "opencode"]) {
+      expect(isAutomatedReviewCapableDriver(ProviderDriverKind.make(driver))).toBe(
+        driver === "codex",
+      );
+    }
   });
 });
 
