@@ -283,10 +283,10 @@ const stageWebClient = Effect.fn("stageWebClient")(function* (source: string, ta
 });
 
 const MacSigningConfig = Config.all({
-  identity: Config.string("T3CODE_CLI_MAC_SIGN_IDENTITY").pipe(Config.option),
-  appleApiKey: Config.string("APPLE_API_KEY").pipe(Config.option),
-  appleApiKeyId: Config.string("APPLE_API_KEY_ID").pipe(Config.option),
-  appleApiIssuer: Config.string("APPLE_API_ISSUER").pipe(Config.option),
+  identity: Config.String("T3CODE_CLI_MAC_SIGN_IDENTITY").pipe(Config.option),
+  appleApiKey: Config.String("APPLE_API_KEY").pipe(Config.option),
+  appleApiKeyId: Config.String("APPLE_API_KEY_ID").pipe(Config.option),
+  appleApiIssuer: Config.String("APPLE_API_ISSUER").pipe(Config.option),
 });
 
 /**
@@ -370,9 +370,9 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
 });
 
 const WindowsSigningConfig = Config.all({
-  endpoint: Config.string("AZURE_TRUSTED_SIGNING_ENDPOINT").pipe(Config.option),
-  accountName: Config.string("AZURE_TRUSTED_SIGNING_ACCOUNT_NAME").pipe(Config.option),
-  certificateProfileName: Config.string("AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME").pipe(
+  endpoint: Config.String("AZURE_TRUSTED_SIGNING_ENDPOINT").pipe(Config.option),
+  accountName: Config.String("AZURE_TRUSTED_SIGNING_ACCOUNT_NAME").pipe(Config.option),
+  certificateProfileName: Config.String("AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME").pipe(
     Config.option,
   ),
 });
@@ -468,23 +468,31 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   const repoRoot = yield* RepoRoot;
   const serverDir = path.join(repoRoot, "apps/server");
   const executableName = input.platform === "win" ? "t3.exe" : "t3";
-  // tsdown suffixes cross-built executables with their target (t3-darwin-x64);
-  // a host build is plain t3. Prefer the exact target when both exist.
+  // tsdown/Vite+ suffixes cross-built executables with their target (t3-darwin-x64)
+  // in release builds. Current Vite+ host SEA builds emit build/bin instead,
+  // while older builds emitted dist-exe/t3. Prefer an exact target, then accept
+  // either host layout so packaging follows the executable actually produced.
   const targetKey = `${input.platform === "mac" ? "darwin" : input.platform}-${input.arch}`;
   const targetExecutable = path.join(
     serverDir,
     "dist-exe",
     `t3-${targetKey}${input.platform === "win" ? ".exe" : ""}`,
   );
-  // The unsuffixed host build is only a valid stand-in when it was built for
-  // this platform and architecture; otherwise a missing target must fail.
   const hostPlatform = yield* HostProcessPlatform;
   const hostKey = `${hostPlatform === "win32" ? "win" : hostPlatform}-${yield* HostProcessArchitecture}`;
-  const builtExecutable = (yield* fs.exists(targetExecutable))
-    ? targetExecutable
-    : targetKey === hostKey
-      ? path.join(serverDir, "dist-exe", executableName)
-      : targetExecutable;
+  const hostExecutableCandidates = [
+    path.join(serverDir, "build", input.platform === "win" ? "bin.exe" : "bin"),
+    path.join(serverDir, "dist-exe", executableName),
+  ];
+  let builtExecutable = targetExecutable;
+  if (!(yield* fs.exists(builtExecutable)) && targetKey === hostKey) {
+    for (const candidate of hostExecutableCandidates) {
+      if (yield* fs.exists(candidate)) {
+        builtExecutable = candidate;
+        break;
+      }
+    }
+  }
   const webClient = path.join(serverDir, "dist/client");
   const resourceMonitorDir = Option.getOrElse(input.resourceMonitorDir, () =>
     path.join(serverDir, "dist/resource-monitor"),
@@ -567,13 +575,13 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
 const command = Command.make(
   "build-cli-archive",
   {
-    platform: Flag.choice("platform", BuildPlatform.literals),
-    arch: Flag.choice("arch", BuildArch.literals),
-    version: Flag.string("version").pipe(
+    platform: Flag.Literals("platform", BuildPlatform.literals),
+    arch: Flag.Literals("arch", BuildArch.literals),
+    version: Flag.String("version").pipe(
       Flag.withDescription("Release version for the archive name."),
     ),
-    outputDir: Flag.string("output-dir").pipe(Flag.withDefault("release-cli")),
-    resourceMonitorDir: Flag.string("resource-monitor-dir").pipe(
+    outputDir: Flag.String("output-dir").pipe(Flag.withDefault("release-cli")),
+    resourceMonitorDir: Flag.String("resource-monitor-dir").pipe(
       Flag.withDescription(
         "Directory laid out like dist/resource-monitor (defaults to apps/server/dist/resource-monitor).",
       ),

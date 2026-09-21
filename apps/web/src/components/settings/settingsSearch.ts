@@ -1,7 +1,10 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
+import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { commandLabel } from "./KeybindingsSettings.logic";
 import {
   validateSettingsScopeSearch,
   type ResolvedSettingsScope,
@@ -18,6 +21,7 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/source-control"
+  | "/settings/storage"
   | "/settings/connections"
   | "/settings/archived";
 
@@ -53,11 +57,18 @@ export interface SettingsSearchItem {
   readonly environmentOnly?: boolean;
   readonly providerSettingsOnly?: boolean;
   readonly localBackendManagementOnly?: boolean;
+  readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
+  /**
+   * Sorts after every other match. Keybinding commands mirror rows on other
+   * surfaces, so "model" must still lead with Default model, not Model Picker.
+   */
+  readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
 
 export interface SettingsSearchAvailability {
+  readonly localEnvironmentDisabled?: boolean;
   readonly hasCloudPublicConfig: boolean;
   readonly hasEnvironment: boolean;
   readonly hasProviderSettingsEnvironment: boolean;
@@ -80,9 +91,37 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
+  "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
 };
+
+/** Anchor id of the first row bound to `command` on the Keybindings page. */
+export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
+  return `keybinding-${command}` as const;
+}
+
+/**
+ * One result per built-in command, alphabetical by label. The anchor is
+ * the command's first row; default keys are searchable so "mod+b" lands on
+ * Sidebar: Toggle. A command with no default binding may have no row, so it
+ * points at the section instead.
+ */
+const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right) =>
+  commandLabel(left).localeCompare(commandLabel(right)),
+).map((command) => {
+  const defaultKeys = DEFAULT_KEYBINDINGS.filter((binding) => binding.command === command).map(
+    (binding) => binding.key,
+  );
+  return {
+    id: keybindingSearchAnchorId(command),
+    title: commandLabel(command),
+    to: "/settings/keybindings" as const,
+    searchTerms: [command, ...defaultKeys],
+    secondary: true,
+    ...(defaultKeys.length === 0 ? { targetId: "keybindings" } : {}),
+  };
+});
 
 /**
  * Searchable settings and stable destinations, in result order. Rows with a
@@ -90,6 +129,22 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "storage-worktrees",
+    title: "Worktree cleanup",
+    to: "/settings/storage",
+    scope: "project-defaults",
+    searchTerms: [
+      "disk storage delete deleted archived threads old inactive merged unchanged worktrees retention days project inherit off custom",
+    ],
+  },
+  {
+    id: "storage-artifacts",
+    title: "Artifacts and logs",
+    to: "/settings/storage",
+    scope: "environment-defaults",
+    searchTerms: ["disk storage browser screenshots captures rotated logs cleanup retention"],
+  },
   {
     id: "project-defaults",
     title: "Project defaults and overrides",
@@ -244,6 +299,25 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "response-streaming",
+    title: "Response streaming",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["output token paragraph buffered wait turn legacy"],
+  },
+  {
+    id: "thread-notifications",
+    title: "Thread notifications",
+    to: "/settings/general",
+    searchTerms: ["notification sound alert completion input approval desktop"],
+  },
+  {
+    id: "local-environment",
+    title: "Local environment",
+    to: "/settings/general",
+    searchTerms: ["local machine remote environment agents desktop"],
+  },
+  {
     id: "dictation-microphone",
     title: "Microphone",
     to: "/settings/general",
@@ -256,6 +330,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "auto-open-task-panel",
     title: "Auto-open task panel",
+    to: "/settings/general",
+  },
+  {
+    id: "open-source-licenses",
+    title: "Open source licenses",
     to: "/settings/general",
   },
   {
@@ -283,10 +362,28 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["command menu dollar $ slash /"],
   },
   {
+    id: "composer-rich-text",
+    title: "Rich text composer",
+    to: "/settings/general",
+    searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
+  },
+  {
     id: "composer-collapse",
     title: "Collapse composer on scroll",
     to: "/settings/general",
     searchTerms: ["composer rest resting scroll wheel conversation timeline shrink minimize"],
+  },
+  {
+    id: "send-shortcut",
+    title: "Send shortcut",
+    to: "/settings/general",
+    searchTerms: ["enter return command ctrl multiline prompt new line composer"],
+  },
+  {
+    id: "follow-up-behavior",
+    title: "Follow-up behavior",
+    to: "/settings/general",
+    searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
     id: "provider-update-checks",
@@ -636,6 +733,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/keybindings",
     searchTerms: ["keyboard shortcuts hotkeys commands bindings json"],
   },
+  ...KEYBINDING_SEARCH_ITEMS,
   {
     id: "snap-shot-enabled",
     title: "SnapShots",
@@ -769,6 +867,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/integrations",
   },
   {
+    id: "browser-recording-key-presses",
+    title: "Show key presses in recordings",
+    to: "/settings/integrations",
+    searchTerms: ["browser preview keyboard shortcuts keystrokes overlay capture"],
+  },
+  {
+    id: "browser-recording-mouse-presses",
+    title: "Show mouse presses in recordings",
+    to: "/settings/integrations",
+    searchTerms: ["browser preview clicks buttons drag overlay capture"],
+  },
+  {
     id: "browser-link-target",
     title: "Open links in",
     to: "/settings/integrations",
@@ -812,6 +922,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
     environmentOnly: true,
     scope: "environment-defaults",
+  },
+  {
+    id: "github-routing",
+    title: "GitHub routing",
+    to: "/settings/integrations",
+    searchTerms: ["github accounts machines permissions routing"],
   },
   {
     id: "source-control-writing-style",
@@ -884,6 +1000,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "t3-connect",
+    localEnvironmentOnly: true,
     title: "T3 Connect",
     to: "/settings/connections",
     targetId: "connections-environment",
@@ -893,6 +1010,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "publish-agent-activity",
+    localEnvironmentOnly: true,
     title: "Publish agent activity",
     to: "/settings/connections",
     targetId: "connections-environment",
@@ -945,6 +1063,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/providers": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
+  "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
   "/settings/archived": "project-defaults",
 };
@@ -1062,6 +1181,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
       (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
+      (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement),
   );
@@ -1105,6 +1225,11 @@ export function searchSettings(
                   : 0;
       return [{ item, index, rank }];
     })
-    .toSorted((left, right) => right.rank - left.rank || left.index - right.index)
+    .toSorted(
+      (left, right) =>
+        Number(left.item.secondary ?? false) - Number(right.item.secondary ?? false) ||
+        right.rank - left.rank ||
+        left.index - right.index,
+    )
     .map(({ item }) => item);
 }

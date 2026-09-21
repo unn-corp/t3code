@@ -130,6 +130,7 @@ function ChecksBody({
 export function PullRequestChecksPopover({
   checksState,
   checks,
+  stale = false,
   environmentId,
   reference,
   githubAccountId,
@@ -139,6 +140,7 @@ export function PullRequestChecksPopover({
   checksState: PullRequestChecksState;
   /** The checks already in hand, for the detail header. Absent on a listing row. */
   checks?: ReadonlyArray<PullRequestCheck>;
+  stale?: boolean;
   environmentId?: EnvironmentId;
   reference?: PullRequestRef;
   /** Thread the popover sits beside; a listing row has none. */
@@ -157,7 +159,7 @@ export function PullRequestChecksPopover({
         )?.githubAccountId ?? null));
   const presentation = pullRequestChecksStatePresentation(checksState);
   // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
-  const summary = checks === undefined ? null : summarizePullRequestChecks(checks);
+  const summary = checks === undefined || stale ? null : summarizePullRequestChecks(checks);
   return (
     <Popover>
       {/* A listing row is itself a button, so the trigger renders as a span: a nested button is
@@ -180,7 +182,11 @@ export function PullRequestChecksPopover({
       <PopoverPopup align="start" className="w-80 max-w-full" side="bottom">
         <p className="mb-2 font-medium text-sm">{presentation.label}</p>
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
-        {checks !== undefined ? (
+        {stale ? (
+          <p className="text-muted-foreground text-xs">
+            Check details are out of date. Refresh the pull request to update them.
+          </p>
+        ) : checks !== undefined ? (
           <ChecksBody
             checks={checks}
             githubAccountId={resolvedGitHubAccountId}

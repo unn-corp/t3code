@@ -15,8 +15,8 @@ import {
   SheetPopup,
   SheetTitle,
 } from "~/components/ui/sheet";
-import { Skeleton } from "~/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { Skeleton } from "~/components/ui/skeleton";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -165,7 +165,10 @@ function SidebarProvider({
     <SidebarContext value={contextValue}>
       <div
         // Inset layouts opt into bg-sidebar through className.
-        className={cn("group/sidebar-wrapper flex min-h-svh w-full", className)}
+        className={cn(
+          "group/sidebar-wrapper flex min-h-svh w-full max-sm:[--workspace-titlebar-control-size:--spacing(8)]",
+          className,
+        )}
         data-sidebar-state={state}
         data-slot="sidebar-wrapper"
         style={
@@ -347,7 +350,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      {isOpen ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
+      {isOpen ? <PanelLeftCloseIcon className="size-4" /> : <PanelLeftIcon className="size-4" />}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );
@@ -669,7 +672,6 @@ function SidebarGroupAction({ className, render, ...props }: useRender.Component
   const defaultProps = {
     className: cn(
       "absolute top-3.5 right-3 flex aspect-square w-5 items-center justify-center rounded-lg p-0 text-sidebar-foreground outline-hidden ring-ring transition-transform hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0",
-      // Increases the hit area of the button on mobile.
       "after:-inset-2 after:absolute md:after:hidden",
       "group-data-[collapsible=icon]:hidden",
       className,

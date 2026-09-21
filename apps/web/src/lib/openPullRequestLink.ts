@@ -2,13 +2,15 @@ import type {
   EnvironmentId,
   GitHubAccountId,
   LocalApi,
+  PullRequestRef,
   RepositoryIdentity,
   ScopedThreadRef,
   ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
-import { type MouseEvent, useCallback } from "react";
+import { type MouseEvent, useCallback, useMemo } from "react";
 
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
 import {
@@ -23,6 +25,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readLocalApi } from "~/localApi";
 
 import { useProjects, useServerConfigs } from "../state/entities";
+import { serverEnvironment } from "../state/server";
 import { usePrimaryEnvironmentId } from "../state/environments";
 
 export class PullRequestLinkOpenError extends Schema.TaggedError<PullRequestLinkOpenError>()(
@@ -152,6 +155,8 @@ export interface ChangeRequestLink {
   readonly host: string;
   readonly repository: string;
   readonly number: number;
+  /** Forgejo's HTTP host and port, separate from the portless repository identity. */
+  readonly authority?: string;
 }
 
 /** The host itself, one of its subdomains, or an install named after the provider. */
@@ -191,6 +196,12 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   if (isHostOf(host, "github.com", "github")) {
     const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
+  }
+  // Forgejo and Gitea use /pulls/ on arbitrary self-hosted domains.
+  const forgejo = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
+  if (forgejo) {
+    const link = claim(host, forgejo);
+    return link === null ? null : { ...link, authority: url.host.toLowerCase() };
   }
   // GitLab, self-hosted included: /{group}/[{subgroup}/...]{repo}/-/merge_requests/{n}. The `/-/`
   // separator is GitLab's own, so the hostname is not asked about.
@@ -245,6 +256,7 @@ export function matchesLinkedPullRequestUrl(
     linked !== null &&
     target !== null &&
     linked.host === target.host &&
+    linked.authority === target.authority &&
     linked.repository === target.repository &&
     linked.number === target.number
   );
@@ -340,6 +352,51 @@ export function findProjectForChangeRequest(
         pullRequestHostOf(identity, kind) === link.authority)
     );
   });
+}
+
+export function resolvePullRequestPreviewTarget({
+  environmentId,
+  projects,
+  pullRequestsEnabled,
+  url,
+}: {
+  environmentId: EnvironmentId | null;
+  projects: ReadonlyArray<EnvironmentProject>;
+  pullRequestsEnabled: boolean;
+  url: string;
+}): { environmentId: EnvironmentId; input: PullRequestRef } | null {
+  if (!pullRequestsEnabled || environmentId === null) return null;
+  const parsed = parseChangeRequestUrl(url);
+  if (parsed === null) return null;
+  const project = findProjectForChangeRequest(
+    projects.filter((candidate) => candidate.environmentId === environmentId),
+    parsed,
+  );
+  if (project === undefined) return null;
+  return {
+    environmentId,
+    input: {
+      projectId: project.id,
+      host: parsed.authority ?? parsed.host,
+      repository: sourceControlRepositorySelector(project.repositoryIdentity) ?? parsed.repository,
+      number: parsed.number,
+    },
+  };
+}
+
+export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null, url: string) {
+  const projects = useProjects();
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  return useMemo(
+    () =>
+      resolvePullRequestPreviewTarget({
+        environmentId,
+        projects,
+        pullRequestsEnabled: serverConfig?.environment.capabilities.pullRequests === true,
+        url,
+      }),
+    [environmentId, projects, serverConfig, url],
+  );
 }
 
 /**

@@ -10,7 +10,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
-import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-external-packages.ts";
+import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   ServerCliBuildAssetMissingError,
@@ -70,7 +70,7 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
 const buildCmd = Command.make(
   "build",
   {
-    verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
   },
   (config) =>
     Effect.gen(function* () {
@@ -109,8 +109,8 @@ const buildCmd = Command.make(
 const buildExeCmd = Command.make(
   "build-exe",
   {
-    verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
-    target: Flag.string("target").pipe(
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
+    target: Flag.String("target").pipe(
       Flag.withDescription(
         "Cross-build for <platform>-<arch> in nodejs.org naming (for example darwin-x64); defaults to the host.",
       ),
@@ -125,13 +125,22 @@ const buildExeCmd = Command.make(
       const serverDir = path.join(repoRoot, "apps/server");
 
       yield* Effect.log("[cli] Building single-executable...");
-      const spawnCommand = yield* resolveSpawnCommand("vp", ["pack"]);
+      // Vite+ emits the final SEA to build/bin and the bundle it is derived
+      // from to dist-exe/bin.mjs when --exe is passed explicitly. The old
+      // environment-only switch is ignored by current Vite+, which silently
+      // produced a normal Node bundle instead.
+      const spawnCommand = yield* resolveSpawnCommand("vp", [
+        "pack",
+        "--exe",
+        "--no-sourcemap",
+        "--out-dir",
+        "dist-exe",
+      ]);
       yield* runCommand(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           cwd: serverDir,
           env: {
             ...process.env,
-            T3CODE_PACK_EXE: "1",
             ...Option.match(config.target, {
               onNone: () => ({}),
               onSome: (target) => ({ T3CODE_PACK_EXE_TARGET: target }),
@@ -151,8 +160,15 @@ const buildExeCmd = Command.make(
       if (specifiers.length > 0) {
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
+      const executableName = process.platform === "win32" ? "bin.exe" : "bin";
+      const executablePath = path.join(serverDir, "build", executableName);
+      if (!(yield* fs.exists(executablePath))) {
+        return yield* new ServerCliBuildAssetMissingError({
+          assetPath: executablePath,
+        });
+      }
       yield* Effect.log(
-        "[cli] Built dist-exe/t3 (expects client/, resource-monitor/, and the runtime-external node_modules beside it; scripts/build-cli-archive.ts assembles that tree)",
+        `[cli] Built ${path.relative(serverDir, executablePath)} (expects client/, resource-monitor/, and the runtime-external node_modules beside it; scripts/build-cli-archive.ts assembles that tree)`,
       );
     }),
 ).pipe(
@@ -175,14 +191,14 @@ const buildExeCmd = Command.make(
 const publishCmd = Command.make(
   "publish",
   {
-    packagesDir: Flag.string("packages-dir").pipe(
+    packagesDir: Flag.String("packages-dir").pipe(
       Flag.withDescription("Output dir of scripts/build-npm-platform-packages.ts."),
     ),
-    tag: Flag.string("tag").pipe(Flag.withDefault("latest")),
-    access: Flag.string("access").pipe(Flag.withDefault("public")),
-    provenance: Flag.boolean("provenance").pipe(Flag.withDefault(false)),
-    dryRun: Flag.boolean("dry-run").pipe(Flag.withDefault(false)),
-    verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
+    tag: Flag.String("tag").pipe(Flag.withDefault("latest")),
+    access: Flag.String("access").pipe(Flag.withDefault("public")),
+    provenance: Flag.Boolean("provenance").pipe(Flag.withDefault(false)),
+    dryRun: Flag.Boolean("dry-run").pipe(Flag.withDefault(false)),
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
   },
   (config) =>
     Effect.gen(function* () {

@@ -124,7 +124,7 @@ describe("resolveGlanceRailUsage", () => {
     [null, "without a provider account"],
     [usage({ windows: [] }), "without usage windows"],
     [usage({ unavailable: true }), "when usage is unavailable"],
-  ])("omits the readout %s", (input) => {
+  ])("omits the readout %s", (input, _description) => {
     expect(resolveGlanceRailUsage(input)).toBeNull();
   });
 });

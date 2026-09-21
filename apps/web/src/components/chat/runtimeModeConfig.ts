@@ -1,5 +1,12 @@
 import type { RuntimeMode } from "@t3tools/contracts";
-import { type LucideIcon, LockIcon, LockOpenIcon, PenLineIcon, SparklesIcon } from "lucide-react";
+import {
+  EyeIcon,
+  type LucideIcon,
+  LockIcon,
+  LockOpenIcon,
+  PenLineIcon,
+  SparklesIcon,
+} from "lucide-react";
 
 export const runtimeModeConfig: Record<
   RuntimeMode,
@@ -19,6 +26,11 @@ export const runtimeModeConfig: Record<
     label: "Auto",
     description: "Supported providers approve routine actions; others still ask.",
     icon: SparklesIcon,
+  },
+  "automated-review": {
+    label: "Read-only automation",
+    description: "Run autonomous inspections without file or network writes.",
+    icon: EyeIcon,
   },
   "full-access": {
     label: "Full access",

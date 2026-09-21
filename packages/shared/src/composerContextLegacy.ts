@@ -78,6 +78,17 @@ function inlineTerminalLabel(record: TerminalContextRecord): string {
   return `@${slug}:${range}`;
 }
 
+const INLINE_TERMINAL_BOUNDARY_CHAR = /^(?:\p{L}|\p{N}|\p{M}|_|@|\.|-)$/u;
+const INLINE_TERMINAL_SUFFIX = /^(?:\p{L}|\p{N}|\p{M}|_|-|[.@]+(?:\p{L}|\p{N}|\p{M}|_|-))/u;
+
+function inlineTerminalLabelIsEmbedded(body: string, at: number, labelLength: number): boolean {
+  const preceding = Array.from(body.slice(0, at)).at(-1);
+  return (
+    (preceding !== undefined && INLINE_TERMINAL_BOUNDARY_CHAR.test(preceding)) ||
+    INLINE_TERMINAL_SUFFIX.test(body.slice(at + labelLength))
+  );
+}
+
 function legacyId(kind: string, index: number): ComposerContextId {
   return `legacy_${kind}_${index}` as ComposerContextId;
 }
@@ -416,11 +427,7 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
     if (placedTerminals.has(record)) continue;
     const label = inlineTerminalLabel(record);
     let at = body.indexOf(label);
-    while (
-      at !== -1 &&
-      (/[\p{L}\p{N}\p{M}_@.-]$/u.test(body.slice(0, at)) ||
-        /^(?:[\p{L}\p{N}\p{M}_-]|[.@]+[\p{L}\p{N}\p{M}_-])/u.test(body.slice(at + label.length)))
-    ) {
+    while (at !== -1 && inlineTerminalLabelIsEmbedded(body, at, label.length)) {
       at = body.indexOf(label, at + 1);
     }
     if (at === -1) continue;

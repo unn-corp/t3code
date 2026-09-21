@@ -39,6 +39,7 @@ import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
@@ -89,6 +90,7 @@ import { DiscordBridgeLive } from "./discord/Layers/DiscordBridge.ts";
 import * as DiscordRestClient from "./discord/DiscordRestClient.ts";
 import * as DiscordBridgeLinks from "./persistence/DiscordBridgeLinks.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
+import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "./orchestration/ThreadPullRequestReactor.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
@@ -108,6 +110,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -205,6 +208,11 @@ const HostPowerMonitorLayerLive = HostPowerMonitor.layer.pipe(
   Layer.provide(DesktopTelemetryReceiverLayerLive),
 );
 
+// Bun is an optional runtime for the server package. Keep these imports
+// dynamic so the Node bundle does not require Bun's optional peer modules.
+const BUN_HTTP_SERVER_MODULE = "@effect/platform-bun/BunHttpServer";
+const BUN_SERVICES_MODULE = "@effect/platform-bun/BunServices";
+
 // Reuses DesktopTelemetryReceiverLayerLive: a fresh receiver layer here
 // would open a second reader on the desktop telemetry fd.
 const DesktopAppUpdateLayerLive = DesktopAppUpdate.layer.pipe(
@@ -235,9 +243,9 @@ const RelayClientLive = Layer.unwrap(
 const HttpServerLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    if (typeof Bun !== "undefined") {
+    if ("Bun" in globalThis) {
       const BunHttpServer = yield* Effect.promise(
-        () => import("@effect/platform-bun/BunHttpServer"),
+        () => import(/* @vite-ignore */ BUN_HTTP_SERVER_MODULE),
       );
       return BunHttpServer.layer({
         port: config.port,
@@ -281,8 +289,8 @@ const HttpServerLive = Layer.unwrap(
 
 const PlatformServicesLive = Layer.unwrap(
   Effect.gen(function* () {
-    if (typeof Bun !== "undefined") {
-      const { layer } = yield* Effect.promise(() => import("@effect/platform-bun/BunServices"));
+    if ("Bun" in globalThis) {
+      const { layer } = yield* Effect.promise(() => import(/* @vite-ignore */ BUN_SERVICES_MODULE));
       return layer;
     } else {
       const { layer } = yield* Effect.promise(() => import("@effect/platform-node/NodeServices"));
@@ -296,6 +304,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
+  Layer.provideMerge(StorageCleanup.layer),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),
   Layer.provideMerge(PullRequestSyncReactor.layer),
@@ -347,6 +356,8 @@ const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.lay
 
 const PullRequestServiceLive = PullRequestService.layer.pipe(
   Layer.provide(PullRequestProviderRegistry.layer),
+  // Where the viewed-file marks live for a host that keeps none of its own.
+  Layer.provide(PullRequestFilesViewed.layer),
   Layer.provide(PullRequestReadCache.layer),
   Layer.provide(SourceControlProviderRegistryLayerLive),
   Layer.provide(SourceControlRateLimit.layer),
@@ -357,7 +368,9 @@ const GitManagerLayerLive = GitManager.layer.pipe(
   Layer.provideMerge(WorktreeSetupTracker.layer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
-  Layer.provideMerge(TextGeneration.layer),
+  Layer.provideMerge(
+    TextGeneration.layer.pipe(Layer.provide(SourceControlProviderRegistryLayerLive)),
+  ),
 );
 
 const GitLayerLive = Layer.empty.pipe(
@@ -376,6 +389,10 @@ const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.l
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
 );
 
+const ProjectCloneTrackerLayerLive = ProjectCloneTracker.layer.pipe(
+  Layer.provide(SourceControlRepositoryServiceLayerLive),
+);
+
 const ReviewLayerLive = ReviewService.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
@@ -388,6 +405,7 @@ const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitWorkflowLayerLive),
   Layer.provideMerge(ReviewLayerLive),
   Layer.provideMerge(SourceControlRepositoryServiceLayerLive),
+  Layer.provideMerge(ProjectCloneTrackerLayerLive),
   Layer.provideMerge(
     VcsStatusBroadcaster.layer.pipe(
       Layer.provide(GitWorkflowLayerLive),
@@ -499,8 +517,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),
+  // `GitHubCli` is the registry's own instance, exposed because the asset route fetches
+  // GitHub-hosted pull request media with the repository's credential.
   Layer.provideMerge(
-    Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
+    Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive, GitHubCli.layer),
   ),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),

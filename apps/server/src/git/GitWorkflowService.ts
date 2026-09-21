@@ -74,6 +74,7 @@ export class GitWorkflowService extends Context.Service<
     readonly fetchRemote: (input: {
       readonly cwd: string;
       readonly remoteName: string;
+      readonly refName?: string;
     }) => Effect.Effect<void, GitCommandError>;
     readonly resolveBranchRemoteName: (input: {
       readonly cwd: string;

@@ -19,6 +19,7 @@ import { Route as AgentDashboardRouteImport } from './routes/agent-dashboard'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as AgentDashboardIndexRouteImport } from './routes/agent-dashboard.index'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+import { Route as SettingsStorageRouteImport } from './routes/settings.storage'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
 import { Route as SettingsSnapShotRouteImport } from './routes/settings.snap-shot'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
@@ -33,7 +34,6 @@ import { Route as SettingsAutomationRouteImport } from './routes/settings.automa
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
-import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as AgentDashboardSuggestionsRouteImport } from './routes/agent-dashboard.suggestions'
 import { Route as AgentDashboardSecurityRouteImport } from './routes/agent-dashboard.security'
 import { Route as AgentDashboardRunsRouteImport } from './routes/agent-dashboard.runs'
@@ -92,6 +92,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
+} as any)
+const SettingsStorageRoute = SettingsStorageRouteImport.update({
+  id: '/storage',
+  path: '/storage',
+  getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
@@ -164,11 +169,6 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ConnectCallbackRoute = ConnectCallbackRouteImport.update({
-  id: '/connect_/callback',
-  path: '/connect/callback',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AgentDashboardSuggestionsRoute =
   AgentDashboardSuggestionsRouteImport.update({
     id: '/suggestions',
@@ -233,7 +233,6 @@ export interface FileRoutesByFullPath {
   '/agent-dashboard/runs': typeof AgentDashboardRunsRoute
   '/agent-dashboard/security': typeof AgentDashboardSecurityRoute
   '/agent-dashboard/suggestions': typeof AgentDashboardSuggestionsRoute
-  '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -248,6 +247,7 @@ export interface FileRoutesByFullPath {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/storage': typeof SettingsStorageRoute
   '/agent-dashboard/': typeof AgentDashboardIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -266,7 +266,6 @@ export interface FileRoutesByTo {
   '/agent-dashboard/runs': typeof AgentDashboardRunsRoute
   '/agent-dashboard/security': typeof AgentDashboardSecurityRoute
   '/agent-dashboard/suggestions': typeof AgentDashboardSuggestionsRoute
-  '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -281,6 +280,7 @@ export interface FileRoutesByTo {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/storage': typeof SettingsStorageRoute
   '/': typeof ChatIndexRoute
   '/agent-dashboard': typeof AgentDashboardIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -303,7 +303,6 @@ export interface FileRoutesById {
   '/agent-dashboard/runs': typeof AgentDashboardRunsRoute
   '/agent-dashboard/security': typeof AgentDashboardSecurityRoute
   '/agent-dashboard/suggestions': typeof AgentDashboardSuggestionsRoute
-  '/connect_/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -318,6 +317,7 @@ export interface FileRoutesById {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/storage': typeof SettingsStorageRoute
   '/_chat/': typeof ChatIndexRoute
   '/agent-dashboard/': typeof AgentDashboardIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -341,7 +341,6 @@ export interface FileRouteTypes {
     | '/agent-dashboard/runs'
     | '/agent-dashboard/security'
     | '/agent-dashboard/suggestions'
-    | '/connect/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -356,6 +355,7 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/snap-shot'
     | '/settings/source-control'
+    | '/settings/storage'
     | '/agent-dashboard/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -374,7 +374,6 @@ export interface FileRouteTypes {
     | '/agent-dashboard/runs'
     | '/agent-dashboard/security'
     | '/agent-dashboard/suggestions'
-    | '/connect/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -389,6 +388,7 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/snap-shot'
     | '/settings/source-control'
+    | '/settings/storage'
     | '/'
     | '/agent-dashboard'
     | '/$environmentId/$threadId'
@@ -410,7 +410,6 @@ export interface FileRouteTypes {
     | '/agent-dashboard/runs'
     | '/agent-dashboard/security'
     | '/agent-dashboard/suggestions'
-    | '/connect_/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -425,6 +424,7 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/snap-shot'
     | '/settings/source-control'
+    | '/settings/storage'
     | '/_chat/'
     | '/agent-dashboard/'
     | '/_chat/$environmentId/$threadId'
@@ -440,7 +440,6 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
-  ConnectCallbackRoute: typeof ConnectCallbackRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
 }
 
@@ -515,6 +514,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/settings/storage': {
+      id: '/settings/storage'
+      path: '/storage'
+      fullPath: '/settings/storage'
+      preLoaderRoute: typeof SettingsStorageRouteImport
+      parentRoute: typeof SettingsRoute
     }
     '/settings/source-control': {
       id: '/settings/source-control'
@@ -612,13 +618,6 @@ declare module '@tanstack/react-router' {
       path: '/projects/$projectKey'
       fullPath: '/projects/$projectKey'
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/connect_/callback': {
-      id: '/connect_/callback'
-      path: '/connect/callback'
-      fullPath: '/connect/callback'
-      preLoaderRoute: typeof ConnectCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agent-dashboard/suggestions': {
@@ -741,6 +740,7 @@ interface SettingsRouteChildren {
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsSnapShotRoute: typeof SettingsSnapShotRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
+  SettingsStorageRoute: typeof SettingsStorageRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
@@ -757,6 +757,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsSnapShotRoute: SettingsSnapShotRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
+  SettingsStorageRoute: SettingsStorageRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
@@ -772,7 +773,6 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
-  ConnectCallbackRoute: ConnectCallbackRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
 }
 export const routeTree = rootRouteImport

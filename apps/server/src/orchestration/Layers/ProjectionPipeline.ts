@@ -814,6 +814,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.activeOrderKey !== undefined
               ? { activeOrderKey: event.payload.activeOrderKey }
               : {}),
+            ...(event.payload.titleState !== undefined
+              ? { titleState: event.payload.titleState }
+              : {}),
             ...(event.payload.titleRegeneration !== undefined
               ? {
                   titleRegenerationRequestId: event.payload.titleRegeneration?.requestId ?? null,
@@ -1010,12 +1013,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             event.payload.role === "user" && event.payload.turnId?.startsWith("import:")
               ? event.payload.updatedAt
               : event.payload.createdAt;
+          const isResumedImportedMessage = event.commandId.startsWith("resume-import:");
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             updatedAt: event.occurredAt,
             latestUserMessageAt:
               event.payload.role === "user" &&
-              !isImportedAgentSessionMessageId(event.payload.messageId) &&
+              (!isImportedAgentSessionMessageId(event.payload.messageId) ||
+                isResumedImportedMessage) &&
               (previousLatest === null || userMessageAt > previousLatest)
                 ? userMessageAt
                 : previousLatest,
@@ -1700,6 +1705,18 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
           });
+          // Do not let a placeholder (status "missing") overwrite a checkpoint
+          // that has already been captured with a real git ref. In-memory
+          // projectEvent already refuses this. SQL did not, so thread detail
+          // and diffs could show missing after a ready capture.
+          if (
+            Option.isSome(existingTurn) &&
+            existingTurn.value.checkpointStatus !== null &&
+            existingTurn.value.checkpointStatus !== "missing" &&
+            event.payload.status === "missing"
+          ) {
+            return;
+          }
           const nextState = event.payload.status === "error" ? "error" : "completed";
           yield* projectionTurnRepository.clearCheckpointTurnConflict({
             threadId: event.payload.threadId,

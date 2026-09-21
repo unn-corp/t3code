@@ -14,6 +14,7 @@ import * as PullRequestSyncReactor from "../PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "../ThreadPullRequestReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 import { DiscordBridge } from "../../discord/Services/DiscordBridge.ts";
+import * as StorageCleanup from "../../storageCleanup.ts";
 
 export const makeOrchestrationReactor = Effect.gen(function* () {
   const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
@@ -25,6 +26,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const threadPullRequestReactor = yield* ThreadPullRequestReactor.ThreadPullRequestReactor;
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const discordBridge = yield* DiscordBridge;
+  const storageCleanup = yield* StorageCleanup.StorageCleanup;
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
     yield* providerRuntimeIngestion.start();
@@ -38,6 +40,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     // Post-commit observer. Stays dormant unless explicitly enabled and
     // configured, and can never fail the orchestration transaction.
     yield* discordBridge.start();
+    yield* storageCleanup.start();
   });
 
   return {

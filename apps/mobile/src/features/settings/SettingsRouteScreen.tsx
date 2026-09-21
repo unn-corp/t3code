@@ -1,15 +1,16 @@
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAuth, useUser } from "@clerk/expo";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Alert, Linking, Platform, Pressable, ScrollView, View } from "react-native";
+import { Alert, Linking, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 
 import {
   isAtomCommandInterrupted,
@@ -18,7 +19,6 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
@@ -30,8 +30,8 @@ import {
 } from "../agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
-import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
-import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
@@ -53,7 +53,13 @@ import {
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import {
+  AndroidSettingsEnvironmentFilter,
+  SettingsEnvironmentFilterHeader,
+} from "./components/SettingsEnvironmentFilterHeader";
+import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 
@@ -75,36 +81,32 @@ function useDeviceRegistered(): boolean {
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const content = hasCloudPublicConfig() ? (
+    <ConfiguredSettingsRouteScreen />
+  ) : (
+    <LocalSettingsRouteScreen />
+  );
 
   return (
     <>
-      <WorkspaceSidebarToolbar />
+      {Platform.OS === "ios" && layout.usesSplitView ? (
+        <NativeHeaderToolbar placement="left">
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Go back"
+            icon="chevron.left"
+            onPress={() => navigation.goBack()}
+          />
+        </NativeHeaderToolbar>
+      ) : null}
+      <SettingsEnvironmentFilterHeader closeSettings />
       {Platform.OS === "android" ? (
-        <>
-          {/* Android renders its own in-screen header instead of the native bar. */}
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Settings" onBack={() => navigation.goBack()} />
-        </>
+        <SettingsScreen title="Settings" trailing={<AndroidSettingsEnvironmentFilter />}>
+          {content}
+        </SettingsScreen>
       ) : (
-        <NativeStackScreenOptions
-          options={{
-            unstable_headerRightItems:
-              Platform.OS === "ios"
-                ? () => [
-                    withNativeGlassHeaderItem({
-                      accessibilityLabel: "Close settings",
-                      icon: { name: "xmark", type: "sfSymbol" } as const,
-                      identifier: "settings-close",
-                      label: "",
-                      onPress: () => navigation.goBack(),
-                      type: "button",
-                    }),
-                  ]
-                : undefined,
-          }}
-        />
+        content
       )}
-      {hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />}
     </>
   );
 }
@@ -145,6 +147,7 @@ function LocalSettingsRouteScreen() {
         <ArchivedThreadsSettingsSection />
 
         <AppSettingsSection />
+        <SettingsIndexSections />
       </ScrollView>
     </View>
   );
@@ -565,8 +568,85 @@ function ConfiguredSettingsRouteScreen() {
         <ArchivedThreadsSettingsSection />
 
         <AppSettingsSection />
+        <SettingsIndexSections />
       </ScrollView>
     </View>
+  );
+}
+
+function SettingsIndexSections() {
+  const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const noServerTargets = selectedTargets.length === 0;
+  const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
+  const scopedProjectMembers =
+    selectedProject?.members
+      .map((member) => member.project)
+      .filter((project) =>
+        selectedTargets.some((target) => target.environmentId === project.environmentId),
+      ) ?? [];
+  const projectLabel =
+    scopedProjectMembers.length > 0
+      ? deriveProjectGroupLabel({
+          representative: scopedProjectMembers[0]!,
+          members: scopedProjectMembers,
+        })
+      : (selectedProject?.label ?? "Unavailable project");
+
+  return (
+    <>
+      <SettingsSection title="Interface">
+        <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+        {Platform.OS === "ios" ? (
+          <SettingsRow icon="keyboard" label="Keyboard" target="SettingsKeyboard" />
+        ) : null}
+      </SettingsSection>
+
+      <SettingsSection title="Projects & threads">
+        {selectedProjectKey !== null ? (
+          <SettingsRow
+            icon="folder"
+            label="Overview"
+            value={projectLabel}
+            target="SettingsProjectOverview"
+          />
+        ) : null}
+        <SettingsRow icon="folder" label="Organization" target="SettingsOrganization" />
+        <SettingsRow icon="text.bubble" label="Thread behavior" target="SettingsThreads" />
+        <SettingsRow icon="archivebox" label="Archived Threads" target="SettingsArchive" />
+      </SettingsSection>
+
+      <SettingsSection title="Server settings">
+        <SettingsRow
+          icon="text.bubble"
+          label="New threads"
+          target="SettingsEnvironmentNewThreads"
+          disabled={noServerTargets}
+        />
+        <SettingsRow
+          icon="arrow.triangle.branch"
+          label="Source control"
+          target="SettingsEnvironmentSourceControl"
+          disabled={noServerTargets}
+        />
+        <SettingsRow
+          icon="text.alignleft"
+          label="Agent behavior"
+          target="SettingsEnvironmentAgentBehavior"
+          disabled={noServerTargets}
+        />
+        <SettingsRow
+          icon="arrow.clockwise"
+          label="Maintenance"
+          target="SettingsEnvironmentMaintenance"
+          disabled={noServerTargets}
+        />
+      </SettingsSection>
+
+      <SettingsSection title="App">
+        <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
+        <SettingsRow icon="info.circle" label="About T3 Code" target="SettingsAbout" />
+      </SettingsSection>
+    </>
   );
 }
 
