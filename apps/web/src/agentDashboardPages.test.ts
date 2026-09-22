@@ -700,7 +700,7 @@ describe("agent dashboard suggestion actions", () => {
     expect(
       suggestionWorkModelSelection({
         instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         options: [
           { id: "reasoningEffort", value: "low" },
           { id: "serviceTier", value: "fast" },
@@ -708,7 +708,7 @@ describe("agent dashboard suggestion actions", () => {
       }),
     ).toEqual({
       instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       options: [
         { id: "serviceTier", value: "fast" },
         { id: "reasoningEffort", value: "max" },

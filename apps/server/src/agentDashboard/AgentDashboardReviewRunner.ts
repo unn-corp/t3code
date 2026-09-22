@@ -29,7 +29,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
-const REVIEW_MODEL = "gpt-5.6-luna";
+const REVIEW_MODEL = "gpt-6-luna";
 
 /** The provider-enforced posture for unattended repository reviews. */
 export const REVIEW_RUNTIME_MODE = "automated-review" as const;

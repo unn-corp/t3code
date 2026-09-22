@@ -1067,7 +1067,7 @@ export const ContinuousImprovementSettings = Schema.Struct({
     Schema.withDecodingDefault(
       Effect.succeed({
         instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         options: [{ id: "reasoningEffort", value: "max" }],
       }),
     ),
@@ -1148,7 +1148,7 @@ export const PullRequestRollupSettings = Schema.Struct({
     Schema.withDecodingDefault(
       Effect.succeed({
         instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         options: [{ id: "reasoningEffort", value: "max" }],
       }),
     ),
@@ -1209,7 +1209,7 @@ export const RepositoryReviewSettings = Schema.Struct({
     Schema.withDecodingDefault(
       Effect.succeed({
         instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       }),
     ),
@@ -1279,7 +1279,7 @@ export const DecisionFollowUpSettings = Schema.Struct({
     Schema.withDecodingDefault(
       Effect.succeed({
         instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       }),
     ),

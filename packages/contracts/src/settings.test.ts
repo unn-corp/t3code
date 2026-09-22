@@ -350,7 +350,7 @@ describe("ServerSettings continuous improvement", () => {
       minimumConfidence: "medium",
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         options: [{ id: "reasoningEffort", value: "max" }],
       },
     });
@@ -375,7 +375,7 @@ describe("ServerSettings continuous improvement", () => {
       intervalMinutes: 120,
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       },
     });
@@ -396,7 +396,7 @@ describe("ServerSettings continuous improvement", () => {
       includeAboveRisk: true,
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       },
     });
@@ -467,7 +467,7 @@ describe("ServerSettings continuous improvement", () => {
       customInstructions: "",
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         options: [{ id: "reasoningEffort", value: "max" }],
       },
     });

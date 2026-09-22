@@ -652,12 +652,12 @@ export function buildDashboardFindingWorktreeBootstrap(input: {
 /** Suggestion implementation work always uses Luna with Max reasoning. */
 export function suggestionWorkModelSelection(current: ModelSelection): ModelSelection {
   const compatibleOptions =
-    current.instanceId === "codex" && current.model === "gpt-5.6-luna"
+    current.instanceId === "codex" && current.model === "gpt-6-luna"
       ? (current.options?.filter((option) => option.id !== "reasoningEffort") ?? [])
       : [];
   return {
     instanceId: ProviderInstanceId.make("codex"),
-    model: "gpt-5.6-luna",
+    model: "gpt-6-luna",
     options: [...compatibleOptions, { id: "reasoningEffort", value: "max" }],
   };
 }
