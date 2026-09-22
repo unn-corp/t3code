@@ -56,6 +56,7 @@ import IconFilterFilled from "@tabler/icons-react-native/IconFilterFilled";
 import IconFolder from "@tabler/icons-react-native/IconFolder";
 import IconFolderOpen from "@tabler/icons-react-native/IconFolderOpen";
 import IconFolderPlus from "@tabler/icons-react-native/IconFolderPlus";
+import IconGauge from "@tabler/icons-react-native/IconGauge";
 import IconGitBranch from "@tabler/icons-react-native/IconGitBranch";
 import IconGitMerge from "@tabler/icons-react-native/IconGitMerge";
 import IconGitPullRequest from "@tabler/icons-react-native/IconGitPullRequest";
@@ -136,6 +137,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   brain: IconBrain,
   camera: IconCamera,
   "chart.bar.xaxis": IconChartBar,
+  "gauge.with.dots.needle.67percent": IconGauge,
   checkmark: IconCheck,
   "checkmark.circle": IconCircleCheck,
   circle: IconCircle,

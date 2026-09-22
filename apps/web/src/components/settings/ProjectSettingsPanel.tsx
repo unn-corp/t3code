@@ -767,7 +767,7 @@ function ProjectDetail({
 
   // ----- new-thread workspace mode -----
   const storedEnvMode = representative.defaultThreadEnvMode ?? null;
-  const inheritedEnvMode = projectSettings.defaultThreadEnvMode;
+  const inheritedEnvMode = projectSettings.defaultThreadEnvMode ?? "local";
   const inheritedEnvModeSource = "environment";
   const mixedWorkspace = group.memberProjects.some(
     (member) => member.defaultThreadEnvMode !== storedEnvMode,
