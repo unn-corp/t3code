@@ -5,7 +5,7 @@ import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { Input } from "~/components/ui/input";
+import { Input, type InputProps } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Separator } from "~/components/ui/separator";
 import {
@@ -545,6 +545,20 @@ function SidebarRail({
   );
 }
 
+/** A bare search or rename field that sits in a row of sidebar chrome. */
+function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
+  return (
+    <Input
+      className={cn(
+        "[&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:placeholder:text-sidebar-muted-foreground",
+        className,
+      )}
+      unstyled
+      {...props}
+    />
+  );
+}
+
 function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
@@ -554,17 +568,6 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
         className,
       )}
       data-slot="sidebar-inset"
-      {...props}
-    />
-  );
-}
-
-function SidebarInput({ className, ...props }: React.ComponentProps<typeof Input>) {
-  return (
-    <Input
-      className={cn("h-8 w-full bg-background shadow-none", className)}
-      data-sidebar="input"
-      data-slot="sidebar-input"
       {...props}
     />
   );
@@ -624,7 +627,10 @@ function SidebarContent({
         <div
           // Reordered rows must not pull the viewport to their new position.
           className={cn(
-            "flex w-full min-w-0 flex-col gap-2 [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden",
+            // Stacked groups share one inset between them instead of doubling
+            // it, including across the fixed header's boundary.
+            "flex w-full min-w-0 flex-col [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden [&>[data-sidebar=group]+[data-sidebar=group]]:pt-0",
+            fixedHeader && "[&>[data-sidebar=group]:first-child]:pt-0",
             className,
           )}
           data-sidebar="content"
@@ -934,6 +940,7 @@ function SidebarMenuSubButton({
 }
 
 export {
+  SidebarInput,
   Sidebar,
   SidebarContent,
   SidebarFooter,
@@ -942,7 +949,6 @@ export {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
-  SidebarInput,
   SidebarInset,
   SidebarMenu,
   SidebarMenuAction,
