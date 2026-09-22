@@ -1506,6 +1506,20 @@ describe("resolveComposerProviderSelection", () => {
     expect(selection.unavailableProviderInstanceId).toBe(missingInstanceId);
   });
 
+  it("lets a new draft pick any ready provider while it holds the empty placeholder", () => {
+    // The composer passes the thread's own selection as lockedInstanceId even
+    // before the thread starts, so a draft arrives holding the placeholder.
+    const ready = entry("claudeAgent");
+    const selection = resolveComposerProviderSelection({
+      entries: [entry("codex", "codex", { status: "error" }), ready],
+      candidateInstanceIds: [undefined, undefined, NO_PROVIDER_MODEL_SELECTION.instanceId],
+      lockedProvider: null,
+      lockedInstanceId: NO_PROVIDER_MODEL_SELECTION.instanceId,
+    });
+
+    expect(selection.selectedProviderEntry?.instanceId).toBe(ready.instanceId);
+  });
+
   it("does not treat the empty draft placeholder as a provider setup target", () => {
     const selection = resolveComposerProviderSelection({
       entries: [entry("antigravity", "antigravity", { enabled: false })],

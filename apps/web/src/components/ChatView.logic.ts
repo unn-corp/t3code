@@ -577,6 +577,7 @@ export function resolveComposerProviderSelection(input: {
   // different configured instance. Keep the provider lock visible rather than
   // silently moving imported history to the first compatible entry.
   const lockedInstanceMissing =
+    input.lockedProvider !== null &&
     input.lockedInstanceId != null &&
     !input.entries.some((entry) => entry.instanceId === input.lockedInstanceId);
   // Missing continuation metadata must not move Antigravity history into
