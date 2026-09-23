@@ -182,6 +182,7 @@ import {
   useRetainedValue,
   useSidebarRowSubscriptionLease,
   useThreadJumpHintVisibility,
+  visibleActiveGroupThreads,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -257,6 +258,9 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Fresh keys deliberately reset both shelves to collapsed for existing users.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
+const COLLAPSED_PROJECT_GROUPS_KEY = "t3code:sidebar:collapsed-project-groups";
+const COLLAPSED_PROJECT_GROUPS_SCHEMA = Schema.Array(Schema.String);
+const EMPTY_COLLAPSED_PROJECT_GROUP_KEYS: string[] = [];
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -627,17 +631,38 @@ function SortableSidebarRepositoryGroup(props: {
   );
 }
 
-function SidebarRepositoryGroupHeader(props: { group: SidebarProjectSnapshot }) {
+function SidebarRepositoryGroupHeader(props: {
+  group: SidebarProjectSnapshot;
+  activeCount: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   return (
     <li
       data-testid="sidebar-repository-group"
       data-repository-key={props.group.projectKey}
       className="list-none"
     >
-      <div className="flex min-w-0 items-center gap-1.5 px-2.5 pb-1 pt-2 text-[11px] font-medium text-sidebar-muted-foreground/80">
+      <button
+        type="button"
+        onClick={props.onToggle}
+        aria-expanded={!props.collapsed}
+        aria-label={`${props.collapsed ? "Expand" : "Collapse"} ${props.group.displayName} project group, ${props.activeCount} active ${props.activeCount === 1 ? "chat" : "chats"}`}
+        data-testid="sidebar-repository-group-toggle"
+        className="flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 pb-1 pt-2 text-left text-[11px] font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+      >
         <ProjectFavicon project={props.group} className="size-3" />
         <span className="min-w-0 flex-1 truncate">{props.group.displayName}</span>
-      </div>
+        {props.collapsed ? (
+          <span className="inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-sidebar-row-hover px-1.5 text-[10px] tabular-nums text-sidebar-foreground">
+            {props.activeCount}
+          </span>
+        ) : null}
+        <ChevronDownIcon
+          aria-hidden
+          className={cn("size-3 shrink-0 transition-transform", props.collapsed && "-rotate-90")}
+        />
+      </button>
     </li>
   );
 }
@@ -2941,6 +2966,30 @@ export default function Sidebar() {
     }
     return groups;
   }, [activeThreads, projectGroupByPhysicalRef, projectGroups]);
+  const [collapsedProjectGroupKeys, setCollapsedProjectGroupKeys] = useLocalStorage(
+    COLLAPSED_PROJECT_GROUPS_KEY,
+    EMPTY_COLLAPSED_PROJECT_GROUP_KEYS,
+    COLLAPSED_PROJECT_GROUPS_SCHEMA,
+  );
+  const collapsedProjectGroups = useMemo(
+    () => new Set(collapsedProjectGroupKeys),
+    [collapsedProjectGroupKeys],
+  );
+  const toggleProjectGroup = useCallback(
+    (projectKey: string) => {
+      if (!collapsedProjectGroups.has(projectKey)) clearSelection();
+      setCollapsedProjectGroupKeys((keys) =>
+        keys.includes(projectKey)
+          ? keys.filter((key) => key !== projectKey)
+          : [...keys, projectKey],
+      );
+    },
+    [clearSelection, collapsedProjectGroups, setCollapsedProjectGroupKeys],
+  );
+  const visibleActiveThreads = useMemo(
+    () => visibleActiveGroupThreads(activeThreadGroups, collapsedProjectGroups),
+    [activeThreadGroups, collapsedProjectGroups],
+  );
   const activeSidebarGroupByDragId = useMemo(
     () =>
       new Map(
@@ -2992,8 +3041,13 @@ export default function Sidebar() {
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () => [
+      ...pinnedThreads,
+      ...visibleActiveThreads,
+      ...visibleSnoozedThreads,
+      ...renderedSettledThreads,
+    ],
+    [pinnedThreads, visibleActiveThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -3596,10 +3650,7 @@ export default function Sidebar() {
     const pinnedRows = rowsOf(pinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
-    const activeRows = rowsOf(
-      activeThreadGroups.flatMap(({ threads: groupThreads }) => groupThreads),
-      "active",
-    );
+    const activeRows = rowsOf(visibleActiveThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
     items.push(...activeRows);
     if (snoozedThreads.length > 0) {
@@ -3612,13 +3663,13 @@ export default function Sidebar() {
     items.push(...settledRows);
     return items;
   }, [
-    activeThreadGroups,
     activeThreads.length,
     pinnedThreads,
     renderedSettledThreads,
     settledThreads.length,
     snoozedThreads.length,
     visibleSnoozedThreads,
+    visibleActiveThreads,
   ]);
   useEffect(() => {
     if (
@@ -5302,24 +5353,10 @@ export default function Sidebar() {
                           onNavigateToDraft={navigateToDraft}
                         />,
                       ];
-                      let renderedActiveGroupKey: string | null = null;
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
+                          if (item.section === "active") continue;
                           const thread = threadByKey.get(item.key)!;
-                          if (item.section === "active") {
-                            const group = projectGroupByPhysicalRef.get(
-                              `${thread.environmentId}:${thread.projectId}`,
-                            );
-                            if (group && group.projectKey !== renderedActiveGroupKey) {
-                              items.push(
-                                <SidebarRepositoryGroupHeader
-                                  key={`repository-group:${group.projectKey}`}
-                                  group={group}
-                                />,
-                              );
-                              renderedActiveGroupKey = group.projectKey;
-                            }
-                          }
                           items.push(renderThreadRow(thread, item.section));
                           continue;
                         }
@@ -5363,6 +5400,23 @@ export default function Sidebar() {
                                 isDropTarget={dragTargetSection === "active"}
                               />,
                             );
+                            for (const { group, threads: groupThreads } of activeThreadGroups) {
+                              if (group) {
+                                items.push(
+                                  <SidebarRepositoryGroupHeader
+                                    key={`repository-group:${group.projectKey}`}
+                                    group={group}
+                                    activeCount={groupThreads.length}
+                                    collapsed={collapsedProjectGroups.has(group.projectKey)}
+                                    onToggle={() => toggleProjectGroup(group.projectKey)}
+                                  />,
+                                );
+                              }
+                              if (group && collapsedProjectGroups.has(group.projectKey)) continue;
+                              for (const thread of groupThreads) {
+                                items.push(renderThreadRow(thread, "active"));
+                              }
+                            }
                             break;
                           case "snoozed-header":
                             items.push(

@@ -46,6 +46,7 @@ import {
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  visibleActiveGroupThreads,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -69,6 +70,23 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("visibleActiveGroupThreads", () => {
+  const groups = [
+    { group: { projectKey: "squidhub" }, threads: ["a", "b"] },
+    { group: { projectKey: "warband" }, threads: ["c"] },
+    { group: null, threads: ["d"] },
+  ];
+
+  it("hides only the collapsed group's rows from sidebar navigation and dragging", () => {
+    expect(visibleActiveGroupThreads(groups, new Set(["squidhub"]))).toEqual(["c", "d"]);
+    expect(groups[0]?.threads).toHaveLength(2);
+  });
+
+  it("restores the group's rows in their original order when expanded", () => {
+    expect(visibleActiveGroupThreads(groups, new Set())).toEqual(["a", "b", "c", "d"]);
+  });
+});
 
 describe("animateSidebarLayoutChanges", () => {
   const baseArgs: Parameters<AnimateLayoutChanges>[0] = {
