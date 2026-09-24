@@ -19,6 +19,7 @@ import { useMemo, useState } from "react";
 
 import {
   buildAgentDashboardUpdateRecords,
+  canDismissAgentDashboardUpdate,
   safeDashboardUpdateFileUrl,
   type NativeAgentFeedItem,
 } from "../agentDashboardPages";
@@ -141,15 +142,17 @@ function DashboardUpdateRow({
             ) : null}
           </div>
         </div>
-        <Button
-          aria-label={`Dismiss update ${item.title}`}
-          disabled={dismissing}
-          onClick={() => onDismiss(item)}
-          size="icon-xs"
-          variant="ghost"
-        >
-          {dismissing ? <LoaderIcon className="animate-spin" /> : <XIcon />}
-        </Button>
+        {canDismissAgentDashboardUpdate(item) ? (
+          <Button
+            aria-label={`Dismiss update ${item.title}`}
+            disabled={dismissing}
+            onClick={() => onDismiss(item)}
+            size="icon-xs"
+            variant="ghost"
+          >
+            {dismissing ? <LoaderIcon className="animate-spin" /> : <XIcon />}
+          </Button>
+        ) : null}
       </div>
     </div>
   );

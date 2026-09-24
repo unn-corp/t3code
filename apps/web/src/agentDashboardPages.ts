@@ -103,6 +103,12 @@ export interface NativeAgentFeedItem {
   readonly durableCard?: AgentDashboardFeedCard;
 }
 
+export function canDismissAgentDashboardUpdate(
+  item: Pick<NativeAgentFeedItem, "durableCard">,
+): boolean {
+  return item.durableCard !== undefined;
+}
+
 type FeedProjectContext = Pick<
   EnvironmentProject,
   "environmentId" | "id" | "title" | "workspaceRoot"

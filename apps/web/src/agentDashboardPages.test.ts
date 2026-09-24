@@ -11,6 +11,7 @@ import {
 
 import {
   buildNativeAgentFeedFromDurableCards,
+  canDismissAgentDashboardUpdate,
   buildDashboardFindingPrompt,
   buildDashboardFindingQuestionPrompt,
   buildDashboardFindingWorktreeBootstrap,
@@ -512,6 +513,7 @@ describe("agent dashboard updates", () => {
       level: "warn",
     });
     expect(update?.durableCard).toBeUndefined();
+    expect(update && canDismissAgentDashboardUpdate(update)).toBe(false);
   });
 
   it("falls back to active thread shells when the server snapshot is unavailable", () => {
@@ -654,6 +656,7 @@ describe("durable agent feed origins", () => {
       model: "gpt-5",
       chatLabel: "Open chat",
     });
+    expect(records[0] && canDismissAgentDashboardUpdate(records[0])).toBe(true);
   });
 
   it("labels historical cards without origin metadata as external updates", () => {
