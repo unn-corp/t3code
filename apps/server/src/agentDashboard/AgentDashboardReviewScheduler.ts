@@ -134,8 +134,8 @@ type ScheduleReadResult =
 
 const scheduleRecoveryMessage = (kind: ScheduleRecoveryKind): string =>
   kind === "malformed"
-    ? "T3 could not decode the findings portfolio schedule; scheduling is paused until the file is repaired."
-    : "T3 could not read the findings portfolio schedule; scheduling is paused until the file is readable.";
+    ? "T3 could not decode the findings portfolio schedule; scheduling is paused until the file is repaired and T3 is restarted."
+    : "T3 could not read the findings portfolio schedule; scheduling is paused until the file is readable and T3 is restarted.";
 
 const recoverySchedule = (
   kind: ScheduleRecoveryKind,
@@ -306,8 +306,12 @@ const scheduleFromRun = (
   // available after the deep-review session was created, so it is the
   // boundary for attempted deep-review coverage.
   const deepReviewDispatched = run.threadId !== null;
+  const successfulPartialReview =
+    run.status === "partial" &&
+    (run.error?.includes("[SILENT]") === true ||
+      run.error?.startsWith("Structured findings") === true);
   const deepReviewCompleted =
-    deepReviewDispatched && (run.status === "succeeded" || run.status === "partial");
+    deepReviewDispatched && (run.status === "succeeded" || successfulPartialReview);
   const completedAtMs = completed ? Date.parse(run.completedAt ?? run.updatedAt) : Number.NaN;
   return {
     ...current,

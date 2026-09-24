@@ -559,15 +559,17 @@ export function AgentFindings({
     ? formatRelativeTimeUntilLabel(findingsSchedule.nextRunAt)
     : null;
   const scheduleTimingLabel =
-    findingsSchedule?.lastStatus === "running"
-      ? "Running now"
-      : nextScheduledRunLabel === "Expired"
-        ? "Run due now"
-        : nextScheduledRunLabel === "Soon"
-          ? "Next run shortly"
-          : nextScheduledRunLabel
-            ? `Next run in ${nextScheduledRunLabel.replace(" left", "")}`
-            : "Schedule ready";
+    findingsSchedule?.enabled === false && findingsSchedule.lastStatus === "failed"
+      ? "Schedule paused"
+      : findingsSchedule?.lastStatus === "running"
+        ? "Running now"
+        : nextScheduledRunLabel === "Expired"
+          ? "Run due now"
+          : nextScheduledRunLabel === "Soon"
+            ? "Next run shortly"
+            : nextScheduledRunLabel
+              ? `Next run in ${nextScheduledRunLabel.replace(" left", "")}`
+              : "Schedule ready";
 
   const showFailure = useCallback((title: string, message: string) => {
     toastManager.add(stackedThreadToast({ type: "error", title, description: message }));

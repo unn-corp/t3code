@@ -426,6 +426,51 @@ it("counts duplicate-only partial output as completed deep-review coverage", () 
   ]);
 });
 
+it("does not claim successful coverage for partial output with zero usable records", () => {
+  const startedAt = "2026-08-10T00:00:00.000Z";
+  const startedAtMs = Date.parse(startedAt);
+  const current = {
+    ...AgentDashboardReviewScheduler.__testing.defaultSchedule(startedAtMs),
+    lastSuccessfulTypes: ["security" as const],
+  };
+  const partial: AgentDashboardAutomationRun = {
+    id: "review-zero-usable",
+    status: "partial",
+    trigger: "scheduled",
+    kind: "repository-review",
+    repository: { projectId: ProjectId.make("project-1") },
+    target: "Project one",
+    threadId: ThreadId.make("review-zero-usable-thread"),
+    jobId: "review-zero-usable",
+    model: null,
+    retryCount: 0,
+    findingCount: 0,
+    costUnits: null,
+    error: "Repository review completed with zero usable findings or qualifications.",
+    createdAt: startedAt,
+    startedAt,
+    updatedAt: "2026-08-10T00:01:00.000Z",
+    completedAt: "2026-08-10T00:01:00.000Z",
+  };
+
+  const next = AgentDashboardReviewScheduler.__testing.scheduleFromRun(
+    current,
+    partial,
+    startedAtMs,
+    startedAt,
+  );
+
+  expect(next.lastCoveredTypes).toEqual([
+    "bug",
+    "security",
+    "research",
+    "improvement",
+    "review",
+    "operations",
+  ]);
+  expect(next.lastSuccessfulTypes).toEqual(["security"]);
+});
+
 it.effect("does not let a heartbeat restore stale running state after a terminal update", () =>
   Effect.gen(function* () {
     const initial: AgentDashboardReviewSchedule = {
