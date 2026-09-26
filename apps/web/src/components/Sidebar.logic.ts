@@ -116,6 +116,18 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 export type SidebarSection = "pinned" | "active" | "snoozed" | "settled";
 
+export function visibleActiveGroupThreads<T>(
+  groups: readonly {
+    readonly group: { readonly projectKey: string } | null;
+    readonly threads: readonly T[];
+  }[],
+  collapsedProjectKeys: ReadonlySet<string>,
+): T[] {
+  return groups.flatMap(({ group, threads }) =>
+    group !== null && collapsedProjectKeys.has(group.projectKey) ? [] : threads,
+  );
+}
+
 /** Sortable ids: thread rows use their scoped key; structural items use a
     colon-free prefix: scoped thread keys always contain a colon. */
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
