@@ -1,5 +1,17 @@
+// @effect-diagnostics nodeBuiltinImport:off - Tests use local filesystem fixtures.
+// @effect-diagnostics preferSchemaOverJson:off - These tests persist a small fixture document.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  DEFAULT_SERVER_SETTINGS,
   IsoDateTime,
   MessageId,
   ProjectId,
@@ -7,11 +19,21 @@ import {
   TurnId,
   type AgentDashboardFinding,
   type AgentDashboardRepositoryPolicy,
+  type OrchestrationShellSnapshot,
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
+  type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as AgentDashboardImplementationRunner from "./AgentDashboardImplementationRunner.ts";
+import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
 import {
+  AgentDashboardContinuousImprovement,
   CONTINUOUS_IMPROVEMENT_RUN_KIND,
   createContinuousImprovementRun,
   evaluateImplementationWatchdog,
@@ -26,7 +48,86 @@ import {
   selectContinuousImprovementStaleCandidates,
   selectContinuousImprovementFinding,
   transitionContinuousImprovementRun,
+  layer as continuousImprovementLayer,
 } from "./AgentDashboardContinuousImprovement.ts";
+
+const pathExists = async (path: string): Promise<boolean> => {
+  try {
+    await NodeFSP.access(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const makeProjection = (input: {
+  readonly getShellSnapshot: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getShellSnapshot"];
+}) =>
+  ({
+    getCommandReadModel: () => Effect.die("unused"),
+    getSnapshot: () => Effect.die("unused"),
+    getShellSnapshot: input.getShellSnapshot,
+    getArchivedShellSnapshot: () => Effect.die("unused"),
+    searchThreads: () => Effect.succeed({ matches: [] }),
+    getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+    getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+    getRecentActivitySummaries: () => Effect.succeed([]),
+    getEventReplayStats: () => Effect.die("unused"),
+    getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+    getProjectShellById: () => Effect.succeed(Option.none()),
+    getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+    getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+    getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+    getThreadShellById: () => Effect.succeed(Option.none()),
+    getThreadDetailById: () => Effect.succeed(Option.none()),
+    getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+  }) satisfies ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
+
+const makeSettingsService = (getSettings: () => ServerSettingsValue) =>
+  ({
+    start: Effect.void,
+    ready: Effect.void,
+    getSettings: Effect.sync(getSettings),
+    updateSettings: () => Effect.die("unused"),
+    getGitHubAccountEnvironment: () => Effect.succeed({ configured: false }),
+    getGitHubAccountEnvironmentForWorkspaceRoot: () => Effect.succeed({ configured: false }),
+    streamChanges: Stream.empty,
+    subscribeChanges: Effect.succeed(Stream.empty),
+  }) satisfies ServerSettings.ServerSettingsService["Service"];
+
+const makeContinuousImprovementTestLayer = (input: {
+  readonly baseDir: string;
+  readonly settings: ServerSettings.ServerSettingsService["Service"];
+  readonly getShellSnapshot: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getShellSnapshot"];
+  readonly runFinding?: AgentDashboardImplementationRunner.AgentDashboardImplementationRunner["Service"]["runFinding"];
+}) =>
+  continuousImprovementLayer.pipe(
+    Layer.provide(
+      Layer.succeed(AgentDashboardImplementationRunner.AgentDashboardImplementationRunner, {
+        runFinding: input.runFinding ?? (() => Effect.succeed(null)),
+        nudgeFinding: () => Effect.void,
+        settleCompletedFinding: () => Effect.void,
+      }),
+    ),
+    Layer.provide(AgentDashboardRunHistory.layer),
+    Layer.provide(
+      Layer.succeed(
+        ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+        makeProjection({ getShellSnapshot: input.getShellSnapshot }),
+      ),
+    ),
+    Layer.provide(
+      Layer.succeed(ServerRuntimeStartup.ServerRuntimeStartup, {
+        awaitCommandReady: Effect.never.pipe(Effect.asVoid),
+        markHttpListening: Effect.void,
+        enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) => effect,
+      }),
+    ),
+    Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
+    Layer.provide(Layer.succeed(ServerSettings.ServerSettingsService, input.settings)),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), input.baseDir)),
+    Layer.provideMerge(NodeServices.layer),
+  );
 
 it("finds the pull request after an implementation agent renames its branch", () => {
   const pullRequest = findImplementationPullRequest({
@@ -654,4 +755,142 @@ it("preserves the actual launch error in durable history", () => {
     error: "git fetch ssh-origin failed: permission denied",
     completedAt: "2026-08-23T12:00:02.000Z",
   });
+});
+
+describe("Continuous Improvement scheduler enablement", () => {
+  it.effect("skips reconciliation across disabled ticks", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-continuous-improvement-disabled-")),
+      ),
+      (baseDir) =>
+        Effect.gen(function* () {
+          const shellReads = { count: 0 };
+          const disabledSettings = {
+            ...DEFAULT_SERVER_SETTINGS,
+            continuousImprovement: {
+              ...DEFAULT_SERVER_SETTINGS.continuousImprovement,
+              enabled: false,
+            },
+          } satisfies ServerSettingsValue;
+
+          yield* Effect.gen(function* () {
+            const service = yield* AgentDashboardContinuousImprovement;
+            expect(yield* service.runOnce).toBeNull();
+            expect(yield* service.runOnce).toBeNull();
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(
+              makeContinuousImprovementTestLayer({
+                baseDir,
+                settings: makeSettingsService(() => disabledSettings),
+                getShellSnapshot: () =>
+                  Effect.sync(() => {
+                    shellReads.count += 1;
+                    return {
+                      snapshotSequence: shellReads.count,
+                      projects: [],
+                      threads: [],
+                      updatedAt: "2026-09-07T00:00:00.000Z",
+                    } satisfies OrchestrationShellSnapshot;
+                  }),
+              }),
+            ),
+          );
+
+          expect(shellReads.count).toBe(0);
+          expect(
+            yield* Effect.promise(() =>
+              pathExists(NodePath.join(baseDir, "userdata", "agent-dashboard")),
+            ),
+          ).toBe(false);
+        }),
+      (baseDir) => Effect.promise(() => NodeFSP.rm(baseDir, { recursive: true, force: true })),
+    ),
+  );
+
+  it.effect("resumes reconciliation and selection when re-enabled", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-continuous-improvement-reenable-")),
+      ),
+      (baseDir) =>
+        Effect.gen(function* () {
+          const findingsPath = NodePath.join(
+            baseDir,
+            "userdata",
+            "agent-dashboard",
+            "findings.json",
+          );
+          const shellReads = { count: 0 };
+          const implementationLaunches = { count: 0 };
+          const settingsState: { value: ServerSettingsValue } = {
+            value: {
+              ...DEFAULT_SERVER_SETTINGS,
+              continuousImprovement: {
+                ...DEFAULT_SERVER_SETTINGS.continuousImprovement,
+                enabled: false,
+              },
+            } satisfies ServerSettingsValue,
+          };
+          const projectShell = {
+            ...project("alpha"),
+            workspaceRoot: process.cwd(),
+          } satisfies OrchestrationProjectShell;
+
+          yield* Effect.promise(() =>
+            NodeFSP.mkdir(NodePath.dirname(findingsPath), { recursive: true }),
+          );
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(
+              findingsPath,
+              JSON.stringify({ findings: [finding("eligible", "alpha")] }),
+            ),
+          );
+
+          yield* Effect.gen(function* () {
+            const service = yield* AgentDashboardContinuousImprovement;
+            expect(yield* service.runOnce).toBeNull();
+            expect(shellReads.count).toBe(0);
+
+            settingsState.value = {
+              ...settingsState.value,
+              continuousImprovement: {
+                ...settingsState.value.continuousImprovement,
+                enabled: true,
+              },
+            };
+
+            expect(yield* service.runOnce).toBeNull();
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(
+              makeContinuousImprovementTestLayer({
+                baseDir,
+                settings: makeSettingsService(() => settingsState.value),
+                getShellSnapshot: () =>
+                  Effect.sync(() => {
+                    shellReads.count += 1;
+                    return {
+                      snapshotSequence: shellReads.count,
+                      projects: [projectShell],
+                      threads: [],
+                      updatedAt: "2026-09-07T00:00:00.000Z",
+                    } satisfies OrchestrationShellSnapshot;
+                  }),
+                runFinding: () =>
+                  Effect.sync(() => {
+                    implementationLaunches.count += 1;
+                    return null;
+                  }),
+              }),
+            ),
+          );
+
+          expect(shellReads.count).toBe(2);
+          expect(implementationLaunches.count).toBe(1);
+        }),
+      (baseDir) => Effect.promise(() => NodeFSP.rm(baseDir, { recursive: true, force: true })),
+    ),
+  );
 });
