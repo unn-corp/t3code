@@ -52,6 +52,8 @@ it.effect("Architect prompt projects only the selected configuration and transcr
     );
     expect(prompt).toContain("Ask one focused question");
     expect(prompt).toContain("Offer concrete structural proposals incrementally");
+    expect(prompt).toContain("When the user asks you to choose reasonable roles");
+    expect(prompt).toContain("make concrete provisional choices");
     expect(prompt).not.toContain("/private/repository");
     expect(prompt).not.toContain("secret transcript note");
   }),

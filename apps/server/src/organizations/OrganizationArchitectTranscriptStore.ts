@@ -37,6 +37,8 @@ export interface OrganizationArchitectCompletionInput {
 export interface OrganizationArchitectFailureInput {
   readonly organizationId: OrganizationId;
   readonly messageId: OrganizationArchitectMessageId;
+  /** A server-authored, credential-free explanation for the failed request. */
+  readonly failureMessage?: string;
 }
 
 type RequestRow = {
@@ -386,6 +388,7 @@ const make = Effect.gen(function* () {
         if (request.status === "failed") return;
         if (request.status === "completed")
           return yield* conflict("Completed Architect request cannot be failed.");
+        const failureMessage = input.failureMessage ?? FAILURE_MESSAGE;
         const time = yield* now;
         const responseMessageId = OrganizationArchitectMessageId.make(
           stableId("architect-response", input.messageId),
@@ -393,9 +396,9 @@ const make = Effect.gen(function* () {
         yield* sql`INSERT INTO organization_architect_messages
         (message_id, organization_id, request_id, role, text, base_revision, created_at)
         VALUES (${responseMessageId}, ${input.organizationId}, ${input.messageId},
-          'architect', ${FAILURE_MESSAGE}, ${request.base_revision}, ${time})`;
+          'architect', ${failureMessage}, ${request.base_revision}, ${time})`;
         yield* sql`UPDATE organization_architect_requests SET status = 'failed',
-        failure_message = ${FAILURE_MESSAGE}, updated_at = ${time}
+        failure_message = ${failureMessage}, updated_at = ${time}
         WHERE request_id = ${input.messageId}`;
       }),
     );

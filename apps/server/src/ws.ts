@@ -110,6 +110,10 @@ import * as AgentDashboardRunHistory from "./agentDashboard/AgentDashboardRunHis
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
+import {
+  architectGenerationFailureMessage,
+  completedArchitectTranscript,
+} from "./organizations/OrganizationArchitectContext.ts";
 import * as OrganizationStore from "./organizations/OrganizationStore.ts";
 import * as OrganizationIntakeStore from "./organizations/OrganizationIntakeStore.ts";
 import * as OrganizationWorkStore from "./organizations/OrganizationWorkStore.ts";
@@ -2529,22 +2533,7 @@ const makeWsRpcLayer = (
                           "The selected provider does not support tool-free Architect conversation.",
                       });
                     }
-                    const transcript = conversation.messages
-                      .filter((message) => message.requestId !== input.messageId)
-                      .slice(-16)
-                      .map((message) => ({
-                        role: message.role === "user" ? ("user" as const) : ("assistant" as const),
-                        text: message.text,
-                      }));
-                    while (
-                      transcript.length > 0 &&
-                      transcript.reduce(
-                        (bytes, turn) => bytes + Buffer.byteLength(turn.text, "utf8"),
-                        0,
-                      ) > 12_000
-                    ) {
-                      transcript.shift();
-                    }
+                    const transcript = completedArchitectTranscript(conversation, input.messageId);
                     const output = yield* generate({
                       modelSelection: input.modelSelection,
                       organization,
@@ -2562,11 +2551,10 @@ const makeWsRpcLayer = (
                       userText: currentMessage.text,
                     }).pipe(
                       Effect.mapError(
-                        () =>
+                        (cause) =>
                           new OrganizationArchitectError({
                             code: "unavailable",
-                            message:
-                              "The Architect could not complete this request. Send a new message to retry.",
+                            message: architectGenerationFailureMessage(cause),
                           }),
                       ),
                     );
@@ -2578,7 +2566,13 @@ const makeWsRpcLayer = (
                     Effect.catch((error) =>
                       organizationArchitectTranscriptStore
                         .fail(
-                          { organizationId: input.organizationId, messageId: input.messageId },
+                          {
+                            organizationId: input.organizationId,
+                            messageId: input.messageId,
+                            ...(Schema.is(OrganizationArchitectError)(error)
+                              ? { failureMessage: error.message }
+                              : {}),
+                          },
                           principal,
                         )
                         .pipe(Effect.ignore, Effect.andThen(Effect.fail(error))),

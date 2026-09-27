@@ -466,13 +466,24 @@ layer("Organization Architect transcript", (it) => {
       const store = yield* OrganizationArchitectTranscriptStore;
       const send = { ...input("failed-request"), text: "Please inspect password=supersecret" };
       yield* store.begin(send, principal);
-      yield* store.fail({ organizationId, messageId: send.messageId }, principal);
+      yield* store.fail(
+        {
+          organizationId,
+          messageId: send.messageId,
+          failureMessage: "The selected Architect provider failed. Check its setup.",
+        },
+        principal,
+      );
       yield* store.fail({ organizationId, messageId: send.messageId }, principal);
       const duplicate = yield* store.begin(send, principal);
       assert.equal(duplicate.shouldGenerate, false);
       assert.equal(duplicate.status, "failed");
       const listed = yield* store.list({ organizationId });
       assert.equal(listed.requests[0]?.status, "failed");
+      assert.equal(
+        listed.requests[0]?.failureMessage,
+        "The selected Architect provider failed. Check its setup.",
+      );
       assert.equal(listed.messages.length, 2);
       assert.equal(listed.messages[0]?.text.includes("supersecret"), false);
       assert.equal(listed.messages[1]?.text.includes("supersecret"), false);
