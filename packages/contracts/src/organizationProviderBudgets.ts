@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { ProjectId } from "./baseSchemas.ts";
+import { IsoDateTime, ProjectId } from "./baseSchemas.ts";
 import { OrganizationId } from "./organizations.ts";
 
 export const OrganizationProviderBudgetReadInput = Schema.Struct({
@@ -40,6 +40,47 @@ export class OrganizationProviderBudgetReadError extends Schema.TaggedError<Orga
   "OrganizationProviderBudgetReadError",
   {
     code: Schema.Literals(["forbidden", "not_found", "unavailable"]),
+    message: Schema.String,
+  },
+) {}
+
+export const OrganizationProviderBudgetScope = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("global") }),
+  Schema.Struct({ kind: Schema.Literal("organization"), organizationId: OrganizationId }),
+  Schema.Struct({ kind: Schema.Literal("project"), projectId: ProjectId }),
+]);
+export type OrganizationProviderBudgetScope = typeof OrganizationProviderBudgetScope.Type;
+
+export const OrganizationProviderBudgetGetInput = Schema.Struct({
+  organizationId: OrganizationId,
+  scope: OrganizationProviderBudgetScope,
+});
+export type OrganizationProviderBudgetGetInput = typeof OrganizationProviderBudgetGetInput.Type;
+
+export const OrganizationProviderBudgetUpdateInput = Schema.Struct({
+  organizationId: OrganizationId,
+  scope: OrganizationProviderBudgetScope,
+  expectedRevision: Schema.NullOr(IsoDateTime),
+  limits: OrganizationProviderBudgetCeiling,
+});
+export type OrganizationProviderBudgetUpdateInput =
+  typeof OrganizationProviderBudgetUpdateInput.Type;
+
+export const OrganizationProviderBudgetConfigurationRecord = Schema.Struct({
+  scope: OrganizationProviderBudgetScope,
+  revision: IsoDateTime,
+  limits: OrganizationProviderBudgetCeiling,
+});
+export type OrganizationProviderBudgetConfigurationRecord =
+  typeof OrganizationProviderBudgetConfigurationRecord.Type;
+
+export const OrganizationProviderBudgetGetResult = Schema.Struct({
+  record: Schema.NullOr(OrganizationProviderBudgetConfigurationRecord),
+});
+export class OrganizationProviderBudgetConfigurationRpcError extends Schema.TaggedError<OrganizationProviderBudgetConfigurationRpcError>()(
+  "OrganizationProviderBudgetConfigurationRpcError",
+  {
+    code: Schema.Literals(["invalid", "not_found", "conflict", "forbidden", "unavailable"]),
     message: Schema.String,
   },
 ) {}

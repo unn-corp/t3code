@@ -24,6 +24,10 @@ import {
   OrganizationGitIntegrationCompletionAuthority,
   OrganizationGitIntegrationCompletionError,
 } from "./OrganizationGitIntegrationCompletion.ts";
+import {
+  coordinateOrganizationGitIntegration,
+  OrganizationGitIntegrationAuthority,
+} from "./OrganizationGitIntegrationCoordinator.ts";
 import { buildOrganizationPatchArtifact } from "./OrganizationPatchArtifactBuilder.ts";
 import { readOrganizationPatchSource } from "./OrganizationPatchSourceReader.ts";
 import {
@@ -379,6 +383,52 @@ it.effect(
         const recovered = yield* completeOrganizationGitIntegration(request);
         assert.equal(recovered.status, "succeeded");
         assert.equal(git.git(["rev-parse", request.targetRef]), before);
+      }),
+    ),
+);
+
+it.effect(
+  "replays the existing Git CAS intent after completion fails before WorkStore success",
+  () =>
+    run((git) =>
+      Effect.gen(function* () {
+        const failed = yield* completeOrganizationGitIntegration(request, () =>
+          Effect.fail(
+            new OrganizationGitIntegrationCompletionError({
+              code: "unavailable",
+              message: "injected completion fault",
+            }),
+          ),
+        ).pipe(Effect.flip);
+        assert.equal(failed.code, "unavailable");
+        assert.equal((yield* state).work?.status, "blocked");
+        const casHead = git.git(["rev-parse", request.targetRef]);
+        const replay = yield* coordinateOrganizationGitIntegration(request).pipe(
+          Effect.provideService(OrganizationGitIntegrationAuthority, {
+            permitsAttempt: (input) =>
+              input.attemptId === request.attemptId &&
+              input.targetRef === request.targetRef &&
+              input.integratorSubject === request.integratorSubject,
+            permits: (input, context) =>
+              input.attemptId === request.attemptId &&
+              input.targetRef === request.targetRef &&
+              input.integratorSubject === request.integratorSubject &&
+              context.workId === workId &&
+              context.organizationId === organizationId &&
+              context.projectId === projectId &&
+              context.bindingId === bindingId,
+          }),
+        );
+        assert.equal(replay.appliedNow, false);
+        assert.equal(git.git(["rev-parse", request.targetRef]), casHead);
+        const completed = yield* completeOrganizationGitIntegration(request);
+        assert.equal(completed.status, "succeeded");
+        assert.equal(git.git(["rev-parse", request.targetRef]), casHead);
+        assert.deepEqual(yield* state, {
+          work: { status: "succeeded", integration_receipt_ref: completed.receiptRef },
+          receipts: 1,
+          transitions: 1,
+        });
       }),
     ),
 );

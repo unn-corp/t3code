@@ -173,6 +173,10 @@ export const Organization = Schema.Struct({
 export type Organization = typeof Organization.Type;
 export const OrganizationGetInput = Schema.Struct({ organizationId: OrganizationId });
 export type OrganizationGetInput = typeof OrganizationGetInput.Type;
+export const OrganizationPublishedConfigGetInput = Schema.Struct({
+  organizationId: OrganizationId,
+  revision: PositiveInt,
+});
 export const OrganizationListInput = Schema.Struct({});
 export type OrganizationListInput = typeof OrganizationListInput.Type;
 export const OrganizationListResult = Schema.Struct({ organizations: Schema.Array(Organization) });

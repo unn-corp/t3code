@@ -30,6 +30,12 @@ export interface OrganizationScopeLaunchOperation {
   readonly identity: OrganizationWorkScopeIdentity | null;
 }
 
+export interface OrganizationScopeLaunchStopEvidence {
+  readonly operationId: string;
+  readonly disposition: "stopped" | "never-dispatched" | "held";
+  readonly identity: OrganizationWorkScopeIdentity | null;
+}
+
 type Event = {
   readonly operationId: string;
   readonly unitName: string;
@@ -319,6 +325,41 @@ export class OrganizationScopeLaunchJournal {
       }
     }
     return { stopped, neverDispatched, held };
+  }
+
+  /** Reconcile exactly one journaled operation. A dispatch without a recorded
+   * host identity remains held; no unit-name or PID-pattern kill is attempted.
+   */
+  async stopAndVerifyOperation(
+    operationId: string,
+    stop: typeof stopAndVerifyOrganizationScopedSandbox = stopAndVerifyOrganizationScopedSandbox,
+  ): Promise<OrganizationScopeLaunchStopEvidence> {
+    const entry = this.#operations.get(operationId);
+    if (!entry) throw new Error("Organization launch operation is unknown");
+    if (entry.phase === "stopped")
+      return {
+        operationId,
+        disposition: "stopped",
+        identity: entry.identity && { ...entry.identity },
+      };
+    if (entry.phase === "never-dispatched")
+      return { operationId, disposition: "never-dispatched", identity: null };
+    if (entry.phase === "reserved") {
+      try {
+        await this.abortReserved(operationId);
+        return { operationId, disposition: "never-dispatched", identity: null };
+      } catch {
+        return { operationId, disposition: "held", identity: null };
+      }
+    }
+    if (!entry.identity) return { operationId, disposition: "held", identity: null };
+    try {
+      await stop(entry.identity);
+      await this.#append({ ...entry, phase: "stopped" }, true);
+      return { operationId, disposition: "stopped", identity: { ...entry.identity } };
+    } catch {
+      return { operationId, disposition: "held", identity: { ...entry.identity } };
+    }
   }
 
   async close(): Promise<void> {

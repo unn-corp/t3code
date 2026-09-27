@@ -51,6 +51,7 @@ export interface OrganizationSingleFileProposalSelection {
   readonly fileName: string;
   readonly taskText: string;
   readonly modelSelection: ModelSelection;
+  readonly findingContext?: { readonly title: string; readonly summary: string };
 }
 /** A server policy selects task and file from scoped saved evidence; clients cannot. */
 export class OrganizationSingleFileProposalPolicy extends Context.Service<
@@ -164,6 +165,7 @@ export const proposeOrganizationSingleFileArtifact = (workId: OrganizationWorkId
     const generationInput = yield* decodeGenerationInput({
       modelSelection: selection.modelSelection,
       taskText: selection.taskText,
+      ...(selection.findingContext ? { findingContext: selection.findingContext } : {}),
       fileName: selection.fileName,
       currentContent: source.content,
       baseDigest: source.sha256,

@@ -23,8 +23,11 @@ const setup = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE TABLE organizations (organization_id TEXT PRIMARY KEY)`;
   yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, deleted_at TEXT)`;
+  yield* sql`CREATE TABLE organization_project_bindings (
+    organization_id TEXT NOT NULL, project_id TEXT NOT NULL, detached_at TEXT)`;
   yield* sql`INSERT INTO organizations VALUES ('org-a')`;
   yield* sql`INSERT INTO projection_projects VALUES ('project-a', NULL), ('deleted-project', '2026-01-01')`;
+  yield* sql`INSERT INTO organization_project_bindings VALUES ('org-a', 'project-a', NULL)`;
   yield* Migration081;
   yield* Migration083;
 });
@@ -38,6 +41,7 @@ const authorizedLayer = (
     Layer.provide(
       Layer.succeed(OrganizationProviderBudgetConfigurationAuthority, {
         authenticatedHumanId: humanId,
+        projectOrganizationId: "org-a",
         permitsRead: () => true,
         permitsGlobalUpdate: () => canManageGlobal,
         permitsScopedUpdate: () => canManageScoped,
@@ -81,6 +85,27 @@ it.effect("denies reads and updates by default, and rejects a missing human iden
       FROM organization_provider_budget_limits WHERE scope_kind = 'global'`)[0];
     assert.equal(row?.max_concurrent, 0);
   }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+);
+
+it.effect("rechecks the Project binding inside the ceiling write transaction", () =>
+  Effect.gen(function* () {
+    yield* setup;
+    const service = yield* OrganizationProviderBudgetConfiguration;
+    const original = yield* service.update({ scope: projectScope, expectedRevision: null, limits });
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE organization_project_bindings
+      SET detached_at = '2026-01-03T00:00:00.000Z'
+      WHERE organization_id = 'org-a' AND project_id = 'project-a'`;
+    const denied = yield* service
+      .update({
+        scope: projectScope,
+        expectedRevision: original.revision,
+        limits: { ...limits, maxConcurrent: 3 },
+      })
+      .pipe(Effect.flip);
+    assert.equal(denied.code, "forbidden");
+    assert.equal((yield* service.get(projectScope))?.maxConcurrent, 2);
+  }).pipe(Effect.provide(authorizedLayer())),
 );
 
 it.effect("updates exact scopes, preserves zero, and rejects stale revisions", () =>

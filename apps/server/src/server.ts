@@ -5,7 +5,6 @@ import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
@@ -54,6 +53,16 @@ import {
   OrganizationWorkIntentReconciliationLoopLive,
 } from "./organizations/OrganizationWorkIntentStore.ts";
 import { organizationScopeLaunchBrokerClient } from "./organizations/OrganizationScopeLaunchBroker.ts";
+import { makeOrganizationLiveWorkReadinessGate } from "./organizations/OrganizationLiveWorkReadinessGate.ts";
+import { makeOrganizationLiveWorkProductionLoop } from "./organizations/OrganizationLiveWorkProductionComposition.ts";
+import { OrganizationStandingWorkAuthorizationLoopLive } from "./organizations/OrganizationStandingWorkAuthorization.ts";
+import { OrganizationGitTargetPreflightLive } from "./organizations/OrganizationGitTargetPreflight.ts";
+import {
+  makeOrganizationEmergencyStopReconciliationLoopLayer,
+  reconcileOrganizationEmergencyStopsAfterRecovery,
+} from "./organizations/OrganizationLiveWorkEmergencyStop.ts";
+import { OrganizationWorkStoreReadOnlyLive } from "./organizations/OrganizationWorkRuntimeLayers.ts";
+import { reconcileOrganizationWorkAtStartup } from "./organizations/OrganizationLiveWorkRecovery.ts";
 import { reconcileOrganizationScopesAtStartup } from "./organizations/OrganizationScopeStartupRecovery.ts";
 import { OrganizationScopeRecoveryError } from "./organizations/OrganizationScopeRecoveryStore.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -672,42 +681,135 @@ const makeServerLayer = Layer.unwrap(
     const cloudLinkParked = yield* Deferred.make<void>();
     const routesReady = yield* Deferred.make<void>();
     const launcherLayer = ServiceLauncherClient.layer;
+    const organizationLiveWorkGate = makeOrganizationLiveWorkReadinessGate();
+    const organizationLiveWorkReadinessLayers = Layer.mergeAll(
+      organizationLiveWorkGate.runtimeReadinessLayer,
+      organizationLiveWorkGate.activationReadinessLayer,
+    );
 
     yield* fixPath();
 
     const httpListeningLayer = Layer.effectDiscard(
       Effect.gen(function* () {
         yield* HttpServer.HttpServer;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => organizationLiveWorkGate.revoke("server_stopping")),
+        );
         // The listener is already exclusive before this process claims the
         // broker epoch. A second server that cannot bind cannot fence the
         // current owner's live Organization scopes.
         // Scoped execution is a Linux systemd facility. Other desktop hosts
         // keep their normal server startup and have no launch authority.
         if (HostProcessPlatform.defaultValue() === "linux") {
-          const owner = yield* Effect.result(
-            Effect.tryPromise({
-              try: () => organizationScopeLaunchBrokerClient(config.baseDir).activate(),
-              catch: (cause) =>
-                new OrganizationScopeRecoveryError({
-                  code: "unavailable",
-                  message:
-                    cause instanceof Error
-                      ? cause.message
-                      : "Organization launch broker owner claim is unavailable.",
-                }),
-            }),
-          );
-          if (Result.isSuccess(owner)) {
-            const recovery = yield* reconcileOrganizationScopesAtStartup(config.baseDir);
-            if (recovery.held.length > 0)
-              yield* Effect.logWarning("Organization scope recovery retains uncertain permits", {
-                held: recovery.held,
-              });
-          } else {
-            yield* Effect.logWarning("Organization launch broker owner claim is unavailable", {
-              message: owner.failure.message,
+          const checkOrganizationReadiness = () =>
+            organizationLiveWorkGate.initialize(
+              Effect.tryPromise({
+                try: () => organizationScopeLaunchBrokerClient(config.baseDir).activate(),
+                catch: (cause) =>
+                  new OrganizationScopeRecoveryError({
+                    code: "unavailable",
+                    message:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Organization broker owner unavailable",
+                  }),
+              }).pipe(
+                Effect.tapError((error) =>
+                  Effect.logWarning("Organization launch broker owner claim is unavailable", {
+                    message: error.message,
+                  }),
+                ),
+              ),
+              reconcileOrganizationScopesAtStartup(config.baseDir).pipe(
+                Effect.tap((report) =>
+                  report.held.length > 0
+                    ? Effect.logWarning("Organization scope recovery retains uncertain permits", {
+                        held: report.held,
+                      })
+                    : Effect.void,
+                ),
+                Effect.tapError((error) =>
+                  Effect.logWarning("Organization scope startup recovery failed", {
+                    message: error.message,
+                  }),
+                ),
+              ),
+              reconcileOrganizationWorkAtStartup.pipe(
+                Effect.flatMap((work) =>
+                  reconcileOrganizationEmergencyStopsAfterRecovery(
+                    organizationScopeLaunchBrokerClient(config.baseDir),
+                  ).pipe(
+                    Effect.map((emergency) => ({
+                      held: [...work.held, ...emergency.held],
+                    })),
+                  ),
+                ),
+                Effect.tap((report) =>
+                  report.held.length > 0
+                    ? Effect.logWarning("Organization WorkStore recovery retains work", {
+                        held: report.held,
+                      })
+                    : Effect.void,
+                ),
+                Effect.tapError((error) =>
+                  Effect.logWarning("Organization WorkStore startup recovery failed", {
+                    message: error.message,
+                  }),
+                ),
+              ),
+            );
+          const status = yield* checkOrganizationReadiness();
+          if (!status.ready)
+            yield* Effect.logWarning("Organization Project work remains disabled", {
+              reason: status.reason,
             });
-          }
+          yield* Effect.forkScoped(
+            Effect.forever(
+              Effect.gen(function* () {
+                yield* organizationLiveWorkGate.retryUntilReady(
+                  () => {
+                    const previous = organizationLiveWorkGate.status();
+                    return checkOrganizationReadiness().pipe(
+                      Effect.tap((retried) =>
+                        retried.reason !== previous.reason || retried.ready
+                          ? Effect.logInfo("Organization Project work readiness changed", {
+                              ready: retried.ready,
+                              reason: retried.reason,
+                            })
+                          : Effect.void,
+                      ),
+                    );
+                  },
+                  // An unexpired lease can become recoverable without restarting HTTP.
+                  Effect.sleep("30 seconds"),
+                );
+                yield* organizationLiveWorkGate.monitorOwner(
+                  () =>
+                    Effect.tryPromise({
+                      try: () => organizationScopeLaunchBrokerClient(config.baseDir).checkOwner(),
+                      catch: (cause) =>
+                        new OrganizationScopeRecoveryError({
+                          code: "unavailable",
+                          message:
+                            cause instanceof Error
+                              ? cause.message
+                              : "Organization broker owner liveness unavailable",
+                        }),
+                    }).pipe(
+                      Effect.tapError((error) =>
+                        Effect.logWarning("Organization launch broker owner liveness failed", {
+                          message: error.message,
+                        }),
+                      ),
+                    ),
+                  Effect.sleep("30 seconds"),
+                );
+                yield* Effect.logWarning("Organization Project work readiness revoked", {
+                  reason: organizationLiveWorkGate.status().reason,
+                });
+              }),
+            ),
+          );
         }
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
         yield* startup.markHttpListening;
@@ -886,7 +988,11 @@ const makeServerLayer = Layer.unwrap(
           ),
         ),
       ),
-    }).pipe(Layer.provideMerge(RuntimeDependenciesLive), Layer.provide(launcherLayer));
+    }).pipe(
+      Layer.provideMerge(RuntimeDependenciesLive),
+      Layer.provide(launcherLayer),
+      Layer.provideMerge(OrganizationGitTargetPreflightLive),
+    );
 
     // The portfolio scheduler and manual reviews share one server-scoped job
     // service so every deep review uses the same lifecycle and idempotency rules.
@@ -952,6 +1058,13 @@ const makeServerLayer = Layer.unwrap(
       OrganizationWorkIntentReconciliationLoopLive.pipe(
         Layer.provide(OrganizationWorkIntentStoreLive),
       ),
+      OrganizationStandingWorkAuthorizationLoopLive,
+      makeOrganizationEmergencyStopReconciliationLoopLayer(
+        organizationScopeLaunchBrokerClient(config.baseDir),
+      ),
+      makeOrganizationLiveWorkProductionLoop(config.baseDir).pipe(
+        Layer.provide(OrganizationWorkStoreReadOnlyLive),
+      ),
       httpListeningLayer,
       runtimeStateLayer,
       tailscaleServeLayer,
@@ -960,6 +1073,7 @@ const makeServerLayer = Layer.unwrap(
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),
+      Layer.provideMerge(organizationLiveWorkReadinessLayers),
       Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpServerLive),

@@ -25,6 +25,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { TextGenerationError } from "@t3tools/contracts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { OrganizationPatchProcessObserver } from "./OrganizationPatchProcessObserver.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -277,8 +278,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         ],
         { env: claudeEnvironment },
       );
+      const observer =
+        operation === "generateOrganizationPatchProposal"
+          ? yield* OrganizationPatchProcessObserver
+          : null;
+      if (observer) yield* observer.preparing();
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: { ...claudeEnvironment, ...observer?.environment },
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
@@ -286,41 +292,68 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         },
       });
 
-      const child = yield* commandSpawner
-        .spawn(command)
-        .pipe(
-          Effect.mapError((cause) =>
-            normalizeCliError("claude", operation, cause, "Failed to spawn Claude CLI process"),
-          ),
-        );
-
-      const [stdout, stderr, exitCode] = yield* Effect.all(
-        [
-          readStreamAsString(
-            operation,
-            child.stdout,
-            operation === "generateOrganizationArchitectTurn"
-              ? ARCHITECT_STDOUT_MAX_BYTES
-              : operation === "generateOrganizationPatchProposal"
-                ? PATCH_STDOUT_MAX_BYTES
-                : undefined,
-          ),
-          readStreamAsString(
-            operation,
-            child.stderr,
-            operation === "generateOrganizationArchitectTurn"
-              ? ARCHITECT_STDERR_MAX_BYTES
-              : operation === "generateOrganizationPatchProposal"
-                ? PATCH_STDERR_MAX_BYTES
-                : undefined,
-          ),
-          child.exitCode.pipe(
+      const [stdout, stderr, exitCode] = yield* Effect.acquireUseRelease(
+        commandSpawner
+          .spawn(command)
+          .pipe(
             Effect.mapError((cause) =>
-              normalizeCliError("claude", operation, cause, "Failed to read Claude CLI exit code"),
+              normalizeCliError("claude", operation, cause, "Failed to spawn Claude CLI process"),
             ),
           ),
-        ],
-        { concurrency: "unbounded" },
+        (child) =>
+          Effect.gen(function* () {
+            if (observer) yield* observer.spawned(child);
+            return yield* Effect.all(
+              [
+                readStreamAsString(
+                  operation,
+                  child.stdout,
+                  operation === "generateOrganizationArchitectTurn"
+                    ? ARCHITECT_STDOUT_MAX_BYTES
+                    : operation === "generateOrganizationPatchProposal"
+                      ? PATCH_STDOUT_MAX_BYTES
+                      : undefined,
+                ),
+                readStreamAsString(
+                  operation,
+                  child.stderr,
+                  operation === "generateOrganizationArchitectTurn"
+                    ? ARCHITECT_STDERR_MAX_BYTES
+                    : operation === "generateOrganizationPatchProposal"
+                      ? PATCH_STDERR_MAX_BYTES
+                      : undefined,
+                ),
+                child.exitCode.pipe(
+                  Effect.mapError((cause) =>
+                    normalizeCliError(
+                      "claude",
+                      operation,
+                      cause,
+                      "Failed to read Claude CLI exit code",
+                    ),
+                  ),
+                ),
+              ],
+              { concurrency: "unbounded" },
+            );
+          }),
+        (child) =>
+          Effect.gen(function* () {
+            if (yield* child.isRunning) yield* child.kill({ forceKillAfter: "2 seconds" });
+            yield* Effect.exit(child.exitCode);
+            if (yield* child.isRunning)
+              return yield* new TextGenerationError({
+                operation,
+                detail: "Claude CLI process exit could not be verified.",
+              });
+            if (observer) yield* observer.exited(child);
+          }).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(TextGenerationError)(cause)
+                ? cause
+                : normalizeCliError("claude", operation, cause, "Failed to verify Claude CLI exit"),
+            ),
+          ),
       );
 
       if (exitCode !== 0) {

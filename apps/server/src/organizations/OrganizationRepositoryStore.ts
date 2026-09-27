@@ -171,9 +171,12 @@ const make = Effect.gen(function* () {
             issue("unavailable", "The selected GitHub account is unavailable."),
           ),
         );
-      if (!account.configured)
+      if (!account.configured || !account.environment?.GH_TOKEN)
         return yield* issue("forbidden", "The selected GitHub account needs a token.");
-      selected = account.environment ?? {};
+      selected = {
+        ...account.environment,
+        GH_HOST: account.environment.GH_HOST ?? "github.com",
+      };
     }
     return {
       ...process.env,
@@ -276,8 +279,12 @@ const make = Effect.gen(function* () {
             () => transport.inspect(link.repository, NodeProcess.cwd(), env),
             "GitHub repository visibility could not be verified; sync was not pushed.",
           );
-          if (actualVisibility !== link.visibility)
-            yield* sql`UPDATE organization_repositories SET visibility = ${actualVisibility}
+          if (
+            actualVisibility !== link.visibility ||
+            (actualVisibility !== "public" && link.public_exposure_acknowledged === 1)
+          )
+            yield* sql`UPDATE organization_repositories SET visibility = ${actualVisibility},
+              public_exposure_acknowledged = ${actualVisibility === "public" ? link.public_exposure_acknowledged : 0}
               WHERE organization_id = ${parsed.organizationId}`;
           if (actualVisibility === "public" && link.public_exposure_acknowledged !== 1) {
             yield* sql`UPDATE organization_repositories SET
@@ -475,7 +482,7 @@ const make = Effect.gen(function* () {
         yield* sql`INSERT INTO organization_repositories
       (organization_id,repository,visibility,github_account_id,auto_sync_enabled,public_exposure_acknowledged,next_sync_at,linked_by,linked_at)
       VALUES (${parsed.organizationId},${parsed.repository},${visibility},
-        ${parsed.githubAccountId ?? null},${parsed.autoSync === true ? 1 : 0},${parsed.publicExposureAcknowledged === true ? 1 : 0},${linkedAt},
+        ${parsed.githubAccountId ?? null},${parsed.autoSync === true ? 1 : 0},${visibility === "public" && parsed.publicExposureAcknowledged === true ? 1 : 0},${linkedAt},
         ${principal.subject},${linkedAt})`.pipe(
           Effect.mapError(() => issue("conflict", "Repository is already linked.")),
         );
@@ -567,7 +574,7 @@ const make = Effect.gen(function* () {
         (organization_id,repository,visibility,github_account_id,auto_sync_enabled,public_exposure_acknowledged,next_sync_at,
           last_accepted_commit,last_sync_at,linked_by,linked_at)
           VALUES (${organizationId},${parsed.repository},${visibility},
-          ${parsed.githubAccountId ?? null},${parsed.autoSync === true ? 1 : 0},${parsed.publicExposureAcknowledged === true ? 1 : 0},${importedAt},
+          ${parsed.githubAccountId ?? null},${parsed.autoSync === true ? 1 : 0},${visibility === "public" && parsed.publicExposureAcknowledged === true ? 1 : 0},${importedAt},
           ${imported.commit},${importedAt},${principal.subject},${importedAt})`;
               for (const [key, record] of imported.records) {
                 const digest = recordDigest(record);

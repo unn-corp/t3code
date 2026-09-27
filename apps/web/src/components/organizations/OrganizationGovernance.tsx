@@ -1,4 +1,5 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   Organization,
   OrganizationBindingAccess,
@@ -8,17 +9,22 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import { Link2Icon, RefreshCwIcon, UnlinkIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { randomUUID } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { organizationEnvironment } from "../../state/organizations";
 import { useEnvironmentQuery } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { OrganizationObservationModeControl } from "./OrganizationProposalControls";
+import { OrganizationProviderBudgetEditor } from "./OrganizationProviderBudgetEditor";
+import { OrganizationEmergencyStopControl } from "./OrganizationEmergencyStopControl";
+import { OrganizationStandingWorkAuthorizations } from "./OrganizationStandingWorkAuthorizations";
 
 const SELECT_CLASS =
   "min-h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-ring";
@@ -65,6 +71,7 @@ export function OrganizationGovernance({
   onDetach,
   onPublish,
   onLifecycle,
+  onRefresh,
 }: {
   readonly organization: Organization;
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -75,8 +82,64 @@ export function OrganizationGovernance({
   readonly onDetach: (binding: OrganizationProjectBinding) => Promise<boolean>;
   readonly onPublish: () => Promise<boolean>;
   readonly onLifecycle: (lifecycle: Organization["lifecycle"]) => Promise<boolean>;
+  readonly onRefresh: () => void;
 }) {
   const environmentId = usePrimaryEnvironmentId();
+  const drain = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : organizationEnvironment.getWorkDrainStatus({
+          environmentId,
+          input: { organizationId: organization.id },
+        }),
+  );
+  const requestDrain = useAtomCommand(organizationEnvironment.requestWorkDrain, {
+    reportFailure: false,
+  });
+  const drainRequestId = useRef(randomUUID());
+  const [drainBusy, setDrainBusy] = useState(false);
+  const [drainError, setDrainError] = useState<string | null>(null);
+  const [drainNotice, setDrainNotice] = useState<string | null>(null);
+  const drainPausedRef = useRef(false);
+  useEffect(() => {
+    if (drain.data?.state !== "draining" || offline) return;
+    const timer = setInterval(drain.refresh, 5_000);
+    return () => clearInterval(timer);
+  }, [drain.data?.state, drain.refresh, offline]);
+  useEffect(() => {
+    if (drain.data?.state === "paused" && !drainPausedRef.current) {
+      drainPausedRef.current = true;
+      onRefresh();
+    }
+    if (drain.data?.state !== "paused") drainPausedRef.current = false;
+  }, [drain.data?.state, onRefresh]);
+
+  async function startDrain() {
+    if (offline || busy || drainBusy || environmentId === null) return;
+    setDrainBusy(true);
+    setDrainError(null);
+    setDrainNotice(null);
+    try {
+      const result = await requestDrain({
+        environmentId,
+        input: { organizationId: organization.id, requestId: drainRequestId.current },
+      });
+      if (result._tag === "Failure") {
+        const cause = squashAtomCommandFailure(result);
+        setDrainError(cause instanceof Error ? cause.message : String(cause));
+      } else {
+        setDrainNotice(
+          result.value.state === "paused"
+            ? "Organization work is paused."
+            : "Drain requested. Admitted work is settling before pause.",
+        );
+        drain.refresh();
+        onRefresh();
+      }
+    } finally {
+      setDrainBusy(false);
+    }
+  }
   const audit = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -113,6 +176,12 @@ export function OrganizationGovernance({
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
+      <OrganizationStandingWorkAuthorizations organization={organization} offline={offline} />
+      <OrganizationEmergencyStopControl
+        organization={organization}
+        offline={offline}
+        onRefresh={onRefresh}
+      />
       <Card>
         <CardPanel className="space-y-4 p-5">
           <h2 className="text-lg font-semibold">Charter</h2>
@@ -189,6 +258,24 @@ export function OrganizationGovernance({
                 Pause
               </Button>
             ) : null}
+            {organization.lifecycle === "active" ? (
+              <Button
+                variant="outline"
+                disabled={busy || drainBusy || offline || environmentId === null}
+                onClick={() => void startDrain()}
+              >
+                {drainBusy
+                  ? "Checking drain…"
+                  : drain.data?.state === "draining"
+                    ? "Recheck drain"
+                    : "Drain and pause"}
+              </Button>
+            ) : null}
+            {organization.lifecycle === "paused" ? (
+              <Button variant="outline" disabled={busy} onClick={() => void onLifecycle("active")}>
+                Resume
+              </Button>
+            ) : null}
             {organization.lifecycle !== "archived" ? (
               <Button
                 variant="destructive-outline"
@@ -199,10 +286,26 @@ export function OrganizationGovernance({
               </Button>
             ) : null}
           </div>
+          {drain.data?.state === "draining" ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              Drain requested. New Project work phases are held while admitted work settles.
+            </p>
+          ) : null}
+          {drainError ? (
+            <p role="alert" className="text-sm text-destructive-foreground">
+              {drainError}
+            </p>
+          ) : null}
+          {drainNotice ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              {drainNotice}
+            </p>
+          ) : null}
           <p className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-            Execution setup is pending. Publishing records a validated configuration; this screen
-            does not start autonomous workers. Archiving and Project detachment require bound work
-            to finish or be canceled and any worker scope to be verified stopped.
+            Pause is available only when no work phase is running and every worker scope has been
+            verified stopped. Drain waits for admitted phases to settle, then pauses; it does not
+            stop a running provider call. Resume requires a ready runtime. Canceling work can
+            require scope recovery first.
           </p>
         </CardPanel>
       </Card>
@@ -390,6 +493,14 @@ export function OrganizationGovernance({
                 </div>
               </div>
             ) : null}
+            <OrganizationProviderBudgetEditor
+              organization={organization}
+              projectName={(linkedId) =>
+                projects.find((project) => project.id === linkedId)?.title ?? linkedId
+              }
+              offline={offline}
+              onUpdated={budgets.refresh}
+            />
           </div>
         </CardPanel>
       </Card>

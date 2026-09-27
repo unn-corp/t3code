@@ -151,6 +151,130 @@ it("permanently aborts a reservation that never reached OS dispatch", async () =
     await journal.close();
   }));
 
+it("stops only the selected persisted identity after restart and returns durable evidence", async () =>
+  fixture(async (path) => {
+    const journal = await OrganizationScopeLaunchJournal.open(path);
+    const selectedUnit = allocateOrganizationScopedUnitName();
+    const otherUnit = allocateOrganizationScopedUnitName();
+    const identity = {
+      unitName: selectedUnit,
+      invocationId: "b".repeat(32),
+      controlGroup: `/user.slice/user-${process.getuid?.()}.slice/user@${process.getuid?.()}.service/${selectedUnit}`,
+      sandboxPid: 51,
+      pidNamespace: 52,
+    };
+    await journal.reserve("selected", selectedUnit);
+    await journal.prepare(
+      "selected",
+      { reservedUnitName: selectedUnit, argv: ["/usr/bin/true"] },
+      async () => ({
+        ...identity,
+        workDirectory: "/unlinked",
+        start: async () => undefined,
+        wait: async () => {
+          throw new Error("unused");
+        },
+        stop: async () => {
+          throw new Error("unused");
+        },
+        discard: async () => {
+          throw new Error("unused");
+        },
+      }),
+    );
+    await journal.reserve("other", otherUnit);
+    await journal.close();
+
+    const restarted = await OrganizationScopeLaunchJournal.open(path);
+    NodeAssert.deepEqual(
+      await restarted.stopAndVerifyOperation("selected", async (received) => {
+        NodeAssert.deepEqual(received, identity);
+        throw new Error("stop verifier unavailable");
+      }),
+      { operationId: "selected", disposition: "held", identity },
+    );
+    NodeAssert.equal(
+      restarted.list().find((entry) => entry.operationId === "selected")?.phase,
+      "prepared",
+    );
+    await restarted.close();
+
+    const recovered = await OrganizationScopeLaunchJournal.open(path);
+    let calls = 0;
+    const stop = async (received: typeof identity) => {
+      NodeAssert.deepEqual(received, identity);
+      calls++;
+    };
+    NodeAssert.deepEqual(await recovered.stopAndVerifyOperation("selected", stop), {
+      operationId: "selected",
+      disposition: "stopped",
+      identity,
+    });
+    NodeAssert.deepEqual(await recovered.stopAndVerifyOperation("selected", stop), {
+      operationId: "selected",
+      disposition: "stopped",
+      identity,
+    });
+    NodeAssert.equal(calls, 1);
+    NodeAssert.equal(
+      recovered.list().find((entry) => entry.operationId === "other")?.phase,
+      "reserved",
+    );
+    await recovered.close();
+
+    const replay = await OrganizationScopeLaunchJournal.open(path);
+    NodeAssert.deepEqual(await replay.stopAndVerifyOperation("selected", stop), {
+      operationId: "selected",
+      disposition: "stopped",
+      identity,
+    });
+    NodeAssert.equal(calls, 1);
+    await replay.close();
+  }));
+
+it("holds identity-less dispatch and verifies a never-dispatched reservation", async () =>
+  fixture(async (path) => {
+    const journal = await OrganizationScopeLaunchJournal.open(path);
+    const uncertainUnit = allocateOrganizationScopedUnitName();
+    await journal.reserve("uncertain", uncertainUnit);
+    await NodeAssert.rejects(
+      journal.prepare(
+        "uncertain",
+        {
+          reservedUnitName: uncertainUnit,
+          argv: ["/usr/bin/true"],
+        },
+        async () => {
+          throw new Error("host returned without identity");
+        },
+      ),
+    );
+    await journal.reserve("safe", allocateOrganizationScopedUnitName());
+    await journal.close();
+
+    const replay = await OrganizationScopeLaunchJournal.open(path);
+    let stopCalls = 0;
+    const stop = async () => {
+      stopCalls++;
+    };
+    NodeAssert.deepEqual(await replay.stopAndVerifyOperation("uncertain", stop), {
+      operationId: "uncertain",
+      disposition: "held",
+      identity: null,
+    });
+    NodeAssert.deepEqual(await replay.stopAndVerifyOperation("safe", stop), {
+      operationId: "safe",
+      disposition: "never-dispatched",
+      identity: null,
+    });
+    NodeAssert.equal(stopCalls, 0);
+    await NodeAssert.rejects(
+      replay.stopAndVerifyOperation("missing", stop),
+      /operation is unknown/,
+    );
+    await replay.close();
+  }));
+
 it.skipIf(!isOrganizationScopedSandboxAvailable())(
   "recovers a real prepared scope by exact invocation and namespace",
   async () =>

@@ -20,6 +20,11 @@ export const organizationEnvironment = {
     tag: WS_METHODS.organizationsGet,
     staleTimeMs: 5_000,
   }),
+  getPublishedConfig: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:organizations:published-config",
+    tag: WS_METHODS.organizationsGetPublishedConfig,
+    staleTimeMs: 5_000,
+  }),
   listAudit: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:organizations:audit",
     tag: WS_METHODS.organizationsListAudit,
@@ -29,6 +34,15 @@ export const organizationEnvironment = {
     label: "environment-data:organizations:provider-budgets",
     tag: WS_METHODS.organizationsReadProviderBudgets,
     staleTimeMs: 5_000,
+  }),
+  getProviderBudget: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:organizations:provider-budget",
+    tag: WS_METHODS.organizationsGetProviderBudget,
+    staleTimeMs: 5_000,
+  }),
+  updateProviderBudget: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:organizations:provider-budget-update",
+    tag: WS_METHODS.organizationsUpdateProviderBudget,
   }),
   repositoryPreview: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:organizations:repository-preview",
@@ -95,6 +109,55 @@ export const organizationEnvironment = {
     label: "environment-data:organizations:work-intents",
     tag: WS_METHODS.organizationsListWorkIntents,
     staleTimeMs: 5_000,
+  }),
+  listWorkFailures: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:organizations:work-failures",
+    tag: WS_METHODS.organizationsListWorkFailures,
+    staleTimeMs: 5_000,
+  }),
+  getWorkRuntimeStatus: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:organizations:work-runtime-status",
+    tag: WS_METHODS.organizationsGetWorkRuntimeStatus,
+    staleTimeMs: 5_000,
+  }),
+  activateWorkIntent: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:organizations:work-intent-activate",
+    tag: WS_METHODS.organizationsActivateWorkIntent,
+  }),
+  cancelWork: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:organizations:work-cancel",
+    tag: WS_METHODS.organizationsCancelWork,
+  }),
+  requestWorkDrain: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:organizations:work-drain",
+    tag: WS_METHODS.organizationsRequestWorkDrain,
+  }),
+  getWorkDrainStatus: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:organizations:work-drain-status",
+    tag: WS_METHODS.organizationsGetWorkDrainStatus,
+    staleTimeMs: 5_000,
+  }),
+  requestEmergencyStop: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:organizations:work-emergency-stop",
+    tag: WS_METHODS.organizationsRequestEmergencyStop,
+  }),
+  getEmergencyStopStatus: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:organizations:work-emergency-stop-status",
+    tag: WS_METHODS.organizationsGetEmergencyStopStatus,
+    staleTimeMs: 5_000,
+  }),
+  createStandingWorkAuthorization: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:organizations:standing-work-create",
+    tag: WS_METHODS.organizationsCreateStandingWorkAuthorization,
+  }),
+  listStandingWorkAuthorizations: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:organizations:standing-work-list",
+    tag: WS_METHODS.organizationsListStandingWorkAuthorizations,
+    staleTimeMs: 5_000,
+  }),
+  revokeStandingWorkAuthorization: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:organizations:standing-work-revoke",
+    tag: WS_METHODS.organizationsRevokeStandingWorkAuthorization,
   }),
   reviewWork: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:organizations:work-review",

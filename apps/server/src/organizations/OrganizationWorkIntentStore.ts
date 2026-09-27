@@ -375,6 +375,8 @@ const make = Effect.gen(function* () {
         const rows = yield* sql<IntentRow>`SELECT * FROM organization_work_intents
         WHERE organization_id = ${organizationId}
           AND (${afterIntentId} IS NULL OR intent_id > ${afterIntentId})
+          AND NOT EXISTS (SELECT 1 FROM organization_work_intent_activations activation
+            WHERE activation.intent_id = organization_work_intents.intent_id)
         ORDER BY intent_id LIMIT ${limit}`;
         const items: OrganizationWorkIntent[] = [];
         for (const row of rows) items.push(yield* decode(row));

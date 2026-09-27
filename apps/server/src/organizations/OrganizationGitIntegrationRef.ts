@@ -142,6 +142,82 @@ export function verifyOrganizationGitTargetApplied(
   return targetOperation({ ...input, allowAlreadyApplied: true }, true);
 }
 
+/** Admission preflight uses the same bounded Git and metadata checks as CAS, without writing a ref. */
+export function preflightOrganizationGitTarget(input: {
+  readonly projectRoot: string;
+  readonly targetRef: string;
+  readonly baseCommit: string;
+}): Effect.Effect<void, OrganizationGitIntegrationRefError> {
+  if (
+    !NodePath.isAbsolute(input.projectRoot) ||
+    !TARGET_REF.test(input.targetRef) ||
+    input.targetRef.endsWith(".") ||
+    input.targetRef.endsWith(".lock") ||
+    input.targetRef.includes("..") ||
+    !FULL_OID.test(input.baseCommit)
+  )
+    return Effect.fail(failure("invalid", "Git target preflight input is invalid."));
+  return Effect.gen(function* () {
+    const root = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(input.projectRoot),
+      catch: () => failure("unavailable", "Project root could not be resolved."),
+    });
+    const git = (args: readonly string[], maxBytes?: number) =>
+      Effect.tryPromise({
+        try: () => runGit(root, args, maxBytes),
+        catch: (cause) =>
+          isRefError(cause) ? cause : failure("unavailable", "Git target command failed."),
+      });
+    const top = yield* git(["rev-parse", "--show-toplevel"]);
+    if (top.exitCode !== 0 || !NodePath.isAbsolute(top.stdout.toString("utf8").trim()))
+      return yield* failure("conflict", "Project is not a Git repository root.");
+    const canonicalTop = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(top.stdout.toString("utf8").trim()),
+      catch: () => failure("unavailable", "Git repository root could not be resolved."),
+    });
+    if (canonicalTop !== root)
+      return yield* failure("conflict", "Project is not the Git repository root.");
+    const format = yield* git(["rev-parse", "--show-ref-format"]);
+    if (format.exitCode !== 0 || format.stdout.toString("ascii").trim() !== "files")
+      return yield* failure("conflict", "Only Git files refs are supported.");
+    const common = yield* git(["rev-parse", "--git-common-dir"]);
+    const commonText = common.stdout.toString("utf8").trim();
+    if (common.exitCode !== 0 || !commonText || commonText.includes("\0"))
+      return yield* failure("conflict", "Git common directory is invalid.");
+    yield* Effect.tryPromise({
+      try: () => assertSafeMetadata(root, commonText, input.targetRef),
+      catch: (cause) =>
+        isRefError(cause) ? cause : failure("unavailable", "Git target path inspection failed."),
+    });
+    const worktrees = yield* git(["worktree", "list", "--porcelain", "-z"], 64 * 1024);
+    if (worktrees.exitCode !== 0)
+      return yield* failure("unavailable", "Git worktrees could not be inspected.");
+    const fields = worktrees.stdout.toString("utf8").split("\0");
+    if (
+      !fields.some((field) => field.startsWith("worktree ")) ||
+      fields.some((field) => field === `branch ${input.targetRef}`)
+    )
+      return yield* failure(
+        "conflict",
+        "Target branch is checked out or worktree state is invalid.",
+      );
+    const state = yield* git([
+      "for-each-ref",
+      "--format=%(refname)%00%(objectname)%00%(symref)",
+      input.targetRef,
+    ]);
+    const [ref, oid, symref, extra] = state.stdout.toString("ascii").trimEnd().split("\0");
+    if (
+      state.exitCode !== 0 ||
+      ref !== input.targetRef ||
+      oid !== input.baseCommit ||
+      symref ||
+      extra !== undefined
+    )
+      return yield* failure("conflict", "Target branch is missing, symbolic, or changed.");
+  });
+}
+
 function targetOperation(
   callerInput: OrganizationGitIntegrationRefInput,
   verifyOnly: boolean,

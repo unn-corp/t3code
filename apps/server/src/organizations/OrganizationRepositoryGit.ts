@@ -141,6 +141,32 @@ const command = async (
   return result.stdout.trim();
 };
 
+/** Match the account's GitHub host as well as the repository path after gh clone. */
+export function matchesGitHubRepositoryOrigin(
+  origin: string,
+  repository: string,
+  host: string,
+): boolean {
+  const normalizedHost = host.toLowerCase();
+  if (
+    !/^[a-z0-9][a-z0-9.-]{0,252}$/.test(normalizedHost) ||
+    normalizedHost.includes("..") ||
+    normalizedHost.endsWith(".") ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
+  )
+    return false;
+  const normalized = origin
+    .trim()
+    .replace(/\.git$/, "")
+    .toLowerCase();
+  const path = repository.toLowerCase();
+  return (
+    normalized === `https://${normalizedHost}/${path}` ||
+    normalized === `git@${normalizedHost}:${path}` ||
+    normalized === `ssh://git@${normalizedHost}/${path}`
+  );
+}
+
 async function checkRepositoryTree(directory: string, env: NodeJS.ProcessEnv) {
   const tree = await command(
     "git",
@@ -207,12 +233,7 @@ export async function withRepositoryClone<A>(
     );
     if (verifyOrigin) {
       const origin = await command("git", ["remote", "get-url", "origin"], directory, env);
-      const normalized = origin.replace(/\.git$/, "").toLowerCase();
-      if (
-        normalized !== `https://github.com/${repository.toLowerCase()}` &&
-        normalized !== `git@github.com:${repository.toLowerCase()}` &&
-        normalized !== `ssh://git@github.com/${repository.toLowerCase()}`
-      )
+      if (!matchesGitHubRepositoryOrigin(origin, repository, env.GH_HOST ?? "github.com"))
         throw new Error("Git origin does not match the selected GitHub repository.");
     }
     const head = await command("git", ["rev-parse", "HEAD"], directory, env).catch(() => null);

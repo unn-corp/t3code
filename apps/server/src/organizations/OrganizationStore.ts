@@ -404,8 +404,21 @@ export class OrganizationStore extends Context.Service<OrganizationStore, Organi
   "t3/organizations/OrganizationStore",
 ) {}
 
+/** Only the explicit, server-owned work activation path may open execution. */
+export class OrganizationLifecycleActivationAuthority extends Context.Service<
+  OrganizationLifecycleActivationAuthority,
+  {
+    readonly permits: (input: OrganizationLifecycleInput) => boolean;
+  }
+>()("t3/organizations/OrganizationStore/OrganizationLifecycleActivationAuthority") {}
+export const OrganizationLifecycleActivationDisabled = Layer.succeed(
+  OrganizationLifecycleActivationAuthority,
+  { permits: () => false },
+);
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const lifecycleActivation = yield* OrganizationLifecycleActivationAuthority;
   const getRows = (organizationId: OrganizationId) => sql<OrganizationRow>`
     SELECT * FROM organizations WHERE organization_id = ${organizationId}
   `;
@@ -775,6 +788,16 @@ const make = Effect.gen(function* () {
     organizationId: OrganizationId,
     bindingId: OrganizationBindingId | null,
   ) {
+    const claims = yield* sql<{ work_id: string }>`
+      SELECT claim.work_id FROM organization_live_work_phase_claims claim
+      JOIN organization_work_items w ON w.work_id = claim.work_id
+      WHERE claim.organization_id = ${organizationId}
+        AND (${bindingId} IS NULL OR w.binding_id = ${bindingId})
+      LIMIT 1`;
+    if (claims.length > 0)
+      return yield* conflict(
+        "An admitted Organization work phase must settle before changing its authority.",
+      );
     const rows = yield* sql<{ work_id: string }>`
       SELECT w.work_id FROM organization_work_items w
       JOIN organization_work_attempts a ON a.work_id = w.work_id
@@ -801,12 +824,13 @@ const make = Effect.gen(function* () {
             message: "Only a user may change lifecycle.",
           });
         if (input.lifecycle === "draft") return yield* invalid("Lifecycle cannot return to draft.");
-        if (input.lifecycle === "active")
+        if (input.lifecycle === "active" && !lifecycleActivation.permits(input))
           return yield* new OrganizationError({
             code: "unavailable",
-            message:
-              "Organization execution is not available yet; publication only saves configuration.",
+            message: "Project work runtime is not ready; check worker recovery before activating.",
           });
+        if (input.lifecycle === "active" && current.publishedRevision === null)
+          return yield* invalid("Publish configuration before activating the Organization.");
         if (input.lifecycle === current.lifecycle)
           return yield* invalid("Lifecycle is already in that state.");
         if (input.lifecycle === "paused" && current.lifecycle !== "active")
@@ -814,6 +838,11 @@ const make = Effect.gen(function* () {
         if (input.lifecycle === "paused" || input.lifecycle === "archived")
           yield* requireNoOpenExecution(current.id, null);
         if (input.lifecycle === "archived") {
+          const emergencyStop = yield* sql<{ organization_id: string }>`
+            SELECT organization_id FROM organization_emergency_stops
+            WHERE organization_id = ${current.id} LIMIT 1`;
+          if (emergencyStop.length > 0)
+            return yield* conflict("Resolve emergency stop before archiving this Organization.");
           const openWork = yield* sql<{ work_id: string }>`
             SELECT work_id FROM organization_work_items
             WHERE organization_id = ${current.id}
@@ -831,6 +860,8 @@ const make = Effect.gen(function* () {
             SET detached_at = ${detachedAt}, updated_at = ${detachedAt}
             WHERE organization_id = ${current.id} AND detached_at IS NULL
           `;
+          yield* sql`DELETE FROM organization_live_work_drains
+            WHERE organization_id = ${current.id} AND completed_at IS NOT NULL`;
         }
         return yield* bump({
           current,
@@ -980,4 +1011,7 @@ const make = Effect.gen(function* () {
   } satisfies OrganizationStoreShape;
 });
 
-export const OrganizationStoreLive = Layer.effect(OrganizationStore, make);
+export const OrganizationStoreLayer = Layer.effect(OrganizationStore, make);
+export const OrganizationStoreLive = OrganizationStoreLayer.pipe(
+  Layer.provide(OrganizationLifecycleActivationDisabled),
+);

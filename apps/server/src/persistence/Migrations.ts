@@ -98,6 +98,13 @@ import Migration0083 from "./Migrations/083_OrganizationProviderBudgetAudit.ts";
 import Migration0084 from "./Migrations/084_OrganizationScopeLaunchRequested.ts";
 import Migration0085 from "./Migrations/085_OrganizationRepositories.ts";
 import Migration0086 from "./Migrations/086_OrganizationScopeRecoveryReceipts.ts";
+import Migration0087 from "./Migrations/087_OrganizationWorkIntentActivations.ts";
+import Migration0088 from "./Migrations/088_OrganizationLiveWorkFailures.ts";
+import Migration0089 from "./Migrations/089_OrganizationLiveWorkDrains.ts";
+import Migration0090 from "./Migrations/090_OrganizationEmergencyStops.ts";
+import Migration0091 from "./Migrations/091_OrganizationStandingWorkAuthorizations.ts";
+import Migration0092 from "./Migrations/092_OrganizationEmergencyProcessRecovery.ts";
+import Migration0093 from "./Migrations/093_OrganizationProviderLaunchMarkers.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -196,6 +203,13 @@ const migrationEntries = [
   [84, "OrganizationScopeLaunchRequested", Migration0084],
   [85, "OrganizationRepositories", Migration0085],
   [86, "OrganizationScopeRecoveryReceipts", Migration0086],
+  [87, "OrganizationWorkIntentActivations", Migration0087],
+  [88, "OrganizationLiveWorkFailures", Migration0088],
+  [89, "OrganizationLiveWorkDrains", Migration0089],
+  [90, "OrganizationEmergencyStops", Migration0090],
+  [91, "OrganizationStandingWorkAuthorizations", Migration0091],
+  [92, "OrganizationEmergencyProcessRecovery", Migration0092],
+  [93, "OrganizationProviderLaunchMarkers", Migration0093],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

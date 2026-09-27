@@ -57,6 +57,7 @@ export const providerBudgetReadAuthority = (
 ): OrganizationProviderBudgetConfigurationAuthority["Service"] => {
   return {
     authenticatedHumanId: humanId,
+    projectOrganizationId: null,
     permitsRead: (scope) =>
       scope.kind === "global" ||
       (scope.kind === "organization" && scope.organizationId === organizationId),

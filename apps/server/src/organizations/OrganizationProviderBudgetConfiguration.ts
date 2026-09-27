@@ -45,6 +45,8 @@ export class OrganizationProviderBudgetConfigurationAuthority extends Context.Se
   OrganizationProviderBudgetConfigurationAuthority,
   {
     readonly authenticatedHumanId: string | null;
+    /** Exact Organization whose live binding permits a Project-scoped write. */
+    readonly projectOrganizationId: string | null;
     readonly permitsRead: (scope: OrganizationProviderBudgetScope) => boolean;
     /** Host administration is required to raise or lower the shared global ceiling. */
     readonly permitsGlobalUpdate: (
@@ -61,6 +63,7 @@ export const OrganizationProviderBudgetConfigurationDisabled = Layer.succeed(
   OrganizationProviderBudgetConfigurationAuthority,
   {
     authenticatedHumanId: null,
+    projectOrganizationId: null,
     permitsRead: () => false,
     permitsGlobalUpdate: () => false,
     permitsScopedUpdate: () => false,
@@ -221,6 +224,19 @@ const make = Effect.gen(function* () {
               AND deleted_at IS NULL
           ) AS present`)[0]?.present === 1;
           if (!exists) return yield* failure("not_found", "Provider budget scope does not exist.");
+          if (key.kind === "project") {
+            const organizationId = authority.projectOrganizationId;
+            if (!validId(organizationId))
+              return yield* failure("forbidden", "Project budget binding is not authorized.");
+            const linked =
+              (yield* sql<{ present: number }>`SELECT EXISTS (
+              SELECT 1 FROM organization_project_bindings
+              WHERE organization_id = ${organizationId} AND project_id = ${key.id}
+                AND detached_at IS NULL
+            ) AS present`)[0]?.present === 1;
+            if (!linked)
+              return yield* failure("forbidden", "Project budget binding is no longer active.");
+          }
           const prior = (yield* rowFor(key))[0];
           if ((prior?.updated_at ?? null) !== proposed.expectedRevision)
             return yield* failure("conflict", "Provider budget revision is stale.");

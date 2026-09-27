@@ -77,13 +77,16 @@ export async function createOrganizationLaunchBrokerToken(baseDir: string): Prom
 export interface OrganizationLaunchBrokerRequest {
   readonly action:
     | "health"
+    | "authorization-version"
     | "activate"
+    | "check-owner"
     | "get"
     | "reserve"
     | "prepare"
     | "start"
     | "wait"
     | "stop"
+    | "stop-and-verify-operation"
     | "discard"
     | "status"
     | "reconcile"

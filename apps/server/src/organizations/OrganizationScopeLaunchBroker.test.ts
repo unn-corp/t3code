@@ -62,8 +62,44 @@ it("keeps one broker owner and fences launches across a trial marker", async () 
   const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-org-broker-test-"));
   const broker = await serveOrganizationScopeLaunchBroker(baseDir);
   try {
+    NodeAssert.equal(
+      await requestOrganizationLaunchBroker(baseDir, { action: "authorization-version" }),
+      2,
+    );
     const client = organizationScopeLaunchBrokerClient(baseDir);
+    await NodeAssert.rejects(client.checkOwner(), /owner epoch is stale or absent/);
     const epoch = await client.activate();
+    NodeAssert.equal(await client.checkOwner(), true);
+    NodeAssert.equal(await organizationScopeLaunchBrokerClient(baseDir).activate(), epoch);
+    await NodeAssert.rejects(
+      requestOrganizationLaunchBroker(baseDir, { action: "activate", ownerPid: process.pid }),
+      /Another live server owns/,
+    );
+    for (const action of ["wait", "stop", "discard"] as const) {
+      await NodeAssert.rejects(
+        requestOrganizationLaunchBroker(baseDir, { action, operationId: "attempt-live" }),
+        /owner epoch is stale or absent/,
+      );
+      await NodeAssert.rejects(
+        requestOrganizationLaunchBroker(baseDir, {
+          action,
+          operationId: "attempt-live",
+          epoch: "0".repeat(64),
+        }),
+        /owner epoch is stale or absent/,
+      );
+    }
+    await NodeAssert.rejects(
+      requestOrganizationLaunchBroker(baseDir, {
+        action: "stop-and-verify-operation",
+        operationId: "attempt-live",
+      }),
+      /owner epoch is stale or absent/,
+    );
+    await NodeAssert.rejects(
+      organizationScopeLaunchBrokerClient(baseDir, "0".repeat(64)).checkOwner(),
+      /owner epoch is stale or absent/,
+    );
     await NodeAssert.rejects(
       requestOrganizationLaunchBroker(baseDir, {
         action: "reserve",
@@ -78,7 +114,7 @@ it("keeps one broker owner and fences launches across a trial marker", async () 
       if (!competitor.pid) throw new Error("Competitor PID unavailable");
       await NodeAssert.rejects(
         requestOrganizationLaunchBroker(baseDir, { action: "activate", ownerPid: competitor.pid }),
-        /Another live server owns/,
+        /does not match socket peer/,
       );
       NodeAssert.match(epoch, /^[a-f0-9]{64}$/);
     } finally {
@@ -93,6 +129,7 @@ it("keeps one broker owner and fences launches across a trial marker", async () 
     );
     const marker = organizationLaunchSuspendMarkerPath(baseDir);
     await NodeFSP.writeFile(marker, '{"version":1,"updateId":"trial-a"}\n', { mode: 0o600 });
+    await NodeAssert.rejects(client.checkOwner(), /suspended for an update trial/);
     await quiesceOrganizationLaunchBroker(baseDir);
     NodeAssert.equal(
       (await client.status()).find((entry) => entry.operationId === "attempt-before-trial")?.phase,
@@ -103,8 +140,54 @@ it("keeps one broker owner and fences launches across a trial marker", async () 
       /suspended for an update trial/,
     );
     await NodeFSP.rm(marker);
+    NodeAssert.equal(await client.checkOwner(), true);
     await client.reserve("attempt-after-trial", allocateOrganizationScopedUnitName());
   } finally {
+    await broker.close();
+    await NodeFSP.rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+it("revokes the read-only owner probe when the claimed process exits", async () => {
+  const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-org-broker-owner-"));
+  const broker = await serveOrganizationScopeLaunchBroker(baseDir);
+  const moduleUrl = new URL("./OrganizationScopeLaunchBroker.ts", import.meta.url).href;
+  const script = `
+    import { organizationScopeLaunchBrokerClient } from ${JSON.stringify(moduleUrl)};
+    const epoch = await organizationScopeLaunchBrokerClient(${JSON.stringify(baseDir)}).activate();
+    process.stdout.write(epoch + '\\n');
+    setInterval(() => {}, 1000);
+  `;
+  const owner = NodeChildProcess.spawn(process.execPath, ["--input-type=module", "-e", script], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    const epoch = await new Promise<string>((resolve, reject) => {
+      let output = "";
+      let errors = "";
+      owner.stdout?.on("data", (chunk: Buffer) => {
+        output += chunk.toString("utf8");
+        const line = output.split("\n")[0];
+        if (line && /^[a-f0-9]{64}$/.test(line)) resolve(line);
+      });
+      owner.stderr?.on("data", (chunk: Buffer) => {
+        errors += chunk.toString("utf8");
+      });
+      owner.once("error", reject);
+      owner.once("exit", () => reject(new Error(`Owner exited before activation: ${errors}`)));
+    });
+    if (!owner.pid) throw new Error("Owner PID unavailable");
+    const client = organizationScopeLaunchBrokerClient(baseDir, epoch);
+    NodeAssert.equal(await client.checkOwner(), true);
+    await NodeAssert.rejects(
+      requestOrganizationLaunchBroker(baseDir, { action: "activate", ownerPid: owner.pid }),
+      /does not match socket peer/,
+    );
+    owner.kill("SIGTERM");
+    await new Promise<void>((resolve) => owner.once("exit", () => resolve()));
+    await NodeAssert.rejects(client.checkOwner(), /owner process identity is unavailable/);
+  } finally {
+    if (owner.exitCode === null) owner.kill("SIGKILL");
     await broker.close();
     await NodeFSP.rm(baseDir, { recursive: true, force: true });
   }
@@ -141,6 +224,53 @@ it.skipIf(!isOrganizationScopedSandboxAvailable())(
       );
     } finally {
       await broker.close();
+      await NodeFSP.rm(baseDir, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(!isOrganizationScopedSandboxAvailable())(
+  "concurrent wait and exact stop finish with one durable stopped operation",
+  async () => {
+    const baseDir = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "t3-org-broker-stop-race-"),
+    );
+    const broker = await serveOrganizationScopeLaunchBroker(baseDir);
+    try {
+      const client = organizationScopeLaunchBrokerClient(baseDir);
+      await client.activate();
+      const operationId = "attempt-stop-race";
+      const unit = allocateOrganizationScopedUnitName();
+      await client.reserve(operationId, unit);
+      const handle = await client.prepare(operationId, {
+        reservedUnitName: unit,
+        argv: ["/usr/bin/node", "-e", "setInterval(() => {}, 1000)"],
+        runtimeMs: 10_000,
+      });
+      await handle.start();
+      const waiting = handle.wait();
+      // Give the wait request a broker round trip before the stop request.
+      NodeAssert.equal((await client.get(operationId))?.phase, "started");
+      const stopped = await client.stopAndVerifyOperation(operationId);
+      NodeAssert.equal(stopped.disposition, "stopped");
+      NodeAssert.equal(stopped.identity?.unitName, unit);
+      await waiting;
+      NodeAssert.equal((await client.get(operationId))?.phase, "stopped");
+      NodeAssert.deepEqual(await client.stopAndVerifyOperation(operationId), stopped);
+    } finally {
+      await broker.close();
+    }
+    const restarted = await serveOrganizationScopeLaunchBroker(baseDir);
+    try {
+      const client = organizationScopeLaunchBrokerClient(baseDir);
+      await client.activate();
+      NodeAssert.equal((await client.get("attempt-stop-race"))?.phase, "stopped");
+      NodeAssert.equal(
+        (await client.stopAndVerifyOperation("attempt-stop-race")).disposition,
+        "stopped",
+      );
+    } finally {
+      await restarted.close();
       await NodeFSP.rm(baseDir, { recursive: true, force: true });
     }
   },
@@ -192,11 +322,19 @@ it.skipIf(!isOrganizationScopedSandboxAvailable())(
       await new Promise<void>((resolve) => child.once("close", () => resolve()));
       const restarted = await serveOrganizationScopeLaunchBroker(baseDir);
       try {
-        const status = await organizationScopeLaunchBrokerClient(baseDir).status();
+        const client = organizationScopeLaunchBrokerClient(baseDir);
+        await client.activate();
+        const status = await client.status();
         NodeAssert.equal(
           status.find((entry) => entry.operationId === "attempt-crashed")?.phase,
           "stopped",
         );
+        const identity = status.find((entry) => entry.operationId === "attempt-crashed")?.identity;
+        NodeAssert.deepEqual(await client.stopAndVerifyOperation("attempt-crashed"), {
+          operationId: "attempt-crashed",
+          disposition: "stopped",
+          identity,
+        });
       } finally {
         await restarted.close();
       }

@@ -196,6 +196,10 @@ export function coordinateOrganizationGitIntegration(
       Effect.gen(function* () {
         const row = (yield* targetFor())[0];
         if (!row) return yield* failure("not_found", "Integration attempt was not found.");
+        const stopped = yield* sql<{ organization_id: string }>`SELECT organization_id
+          FROM organization_emergency_stops WHERE organization_id = ${row.organization_id}`;
+        if (stopped.length > 0)
+          return yield* failure("conflict", "Emergency stop holds Git integration.");
         let capabilities: unknown;
         try {
           capabilities = JSON.parse(row.binding_capabilities_json ?? "");
@@ -362,6 +366,8 @@ export function coordinateOrganizationGitIntegration(
           AND updated_at = ${value.binding_version}
           AND EXISTS (SELECT 1 FROM organizations o WHERE o.organization_id = ${value.organization_id}
             AND o.lifecycle = 'active')
+          AND NOT EXISTS (SELECT 1 FROM organization_emergency_stops stop
+            WHERE stop.organization_id = ${value.organization_id})
           AND EXISTS (SELECT 1 FROM projection_projects p WHERE p.project_id = ${value.project_id}
             AND p.deleted_at IS NULL AND p.workspace_root = ${workspaceRoot})
         RETURNING binding_id`;

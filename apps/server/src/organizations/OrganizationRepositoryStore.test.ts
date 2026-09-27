@@ -4,7 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
-import { OrganizationId } from "@t3tools/contracts";
+import { GitHubAccountId, OrganizationId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -54,15 +54,32 @@ it.effect(
           process.env.PATH = `${bin}:${originalPath ?? "/usr/bin:/bin"}`;
           process.env.T3_TEST_BARE = bare;
           let remoteVisibility: "private" | "public" = "private";
+          let createCalls = 0;
+          let inspectCalls = 0;
           const transport = {
-            create: async () => undefined,
-            inspect: async () => remoteVisibility,
+            create: async () => {
+              createCalls++;
+            },
+            inspect: async () => {
+              inspectCalls++;
+              return remoteVisibility;
+            },
             withClone: <A>(
               repository: string,
               env: NodeJS.ProcessEnv,
               fn: (directory: string, head: string | null) => Promise<A>,
             ) => withRepositoryClone(repository, env, fn, false),
           };
+          const settingsWithoutSelectedToken = Layer.effect(
+            ServerSettings.ServerSettingsService,
+            Effect.gen(function* () {
+              const settings = yield* ServerSettings.ServerSettingsService;
+              return {
+                ...settings,
+                getGitHubAccountEnvironment: () => Effect.succeed({ configured: true }),
+              };
+            }),
+          ).pipe(Layer.provide(ServerSettings.layerTest()));
           const runDb = <A, E>(
             effect: Effect.Effect<
               A,
@@ -73,7 +90,7 @@ it.effect(
             effect.pipe(
               Effect.provide(
                 Layer.mergeAll(OrganizationStoreLive, OrganizationRepositoryStoreLive).pipe(
-                  Layer.provideMerge(ServerSettings.layerTest()),
+                  Layer.provideMerge(settingsWithoutSelectedToken),
                   Layer.provideMerge(NodeSqliteClient.layerMemory()),
                   Layer.provideMerge(Layer.succeed(OrganizationRepositoryTransport, transport)),
                 ),
@@ -91,6 +108,21 @@ it.effect(
                 mission: "Investigate safely",
                 actor: "user",
               });
+              const selectedWithoutToken = yield* Effect.exit(
+                repositories.link(
+                  {
+                    organizationId,
+                    repository: "owner/knowledge",
+                    create: true,
+                    visibility: "private",
+                    githubAccountId: GitHubAccountId.make("selected-account"),
+                  },
+                  human,
+                ),
+              );
+              assert.equal(selectedWithoutToken._tag, "Failure");
+              assert.equal(createCalls, 0);
+              assert.equal(inspectCalls, 0);
               remoteVisibility = "public";
               const unacknowledgedLink = yield* Effect.exit(
                 repositories.link(
@@ -113,10 +145,12 @@ it.effect(
                   create: false,
                   visibility: "private",
                   autoSync: false,
+                  publicExposureAcknowledged: true,
                 },
                 human,
               );
               assert.equal(linked.conflictCount, 0);
+              assert.equal(linked.publicExposureAcknowledged, false);
               const sql = yield* SqlClient.SqlClient;
               const timestamp = "2026-09-27T00:00:00.000Z";
               yield* sql`INSERT INTO organization_memory_records
@@ -211,6 +245,12 @@ it.effect(
               );
               assert.equal(resumed.publicExposureAcknowledged, true);
               remoteVisibility = "private";
+              const privateAgain = yield* repositories.sync({ organizationId }, human);
+              assert.equal(privateAgain.publicExposureAcknowledged, false);
+              remoteVisibility = "public";
+              const publicAgain = yield* Effect.exit(repositories.sync({ organizationId }, human));
+              assert.equal(publicAgain._tag, "Failure");
+              remoteVisibility = "private";
               return synced;
             }),
           );
@@ -232,11 +272,22 @@ it.effect(
               assert.equal(unacknowledgedLoad._tag, "Failure");
               remoteVisibility = "private";
               const loaded = yield* repositories.load(
-                { repository: "owner/knowledge", autoSync: false },
+                {
+                  repository: "owner/knowledge",
+                  autoSync: false,
+                  publicExposureAcknowledged: true,
+                },
                 human,
               );
               assert.equal(loaded.organizationId, organizationId);
               assert.equal(loaded.conflictCount, 0);
+              assert.equal(loaded.publicExposureAcknowledged, false);
+              remoteVisibility = "public";
+              const privateLoadBecamePublic = yield* Effect.exit(
+                repositories.sync({ organizationId }, human),
+              );
+              assert.equal(privateLoadBecamePublic._tag, "Failure");
+              remoteVisibility = "private";
               const incoming = yield* repositories.listRecords({ organizationId, kind: "memory" });
               assert.equal(
                 (incoming.records[0]?.record.content.content as { title?: string })?.title,

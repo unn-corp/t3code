@@ -145,6 +145,12 @@ export const OrganizationWorkRecoveryInput = Schema.Struct({
   evidenceRef: ShortId,
 });
 export type OrganizationWorkRecoveryInput = typeof OrganizationWorkRecoveryInput.Type;
+export const OrganizationWorkCancelInput = Schema.Struct({
+  organizationId: OrganizationId,
+  workId: OrganizationWorkId,
+  transitionId: ShortId,
+});
+export type OrganizationWorkCancelInput = typeof OrganizationWorkCancelInput.Type;
 
 export class OrganizationWorkError extends Schema.TaggedError<OrganizationWorkError>()(
   "OrganizationWorkError",

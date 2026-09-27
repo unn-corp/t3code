@@ -26,6 +26,12 @@ export const OrganizationPatchBaseDigest = Schema.String.check(Schema.isPattern(
 export const OrganizationPatchProposalInput = Schema.Struct({
   modelSelection: ModelSelection,
   taskText: Schema.String.check(textWithin(ORGANIZATION_PATCH_TASK_MAX_BYTES)),
+  findingContext: Schema.optional(
+    Schema.Struct({
+      title: Schema.String.check(textWithin(512)),
+      summary: Schema.String.check(textWithin(2_048)),
+    }),
+  ),
   fileName: OrganizationPatchFileName,
   currentContent: Schema.String.check(textWithin(ORGANIZATION_PATCH_SOURCE_MAX_BYTES)),
   baseDigest: OrganizationPatchBaseDigest,

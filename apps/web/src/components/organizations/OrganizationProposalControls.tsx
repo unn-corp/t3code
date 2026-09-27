@@ -92,8 +92,9 @@ export function OrganizationObservationModeControl({
         </div>
         <p className="text-sm text-muted-foreground">
           With a published configuration, this mode reviews new scoped findings from linked Projects
-          and saves proposals for human review. It cannot start a worker or change code. Earlier
-          findings are not imported when you first enable it.
+          and saves proposals. Observation alone cannot start a worker; a separate standing work
+          grant can authorize matching intents. Earlier findings are not imported when you first
+          enable it.
         </p>
         {mode.isPending && !mode.data ? <p role="status">Loading observation settings…</p> : null}
         {mode.error || error ? (

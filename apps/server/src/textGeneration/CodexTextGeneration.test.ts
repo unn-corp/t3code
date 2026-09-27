@@ -1,11 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "node:crypto";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import type { ChildProcessSpawner } from "effect/unstable/process";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -14,6 +18,7 @@ import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
+import { OrganizationPatchProcessObserver } from "./OrganizationPatchProcessObserver.ts";
 import { architectTurnInput } from "./OrganizationArchitectFixture.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
@@ -22,6 +27,15 @@ const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
   ProviderInstanceId.make("codex"),
   "gpt-5.4-mini",
 );
+const patchCurrentContent = "export const answer = 1;\n";
+const patchBaseDigest = NodeCrypto.createHash("sha256").update(patchCurrentContent).digest("hex");
+const patchInput = {
+  modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+  taskText: "Change answer to 2.",
+  fileName: "answer.js",
+  currentContent: patchCurrentContent,
+  baseDigest: patchBaseDigest,
+};
 
 const CodexTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-codex-text-generation-test-",
@@ -39,6 +53,10 @@ interface FakeCodexInput {
   forbidArg?: string;
   stdinMustContain?: string;
   stdinMustNotContain?: string;
+  requireStrictOutputSchema?: boolean;
+  cwdMustNotBe?: string;
+  waitForSignal?: boolean;
+  requireEnvMarker?: string;
 }
 
 // The stub walks argv the way the shell script it replaced did: `--image`,
@@ -55,6 +73,10 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     forbidArg: input.forbidArg ?? null,
     stdinMustContain: input.stdinMustContain ?? null,
     stdinMustNotContain: input.stdinMustNotContain ?? null,
+    requireStrictOutputSchema: input.requireStrictOutputSchema ?? false,
+    cwdMustNotBe: input.cwdMustNotBe ?? null,
+    waitForSignal: input.waitForSignal ?? false,
+    requireEnvMarker: input.requireEnvMarker ?? null,
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
@@ -70,6 +92,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "const args = process.argv.slice(2);",
         'const originalArgs = ` ${args.join(" ")} `;',
         "let outputPath = null;",
+        "let schemaPath = null;",
         "let seenImage = false;",
         'let seenServiceTier = "";',
         'let seenReasoningEffort = "";',
@@ -85,6 +108,9 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  } else if (args[index] === "--output-last-message") {',
         "    index += 1;",
         "    outputPath = args[index] ?? null;",
+        '  } else if (args[index] === "--output-schema") {',
+        "    index += 1;",
+        "    schemaPath = args[index] ?? null;",
         "  }",
         "}",
         "const chunks = [];",
@@ -101,6 +127,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  fail("forbidden arg: " + check.forbidArg, 9);',
         "}",
         'if (check.requireImage && !seenImage) fail("missing --image input", 2);',
+        'if (check.requireEnvMarker !== null && process.env.T3_ORG_PROVIDER_LAUNCH_ID !== check.requireEnvMarker) fail("missing provider launch marker", 13);',
         "if (",
         "  check.requireServiceTier !== null &&",
         '  seenServiceTier !== `service_tier="${check.requireServiceTier}"`',
@@ -122,7 +149,23 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "if (check.stdinMustNotContain !== null && stdinContent.includes(check.stdinMustNotContain)) {",
         '  fail("stdin contained forbidden content", 4);',
         "}",
+        "if (check.requireStrictOutputSchema) {",
+        '  if (!schemaPath) fail("missing output schema", 10);',
+        '  const schema = JSON.parse(NodeFS.readFileSync(schemaPath, "utf8"));',
+        "  const visit = (value) => {",
+        "    if (Array.isArray(value)) return value.every(visit);",
+        '    if (value === null || typeof value !== "object") return true;',
+        "    if (value.properties) {",
+        "      const required = new Set(value.required ?? []);",
+        "      if (Object.keys(value.properties).some((key) => !required.has(key))) return false;",
+        "    }",
+        "    return Object.values(value).every(visit);",
+        "  };",
+        '  if (!visit(schema)) fail("schema has optional properties", 11);',
+        "}",
+        'if (check.cwdMustNotBe !== null && process.cwd() === check.cwdMustNotBe) fail("not isolated", 12);',
         'if (check.stderr !== null) process.stderr.write(check.stderr + "\\n");',
+        "if (check.waitForSignal) await new Promise(() => {});",
         'if (outputPath !== null) NodeFS.writeFileSync(outputPath, check.output + "\\n");',
         "process.exitCode = check.exitCode;",
         "",
@@ -161,11 +204,118 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
+  it.effect("verifies exact patch provider exit on interruption", () =>
+    withFakeCodexEnv(
+      { output: "", waitForSignal: true, requireEnvMarker: "disposable-test-marker" },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const spawned = yield* Deferred.make<number>();
+          const exited = yield* Deferred.make<number>();
+          const observer = {
+            environment: { T3_ORG_PROVIDER_LAUNCH_ID: "disposable-test-marker" },
+            preparing: () => Effect.void,
+            spawned: (handle: ChildProcessSpawner.ChildProcessHandle) =>
+              Deferred.succeed(spawned, handle.pid).pipe(Effect.asVoid),
+            exited: (handle: ChildProcessSpawner.ChildProcessHandle) =>
+              Effect.gen(function* () {
+                expect(yield* handle.isRunning.pipe(Effect.orDie)).toBe(false);
+                yield* Deferred.succeed(exited, handle.pid);
+              }),
+          };
+          const fiber = yield* textGeneration.generateOrganizationPatchProposal!(patchInput).pipe(
+            Effect.provideService(OrganizationPatchProcessObserver, observer),
+            Effect.forkChild,
+          );
+          const processId = yield* Deferred.await(spawned);
+          yield* Fiber.interrupt(fiber);
+          expect(yield* Deferred.await(exited)).toBe(processId);
+        }),
+    ),
+  );
+  it.effect("proposes one bounded file replacement in a strict, isolated read-only turn", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          fileName: "answer.js",
+          baseDigest: patchBaseDigest,
+          replacementContent: "export const answer = 2;\n",
+          rationale: "Updates the answer.",
+        }),
+        requireArg: "-s read-only",
+        requireStrictOutputSchema: true,
+        cwdMustNotBe: process.cwd(),
+        stdinMustContain: "Change answer to 2.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const proposal = yield* textGeneration.generateOrganizationPatchProposal!(patchInput);
+          expect(proposal.fileName).toBe("answer.js");
+          expect(proposal.replacementContent).toContain("2");
+        }),
+    ),
+  );
+
+  it.effect("rejects malformed or mismatched patch proposals and invalid input", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          fileName: "other.js",
+          baseDigest: patchBaseDigest,
+          replacementContent: "changed",
+          rationale: "Wrong file.",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationPatchProposal!;
+          expect((yield* Effect.flip(generate(patchInput))).detail).toContain("does not match");
+          expect(
+            (yield* Effect.flip(generate({ ...patchInput, baseDigest: "0".repeat(64) }))).detail,
+          ).toContain("digest");
+          expect(
+            (yield* Effect.flip(generate({ ...patchInput, fileName: "../escape" }))).detail,
+          ).toContain("invalid");
+        }),
+    ),
+  );
+
+  it.effect("rejects patch output that violates the proposal schema", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          fileName: "../secret",
+          baseDigest: patchBaseDigest,
+          replacementContent: "changed",
+          rationale: "Wrong path.",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateOrganizationPatchProposal!(patchInput),
+          );
+          expect(error.detail).toContain("invalid structured output");
+        }),
+    ),
+  );
+
+  it.effect("rejects patch output beyond the structured output size limit", () =>
+    withFakeCodexEnv({ output: "x".repeat(256 * 1024 + 1) }, (textGeneration) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          textGeneration.generateOrganizationPatchProposal!(patchInput),
+        );
+        expect(error.detail).toContain("size limit");
+      }),
+    ),
+  );
+
   it.effect("generates an Architect reply in a read-only isolated CLI turn", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({ reply: "Add QA after defining review ownership.", proposals: [] }),
         requireArg: "-s read-only",
+        requireStrictOutputSchema: true,
         stdinMustContain: "Organization configuration JSON:",
       },
       (textGeneration) =>

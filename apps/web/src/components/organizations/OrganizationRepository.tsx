@@ -417,7 +417,7 @@ export function OrganizationRepository({
                   blocked ||
                   !preview.data ||
                   !repository.trim() ||
-                  ((!create || visibility === "public") && !publicAcknowledged)
+                  (create && visibility === "public" && !publicAcknowledged)
                 }
                 onClick={() =>
                   void run(
@@ -712,10 +712,7 @@ export function OrganizationRepositoryLoader() {
               I understand this repository may expose shared records publicly.
             </label>
           </div>
-          <Button
-            type="submit"
-            disabled={busy || environmentId === null || !repository.trim() || !publicAcknowledged}
-          >
+          <Button type="submit" disabled={busy || environmentId === null || !repository.trim()}>
             {busy ? "Loading…" : "Load Organization"}
           </Button>
         </form>

@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeCrypto from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
 import {
   createOrganizationLaunchBrokerToken,
   organizationLaunchBrokerAddress,
@@ -13,6 +14,7 @@ import {
 import {
   OrganizationScopeLaunchJournal,
   organizationScopeLaunchJournalPath,
+  type OrganizationScopeLaunchStopEvidence,
 } from "./OrganizationScopeLaunchJournal.ts";
 import {
   allocateOrganizationScopedUnitName,
@@ -100,6 +102,51 @@ async function ownerIdentity(pid: number): Promise<{ pid: number; startTicks: st
   return { pid, startTicks };
 }
 
+/** Node does not expose SO_PEERCRED. Pass only the accepted socket FD to a
+ * fixed host helper so the kernel, rather than request JSON, identifies the
+ * process claiming an owner epoch. Missing helper support fails closed.
+ */
+async function peerIdentity(socket: NodeNet.Socket): Promise<{ pid: number; uid: number }> {
+  const fd: unknown = Reflect.get(Reflect.get(socket, "_handle") ?? {}, "fd");
+  if (!Number.isSafeInteger(fd) || (fd as number) < 0)
+    throw new Error("Broker peer socket identity is unavailable");
+  const script =
+    "import json,socket,struct; s=socket.socket(fileno=3); " +
+    "pid,uid,_=struct.unpack('3i',s.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12)); " +
+    "print(json.dumps([pid,uid]))";
+  return new Promise((resolve, reject) => {
+    const child = NodeChildProcess.spawn("/usr/bin/python3", ["-I", "-c", script], {
+      env: {},
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore", fd as number],
+    });
+    let output = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+      if (output.length > 128) child.kill();
+    });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code !== 0) return reject(new Error("Broker peer credentials are unavailable"));
+      try {
+        const value: unknown = JSON.parse(output);
+        if (
+          !Array.isArray(value) ||
+          value.length !== 2 ||
+          !Number.isSafeInteger(value[0]) ||
+          !Number.isSafeInteger(value[1]) ||
+          value[0] <= 0 ||
+          value[1] < 0
+        )
+          throw new Error("Broker peer credentials are invalid");
+        resolve({ pid: value[0], uid: value[1] });
+      } catch {
+        reject(new Error("Broker peer credentials are invalid"));
+      }
+    });
+  });
+}
+
 /** One process owns this abstract socket, journal, and every live scoped handle.
  * Every launch and suspension transition is serialized. A broker crash closes
  * both start gates; replay stops known identities and retains unknown dispatches.
@@ -109,7 +156,10 @@ export async function serveOrganizationScopeLaunchBroker(baseDir: string): Promi
   close(): Promise<void>;
 }> {
   const token = await createOrganizationLaunchBrokerToken(baseDir);
-  let dispatch: (request: OrganizationLaunchBrokerRequest) => Promise<unknown> = () =>
+  let dispatch: (
+    request: OrganizationLaunchBrokerRequest,
+    peer?: { pid: number; uid: number },
+  ) => Promise<unknown> = () =>
     Promise.reject(new Error("Organization launch broker is initializing"));
   const server = NodeNet.createServer({ allowHalfOpen: true }, (socket) => {
     let body = "";
@@ -129,7 +179,8 @@ export async function serveOrganizationScopeLaunchBroker(baseDir: string): Promi
           const action = Reflect.get(raw, "action");
           if (typeof action !== "string") throw new Error("Broker action is missing");
           const request = raw as OrganizationLaunchBrokerRequest;
-          const value = await dispatch(request);
+          const peer = action === "activate" ? await peerIdentity(socket) : undefined;
+          const value = await dispatch(request, peer);
           socket.end(`${JSON.stringify({ ok: true, value })}\n`);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Broker request failed";
@@ -160,18 +211,25 @@ export async function serveOrganizationScopeLaunchBroker(baseDir: string): Promi
   let queue = Promise.resolve();
   let activeOwner: { pid: number; startTicks: string; epoch: string } | null = null;
   const requireEpoch = (request: OrganizationLaunchBrokerRequest) => {
-    if (!activeOwner || request.epoch !== activeOwner.epoch)
+    const owner = activeOwner;
+    if (!owner || request.epoch !== owner.epoch)
       throw new Error("Organization launch owner epoch is stale or absent");
+    return owner;
   };
 
-  const run = async (request: OrganizationLaunchBrokerRequest): Promise<unknown> => {
+  const run = async (
+    request: OrganizationLaunchBrokerRequest,
+    peer?: { pid: number; uid: number },
+  ): Promise<unknown> => {
     switch (request.action) {
       case "health":
         return true;
+      case "authorization-version":
+        return 2;
       case "activate": {
+        if (!peer || peer.uid !== process.getuid?.() || request.ownerPid !== peer.pid)
+          throw new Error("Broker owner process does not match socket peer");
         const owner = await ownerIdentity(request.ownerPid ?? 0);
-        if (activeOwner?.pid === owner.pid && activeOwner.startTicks === owner.startTicks)
-          return activeOwner.epoch;
         if (activeOwner) {
           const prior = await ownerIdentity(activeOwner.pid).catch(() => null);
           if (prior?.startTicks === activeOwner.startTicks)
@@ -189,6 +247,15 @@ export async function serveOrganizationScopeLaunchBroker(baseDir: string): Promi
         const epoch = NodeCrypto.randomBytes(32).toString("hex");
         activeOwner = { ...owner, epoch };
         return epoch;
+      }
+      case "check-owner": {
+        const claimed = requireEpoch(request);
+        const owner = await ownerIdentity(claimed.pid).catch(() => null);
+        if (owner?.startTicks !== claimed.startTicks)
+          throw new Error("Organization launch owner process identity is unavailable");
+        if (await suspended(baseDir))
+          throw new Error("Organization launch is suspended for an update trial");
+        return true;
       }
       case "get":
         return (
@@ -235,12 +302,20 @@ export async function serveOrganizationScopeLaunchBroker(baseDir: string): Promi
       }
       case "stop":
       case "discard": {
+        requireEpoch(request);
         const operationId = requiredOperationId(request);
         const handle = handles.get(operationId);
         if (!handle) throw new Error("Broker has no live prepared scope handle");
         const result = request.action === "stop" ? await handle.stop() : await handle.discard();
         handles.delete(operationId);
         return result;
+      }
+      case "stop-and-verify-operation": {
+        requireEpoch(request);
+        const operationId = requiredOperationId(request);
+        const evidence = await journal.stopAndVerifyOperation(operationId);
+        if (evidence.disposition !== "held") handles.delete(operationId);
+        return evidence;
       }
       case "reconcile": {
         requireEpoch(request);
@@ -274,8 +349,16 @@ export async function serveOrganizationScopeLaunchBroker(baseDir: string): Promi
     }
   };
 
-  dispatch = (request: OrganizationLaunchBrokerRequest): Promise<unknown> => {
+  dispatch = (
+    request: OrganizationLaunchBrokerRequest,
+    peer?: { pid: number; uid: number },
+  ): Promise<unknown> => {
     if (request.action === "wait") {
+      try {
+        requireEpoch(request);
+      } catch (error) {
+        return Promise.reject(error);
+      }
       const handle = handles.get(requiredOperationId(request));
       if (!handle) return Promise.reject(new Error("Broker has no live prepared scope handle"));
       return handle.wait().then((result) => {
@@ -283,7 +366,7 @@ export async function serveOrganizationScopeLaunchBroker(baseDir: string): Promi
         return result;
       });
     }
-    const pending = queue.then(() => run(request));
+    const pending = queue.then(() => run(request, peer));
     queue = pending.then(
       () => undefined,
       () => undefined,
@@ -314,6 +397,25 @@ export function organizationScopeLaunchBrokerClient(baseDir: string, initialEpoc
   };
   return {
     activate: async (ownerPid = process.pid) => {
+      const version = await requestOrganizationLaunchBroker<number>(baseDir, {
+        action: "authorization-version",
+      });
+      if (version !== 2)
+        throw new Error("Organization launch broker authorization version differs");
+      const existing = epoch ?? processOwnerEpochs.get(baseDir);
+      if (existing && ownerPid === process.pid) {
+        try {
+          await requestOrganizationLaunchBroker<boolean>(baseDir, {
+            action: "check-owner",
+            epoch: existing,
+          });
+          epoch = existing;
+          return existing;
+        } catch {
+          // The broker restarted or the previous owner exited. A fresh claim
+          // must pass the socket peer identity check below.
+        }
+      }
       epoch = await requestOrganizationLaunchBroker<string>(baseDir, {
         action: "activate",
         ownerPid,
@@ -321,6 +423,9 @@ export function organizationScopeLaunchBrokerClient(baseDir: string, initialEpoc
       processOwnerEpochs.set(baseDir, epoch);
       return epoch;
     },
+    /** Read-only liveness probe; never claims a new epoch or runs recovery. */
+    checkOwner: () =>
+      requestOrganizationLaunchBroker<boolean>(baseDir, { action: "check-owner", ...owned() }),
     reserve: (operationId: string, unitName: string) =>
       requestOrganizationLaunchBroker<void>(baseDir, {
         action: "reserve",
@@ -350,6 +455,12 @@ export function organizationScopeLaunchBrokerClient(baseDir: string, initialEpoc
         neverDispatched: readonly string[];
         held: readonly string[];
       }>(baseDir, { action: "reconcile", ...owned() }),
+    stopAndVerifyOperation: (operationId: string) =>
+      requestOrganizationLaunchBroker<OrganizationScopeLaunchStopEvidence>(baseDir, {
+        action: "stop-and-verify-operation",
+        operationId,
+        ...owned(),
+      }),
     prepare: async (
       operationId: string,
       input: OrganizationSandboxInput & { readonly reservedUnitName?: string },

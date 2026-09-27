@@ -313,6 +313,8 @@ import {
   OrganizationDetachProjectInput,
   OrganizationError,
   OrganizationGetInput,
+  OrganizationPublishedConfig,
+  OrganizationPublishedConfigGetInput,
   OrganizationLifecycleInput,
   OrganizationListInput,
   OrganizationListResult,
@@ -334,7 +336,29 @@ import {
   OrganizationObservationId,
   OrganizationTentativeFinding,
 } from "./organizationIntake.ts";
-import { OrganizationWorkDetail, OrganizationWorkError } from "./organizationWork.ts";
+import {
+  OrganizationWorkCancelInput,
+  OrganizationWorkDetail,
+  OrganizationWorkError,
+} from "./organizationWork.ts";
+import {
+  OrganizationWorkDrainInput,
+  OrganizationWorkDrainStatusInput,
+  OrganizationWorkDrainStatus,
+} from "./organizationWorkDrain.ts";
+import {
+  OrganizationEmergencyStopRequestInput,
+  OrganizationEmergencyStopStatusInput,
+  OrganizationEmergencyStopStatus,
+} from "./organizationEmergencyStop.ts";
+import {
+  OrganizationStandingWorkAuthorization,
+  OrganizationStandingWorkAuthorizationCreateInput,
+  OrganizationStandingWorkAuthorizationError,
+  OrganizationStandingWorkAuthorizationListInput,
+  OrganizationStandingWorkAuthorizationListResult,
+  OrganizationStandingWorkAuthorizationRevokeInput,
+} from "./organizationStandingWorkAuthorization.ts";
 import {
   OrganizationWorkReviewInput,
   OrganizationWorkReviewResult,
@@ -377,14 +401,29 @@ import {
   OrganizationDirectorListResult,
 } from "./organizationDirector.ts";
 import {
+  OrganizationWorkIntentActivationError,
+  OrganizationWorkIntentActivationInput,
+  OrganizationWorkIntentActivationResult,
   OrganizationWorkIntentListInput,
   OrganizationWorkIntentListResult,
   OrganizationWorkIntentReadError,
 } from "./organizationWorkIntents.ts";
 import {
+  OrganizationLiveWorkFailuresError,
+  OrganizationLiveWorkFailuresInput,
+  OrganizationLiveWorkFailuresResult,
+  OrganizationLiveWorkRuntimeStatusInput,
+  OrganizationLiveWorkRuntimeStatusResult,
+} from "./organizationWorkFailures.ts";
+import {
+  OrganizationProviderBudgetConfigurationRecord,
+  OrganizationProviderBudgetConfigurationRpcError,
+  OrganizationProviderBudgetGetInput,
+  OrganizationProviderBudgetGetResult,
   OrganizationProviderBudgetReadInput,
   OrganizationProviderBudgetReadResult,
   OrganizationProviderBudgetReadError,
+  OrganizationProviderBudgetUpdateInput,
 } from "./organizationProviderBudgets.ts";
 import {
   OrganizationRepositoryError,
@@ -404,6 +443,7 @@ export const WS_METHODS = {
   organizationsList: "organizations.list",
   organizationsCreate: "organizations.create",
   organizationsGet: "organizations.get",
+  organizationsGetPublishedConfig: "organizations.getPublishedConfig",
   organizationsMutate: "organizations.mutate",
   organizationsBindProject: "organizations.bindProject",
   organizationsDetachProject: "organizations.detachProject",
@@ -411,6 +451,8 @@ export const WS_METHODS = {
   organizationsSetLifecycle: "organizations.setLifecycle",
   organizationsListAudit: "organizations.listAudit",
   organizationsReadProviderBudgets: "organizations.providerBudgets.read",
+  organizationsGetProviderBudget: "organizations.providerBudgets.get",
+  organizationsUpdateProviderBudget: "organizations.providerBudgets.update",
   organizationsRepositoryPreview: "organizations.repository.preview",
   organizationsRepositoryLink: "organizations.repository.link",
   organizationsRepositoryLoad: "organizations.repository.load",
@@ -430,6 +472,17 @@ export const WS_METHODS = {
   organizationsListIntakeAudit: "organizations.listIntakeAudit",
   organizationsListWork: "organizations.listWork",
   organizationsListWorkIntents: "organizations.workIntents.list",
+  organizationsListWorkFailures: "organizations.workFailures.list",
+  organizationsGetWorkRuntimeStatus: "organizations.workRuntime.status",
+  organizationsActivateWorkIntent: "organizations.workIntents.activate",
+  organizationsCancelWork: "organizations.work.cancel",
+  organizationsRequestWorkDrain: "organizations.work.drain",
+  organizationsGetWorkDrainStatus: "organizations.work.drainStatus",
+  organizationsRequestEmergencyStop: "organizations.work.emergencyStop",
+  organizationsGetEmergencyStopStatus: "organizations.work.emergencyStopStatus",
+  organizationsCreateStandingWorkAuthorization: "organizations.standingWork.create",
+  organizationsListStandingWorkAuthorizations: "organizations.standingWork.list",
+  organizationsRevokeStandingWorkAuthorization: "organizations.standingWork.revoke",
   organizationsReviewWork: "organizations.reviewWork",
   organizationsDecideWorkApproval: "organizations.decideWorkApproval",
   organizationsArchitectList: "organizations.architect.list",
@@ -659,6 +712,14 @@ export const WsOrganizationsGetRpc = Rpc.make(WS_METHODS.organizationsGet, {
   success: Organization,
   error: organizationRpcError,
 });
+export const WsOrganizationsGetPublishedConfigRpc = Rpc.make(
+  WS_METHODS.organizationsGetPublishedConfig,
+  {
+    payload: OrganizationPublishedConfigGetInput,
+    success: OrganizationPublishedConfig,
+    error: organizationRpcError,
+  },
+);
 export const WsOrganizationsMutateRpc = Rpc.make(WS_METHODS.organizationsMutate, {
   payload: OrganizationMutationInput,
   success: Organization,
@@ -695,6 +756,28 @@ export const WsOrganizationsReadProviderBudgetsRpc = Rpc.make(
     payload: OrganizationProviderBudgetReadInput,
     success: OrganizationProviderBudgetReadResult,
     error: Schema.Union([OrganizationProviderBudgetReadError, EnvironmentAuthorizationError]),
+  },
+);
+export const WsOrganizationsGetProviderBudgetRpc = Rpc.make(
+  WS_METHODS.organizationsGetProviderBudget,
+  {
+    payload: OrganizationProviderBudgetGetInput,
+    success: OrganizationProviderBudgetGetResult,
+    error: Schema.Union([
+      OrganizationProviderBudgetConfigurationRpcError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+export const WsOrganizationsUpdateProviderBudgetRpc = Rpc.make(
+  WS_METHODS.organizationsUpdateProviderBudget,
+  {
+    payload: OrganizationProviderBudgetUpdateInput,
+    success: OrganizationProviderBudgetConfigurationRecord,
+    error: Schema.Union([
+      OrganizationProviderBudgetConfigurationRpcError,
+      EnvironmentAuthorizationError,
+    ]),
   },
 );
 
@@ -836,6 +919,100 @@ export const WsOrganizationsListWorkIntentsRpc = Rpc.make(WS_METHODS.organizatio
   success: OrganizationWorkIntentListResult,
   error: Schema.Union([OrganizationWorkIntentReadError, EnvironmentAuthorizationError]),
 });
+export const WsOrganizationsListWorkFailuresRpc = Rpc.make(
+  WS_METHODS.organizationsListWorkFailures,
+  {
+    payload: OrganizationLiveWorkFailuresInput,
+    success: OrganizationLiveWorkFailuresResult,
+    error: Schema.Union([OrganizationLiveWorkFailuresError, EnvironmentAuthorizationError]),
+  },
+);
+export const WsOrganizationsGetWorkRuntimeStatusRpc = Rpc.make(
+  WS_METHODS.organizationsGetWorkRuntimeStatus,
+  {
+    payload: OrganizationLiveWorkRuntimeStatusInput,
+    success: OrganizationLiveWorkRuntimeStatusResult,
+    error: Schema.Union([OrganizationLiveWorkFailuresError, EnvironmentAuthorizationError]),
+  },
+);
+export const WsOrganizationsActivateWorkIntentRpc = Rpc.make(
+  WS_METHODS.organizationsActivateWorkIntent,
+  {
+    payload: OrganizationWorkIntentActivationInput,
+    success: OrganizationWorkIntentActivationResult,
+    error: Schema.Union([OrganizationWorkIntentActivationError, EnvironmentAuthorizationError]),
+  },
+);
+export const WsOrganizationsCancelWorkRpc = Rpc.make(WS_METHODS.organizationsCancelWork, {
+  payload: OrganizationWorkCancelInput,
+  success: OrganizationWorkDetail,
+  error: Schema.Union([OrganizationWorkError, EnvironmentAuthorizationError]),
+});
+export const WsOrganizationsRequestWorkDrainRpc = Rpc.make(
+  WS_METHODS.organizationsRequestWorkDrain,
+  {
+    payload: OrganizationWorkDrainInput,
+    success: OrganizationWorkDrainStatus,
+    error: Schema.Union([OrganizationWorkError, EnvironmentAuthorizationError]),
+  },
+);
+export const WsOrganizationsGetWorkDrainStatusRpc = Rpc.make(
+  WS_METHODS.organizationsGetWorkDrainStatus,
+  {
+    payload: OrganizationWorkDrainStatusInput,
+    success: OrganizationWorkDrainStatus,
+    error: Schema.Union([OrganizationWorkError, EnvironmentAuthorizationError]),
+  },
+);
+export const WsOrganizationsRequestEmergencyStopRpc = Rpc.make(
+  WS_METHODS.organizationsRequestEmergencyStop,
+  {
+    payload: OrganizationEmergencyStopRequestInput,
+    success: OrganizationEmergencyStopStatus,
+    error: Schema.Union([OrganizationWorkError, EnvironmentAuthorizationError]),
+  },
+);
+export const WsOrganizationsGetEmergencyStopStatusRpc = Rpc.make(
+  WS_METHODS.organizationsGetEmergencyStopStatus,
+  {
+    payload: OrganizationEmergencyStopStatusInput,
+    success: OrganizationEmergencyStopStatus,
+    error: Schema.Union([OrganizationWorkError, EnvironmentAuthorizationError]),
+  },
+);
+export const WsOrganizationsCreateStandingWorkAuthorizationRpc = Rpc.make(
+  WS_METHODS.organizationsCreateStandingWorkAuthorization,
+  {
+    payload: OrganizationStandingWorkAuthorizationCreateInput,
+    success: OrganizationStandingWorkAuthorization,
+    error: Schema.Union([
+      OrganizationStandingWorkAuthorizationError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+export const WsOrganizationsListStandingWorkAuthorizationsRpc = Rpc.make(
+  WS_METHODS.organizationsListStandingWorkAuthorizations,
+  {
+    payload: OrganizationStandingWorkAuthorizationListInput,
+    success: OrganizationStandingWorkAuthorizationListResult,
+    error: Schema.Union([
+      OrganizationStandingWorkAuthorizationError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+export const WsOrganizationsRevokeStandingWorkAuthorizationRpc = Rpc.make(
+  WS_METHODS.organizationsRevokeStandingWorkAuthorization,
+  {
+    payload: OrganizationStandingWorkAuthorizationRevokeInput,
+    success: OrganizationStandingWorkAuthorization,
+    error: Schema.Union([
+      OrganizationStandingWorkAuthorizationError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
 export const WsOrganizationsReviewWorkRpc = Rpc.make(WS_METHODS.organizationsReviewWork, {
   payload: OrganizationWorkReviewInput,
   success: OrganizationWorkReviewResult,
@@ -2052,6 +2229,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrganizationsListRpc,
   WsOrganizationsCreateRpc,
   WsOrganizationsGetRpc,
+  WsOrganizationsGetPublishedConfigRpc,
   WsOrganizationsMutateRpc,
   WsOrganizationsBindProjectRpc,
   WsOrganizationsDetachProjectRpc,
@@ -2059,6 +2237,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrganizationsSetLifecycleRpc,
   WsOrganizationsListAuditRpc,
   WsOrganizationsReadProviderBudgetsRpc,
+  WsOrganizationsGetProviderBudgetRpc,
+  WsOrganizationsUpdateProviderBudgetRpc,
   WsOrganizationsRepositoryPreviewRpc,
   WsOrganizationsRepositoryLinkRpc,
   WsOrganizationsRepositoryLoadRpc,
@@ -2078,6 +2258,17 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrganizationsListIntakeAuditRpc,
   WsOrganizationsListWorkRpc,
   WsOrganizationsListWorkIntentsRpc,
+  WsOrganizationsListWorkFailuresRpc,
+  WsOrganizationsGetWorkRuntimeStatusRpc,
+  WsOrganizationsActivateWorkIntentRpc,
+  WsOrganizationsCancelWorkRpc,
+  WsOrganizationsRequestWorkDrainRpc,
+  WsOrganizationsGetWorkDrainStatusRpc,
+  WsOrganizationsRequestEmergencyStopRpc,
+  WsOrganizationsGetEmergencyStopStatusRpc,
+  WsOrganizationsCreateStandingWorkAuthorizationRpc,
+  WsOrganizationsListStandingWorkAuthorizationsRpc,
+  WsOrganizationsRevokeStandingWorkAuthorizationRpc,
   WsOrganizationsReviewWorkRpc,
   WsOrganizationsDecideWorkApprovalRpc,
   WsOrganizationsArchitectListRpc,

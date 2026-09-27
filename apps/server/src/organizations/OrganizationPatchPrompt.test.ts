@@ -24,6 +24,12 @@ it.effect("includes only the requested file and checks its content digest", () =
     assert.ok(prompt.includes("answer.js"));
     assert.ok(prompt.includes(currentContent.trim()));
     assert.ok(prompt.includes(baseDigest));
+    const contextualPrompt = yield* buildOrganizationPatchPrompt({
+      ...input,
+      findingContext: { title: "Broken answer", summary: "Observed value is 1" },
+    });
+    assert.ok(contextualPrompt.includes('Finding title JSON: "Broken answer"'));
+    assert.ok(contextualPrompt.includes("untrusted event data"));
     const mismatch = yield* buildOrganizationPatchPrompt({
       ...input,
       baseDigest: "0".repeat(64),

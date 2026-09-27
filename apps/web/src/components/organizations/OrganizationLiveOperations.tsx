@@ -1,14 +1,18 @@
-import type { Organization, ProjectId } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { Organization, OrganizationWorkId, ProjectId } from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { randomUUID } from "../../lib/utils";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { organizationEnvironment } from "../../state/organizations";
 import { useEnvironmentQuery, type EnvironmentQueryView } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
+import { OrganizationIntentActivation } from "./OrganizationIntentActivation";
 
 type Destination = "sources" | "work" | "governance";
 
@@ -93,6 +97,11 @@ export function OrganizationLiveOperations({
 }) {
   const environmentId = usePrimaryEnvironmentId();
   const [metricsAsOf, setMetricsAsOf] = useState(() => Date.now());
+  const [cancelingWorkId, setCancelingWorkId] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelNotice, setCancelNotice] = useState<string | null>(null);
+  const cancelRequestIds = useRef(new Map<string, string>());
+  const cancelWork = useAtomCommand(organizationEnvironment.cancelWork, { reportFailure: false });
   useEffect(() => {
     const timer = setInterval(() => setMetricsAsOf(Date.now()), 60_000);
     return () => clearInterval(timer);
@@ -124,6 +133,16 @@ export function OrganizationLiveOperations({
           input: { organizationId: organization.id, afterIntentId: null, limit: 100 },
         }),
   );
+  const workFailures = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : organizationEnvironment.listWorkFailures({ environmentId, input }),
+  );
+  const runtimeStatus = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : organizationEnvironment.getWorkRuntimeStatus({ environmentId, input }),
+  );
   const observationMode = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -145,6 +164,8 @@ export function OrganizationLiveOperations({
       findings.refresh();
       work.refresh();
       workIntents.refresh();
+      workFailures.refresh();
+      runtimeStatus.refresh();
       observationMode.refresh();
       proposals.refresh();
     }
@@ -156,6 +177,8 @@ export function OrganizationLiveOperations({
     findings.refresh,
     work.refresh,
     workIntents.refresh,
+    workFailures.refresh,
+    runtimeStatus.refresh,
     observationMode.refresh,
     proposals.refresh,
   ]);
@@ -166,8 +189,35 @@ export function OrganizationLiveOperations({
     findings.refresh();
     work.refresh();
     workIntents.refresh();
+    workFailures.refresh();
+    runtimeStatus.refresh();
     observationMode.refresh();
     proposals.refresh();
+  }
+
+  async function cancel(item: { readonly id: OrganizationWorkId }) {
+    if (offline || environmentId === null || cancelingWorkId !== null) return;
+    const transitionId = cancelRequestIds.current.get(item.id) ?? randomUUID();
+    cancelRequestIds.current.set(item.id, transitionId);
+    setCancelingWorkId(item.id);
+    setCancelError(null);
+    setCancelNotice(null);
+    try {
+      const result = await cancelWork({
+        environmentId,
+        input: { organizationId: organization.id, workId: item.id, transitionId },
+      });
+      if (result._tag === "Failure") {
+        const cause = squashAtomCommandFailure(result);
+        setCancelError(cause instanceof Error ? cause.message : String(cause));
+      } else {
+        setCancelNotice(`Work ${item.id} was canceled.`);
+        work.refresh();
+        workFailures.refresh();
+      }
+    } finally {
+      setCancelingWorkId(null);
+    }
   }
 
   const activeBindings = organization.bindings.filter((binding) => binding.detachedAt === null);
@@ -209,6 +259,7 @@ export function OrganizationLiveOperations({
     findings.data !== null &&
     work.data !== null &&
     workIntents.data !== null &&
+    workFailures.data !== null &&
     observationMode.data !== null &&
     proposals.data !== null &&
     !observations.error &&
@@ -216,6 +267,7 @@ export function OrganizationLiveOperations({
     !findings.error &&
     !work.error &&
     !workIntents.error &&
+    !workFailures.error &&
     !observationMode.error &&
     !proposals.error;
 
@@ -283,13 +335,22 @@ export function OrganizationLiveOperations({
           <CardPanel className="space-y-4 p-4 sm:p-5">
             <h3 className="text-lg font-semibold">Available capabilities</h3>
             <p className="text-sm">
-              Director conversation can report from saved records. The executor is unavailable in
-              this workspace.
+              Director conversation reports from saved records. Current work intents can start one
+              selected Project file through independent QA and your approval.
             </p>
-            <p className="text-sm text-muted-foreground">
-              The records below can be inspected, but this view cannot direct work or start
-              execution.
-            </p>
+            {runtimeStatus.error ? (
+              <p role="status" className="text-sm text-muted-foreground">
+                Project worker readiness could not be checked: {runtimeStatus.error}
+              </p>
+            ) : runtimeStatus.data?.ready ? (
+              <p role="status" className="text-sm text-muted-foreground">
+                Project worker is ready for reviewed work.
+              </p>
+            ) : (
+              <p role="status" className="text-sm text-muted-foreground">
+                Project worker is waiting for broker ownership and recovery checks.
+              </p>
+            )}
           </CardPanel>
         </Card>
       </div>
@@ -468,6 +529,14 @@ export function OrganizationLiveOperations({
                               Reason: {intent.staleReason}
                             </p>
                           ) : null}
+                          {intent.freshness === "current" ? (
+                            <OrganizationIntentActivation
+                              organization={organization}
+                              intent={intent}
+                              offline={offline}
+                              onActivated={refresh}
+                            />
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -479,6 +548,38 @@ export function OrganizationLiveOperations({
                   </p>
                 ) : null}
               </>
+            ) : null}
+          </div>
+        </CardPanel>
+      </Card>
+
+      <Card>
+        <CardPanel>
+          <div className="space-y-3">
+            <h3 className="text-lg font-semibold">Project work failures</h3>
+            <p className="text-sm text-muted-foreground">
+              Budget exhaustion and temporary integration failures remain visible and can retry
+              after capacity or service availability returns. Other failures stop this work for
+              review.
+            </p>
+            <EvidenceState label="Project work failures" query={workFailures} offline={offline} />
+            {workFailures.data?.failures.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No saved work failures.</p>
+            ) : null}
+            {workFailures.data?.failures.length ? (
+              <ul className="space-y-2">
+                {workFailures.data.failures.map((failure) => (
+                  <li key={failure.workId} className="rounded-lg border border-border p-3 text-sm">
+                    <p className="font-medium break-all">Work {failure.workId}</p>
+                    <p className="text-muted-foreground">
+                      {failure.phase} stopped: {failure.code.replaceAll("_", " ")}
+                    </p>
+                    <p className="text-muted-foreground">
+                      <RecordedTime value={failure.occurredAt} />
+                    </p>
+                  </li>
+                ))}
+              </ul>
             ) : null}
           </div>
         </CardPanel>
@@ -802,6 +903,20 @@ export function OrganizationLiveOperations({
               </Button>
             </div>
             <EvidenceState label="Work records" query={work} offline={offline} />
+            <p className="text-sm text-muted-foreground">
+              Cancel applies to one work item. A running worker must have its scoped stop verified
+              or recovered before cancellation can finish.
+            </p>
+            {cancelError ? (
+              <p role="alert" className="text-sm text-destructive-foreground">
+                {cancelError}
+              </p>
+            ) : null}
+            {cancelNotice ? (
+              <p role="status" className="text-sm text-muted-foreground">
+                {cancelNotice}
+              </p>
+            ) : null}
             {work.data && workItems.length === 0 ? (
               <p className="text-sm text-muted-foreground">No work records persisted.</p>
             ) : null}
@@ -834,6 +949,19 @@ export function OrganizationLiveOperations({
                     <p className="mt-1 text-muted-foreground">
                       {projectName(item.projectId)}; updated <RecordedTime value={item.updatedAt} />
                     </p>
+                    {item.status !== "succeeded" &&
+                    item.status !== "failed" &&
+                    item.status !== "canceled" ? (
+                      <Button
+                        className="mt-2"
+                        size="sm"
+                        variant="destructive-outline"
+                        disabled={offline || environmentId === null || cancelingWorkId !== null}
+                        onClick={() => void cancel(item)}
+                      >
+                        {cancelingWorkId === item.id ? "Canceling…" : "Cancel work"}
+                      </Button>
+                    ) : null}
                   </li>
                 ))}
             </ul>

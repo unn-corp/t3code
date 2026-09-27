@@ -91,6 +91,7 @@ function fixture(git: GitFixture, options?: { approvalRoot?: string; permission?
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE organizations (organization_id TEXT PRIMARY KEY, lifecycle TEXT NOT NULL)`;
+    yield* sql`CREATE TABLE organization_emergency_stops (organization_id TEXT PRIMARY KEY)`;
     yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY,
       workspace_root TEXT NOT NULL, deleted_at TEXT)`;
     yield* sql`CREATE TABLE organization_project_bindings (binding_id TEXT PRIMARY KEY,
@@ -255,6 +256,22 @@ it.effect("CAS integrates a retained approved candidate and exact replay is idem
         status: string;
       }>`SELECT status FROM organization_git_integration_intents`;
       assert.equal(rows[0]?.status, "applied");
+    }),
+  ),
+);
+
+it.effect("a committed emergency stop fences Git CAS", () =>
+  run((git) =>
+    Effect.gen(function* () {
+      const { services } = yield* fixture(git);
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO organization_emergency_stops (organization_id) VALUES ('org')`;
+      const denied = yield* coordinateOrganizationGitIntegration(request).pipe(
+        Effect.provide(services),
+        Effect.flip,
+      );
+      assert.equal(denied.code, "conflict");
+      assert.equal(git.git(["rev-parse", "refs/heads/release"]), git.baseCommit);
     }),
   ),
 );

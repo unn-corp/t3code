@@ -22,6 +22,20 @@ export function toJsonSchemaObject(schema: Schema.Top): unknown {
   return document.schema;
 }
 
+/** Codex structured output requires every declared object property in `required`. */
+export function requireAllJsonSchemaProperties(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(requireAllJsonSchemaProperties);
+  if (value === null || typeof value !== "object") return value;
+  const result = Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [key, requireAllJsonSchemaProperties(nested)]),
+  );
+  const properties = result["properties"];
+  if (properties !== null && typeof properties === "object" && !Array.isArray(properties)) {
+    result["required"] = Object.keys(properties);
+  }
+  return result;
+}
+
 /** Truncate a text section to `maxChars`, appending a `[truncated]` marker when needed. */
 export function limitSection(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;

@@ -423,8 +423,8 @@ export function OrganizationWorkspace({ organizationId }: { readonly organizatio
                 <CardPanel className="p-6">
                   <h2 className="text-lg font-semibold">Operating status</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    This view shows saved configuration and lifecycle state. Worker execution and
-                    live operations are not available from this Organization workspace yet.
+                    Live Operations shows evidence, waiting intents, Project work, approvals, and
+                    runtime readiness. Link a Project and publish a reviewed workflow to begin.
                   </p>
                 </CardPanel>
               </Card>
@@ -494,6 +494,7 @@ export function OrganizationWorkspace({ organizationId }: { readonly organizatio
               onDetach={detach}
               onPublish={publishDraft}
               onLifecycle={changeLifecycle}
+              onRefresh={refresh}
             />
           ) : null}
         </>

@@ -10,10 +10,13 @@ import {
 import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import type { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -27,6 +30,7 @@ import {
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
+import { OrganizationPatchProcessObserver } from "./OrganizationPatchProcessObserver.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -153,6 +157,7 @@ function makeFakeClaudeBinary(dir: string) {
         "}",
         "",
         "const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;",
+        "if (process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL) await new Promise(() => {});",
         "if (stderrText) {",
         '  process.stderr.write(stderrText + "\\n");',
         "}",
@@ -177,6 +182,7 @@ function withFakeClaudeEnv<A, E, R>(
     stdinMustContain?: string;
     configDirMustBe?: string;
     cwdMustNotBe?: string;
+    waitForSignal?: boolean;
     claudeConfig?: Partial<ClaudeSettings>;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -196,11 +202,14 @@ function withFakeClaudeEnv<A, E, R>(
     const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
     const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
     const previousCwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
+    const previousWaitForSignal = process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL;
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         process.env.PATH = `${binDir}${pathDelimiter}${previousPath ?? ""}`;
         process.env.T3_FAKE_CLAUDE_OUTPUT = input.output;
+        if (input.waitForSignal) process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL = "1";
+        else delete process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL;
         if (input.outputRepeat !== undefined) {
           process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT = String(input.outputRepeat);
         } else {
@@ -264,6 +273,12 @@ function withFakeClaudeEnv<A, E, R>(
             process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT = previousOutputRepeat;
           }
 
+          if (previousWaitForSignal === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL;
+          } else {
+            process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL = previousWaitForSignal;
+          }
+
           if (previousExitCode === undefined) {
             delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
           } else {
@@ -319,6 +334,72 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
+  it.effect("interrupts and verifies exact patch CLI exit", () =>
+    withFakeClaudeEnv({ output: "", waitForSignal: true }, (textGeneration) =>
+      Effect.gen(function* () {
+        const spawned = yield* Deferred.make<number>();
+        const exited = yield* Deferred.make<number>();
+        const observer = {
+          environment: { T3_ORG_PROVIDER_LAUNCH_ID: "disposable-claude-marker" },
+          preparing: () => Effect.void,
+          spawned: (handle: ChildProcessSpawner.ChildProcessHandle) =>
+            Deferred.succeed(spawned, handle.pid).pipe(Effect.asVoid),
+          exited: (handle: ChildProcessSpawner.ChildProcessHandle) =>
+            Effect.gen(function* () {
+              expect(yield* handle.isRunning.pipe(Effect.orDie)).toBe(false);
+              yield* Deferred.succeed(exited, handle.pid);
+            }),
+        };
+        const fiber = yield* textGeneration.generateOrganizationPatchProposal!(patchInput).pipe(
+          Effect.provideService(OrganizationPatchProcessObserver, observer),
+          Effect.forkChild,
+        );
+        const processId = yield* Deferred.await(spawned);
+        yield* Fiber.interrupt(fiber);
+        expect(yield* Deferred.await(exited)).toBe(processId);
+      }),
+    ),
+  );
+  it.effect("verifies the patch CLI exit through the live observer", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            fileName: "answer.js",
+            baseDigest: patchBaseDigest,
+            replacementContent: "export const answer = 2;\n",
+            rationale: "Updates the answer.",
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const seen: string[] = [];
+          const observer = {
+            environment: { T3_ORG_PROVIDER_LAUNCH_ID: "disposable-claude-marker" },
+            preparing: () =>
+              Effect.sync(() => {
+                seen.push("preparing");
+              }),
+            spawned: (handle: ChildProcessSpawner.ChildProcessHandle) =>
+              Effect.sync(() => {
+                seen.push(`spawned:${handle.pid}`);
+              }),
+            exited: (handle: ChildProcessSpawner.ChildProcessHandle) =>
+              Effect.gen(function* () {
+                expect(yield* handle.isRunning.pipe(Effect.orDie)).toBe(false);
+                seen.push(`exited:${handle.pid}`);
+              }),
+          };
+          yield* textGeneration.generateOrganizationPatchProposal!(patchInput).pipe(
+            Effect.provideService(OrganizationPatchProcessObserver, observer),
+          );
+          expect(seen[0]).toBe("preparing");
+          expect(seen[1]).toMatch(/^spawned:\d+$/);
+          expect(seen[2]).toBe(`exited:${seen[1]!.slice(8)}`);
+        }),
+    ),
+  );
   it.effect("proposes one bounded file replacement without checkout or tools", () =>
     withFakeClaudeEnv(
       {
