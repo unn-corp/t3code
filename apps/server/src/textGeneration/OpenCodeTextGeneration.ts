@@ -1,8 +1,11 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
   NonNegativeInt,
+  OrganizationArchitectTurnOutput,
   TextGenerationError,
   type ChatAttachment,
   type ModelSelection,
@@ -28,13 +31,19 @@ import {
 } from "./TextGenerationUtils.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../provider/OpenCodeServerOwner.ts";
+import {
+  buildOrganizationArchitectPrompt,
+  validateOrganizationArchitectOutput,
+} from "../organizations/OrganizationArchitectPrompt.ts";
 
 const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateCommitMessage",
   "generatePrContent",
   "generateBranchName",
   "generateThreadTitle",
+  "generateOrganizationArchitectTurn",
 ]);
+const ARCHITECT_TIMEOUT_MS = 60_000;
 
 type OpenCodeTextGenerationOperation = typeof OpenCodeTextGenerationOperation.Type;
 
@@ -174,6 +183,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
   openCodeSettings: OpenCodeSettings,
 ) {
   const serverConfig = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
   const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
 
@@ -241,20 +251,32 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         };
 
         const result = yield* Effect.tryPromise({
-          try: () =>
-            client.session.prompt({
-              sessionID: session.data.id,
-              model: parsedModel,
-              ...(selectedAgent ? { agent: selectedAgent } : {}),
-              ...(selectedVariant ? { variant: selectedVariant } : {}),
-              parts: [{ type: "text", text: input.prompt }, ...fileParts],
-            }),
+          try: (signal) =>
+            client.session.prompt(
+              {
+                sessionID: session.data.id,
+                model: parsedModel,
+                ...(selectedAgent ? { agent: selectedAgent } : {}),
+                ...(selectedVariant ? { variant: selectedVariant } : {}),
+                parts: [{ type: "text", text: input.prompt }, ...fileParts],
+              },
+              { signal },
+            ),
           catch: (cause) =>
             new OpenCodeTextGenerationPromptRequestError({
               ...promptContext,
               cause,
             }),
-        });
+        }).pipe(
+          Effect.onInterrupt(() =>
+            input.operation === "generateOrganizationArchitectTurn"
+              ? Effect.tryPromise({
+                  try: (signal) => client.session.abort({ sessionID: session.data.id }, { signal }),
+                  catch: () => undefined,
+                }).pipe(Effect.timeoutOption(2_000), Effect.ignore)
+              : Effect.void,
+          ),
+        );
         const promptFailure = getOpenCodePromptFailure(result.data?.info?.error);
         if (promptFailure) {
           return yield* new OpenCodeTextGenerationPromptResponseError({
@@ -331,7 +353,25 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             })
             .pipe(Effect.flatMap(runAgainstServer), Effect.scoped)
         : serverOwner.withServer(runAgainstServer);
-    const rawOutput = yield* serverOutput.pipe(
+    const boundedOutput =
+      input.operation === "generateOrganizationArchitectTurn"
+        ? serverOutput.pipe(
+            Effect.timeoutOption(ARCHITECT_TIMEOUT_MS),
+            Effect.flatMap(
+              Option.match({
+                onNone: () =>
+                  Effect.fail(
+                    new TextGenerationError({
+                      operation: input.operation,
+                      detail: "OpenCode Architect request timed out.",
+                    }),
+                  ),
+                onSome: Effect.succeed,
+              }),
+            ),
+          )
+        : serverOutput;
+    const rawOutput = yield* boundedOutput.pipe(
       Effect.catchTags({
         OpenCodeRuntimeError: (cause) =>
           Effect.fail(
@@ -343,6 +383,16 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           ),
       }),
     );
+
+    if (
+      input.operation === "generateOrganizationArchitectTurn" &&
+      Buffer.byteLength(rawOutput, "utf8") > 64_000
+    ) {
+      return yield* new TextGenerationError({
+        operation: input.operation,
+        detail: "OpenCode Architect output exceeded the structured output size limit.",
+      });
+    }
 
     const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));
     return yield* decodeOutput(extractJsonObject(rawOutput)).pipe(
@@ -453,10 +503,39 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       };
     });
 
+  const generateOrganizationArchitectTurn: NonNullable<
+    TextGeneration.TextGeneration["Service"]["generateOrganizationArchitectTurn"]
+  > = Effect.fn("OpenCodeTextGeneration.generateOrganizationArchitectTurn")(function* (input) {
+    const prompt = yield* buildOrganizationArchitectPrompt(input);
+    const generated = yield* Effect.gen(function* () {
+      const cwd = yield* fileSystem
+        .makeTempDirectoryScoped({ prefix: "t3code-opencode-architect-" })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: "generateOrganizationArchitectTurn",
+                detail: "Failed to create isolated Architect directory.",
+                cause,
+              }),
+          ),
+        );
+      return yield* runOpenCodeJson({
+        operation: "generateOrganizationArchitectTurn",
+        cwd,
+        prompt,
+        outputSchemaJson: OrganizationArchitectTurnOutput,
+        modelSelection: input.modelSelection,
+      });
+    }).pipe(Effect.scoped);
+    return yield* validateOrganizationArchitectOutput(generated, input.organization.draftRevision);
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateOrganizationArchitectTurn,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

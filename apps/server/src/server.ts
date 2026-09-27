@@ -1,9 +1,11 @@
 import { EnvironmentHttpApi, ProviderDriverKind } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
@@ -34,6 +36,26 @@ import {
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
+import {
+  OrganizationCorrelationRecoveryLive,
+  OrganizationCorrelationRecoveryLoopLive,
+} from "./organizations/OrganizationCorrelationRecovery.ts";
+import { OrganizationRepositoryStoreLive } from "./organizations/OrganizationRepositoryStore.ts";
+import {
+  OrganizationRepositorySyncCoordinatorLive,
+  OrganizationRepositorySyncLoopLive,
+} from "./organizations/OrganizationRepositorySyncLoop.ts";
+import {
+  OrganizationProposalStoreLive,
+  OrganizationProposalReconciliationLoopLive,
+} from "./organizations/OrganizationProposalStore.ts";
+import {
+  OrganizationWorkIntentStoreLive,
+  OrganizationWorkIntentReconciliationLoopLive,
+} from "./organizations/OrganizationWorkIntentStore.ts";
+import { organizationScopeLaunchBrokerClient } from "./organizations/OrganizationScopeLaunchBroker.ts";
+import { reconcileOrganizationScopesAtStartup } from "./organizations/OrganizationScopeStartupRecovery.ts";
+import { OrganizationScopeRecoveryError } from "./organizations/OrganizationScopeRecoveryStore.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
@@ -159,6 +181,7 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
+import { organizationIntakeHttpRouteLayer } from "./organizations/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
@@ -612,6 +635,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
+    organizationIntakeHttpRouteLayer,
     assetRouteLayer,
     agentDashboardFeedRouteLayer,
     attachmentUploadRouteLayer,
@@ -654,6 +678,37 @@ const makeServerLayer = Layer.unwrap(
     const httpListeningLayer = Layer.effectDiscard(
       Effect.gen(function* () {
         yield* HttpServer.HttpServer;
+        // The listener is already exclusive before this process claims the
+        // broker epoch. A second server that cannot bind cannot fence the
+        // current owner's live Organization scopes.
+        // Scoped execution is a Linux systemd facility. Other desktop hosts
+        // keep their normal server startup and have no launch authority.
+        if (HostProcessPlatform.defaultValue() === "linux") {
+          const owner = yield* Effect.result(
+            Effect.tryPromise({
+              try: () => organizationScopeLaunchBrokerClient(config.baseDir).activate(),
+              catch: (cause) =>
+                new OrganizationScopeRecoveryError({
+                  code: "unavailable",
+                  message:
+                    cause instanceof Error
+                      ? cause.message
+                      : "Organization launch broker owner claim is unavailable.",
+                }),
+            }),
+          );
+          if (Result.isSuccess(owner)) {
+            const recovery = yield* reconcileOrganizationScopesAtStartup(config.baseDir);
+            if (recovery.held.length > 0)
+              yield* Effect.logWarning("Organization scope recovery retains uncertain permits", {
+                held: recovery.held,
+              });
+          } else {
+            yield* Effect.logWarning("Organization launch broker owner claim is unavailable", {
+              message: owner.failure.message,
+            });
+          }
+        }
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
         yield* startup.markHttpListening;
       }),
@@ -883,6 +938,20 @@ const makeServerLayer = Layer.unwrap(
     }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
     const serverApplicationLayer = Layer.mergeAll(
       routesLayer,
+      OrganizationCorrelationRecoveryLoopLive.pipe(
+        Layer.provide(OrganizationCorrelationRecoveryLive),
+      ),
+      OrganizationRepositorySyncLoopLive.pipe(
+        Layer.provide(
+          OrganizationRepositorySyncCoordinatorLive.pipe(
+            Layer.provide(OrganizationRepositoryStoreLive),
+          ),
+        ),
+      ),
+      OrganizationProposalReconciliationLoopLive.pipe(Layer.provide(OrganizationProposalStoreLive)),
+      OrganizationWorkIntentReconciliationLoopLive.pipe(
+        Layer.provide(OrganizationWorkIntentStoreLive),
+      ),
       httpListeningLayer,
       runtimeStateLayer,
       tailscaleServeLayer,

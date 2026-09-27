@@ -195,6 +195,7 @@ import {
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { OrganizationsSidebarButton } from "./sidebar/OrganizationsSidebarButton";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
@@ -2964,6 +2965,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         // header and would otherwise paint across the search row's outline.
         <SidebarGroup className="z-[1]">
           <SidebarMenu>
+            <OrganizationsSidebarButton />
             <SidebarMenuItem>
               <CommandDialogTrigger
                 render={

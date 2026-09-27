@@ -1,7 +1,15 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  ModelSelection,
+  Organization,
+  OrganizationArchitectTurnOutput,
+  OrganizationPatchProposalInput,
+  OrganizationPatchProposalOutput,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
@@ -75,6 +83,18 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface OrganizationArchitectTurnInput {
+  /** The selected, configured provider instance and model. */
+  modelSelection: ModelSelection;
+  /** Only Organization configuration is supplied to the model, never repository contents. */
+  organization: Pick<
+    Organization,
+    "id" | "title" | "mission" | "draftRevision" | "graph" | "workflows"
+  >;
+  transcript: ReadonlyArray<{ readonly role: "user" | "assistant"; readonly text: string }>;
+  userText: string;
+}
+
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -106,6 +126,15 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Optional on provider instances; the facade returns a typed unsupported error. */
+    readonly generateOrganizationArchitectTurn?: (
+      input: OrganizationArchitectTurnInput,
+    ) => Effect.Effect<OrganizationArchitectTurnOutput, TextGenerationError>;
+    /** Tool-free, single-file text proposal; never applies or tests its output. */
+    readonly generateOrganizationPatchProposal?: (
+      input: OrganizationPatchProposalInput,
+    ) => Effect.Effect<OrganizationPatchProposalOutput, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -113,7 +142,9 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateOrganizationArchitectTurn"
+  | "generateOrganizationPatchProposal";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -166,7 +197,87 @@ export const make = Effect.gen(function* () {
           }),
         ),
       ),
+    generateOrganizationArchitectTurn: (input) =>
+      registry.getInstance(input.modelSelection.instanceId).pipe(
+        Effect.flatMap((instance) =>
+          instance === undefined
+            ? Effect.fail(
+                new TextGenerationError({
+                  operation: "generateOrganizationArchitectTurn",
+                  detail: `No provider instance registered for id '${input.modelSelection.instanceId}'.`,
+                }),
+              )
+            : !instance.enabled
+              ? Effect.fail(
+                  new TextGenerationError({
+                    operation: "generateOrganizationArchitectTurn",
+                    detail: `Provider instance '${input.modelSelection.instanceId}' is disabled.`,
+                  }),
+                )
+              : instance.textGeneration.generateOrganizationArchitectTurn
+                ? instance.textGeneration.generateOrganizationArchitectTurn(input)
+                : Effect.fail(
+                    new TextGenerationError({
+                      operation: "generateOrganizationArchitectTurn",
+                      detail: `Provider instance '${input.modelSelection.instanceId}' does not support tool-free Organization Architect generation.`,
+                    }),
+                  ),
+        ),
+      ),
+    generateOrganizationPatchProposal: (input) =>
+      registry.getInstance(input.modelSelection.instanceId).pipe(
+        Effect.flatMap((instance) =>
+          instance === undefined
+            ? Effect.fail(
+                new TextGenerationError({
+                  operation: "generateOrganizationPatchProposal",
+                  detail: `No provider instance registered for id '${input.modelSelection.instanceId}'.`,
+                }),
+              )
+            : !instance.enabled
+              ? Effect.fail(
+                  new TextGenerationError({
+                    operation: "generateOrganizationPatchProposal",
+                    detail: `Provider instance '${input.modelSelection.instanceId}' is disabled.`,
+                  }),
+                )
+              : instance.textGeneration.generateOrganizationPatchProposal
+                ? instance.textGeneration.generateOrganizationPatchProposal(input)
+                : Effect.fail(
+                    new TextGenerationError({
+                      operation: "generateOrganizationPatchProposal",
+                      detail: `Provider instance '${input.modelSelection.instanceId}' does not support tool-free Organization patch proposals.`,
+                    }),
+                  ),
+        ),
+      ),
   });
 });
+
+/** A required call surface for consumers of the optional provider-instance method. */
+export const generateOrganizationArchitectTurn = (input: OrganizationArchitectTurnInput) =>
+  Effect.flatMap(TextGeneration, (service) =>
+    service.generateOrganizationArchitectTurn
+      ? service.generateOrganizationArchitectTurn(input)
+      : Effect.fail(
+          new TextGenerationError({
+            operation: "generateOrganizationArchitectTurn",
+            detail: "Organization Architect generation is unavailable.",
+          }),
+        ),
+  );
+
+/** A required facade for the optional per-provider patch proposal method. */
+export const generateOrganizationPatchProposal = (input: OrganizationPatchProposalInput) =>
+  Effect.flatMap(TextGeneration, (service) =>
+    service.generateOrganizationPatchProposal
+      ? service.generateOrganizationPatchProposal(input)
+      : Effect.fail(
+          new TextGenerationError({
+            operation: "generateOrganizationPatchProposal",
+            detail: "Organization patch proposal generation is unavailable.",
+          }),
+        ),
+  );
 
 export const layer = Layer.effect(TextGeneration, make);

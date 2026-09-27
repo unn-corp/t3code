@@ -177,7 +177,11 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        async () => {},
+      );
       const running = launcher.run();
       const stopping = launcher.stop("SIGTERM");
       // An explicit stop leaves the marker that tells a child shutting down
@@ -229,7 +233,11 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        async () => {},
+      );
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -280,7 +288,11 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        async () => {},
+      );
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -340,7 +352,11 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        async () => {},
+      );
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -357,6 +373,64 @@ if (context.update?.status === "pending") {
       const updateId = state.update?.id;
       assert.isDefined(updateId);
       assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
+    }),
+  );
+
+  it.effect("returns to the previous version if the active child exits before handoff", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-early-exit-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "unchanged");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds a path in fake child source.
+      const encodedDatabasePath = JSON.stringify(databasePath);
+      const childSource = `
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+if (context.update === undefined) {
+  process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: ${encodedDatabasePath} });
+  setTimeout(() => process.exit(1), 100);
+} else {
+  process.exit(0);
+}
+`;
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        async () => {},
+      );
+      yield* Effect.promise(() =>
+        launcher.run().then(
+          () => Promise.reject(new Error("launcher unexpectedly completed")),
+          () => Promise.resolve(),
+        ),
+      );
+      const state = yield* Effect.promise(() => readServiceState(statePath));
+      assert.equal(state.activeVersion, "1.0.0");
+      assert.equal(state.update?.status, "failed");
+      assert.equal(
+        state.update?.status === "failed" ? state.update.reason : undefined,
+        "scope-quiesce-not-proven",
+      );
+      assert.equal(yield* fs.readFileString(databasePath), "unchanged");
+      assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", state.update!.id)));
     }),
   );
 });

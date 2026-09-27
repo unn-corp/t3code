@@ -228,6 +228,7 @@ import {
   useSidebar,
 } from "./ui/sidebar";
 import { AgentDashboardSidebarButton } from "./sidebar/AgentDashboardSidebarButton";
+import { OrganizationsSidebarButton } from "./sidebar/OrganizationsSidebarButton";
 import {
   Combobox,
   ComboboxEmpty,
@@ -4826,6 +4827,7 @@ export default function Sidebar() {
             </div>
             <SidebarMenu>
               <AgentDashboardSidebarButton />
+              <OrganizationsSidebarButton />
             </SidebarMenu>
             {projectGroups.length > 0 ? (
               <div className="flex items-center gap-1">

@@ -16,6 +16,7 @@ import { GrokSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { makeGrokTextGeneration } from "./GrokTextGeneration.ts";
+import { architectTurnInput } from "./OrganizationArchitectFixture.ts";
 import { execScriptSource, writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -26,7 +27,7 @@ const GrokTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.
   prefix: "t3code-grok-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
+function makeAcpGrokWrapper(dir: string, env: Record<string, string>, architect = false): string {
   /*
   const binDir = NodePath.join(dir, "bin");
   const grokPath = NodePath.join(binDir, "grok");
@@ -54,7 +55,7 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
     env,
     source: execScriptSource({
       scriptPath: mockAgentPath,
-      expectedArgs: ["agent", "--always-approve", "stdio"],
+      expectedArgs: architect ? ["agent", "stdio"] : ["agent", "--always-approve", "stdio"],
     }),
   });
 }
@@ -62,6 +63,7 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
 function withFakeAcpGrok<A, E, R>(
   env: Record<string, string>,
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  architect = false,
 ) {
   return Effect.gen(function* () {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-acp-"));
@@ -70,7 +72,7 @@ function withFakeAcpGrok<A, E, R>(
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }),
     );
-    const binaryPath = makeAcpGrokWrapper(tempDir, env);
+    const binaryPath = makeAcpGrokWrapper(tempDir, env, architect);
     const config = decodeGrokSettings({ binaryPath });
     const textGeneration = yield* makeGrokTextGeneration(config);
     return yield* effectFn(textGeneration);
@@ -88,6 +90,42 @@ function readJsonRpcRequests(
 }
 
 it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
+  it.effect("generates an Architect reply without always-approve", () =>
+    withFakeAcpGrok(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          reply: "Clarify QA ownership.",
+          proposals: [],
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateOrganizationArchitectTurn!(
+            architectTurnInput("grok", "grok-build"),
+          );
+          expect(generated.reply).toBe("Clarify QA ownership.");
+        }),
+      true,
+    ),
+  );
+  it.effect("runs Architect without always-approve and rejects attempted tool work", () =>
+    withFakeAcpGrok(
+      {
+        T3_ACP_EMIT_TOOL_CALLS: "1",
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ reply: "Review QA.", proposals: [] }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateOrganizationArchitectTurn!(
+              architectTurnInput("grok", "grok-build"),
+            ),
+          );
+          expect(error.detail).toContain("attempted tool work");
+        }),
+      true,
+    ),
+  );
   it.effect("uses ACP with disabled tool capabilities and forwards the requested model id", () => {
     const requestLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),

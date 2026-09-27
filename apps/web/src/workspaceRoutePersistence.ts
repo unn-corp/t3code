@@ -3,6 +3,15 @@ import { isElectron } from "./env";
 export const LAST_WORKSPACE_ROUTE_STORAGE_KEY = "t3code:last-workspace-route:v1";
 export const PERSISTED_WORKSPACE_ROUTE = "/agent-dashboard" as const;
 
+function isPersistedWorkspaceRoute(value: string | null): value is string {
+  return (
+    value === PERSISTED_WORKSPACE_ROUTE ||
+    value?.startsWith(`${PERSISTED_WORKSPACE_ROUTE}/`) === true ||
+    value === "/organizations" ||
+    value?.startsWith("/organizations/") === true
+  );
+}
+
 export function readPersistedWorkspaceRoute(): string | null {
   if (!isElectron || typeof window === "undefined") {
     return null;
@@ -11,9 +20,7 @@ export function readPersistedWorkspaceRoute(): string | null {
   try {
     const value = window.localStorage.getItem(LAST_WORKSPACE_ROUTE_STORAGE_KEY);
     if (value === "/research") return PERSISTED_WORKSPACE_ROUTE;
-    return value === PERSISTED_WORKSPACE_ROUTE || value?.startsWith(`${PERSISTED_WORKSPACE_ROUTE}/`)
-      ? value
-      : null;
+    return isPersistedWorkspaceRoute(value) ? value : null;
   } catch {
     return null;
   }
@@ -46,10 +53,7 @@ export function persistWorkspaceRoute(pathname: string): void {
   }
 
   try {
-    if (
-      pathname === PERSISTED_WORKSPACE_ROUTE ||
-      pathname.startsWith(`${PERSISTED_WORKSPACE_ROUTE}/`)
-    ) {
+    if (isPersistedWorkspaceRoute(pathname)) {
       window.localStorage.setItem(LAST_WORKSPACE_ROUTE_STORAGE_KEY, pathname);
     } else if (pathname === "/") {
       window.localStorage.removeItem(LAST_WORKSPACE_ROUTE_STORAGE_KEY);

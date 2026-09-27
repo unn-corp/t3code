@@ -10,6 +10,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   type CodexSettings,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+  OrganizationArchitectTurnOutput,
   type ModelSelection,
   type ServerProviderModel,
   TextGenerationError,
@@ -37,6 +38,10 @@ import {
 } from "./TextGenerationUtils.ts";
 import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
+import {
+  buildOrganizationArchitectPrompt,
+  validateOrganizationArchitectOutput,
+} from "../organizations/OrganizationArchitectPrompt.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -103,7 +108,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateOrganizationArchitectTurn",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -164,7 +170,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateOrganizationArchitectTurn";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -216,12 +223,25 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         ],
         { env: resolvedEnvironment },
       );
+      const workingDirectory =
+        operation === "generateOrganizationArchitectTurn"
+          ? yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-codex-architect-" }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new TextGenerationError({
+                    operation,
+                    detail: "Failed to create isolated Architect directory.",
+                    cause,
+                  }),
+              ),
+            )
+          : cwd;
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: {
           ...resolvedEnvironment,
           ...(codexConfig.homePath ? { CODEX_HOME: expandHomePath(codexConfig.homePath) } : {}),
         },
-        cwd,
+        cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
@@ -273,7 +293,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return yield* Effect.gen(function* () {
       yield* runCodexCommand().pipe(
         Effect.scoped,
-        Effect.timeoutOption(CODEX_TIMEOUT_MS),
+        Effect.timeoutOption(
+          operation === "generateOrganizationArchitectTurn" ? 60_000 : CODEX_TIMEOUT_MS,
+        ),
         Effect.flatMap(
           Option.match({
             onNone: () =>
@@ -287,6 +309,24 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
       const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
 
+      if (operation === "generateOrganizationArchitectTurn") {
+        const info = yield* fileSystem.stat(outputPath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: "Failed to inspect Codex Architect output.",
+                cause,
+              }),
+          ),
+        );
+        if (info.size > 64_000n) {
+          return yield* new TextGenerationError({
+            operation,
+            detail: "Codex Architect output exceeded the structured output size limit.",
+          });
+        }
+      }
       return yield* fileSystem.readFileString(outputPath).pipe(
         Effect.mapError(
           (cause) =>
@@ -417,10 +457,25 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateOrganizationArchitectTurn: NonNullable<
+    TextGeneration.TextGeneration["Service"]["generateOrganizationArchitectTurn"]
+  > = Effect.fn("CodexTextGeneration.generateOrganizationArchitectTurn")(function* (input) {
+    const prompt = yield* buildOrganizationArchitectPrompt(input);
+    const generated = yield* runCodexJson({
+      operation: "generateOrganizationArchitectTurn",
+      cwd: process.cwd(),
+      prompt,
+      outputSchemaJson: OrganizationArchitectTurnOutput,
+      modelSelection: input.modelSelection,
+    });
+    return yield* validateOrganizationArchitectOutput(generated, input.organization.draftRevision);
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateOrganizationArchitectTurn,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -1,12 +1,17 @@
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
-import { type GrokSettings, type ModelSelection } from "@t3tools/contracts";
+import {
+  OrganizationArchitectTurnOutput,
+  type GrokSettings,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
@@ -31,6 +36,11 @@ import {
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "../provider/acp/GrokAcpSupport.ts";
+import { denyArchitectAcpTools } from "./OrganizationArchitectAcp.ts";
+import {
+  buildOrganizationArchitectPrompt,
+  validateOrganizationArchitectOutput,
+} from "../organizations/OrganizationArchitectPrompt.ts";
 
 const GROK_TIMEOUT_MS = 180_000;
 
@@ -42,6 +52,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
 ) {
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const runGrokJson = <S extends Schema.Top>({
     operation,
@@ -54,7 +65,8 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateOrganizationArchitectTurn";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -63,17 +75,42 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     Effect.gen(function* () {
       const resolvedModel = resolveGrokAcpBaseModelId(modelSelection.model);
       const outputRef = yield* Ref.make("");
+      const toolAttempted = yield* Ref.make(false);
+      const outputExceeded = yield* Ref.make(false);
+      const workingDirectory =
+        operation === "generateOrganizationArchitectTurn"
+          ? yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-grok-architect-" }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new TextGenerationError({
+                    operation,
+                    detail: "Failed to create isolated Architect directory.",
+                    cause,
+                  }),
+              ),
+            )
+          : cwd;
       const runtime = yield* makeGrokAcpRuntime({
         grokSettings,
         environment,
         childProcessSpawner: commandSpawner,
-        cwd,
-        alwaysApprove: true,
+        cwd: workingDirectory,
+        alwaysApprove: operation !== "generateOrganizationArchitectTurn",
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
+      if (operation === "generateOrganizationArchitectTurn") {
+        yield* denyArchitectAcpTools(runtime);
+      }
+
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
+        if (
+          operation === "generateOrganizationArchitectTurn" &&
+          (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update")
+        ) {
+          return Ref.set(toolAttempted, true);
+        }
         if (update.sessionUpdate !== "agent_message_chunk") {
           return Effect.void;
         }
@@ -81,7 +118,17 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         if (content.type !== "text") {
           return Effect.void;
         }
-        return Ref.update(outputRef, (current) => current + content.text);
+        return Ref.modify(outputRef, (current) => {
+          if (
+            operation === "generateOrganizationArchitectTurn" &&
+            Buffer.byteLength(current, "utf8") + Buffer.byteLength(content.text, "utf8") > 64_000
+          ) {
+            return [true, current] as const;
+          }
+          return [false, current + content.text] as const;
+        }).pipe(
+          Effect.flatMap((exceeded) => (exceeded ? Ref.set(outputExceeded, true) : Effect.void)),
+        );
       });
 
       const promptResult = yield* Effect.gen(function* () {
@@ -110,7 +157,9 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           prompt: [{ type: "text", text: prompt }],
         });
       }).pipe(
-        Effect.timeoutOption(GROK_TIMEOUT_MS),
+        Effect.timeoutOption(
+          operation === "generateOrganizationArchitectTurn" ? 60_000 : GROK_TIMEOUT_MS,
+        ),
         Effect.flatMap(
           Option.match({
             onNone: () =>
@@ -130,6 +179,19 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
               }),
         ),
       );
+
+      if (yield* Ref.get(toolAttempted)) {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Grok attempted tool work during Architect generation.",
+        });
+      }
+      if (yield* Ref.get(outputExceeded)) {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Grok Architect output exceeded the structured output size limit.",
+        });
+      }
 
       const trimmed = (yield* Ref.get(outputRef)).trim();
       if (!trimmed) {
@@ -264,10 +326,25 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateOrganizationArchitectTurn: NonNullable<
+    TextGeneration.TextGeneration["Service"]["generateOrganizationArchitectTurn"]
+  > = Effect.fn("GrokTextGeneration.generateOrganizationArchitectTurn")(function* (input) {
+    const prompt = yield* buildOrganizationArchitectPrompt(input);
+    const generated = yield* runGrokJson({
+      operation: "generateOrganizationArchitectTurn",
+      cwd: process.cwd(),
+      prompt,
+      outputSchemaJson: OrganizationArchitectTurnOutput,
+      modelSelection: input.modelSelection,
+    });
+    return yield* validateOrganizationArchitectOutput(generated, input.organization.draftRevision);
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateOrganizationArchitectTurn,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

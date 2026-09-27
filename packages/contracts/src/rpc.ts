@@ -303,9 +303,150 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  Organization,
+  OrganizationId,
+  OrganizationAuditListInput,
+  OrganizationAuditListResult,
+  OrganizationBindProjectInput,
+  OrganizationCreateInput,
+  OrganizationDetachProjectInput,
+  OrganizationError,
+  OrganizationGetInput,
+  OrganizationLifecycleInput,
+  OrganizationListInput,
+  OrganizationListResult,
+  OrganizationMutationInput,
+  OrganizationPublishInput,
+} from "./organizations.ts";
+import {
+  OrganizationIntakeAuditEntry,
+  OrganizationIntakeError,
+  OrganizationIntakeEventInput,
+  OrganizationIntakeCorrelationStatus,
+  OrganizationCorrelationJobStatus,
+  OrganizationIntakeRegisterSourceInput,
+  OrganizationIntakeResult,
+  OrganizationIntakeSource,
+  OrganizationIntakeSourceId,
+  OrganizationIntakeSourceRegistration,
+  OrganizationObservation,
+  OrganizationObservationId,
+  OrganizationTentativeFinding,
+} from "./organizationIntake.ts";
+import { OrganizationWorkDetail, OrganizationWorkError } from "./organizationWork.ts";
+import {
+  OrganizationWorkReviewInput,
+  OrganizationWorkReviewResult,
+} from "./organizationWorkReview.ts";
+import { OrganizationWorkApprovalDecisionInput } from "./organizationWorkApproval.ts";
+import {
+  OrganizationArchitectError,
+  OrganizationArchitectListInput,
+  OrganizationArchitectListResult,
+  OrganizationArchitectSendInput,
+  OrganizationArchitectSendResult,
+  OrganizationArchitectApplyBatchInput,
+} from "./organizationArchitect.ts";
+import {
+  OrganizationMemoryArchiveInput,
+  OrganizationMemoryCorrectInput,
+  OrganizationMemoryCreateInput,
+  OrganizationMemoryError,
+  OrganizationMemoryHistoryInput,
+  OrganizationMemoryListInput,
+  OrganizationMemoryRecord,
+  OrganizationMemoryRevision,
+  OrganizationMemorySupersedeInput,
+} from "./organizationMemory.ts";
+import {
+  OrganizationObservationMode,
+  OrganizationObservationModeGetInput,
+  OrganizationObservationModeSetInput,
+  OrganizationProposalDecisionInput,
+  OrganizationProposalError,
+  OrganizationProposalListInput,
+  OrganizationProposalListResult,
+  OrganizationWorkProposal,
+} from "./organizationProposals.ts";
+import {
+  OrganizationDirectorAskInput,
+  OrganizationDirectorAskResult,
+  OrganizationDirectorError,
+  OrganizationDirectorListInput,
+  OrganizationDirectorListResult,
+} from "./organizationDirector.ts";
+import {
+  OrganizationWorkIntentListInput,
+  OrganizationWorkIntentListResult,
+  OrganizationWorkIntentReadError,
+} from "./organizationWorkIntents.ts";
+import {
+  OrganizationProviderBudgetReadInput,
+  OrganizationProviderBudgetReadResult,
+  OrganizationProviderBudgetReadError,
+} from "./organizationProviderBudgets.ts";
+import {
+  OrganizationRepositoryError,
+  OrganizationRepositoryLinkInput,
+  OrganizationRepositoryListInput,
+  OrganizationRepositoryListResult,
+  OrganizationRepositoryLoadInput,
+  OrganizationRepositoryPreview,
+  OrganizationRepositoryPreviewInput,
+  OrganizationRepositoryResolveInput,
+  OrganizationRepositoryStatus,
+  OrganizationRepositorySyncInput,
+} from "./organizationRepository.ts";
 
 export const WS_METHODS = {
   // Project registry methods
+  organizationsList: "organizations.list",
+  organizationsCreate: "organizations.create",
+  organizationsGet: "organizations.get",
+  organizationsMutate: "organizations.mutate",
+  organizationsBindProject: "organizations.bindProject",
+  organizationsDetachProject: "organizations.detachProject",
+  organizationsPublish: "organizations.publish",
+  organizationsSetLifecycle: "organizations.setLifecycle",
+  organizationsListAudit: "organizations.listAudit",
+  organizationsReadProviderBudgets: "organizations.providerBudgets.read",
+  organizationsRepositoryPreview: "organizations.repository.preview",
+  organizationsRepositoryLink: "organizations.repository.link",
+  organizationsRepositoryLoad: "organizations.repository.load",
+  organizationsRepositorySync: "organizations.repository.sync",
+  organizationsRepositoryStatus: "organizations.repository.status",
+  organizationsRepositoryListRecords: "organizations.repository.listRecords",
+  organizationsRepositoryResolveConflict: "organizations.repository.resolveConflict",
+  organizationsRegisterSource: "organizations.registerSource",
+  organizationsRotateSourceSecret: "organizations.rotateSourceSecret",
+  organizationsSetSourceEnabled: "organizations.setSourceEnabled",
+  organizationsListSources: "organizations.listSources",
+  organizationsIngestManual: "organizations.ingestManual",
+  organizationsRetryCorrelation: "organizations.intake.retryCorrelation",
+  organizationsListObservations: "organizations.listObservations",
+  organizationsListCorrelationJobs: "organizations.intake.listCorrelationJobs",
+  organizationsListFindings: "organizations.listFindings",
+  organizationsListIntakeAudit: "organizations.listIntakeAudit",
+  organizationsListWork: "organizations.listWork",
+  organizationsListWorkIntents: "organizations.workIntents.list",
+  organizationsReviewWork: "organizations.reviewWork",
+  organizationsDecideWorkApproval: "organizations.decideWorkApproval",
+  organizationsArchitectList: "organizations.architect.list",
+  organizationsArchitectSend: "organizations.architect.send",
+  organizationsArchitectApplyBatch: "organizations.architect.applyBatch",
+  organizationsMemoryList: "organizations.memory.list",
+  organizationsMemoryHistory: "organizations.memory.history",
+  organizationsMemoryCreate: "organizations.memory.create",
+  organizationsMemoryCorrect: "organizations.memory.correct",
+  organizationsMemorySupersede: "organizations.memory.supersede",
+  organizationsMemoryArchive: "organizations.memory.archive",
+  organizationsProposalList: "organizations.proposals.list",
+  organizationsProposalDecide: "organizations.proposals.decide",
+  organizationsObservationModeGet: "organizations.observationMode.get",
+  organizationsObservationModeSet: "organizations.observationMode.set",
+  organizationsDirectorList: "organizations.director.list",
+  organizationsDirectorAsk: "organizations.director.ask",
   agentDashboardGetSnapshot: "agentDashboard.getSnapshot",
   agentDashboardDismissFeedCard: "agentDashboard.dismissFeedCard",
   agentDashboardClearFeed: "agentDashboard.clearFeed",
@@ -499,6 +640,314 @@ const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, 
   payload: ServerUpsertKeybindingInput,
   success: ServerUpsertKeybindingResult,
   error: Schema.Union([KeybindingsConfigError, EnvironmentAuthorizationError]),
+});
+
+const organizationRpcError = Schema.Union([OrganizationError, EnvironmentAuthorizationError]);
+
+export const WsOrganizationsListRpc = Rpc.make(WS_METHODS.organizationsList, {
+  payload: OrganizationListInput,
+  success: OrganizationListResult,
+  error: organizationRpcError,
+});
+export const WsOrganizationsCreateRpc = Rpc.make(WS_METHODS.organizationsCreate, {
+  payload: OrganizationCreateInput,
+  success: Organization,
+  error: organizationRpcError,
+});
+export const WsOrganizationsGetRpc = Rpc.make(WS_METHODS.organizationsGet, {
+  payload: OrganizationGetInput,
+  success: Organization,
+  error: organizationRpcError,
+});
+export const WsOrganizationsMutateRpc = Rpc.make(WS_METHODS.organizationsMutate, {
+  payload: OrganizationMutationInput,
+  success: Organization,
+  error: organizationRpcError,
+});
+export const WsOrganizationsBindProjectRpc = Rpc.make(WS_METHODS.organizationsBindProject, {
+  payload: OrganizationBindProjectInput,
+  success: Organization,
+  error: organizationRpcError,
+});
+export const WsOrganizationsDetachProjectRpc = Rpc.make(WS_METHODS.organizationsDetachProject, {
+  payload: OrganizationDetachProjectInput,
+  success: Organization,
+  error: organizationRpcError,
+});
+export const WsOrganizationsPublishRpc = Rpc.make(WS_METHODS.organizationsPublish, {
+  payload: OrganizationPublishInput,
+  success: Organization,
+  error: organizationRpcError,
+});
+export const WsOrganizationsSetLifecycleRpc = Rpc.make(WS_METHODS.organizationsSetLifecycle, {
+  payload: OrganizationLifecycleInput,
+  success: Organization,
+  error: organizationRpcError,
+});
+export const WsOrganizationsListAuditRpc = Rpc.make(WS_METHODS.organizationsListAudit, {
+  payload: OrganizationAuditListInput,
+  success: OrganizationAuditListResult,
+  error: organizationRpcError,
+});
+export const WsOrganizationsReadProviderBudgetsRpc = Rpc.make(
+  WS_METHODS.organizationsReadProviderBudgets,
+  {
+    payload: OrganizationProviderBudgetReadInput,
+    success: OrganizationProviderBudgetReadResult,
+    error: Schema.Union([OrganizationProviderBudgetReadError, EnvironmentAuthorizationError]),
+  },
+);
+
+const organizationRepositoryRpcError = Schema.Union([
+  OrganizationRepositoryError,
+  EnvironmentAuthorizationError,
+]);
+export const WsOrganizationsRepositoryPreviewRpc = Rpc.make(
+  WS_METHODS.organizationsRepositoryPreview,
+  {
+    payload: OrganizationRepositoryPreviewInput,
+    success: OrganizationRepositoryPreview,
+    error: organizationRepositoryRpcError,
+  },
+);
+export const WsOrganizationsRepositoryLinkRpc = Rpc.make(WS_METHODS.organizationsRepositoryLink, {
+  payload: OrganizationRepositoryLinkInput,
+  success: OrganizationRepositoryStatus,
+  error: organizationRepositoryRpcError,
+});
+export const WsOrganizationsRepositoryLoadRpc = Rpc.make(WS_METHODS.organizationsRepositoryLoad, {
+  payload: OrganizationRepositoryLoadInput,
+  success: OrganizationRepositoryStatus,
+  error: organizationRepositoryRpcError,
+});
+export const WsOrganizationsRepositorySyncRpc = Rpc.make(WS_METHODS.organizationsRepositorySync, {
+  payload: OrganizationRepositorySyncInput,
+  success: OrganizationRepositoryStatus,
+  error: organizationRepositoryRpcError,
+});
+export const WsOrganizationsRepositoryStatusRpc = Rpc.make(
+  WS_METHODS.organizationsRepositoryStatus,
+  {
+    payload: OrganizationRepositorySyncInput,
+    success: OrganizationRepositoryStatus,
+    error: organizationRepositoryRpcError,
+  },
+);
+export const WsOrganizationsRepositoryListRecordsRpc = Rpc.make(
+  WS_METHODS.organizationsRepositoryListRecords,
+  {
+    payload: OrganizationRepositoryListInput,
+    success: OrganizationRepositoryListResult,
+    error: organizationRepositoryRpcError,
+  },
+);
+export const WsOrganizationsRepositoryResolveConflictRpc = Rpc.make(
+  WS_METHODS.organizationsRepositoryResolveConflict,
+  {
+    payload: OrganizationRepositoryResolveInput,
+    success: OrganizationRepositoryStatus,
+    error: organizationRepositoryRpcError,
+  },
+);
+
+const organizationIntakeRpcError = Schema.Union([
+  OrganizationIntakeError,
+  EnvironmentAuthorizationError,
+]);
+const organizationSourceInput = Schema.Struct({
+  organizationId: OrganizationId,
+  sourceId: OrganizationIntakeSourceId,
+});
+export const WsOrganizationsRegisterSourceRpc = Rpc.make(WS_METHODS.organizationsRegisterSource, {
+  payload: OrganizationIntakeRegisterSourceInput,
+  success: OrganizationIntakeSourceRegistration,
+  error: organizationIntakeRpcError,
+});
+export const WsOrganizationsRotateSourceSecretRpc = Rpc.make(
+  WS_METHODS.organizationsRotateSourceSecret,
+  {
+    payload: organizationSourceInput,
+    success: OrganizationIntakeSourceRegistration,
+    error: organizationIntakeRpcError,
+  },
+);
+export const WsOrganizationsSetSourceEnabledRpc = Rpc.make(
+  WS_METHODS.organizationsSetSourceEnabled,
+  {
+    payload: Schema.Struct({ ...organizationSourceInput.fields, enabled: Schema.Boolean }),
+    success: OrganizationIntakeSource,
+    error: organizationIntakeRpcError,
+  },
+);
+export const WsOrganizationsListSourcesRpc = Rpc.make(WS_METHODS.organizationsListSources, {
+  payload: OrganizationGetInput,
+  success: Schema.Struct({ sources: Schema.Array(OrganizationIntakeSource) }),
+  error: organizationIntakeRpcError,
+});
+export const WsOrganizationsIngestManualRpc = Rpc.make(WS_METHODS.organizationsIngestManual, {
+  payload: OrganizationIntakeEventInput,
+  success: OrganizationIntakeResult,
+  error: organizationIntakeRpcError,
+});
+export const WsOrganizationsRetryCorrelationRpc = Rpc.make(
+  WS_METHODS.organizationsRetryCorrelation,
+  {
+    payload: Schema.Struct({
+      organizationId: OrganizationId,
+      observationId: OrganizationObservationId,
+    }),
+    success: OrganizationIntakeCorrelationStatus,
+    error: organizationIntakeRpcError,
+  },
+);
+export const WsOrganizationsListObservationsRpc = Rpc.make(
+  WS_METHODS.organizationsListObservations,
+  {
+    payload: OrganizationGetInput,
+    success: Schema.Struct({ observations: Schema.Array(OrganizationObservation) }),
+    error: organizationIntakeRpcError,
+  },
+);
+export const WsOrganizationsListCorrelationJobsRpc = Rpc.make(
+  WS_METHODS.organizationsListCorrelationJobs,
+  {
+    payload: OrganizationGetInput,
+    success: Schema.Struct({ jobs: Schema.Array(OrganizationCorrelationJobStatus) }),
+    error: organizationIntakeRpcError,
+  },
+);
+export const WsOrganizationsListFindingsRpc = Rpc.make(WS_METHODS.organizationsListFindings, {
+  payload: OrganizationGetInput,
+  success: Schema.Struct({ findings: Schema.Array(OrganizationTentativeFinding) }),
+  error: organizationIntakeRpcError,
+});
+export const WsOrganizationsListIntakeAuditRpc = Rpc.make(WS_METHODS.organizationsListIntakeAudit, {
+  payload: OrganizationGetInput,
+  success: Schema.Struct({ entries: Schema.Array(OrganizationIntakeAuditEntry) }),
+  error: organizationIntakeRpcError,
+});
+export const WsOrganizationsListWorkRpc = Rpc.make(WS_METHODS.organizationsListWork, {
+  payload: OrganizationGetInput,
+  success: Schema.Struct({ items: Schema.Array(OrganizationWorkDetail) }),
+  error: Schema.Union([OrganizationWorkError, EnvironmentAuthorizationError]),
+});
+export const WsOrganizationsListWorkIntentsRpc = Rpc.make(WS_METHODS.organizationsListWorkIntents, {
+  payload: OrganizationWorkIntentListInput,
+  success: OrganizationWorkIntentListResult,
+  error: Schema.Union([OrganizationWorkIntentReadError, EnvironmentAuthorizationError]),
+});
+export const WsOrganizationsReviewWorkRpc = Rpc.make(WS_METHODS.organizationsReviewWork, {
+  payload: OrganizationWorkReviewInput,
+  success: OrganizationWorkReviewResult,
+  error: Schema.Union([OrganizationWorkError, EnvironmentAuthorizationError]),
+});
+export const WsOrganizationsDecideWorkApprovalRpc = Rpc.make(
+  WS_METHODS.organizationsDecideWorkApproval,
+  {
+    payload: OrganizationWorkApprovalDecisionInput,
+    success: OrganizationWorkDetail,
+    error: Schema.Union([OrganizationWorkError, EnvironmentAuthorizationError]),
+  },
+);
+const organizationArchitectRpcError = Schema.Union([
+  OrganizationArchitectError,
+  EnvironmentAuthorizationError,
+]);
+export const WsOrganizationsArchitectListRpc = Rpc.make(WS_METHODS.organizationsArchitectList, {
+  payload: OrganizationArchitectListInput,
+  success: OrganizationArchitectListResult,
+  error: organizationArchitectRpcError,
+});
+export const WsOrganizationsArchitectSendRpc = Rpc.make(WS_METHODS.organizationsArchitectSend, {
+  payload: OrganizationArchitectSendInput,
+  success: OrganizationArchitectSendResult,
+  error: organizationArchitectRpcError,
+});
+export const WsOrganizationsArchitectApplyBatchRpc = Rpc.make(
+  WS_METHODS.organizationsArchitectApplyBatch,
+  {
+    payload: OrganizationArchitectApplyBatchInput,
+    success: Organization,
+    error: organizationRpcError,
+  },
+);
+const organizationMemoryRpcError = Schema.Union([
+  OrganizationMemoryError,
+  EnvironmentAuthorizationError,
+]);
+export const WsOrganizationsMemoryListRpc = Rpc.make(WS_METHODS.organizationsMemoryList, {
+  payload: OrganizationMemoryListInput,
+  success: Schema.Struct({ records: Schema.Array(OrganizationMemoryRecord) }),
+  error: organizationMemoryRpcError,
+});
+export const WsOrganizationsMemoryHistoryRpc = Rpc.make(WS_METHODS.organizationsMemoryHistory, {
+  payload: OrganizationMemoryHistoryInput,
+  success: Schema.Struct({ revisions: Schema.Array(OrganizationMemoryRevision) }),
+  error: organizationMemoryRpcError,
+});
+export const WsOrganizationsMemoryCreateRpc = Rpc.make(WS_METHODS.organizationsMemoryCreate, {
+  payload: OrganizationMemoryCreateInput,
+  success: OrganizationMemoryRecord,
+  error: organizationMemoryRpcError,
+});
+export const WsOrganizationsMemoryCorrectRpc = Rpc.make(WS_METHODS.organizationsMemoryCorrect, {
+  payload: OrganizationMemoryCorrectInput,
+  success: OrganizationMemoryRecord,
+  error: organizationMemoryRpcError,
+});
+export const WsOrganizationsMemorySupersedeRpc = Rpc.make(WS_METHODS.organizationsMemorySupersede, {
+  payload: OrganizationMemorySupersedeInput,
+  success: OrganizationMemoryRecord,
+  error: organizationMemoryRpcError,
+});
+export const WsOrganizationsMemoryArchiveRpc = Rpc.make(WS_METHODS.organizationsMemoryArchive, {
+  payload: OrganizationMemoryArchiveInput,
+  success: OrganizationMemoryRecord,
+  error: organizationMemoryRpcError,
+});
+const organizationProposalRpcError = Schema.Union([
+  OrganizationProposalError,
+  EnvironmentAuthorizationError,
+]);
+export const WsOrganizationsProposalListRpc = Rpc.make(WS_METHODS.organizationsProposalList, {
+  payload: OrganizationProposalListInput,
+  success: OrganizationProposalListResult,
+  error: organizationProposalRpcError,
+});
+export const WsOrganizationsProposalDecideRpc = Rpc.make(WS_METHODS.organizationsProposalDecide, {
+  payload: OrganizationProposalDecisionInput,
+  success: OrganizationWorkProposal,
+  error: organizationProposalRpcError,
+});
+export const WsOrganizationsObservationModeGetRpc = Rpc.make(
+  WS_METHODS.organizationsObservationModeGet,
+  {
+    payload: OrganizationObservationModeGetInput,
+    success: OrganizationObservationMode,
+    error: organizationProposalRpcError,
+  },
+);
+export const WsOrganizationsObservationModeSetRpc = Rpc.make(
+  WS_METHODS.organizationsObservationModeSet,
+  {
+    payload: OrganizationObservationModeSetInput,
+    success: OrganizationObservationMode,
+    error: organizationProposalRpcError,
+  },
+);
+const organizationDirectorRpcError = Schema.Union([
+  OrganizationDirectorError,
+  EnvironmentAuthorizationError,
+]);
+export const WsOrganizationsDirectorListRpc = Rpc.make(WS_METHODS.organizationsDirectorList, {
+  payload: OrganizationDirectorListInput,
+  success: OrganizationDirectorListResult,
+  error: organizationDirectorRpcError,
+});
+export const WsOrganizationsDirectorAskRpc = Rpc.make(WS_METHODS.organizationsDirectorAsk, {
+  payload: OrganizationDirectorAskInput,
+  success: OrganizationDirectorAskResult,
+  error: organizationDirectorRpcError,
 });
 
 export const WsAgentDashboardGetSnapshotRpc = Rpc.make(WS_METHODS.agentDashboardGetSnapshot, {
@@ -1600,6 +2049,52 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
 });
 
 export const WsRpcGroup = RpcGroup.make(
+  WsOrganizationsListRpc,
+  WsOrganizationsCreateRpc,
+  WsOrganizationsGetRpc,
+  WsOrganizationsMutateRpc,
+  WsOrganizationsBindProjectRpc,
+  WsOrganizationsDetachProjectRpc,
+  WsOrganizationsPublishRpc,
+  WsOrganizationsSetLifecycleRpc,
+  WsOrganizationsListAuditRpc,
+  WsOrganizationsReadProviderBudgetsRpc,
+  WsOrganizationsRepositoryPreviewRpc,
+  WsOrganizationsRepositoryLinkRpc,
+  WsOrganizationsRepositoryLoadRpc,
+  WsOrganizationsRepositorySyncRpc,
+  WsOrganizationsRepositoryStatusRpc,
+  WsOrganizationsRepositoryListRecordsRpc,
+  WsOrganizationsRepositoryResolveConflictRpc,
+  WsOrganizationsRegisterSourceRpc,
+  WsOrganizationsRotateSourceSecretRpc,
+  WsOrganizationsSetSourceEnabledRpc,
+  WsOrganizationsListSourcesRpc,
+  WsOrganizationsIngestManualRpc,
+  WsOrganizationsRetryCorrelationRpc,
+  WsOrganizationsListObservationsRpc,
+  WsOrganizationsListCorrelationJobsRpc,
+  WsOrganizationsListFindingsRpc,
+  WsOrganizationsListIntakeAuditRpc,
+  WsOrganizationsListWorkRpc,
+  WsOrganizationsListWorkIntentsRpc,
+  WsOrganizationsReviewWorkRpc,
+  WsOrganizationsDecideWorkApprovalRpc,
+  WsOrganizationsArchitectListRpc,
+  WsOrganizationsArchitectSendRpc,
+  WsOrganizationsArchitectApplyBatchRpc,
+  WsOrganizationsMemoryListRpc,
+  WsOrganizationsMemoryHistoryRpc,
+  WsOrganizationsMemoryCreateRpc,
+  WsOrganizationsMemoryCorrectRpc,
+  WsOrganizationsMemorySupersedeRpc,
+  WsOrganizationsMemoryArchiveRpc,
+  WsOrganizationsProposalListRpc,
+  WsOrganizationsProposalDecideRpc,
+  WsOrganizationsObservationModeGetRpc,
+  WsOrganizationsObservationModeSetRpc,
+  WsOrganizationsDirectorListRpc,
+  WsOrganizationsDirectorAskRpc,
   WsAgentDashboardGetSnapshotRpc,
   WsAgentDashboardDismissFeedCardRpc,
   WsAgentDashboardClearFeedRpc,

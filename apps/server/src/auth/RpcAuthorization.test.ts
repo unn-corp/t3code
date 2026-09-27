@@ -37,6 +37,36 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires orchestration read scope for the bounded work intent page", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.organizationsListWorkIntents)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
+  it("requires orchestration read scope for provider ceiling visibility", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.organizationsReadProviderBudgets)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
+  it("separates Organization repository reads from GitHub and conflict writes", () => {
+    for (const method of [
+      WS_METHODS.organizationsRepositoryPreview,
+      WS_METHODS.organizationsRepositoryStatus,
+      WS_METHODS.organizationsRepositoryListRecords,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [
+      WS_METHODS.organizationsRepositoryLink,
+      WS_METHODS.organizationsRepositoryLoad,
+      WS_METHODS.organizationsRepositorySync,
+      WS_METHODS.organizationsRepositoryResolveConflict,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("allows relay status reads without granting relay installation access", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudGetRelayClientStatus)).toBe(
       AuthRelayReadScope,
@@ -55,6 +85,36 @@ describe("RPC authorization scopes", () => {
       AuthOrchestrationReadScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsImport)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
+  it("keeps Organization observation and proposal writes behind operate scope", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.organizationsObservationModeGet)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.organizationsProposalList)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.organizationsObservationModeSet)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.organizationsProposalDecide)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
+  it("requires operate scope to ask the Director while transcript reads stay readable", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.organizationsDirectorList)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.organizationsDirectorAsk)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
+  it("requires operate scope for atomic Architect draft application", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.organizationsArchitectApplyBatch)).toBe(
       AuthOrchestrationOperateScope,
     );
   });

@@ -5,7 +5,8 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { OrganizationId, ProviderInstanceId } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -63,6 +64,119 @@ const makeStubRegistry = (
 };
 
 describe("TextGeneration.make", () => {
+  it.effect("returns typed unsupported and disabled errors for patch proposals", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const source = "export const n = 1;\n";
+      const input = {
+        modelSelection: createModelSelection(instanceId, "gpt-5"),
+        taskText: "Change n to 2.",
+        fileName: "source.js",
+        currentContent: source,
+        baseDigest: NodeCrypto.createHash("sha256").update(source).digest("hex"),
+      };
+      const registry = makeStubRegistry([makeStubInstance(instanceId, makeStubTextGeneration({}))]);
+      const tg = yield* TextGeneration.make.pipe(
+        Effect.provideService(ProviderInstanceRegistry.ProviderInstanceRegistry, registry),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("No link lookup expected"),
+          }),
+        ),
+      );
+      const unsupported = yield* tg.generateOrganizationPatchProposal!(input).pipe(Effect.flip);
+      expect(unsupported.detail).toContain("does not support");
+      const disabledRegistry = makeStubRegistry([
+        {
+          ...makeStubInstance(instanceId, makeStubTextGeneration({})),
+          enabled: false,
+        },
+      ]);
+      const disabledService = yield* TextGeneration.make.pipe(
+        Effect.provideService(ProviderInstanceRegistry.ProviderInstanceRegistry, disabledRegistry),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("No link lookup expected"),
+          }),
+        ),
+      );
+      const disabled = yield* disabledService.generateOrganizationPatchProposal!(input).pipe(
+        Effect.flip,
+      );
+      expect(disabled.detail).toContain("disabled");
+    }),
+  );
+  it.effect("returns a typed error for an unsupported Architect provider", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const tg = yield* TextGeneration.make.pipe(
+        Effect.provideService(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          makeStubRegistry([makeStubInstance(instanceId, makeStubTextGeneration({}))]),
+        ),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("No link lookup expected"),
+          }),
+        ),
+      );
+      const error = yield* Effect.flip(
+        tg.generateOrganizationArchitectTurn!({
+          modelSelection: createModelSelection(instanceId, "gpt-5"),
+          organization: {
+            id: OrganizationId.make("org-test"),
+            title: "Studio",
+            mission: "Ship work",
+            draftRevision: 1,
+            workflows: [],
+            graph: { roles: [], edges: [] },
+          },
+          transcript: [],
+          userText: "Hello",
+        }),
+      );
+      expect(error._tag).toBe("TextGenerationError");
+      expect(error.detail).toContain("does not support");
+    }),
+  );
+
+  it.effect("rejects disabled provider instances for Architect turns", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const instance = {
+        ...makeStubInstance(instanceId, makeStubTextGeneration({})),
+        enabled: false,
+      };
+      const tg = yield* TextGeneration.make.pipe(
+        Effect.provideService(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          makeStubRegistry([instance]),
+        ),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("No link lookup expected"),
+          }),
+        ),
+      );
+      const error = yield* Effect.flip(
+        tg.generateOrganizationArchitectTurn!({
+          modelSelection: createModelSelection(instanceId, "claude-test"),
+          organization: {
+            id: OrganizationId.make("org-test"),
+            title: "Studio",
+            mission: "Ship work",
+            draftRevision: 1,
+            workflows: [],
+            graph: { roles: [], edges: [] },
+          },
+          transcript: [],
+          userText: "Hello",
+        }),
+      );
+      expect(error.detail).toContain("disabled");
+    }),
+  );
+
   it.effect("retains supplied subject context in the provider prompt", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");

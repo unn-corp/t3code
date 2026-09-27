@@ -14,6 +14,7 @@ import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
+import { architectTurnInput } from "./OrganizationArchitectFixture.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
@@ -160,6 +161,22 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
+  it.effect("generates an Architect reply in a read-only isolated CLI turn", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ reply: "Add QA after defining review ownership.", proposals: [] }),
+        requireArg: "-s read-only",
+        stdinMustContain: "Organization configuration JSON:",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateOrganizationArchitectTurn!(
+            architectTurnInput("codex", "gpt-5.6-luna"),
+          );
+          expect(generated.reply).toContain("Add QA");
+        }),
+    ),
+  );
   for (const selectedModel of ["gpt-5.6-luna", "openai.gpt-5.6-luna"]) {
     it.effect(`dispatches the qualified live model for ${selectedModel}`, () =>
       withFakeCodexEnv(

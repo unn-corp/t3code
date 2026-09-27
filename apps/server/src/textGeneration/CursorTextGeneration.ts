@@ -1,11 +1,16 @@
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { type CursorSettings, type ModelSelection } from "@t3tools/contracts";
+import {
+  OrganizationArchitectTurnOutput,
+  type CursorSettings,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
@@ -26,6 +31,11 @@ import {
   applyCursorAcpModelSelection,
   makeCursorAcpRuntime,
 } from "../provider/acp/CursorAcpSupport.ts";
+import { denyArchitectAcpTools } from "./OrganizationArchitectAcp.ts";
+import {
+  buildOrganizationArchitectPrompt,
+  validateOrganizationArchitectOutput,
+} from "../organizations/OrganizationArchitectPrompt.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
 
@@ -41,6 +51,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 ) {
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
   const resolvedEnvironment = environment ?? process.env;
 
   const runCursorJson = <S extends Schema.Top>({
@@ -54,7 +65,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateOrganizationArchitectTurn";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -62,16 +74,41 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const outputRef = yield* Ref.make("");
+      const toolAttempted = yield* Ref.make(false);
+      const outputExceeded = yield* Ref.make(false);
+      const workingDirectory =
+        operation === "generateOrganizationArchitectTurn"
+          ? yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-cursor-architect-" }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new TextGenerationError({
+                    operation,
+                    detail: "Failed to create isolated Architect directory.",
+                    cause,
+                  }),
+              ),
+            )
+          : cwd;
       const runtime = yield* makeCursorAcpRuntime({
         cursorSettings,
         environment: resolvedEnvironment,
         childProcessSpawner: commandSpawner,
-        cwd,
+        cwd: workingDirectory,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
+      if (operation === "generateOrganizationArchitectTurn") {
+        yield* denyArchitectAcpTools(runtime);
+      }
+
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
+        if (
+          operation === "generateOrganizationArchitectTurn" &&
+          (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update")
+        ) {
+          return Ref.set(toolAttempted, true);
+        }
         if (update.sessionUpdate !== "agent_message_chunk") {
           return Effect.void;
         }
@@ -79,7 +116,17 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         if (content.type !== "text") {
           return Effect.void;
         }
-        return Ref.update(outputRef, (current) => current + content.text);
+        return Ref.modify(outputRef, (current) => {
+          if (
+            operation === "generateOrganizationArchitectTurn" &&
+            Buffer.byteLength(current, "utf8") + Buffer.byteLength(content.text, "utf8") > 64_000
+          ) {
+            return [true, current] as const;
+          }
+          return [false, current + content.text] as const;
+        }).pipe(
+          Effect.flatMap((exceeded) => (exceeded ? Ref.set(outputExceeded, true) : Effect.void)),
+        );
       });
 
       const promptResult = yield* Effect.gen(function* () {
@@ -104,7 +151,9 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           prompt: [{ type: "text", text: prompt }],
         });
       }).pipe(
-        Effect.timeoutOption(CURSOR_TIMEOUT_MS),
+        Effect.timeoutOption(
+          operation === "generateOrganizationArchitectTurn" ? 60_000 : CURSOR_TIMEOUT_MS,
+        ),
         Effect.flatMap(
           Option.match({
             onNone: () =>
@@ -127,6 +176,19 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
               }),
         ),
       );
+
+      if (yield* Ref.get(toolAttempted)) {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Cursor attempted tool work during Architect generation.",
+        });
+      }
+      if (yield* Ref.get(outputExceeded)) {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Cursor Architect output exceeded the structured output size limit.",
+        });
+      }
 
       const rawResult = (yield* Ref.get(outputRef)).trim();
       if (!rawResult) {
@@ -261,10 +323,25 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateOrganizationArchitectTurn: NonNullable<
+    TextGeneration.TextGeneration["Service"]["generateOrganizationArchitectTurn"]
+  > = Effect.fn("CursorTextGeneration.generateOrganizationArchitectTurn")(function* (input) {
+    const prompt = yield* buildOrganizationArchitectPrompt(input);
+    const generated = yield* runCursorJson({
+      operation: "generateOrganizationArchitectTurn",
+      cwd: process.cwd(),
+      prompt,
+      outputSchemaJson: OrganizationArchitectTurnOutput,
+      modelSelection: input.modelSelection,
+    });
+    return yield* validateOrganizationArchitectOutput(generated, input.organization.draftRevision);
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateOrganizationArchitectTurn,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

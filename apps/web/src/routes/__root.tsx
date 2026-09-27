@@ -308,14 +308,16 @@ function DocumentTitleSync() {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
   const title =
-    pathname === "/agent-dashboard" || pathname.startsWith("/agent-dashboard/")
-      ? "Agent Dashboard"
-      : resolveServerBackedAppDisplayName({
-          baseName: APP_BASE_NAME,
-          fallbackDisplayName: APP_DISPLAY_NAME,
-          fallbackStageLabel: APP_STAGE_LABEL,
-          primaryServerVersion,
-        });
+    pathname === "/organizations" || pathname.startsWith("/organizations/")
+      ? "Organizations"
+      : pathname === "/agent-dashboard" || pathname.startsWith("/agent-dashboard/")
+        ? "Agent Dashboard"
+        : resolveServerBackedAppDisplayName({
+            baseName: APP_BASE_NAME,
+            fallbackDisplayName: APP_DISPLAY_NAME,
+            fallbackStageLabel: APP_STAGE_LABEL,
+            primaryServerVersion,
+          });
 
   useEffect(() => {
     document.title = title;

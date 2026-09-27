@@ -1,6 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "node:crypto";
 import { it } from "@effect/vitest";
-import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  OrganizationId,
+  OrganizationRoleId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
@@ -23,6 +29,47 @@ import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+const architectInput = {
+  modelSelection: createModelSelection(
+    ProviderInstanceId.make("claudeAgent"),
+    SYNTHETIC_CLAUDE_STANDARD_MODEL,
+  ),
+  organization: {
+    id: OrganizationId.make("org-architect-test"),
+    title: "Studio",
+    mission: "Build useful software",
+    draftRevision: 3,
+    workflows: [],
+    graph: {
+      roles: [
+        {
+          id: OrganizationRoleId.make("architect"),
+          kind: "architect" as const,
+          title: "Architect",
+          mandate: "Design the organization",
+          poolSize: 1,
+        },
+      ],
+      edges: [],
+    },
+  },
+  transcript: [{ role: "user" as const, text: "We need a QA role." }],
+  userText: "Suggest a plan.",
+};
+
+const patchCurrentContent = "export const answer = 1;\n";
+const patchBaseDigest = NodeCrypto.createHash("sha256").update(patchCurrentContent).digest("hex");
+const patchInput = {
+  modelSelection: createModelSelection(
+    ProviderInstanceId.make("claudeAgent"),
+    SYNTHETIC_CLAUDE_STANDARD_MODEL,
+  ),
+  taskText: "Change answer to 2.",
+  fileName: "answer.js",
+  currentContent: patchCurrentContent,
+  baseDigest: patchBaseDigest,
+};
 
 const ClaudeTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-claude-text-generation-test-",
@@ -110,7 +157,7 @@ function makeFakeClaudeBinary(dir: string) {
         '  process.stderr.write(stderrText + "\\n");',
         "}",
         "",
-        'process.stdout.write(process.env.T3_FAKE_CLAUDE_OUTPUT ?? "");',
+        'process.stdout.write(process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT ? "x".repeat(Number(process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT)) : (process.env.T3_FAKE_CLAUDE_OUTPUT ?? ""));',
         "process.exitCode = Number(process.env.T3_FAKE_CLAUDE_EXIT_CODE ?? 0);",
         "",
       ].join("\n"),
@@ -122,6 +169,7 @@ function makeFakeClaudeBinary(dir: string) {
 function withFakeClaudeEnv<A, E, R>(
   input: {
     output: string;
+    outputRepeat?: number;
     exitCode?: number;
     stderr?: string;
     argsMustContain?: string;
@@ -140,6 +188,7 @@ function withFakeClaudeEnv<A, E, R>(
     const pathDelimiter = (yield* isHostWindows) ? ";" : ":";
     const previousPath = process.env.PATH;
     const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;
+    const previousOutputRepeat = process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT;
     const previousExitCode = process.env.T3_FAKE_CLAUDE_EXIT_CODE;
     const previousStderr = process.env.T3_FAKE_CLAUDE_STDERR;
     const previousArgsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
@@ -152,6 +201,11 @@ function withFakeClaudeEnv<A, E, R>(
       Effect.sync(() => {
         process.env.PATH = `${binDir}${pathDelimiter}${previousPath ?? ""}`;
         process.env.T3_FAKE_CLAUDE_OUTPUT = input.output;
+        if (input.outputRepeat !== undefined) {
+          process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT = String(input.outputRepeat);
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT;
+        }
 
         if (input.exitCode !== undefined) {
           process.env.T3_FAKE_CLAUDE_EXIT_CODE = String(input.exitCode);
@@ -203,6 +257,11 @@ function withFakeClaudeEnv<A, E, R>(
             delete process.env.T3_FAKE_CLAUDE_OUTPUT;
           } else {
             process.env.T3_FAKE_CLAUDE_OUTPUT = previousOutput;
+          }
+          if (previousOutputRepeat === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT;
+          } else {
+            process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT = previousOutputRepeat;
           }
 
           if (previousExitCode === undefined) {
@@ -260,6 +319,182 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
+  it.effect("proposes one bounded file replacement without checkout or tools", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            fileName: "answer.js",
+            baseDigest: patchBaseDigest,
+            replacementContent: "export const answer = 2;\n",
+            rationale: "Updates the answer.",
+          },
+        }),
+        cwdMustNotBe: process.cwd(),
+        stdinMustContain: "Change answer to 2.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationPatchProposal;
+          expect(generate).toBeDefined();
+          if (!generate) return;
+          const proposal = yield* generate(patchInput);
+          expect(proposal.fileName).toBe("answer.js");
+          expect(proposal.replacementContent).toContain("2");
+        }),
+    ),
+  );
+
+  it.effect("rejects patch path, digest, source hash and byte-limit violations", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            fileName: "../secret",
+            baseDigest: patchBaseDigest,
+            replacementContent: "changed",
+            rationale: "wrong path",
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationPatchProposal;
+          if (!generate) return;
+          expect((yield* Effect.flip(generate(patchInput))).detail).toContain("invalid structured");
+          expect(
+            (yield* Effect.flip(generate({ ...patchInput, baseDigest: "0".repeat(64) }))).detail,
+          ).toContain("digest");
+          expect(
+            (yield* Effect.flip(generate({ ...patchInput, fileName: "../escape" }))).detail,
+          ).toContain("invalid");
+        }),
+    ),
+  );
+
+  it.effect("rejects validly shaped patch output for another file or digest", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            fileName: "other.js",
+            baseDigest: patchBaseDigest,
+            replacementContent: "changed",
+            rationale: "wrong file",
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationPatchProposal;
+          if (!generate) return;
+          expect((yield* Effect.flip(generate(patchInput))).detail).toContain("does not match");
+        }),
+    ),
+  );
+
+  it.effect("caps raw patch subprocess output", () =>
+    withFakeClaudeEnv(
+      {
+        output: "",
+        outputRepeat: 262_145,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationPatchProposal;
+          if (!generate) return;
+          expect((yield* Effect.flip(generate(patchInput))).detail).toContain("size limit");
+        }),
+    ),
+  );
+  it.effect("generates revision-bound Architect proposals without checkout or tools", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            reply: "Add quality review before integration.",
+            proposals: [{ baseRevision: 3, change: { type: "set-title", title: "Studio Team" } }],
+          },
+        }),
+        cwdMustNotBe: process.cwd(),
+        stdinMustContain: "Suggest a plan.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationArchitectTurn;
+          expect(generate).toBeDefined();
+          if (!generate) return;
+          const result = yield* generate(architectInput);
+          expect(result.reply).toContain("quality review");
+          expect(result.proposals[0]?.baseRevision).toBe(3);
+        }),
+    ),
+  );
+
+  it.effect("rejects Architect proposals for another draft revision", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            reply: "Here is a suggestion.",
+            proposals: [{ baseRevision: 2, change: { type: "set-title", title: "Studio Team" } }],
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationArchitectTurn;
+          if (!generate) return;
+          const error = yield* Effect.flip(generate(architectInput));
+          expect(error.detail).toContain("revision");
+        }),
+    ),
+  );
+
+  it.effect("rejects disallowed Architect changes and oversized output", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            reply: "Remove the role.",
+            proposals: [{ baseRevision: 3, change: { type: "remove-role", roleId: "architect" } }],
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationArchitectTurn;
+          if (!generate) return;
+          const error = yield* Effect.flip(generate(architectInput));
+          expect(error.detail).toContain("invalid structured output");
+        }),
+    ),
+  );
+
+  it.effect("rejects Architect inputs beyond the byte limit before spawning", () =>
+    withFakeClaudeEnv({ output: "" }, (textGeneration) =>
+      Effect.gen(function* () {
+        const generate = textGeneration.generateOrganizationArchitectTurn;
+        if (!generate) return;
+        const error = yield* Effect.flip(
+          generate({ ...architectInput, userText: "x".repeat(4_001) }),
+        );
+        expect(error.detail).toContain("4,000 UTF-8 bytes");
+      }),
+    ),
+  );
+
+  it.effect("caps Architect subprocess output", () =>
+    withFakeClaudeEnv({ output: "x".repeat(64_001) }, (textGeneration) =>
+      Effect.gen(function* () {
+        const generate = textGeneration.generateOrganizationArchitectTurn;
+        if (!generate) return;
+        const error = yield* Effect.flip(generate(architectInput));
+        expect(error.detail).toContain("size limit");
+      }),
+    ),
+  );
+
   it.effect("forwards Claude thinking settings without passing unsupported effort", () =>
     withFakeClaudeEnv(
       {

@@ -48,6 +48,9 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
+  OrganizationIntakeError,
+  OrganizationArchitectError,
+  OrganizationProviderBudgetReadError,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   type ProjectEntriesFailure,
@@ -102,6 +105,34 @@ import * as AgentDashboardRunHistory from "./agentDashboard/AgentDashboardRunHis
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
 import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewScheduler from "./agentDashboard/AgentDashboardReviewScheduler.ts";
+import * as OrganizationStore from "./organizations/OrganizationStore.ts";
+import * as OrganizationIntakeStore from "./organizations/OrganizationIntakeStore.ts";
+import * as OrganizationWorkStore from "./organizations/OrganizationWorkStore.ts";
+import * as OrganizationWorkIntentStore from "./organizations/OrganizationWorkIntentStore.ts";
+import * as OrganizationProviderBudgetConfiguration from "./organizations/OrganizationProviderBudgetConfiguration.ts";
+import {
+  readLinkedBudgetProjectPage,
+  providerBudgetReadAuthority,
+} from "./organizations/OrganizationProviderBudgetRead.ts";
+import {
+  OrganizationWorkIntentListResult,
+  OrganizationWorkIntentReadError,
+} from "../../../packages/contracts/src/organizationWorkIntents.ts";
+import * as OrganizationWorkReviewStore from "./organizations/OrganizationWorkReviewStore.ts";
+import { decideOrganizationWorkApprovalForSession } from "./organizations/OrganizationWorkApprovalRpc.ts";
+import * as OrganizationWorkRuntimeLayers from "./organizations/OrganizationWorkRuntimeLayers.ts";
+import * as OrganizationArchitectTranscriptStore from "./organizations/OrganizationArchitectTranscriptStore.ts";
+import * as OrganizationMemoryStore from "./organizations/OrganizationMemoryStore.ts";
+import * as OrganizationCorrelationCoordinator from "./organizations/OrganizationCorrelationCoordinator.ts";
+import * as OrganizationCorrelationRecovery from "./organizations/OrganizationCorrelationRecovery.ts";
+import * as OrganizationProposalStore from "./organizations/OrganizationProposalStore.ts";
+import * as OrganizationDirectorStore from "./organizations/OrganizationDirectorStore.ts";
+import * as OrganizationRepositoryStore from "./organizations/OrganizationRepositoryStore.ts";
+import { correlateRecordedIntake } from "./organizations/OrganizationIntakeCorrelation.ts";
+import {
+  isInteractiveOrganizationSession,
+  requireInteractiveOrganizationSession,
+} from "./auth/OrganizationGovernanceAuthorization.ts";
 import * as NodeOS from "node:os";
 
 import { discoverAgentSessions } from "./provider/agentSessionDiscovery.ts";
@@ -200,6 +231,8 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+
+const decodeWorkIntentPage = Schema.decodeEffect(OrganizationWorkIntentListResult);
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -615,6 +648,35 @@ const makeWsRpcLayer = (
       const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
       const dashboardStore = AgentDashboardStore.getStore(config.stateDir);
+      const organizationStore = yield* OrganizationStore.OrganizationStore;
+      const organizationIntakeStore = yield* OrganizationIntakeStore.OrganizationIntakeStore;
+      const organizationWorkStore = yield* OrganizationWorkStore.OrganizationWorkStore;
+      const organizationWorkIntentStore =
+        yield* OrganizationWorkIntentStore.OrganizationWorkIntentStore;
+      const organizationWorkReviewStore =
+        yield* OrganizationWorkReviewStore.OrganizationWorkReviewStore;
+      const organizationArchitectTranscriptStore =
+        yield* OrganizationArchitectTranscriptStore.OrganizationArchitectTranscriptStore;
+      const organizationMemoryStore = yield* OrganizationMemoryStore.OrganizationMemoryStore;
+      const organizationCorrelationCoordinator =
+        yield* OrganizationCorrelationCoordinator.OrganizationCorrelationCoordinator;
+      const organizationCorrelationRecovery =
+        yield* OrganizationCorrelationRecovery.OrganizationCorrelationRecovery;
+      const organizationProposalStore = yield* OrganizationProposalStore.OrganizationProposalStore;
+      const organizationDirectorStore = yield* OrganizationDirectorStore.OrganizationDirectorStore;
+      const organizationRepositoryStore =
+        yield* OrganizationRepositoryStore.OrganizationRepositoryStore;
+      const requireInteractiveIntakeSession = <A, E, R>(
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | OrganizationIntakeError, R> =>
+        isInteractiveOrganizationSession(currentSession)
+          ? effect
+          : Effect.fail(
+              new OrganizationIntakeError({
+                code: "forbidden",
+                message: "Organization intake changes require an interactive session.",
+              }),
+            );
       const reviewJobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
       const runtimeContext = yield* Effect.context<never>();
       const continuousImprovement = Context.getOption(
@@ -2014,6 +2076,609 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [WS_METHODS.organizationsList]: (_input) =>
+          observeRpcEffect(WS_METHODS.organizationsList, organizationStore.list(), {
+            "rpc.aggregate": "organizations",
+          }),
+        [WS_METHODS.organizationsCreate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsCreate,
+            requireInteractiveOrganizationSession(
+              currentSession,
+              organizationStore.create({ ...input, actor: "user" }),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsGet]: (input) =>
+          observeRpcEffect(WS_METHODS.organizationsGet, organizationStore.get(input), {
+            "rpc.aggregate": "organizations",
+          }),
+        [WS_METHODS.organizationsReadProviderBudgets]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsReadProviderBudgets,
+            Effect.gen(function* () {
+              if (!isInteractiveOrganizationSession(currentSession))
+                return yield* new OrganizationProviderBudgetReadError({
+                  code: "forbidden",
+                  message: "Provider budget ceilings require an authenticated human session.",
+                });
+              const organization = yield* organizationStore.get(input).pipe(
+                Effect.mapError(
+                  (error) =>
+                    new OrganizationProviderBudgetReadError({
+                      code: error.code === "not_found" ? "not_found" : "unavailable",
+                      message: error.message,
+                    }),
+                ),
+              );
+              const scopedAuthority = Layer.succeed(
+                OrganizationProviderBudgetConfiguration.OrganizationProviderBudgetConfigurationAuthority,
+                providerBudgetReadAuthority(currentSession.subject, organization.id),
+              );
+              const budgetConfiguration =
+                yield* OrganizationProviderBudgetConfiguration.OrganizationProviderBudgetConfiguration.pipe(
+                  Effect.provide(
+                    OrganizationProviderBudgetConfiguration.OrganizationProviderBudgetConfigurationWithAuthority.pipe(
+                      Layer.provide(scopedAuthority),
+                      Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+                    ),
+                  ),
+                );
+              const readCeiling = (
+                scope: OrganizationProviderBudgetConfiguration.OrganizationProviderBudgetScope,
+              ) =>
+                budgetConfiguration.get(scope).pipe(
+                  Effect.map((record) =>
+                    record === null
+                      ? null
+                      : {
+                          maxConcurrent: record.maxConcurrent,
+                          maxDailyCalls: record.maxDailyCalls,
+                          maxDailyEstimatedTokens: record.maxDailyEstimatedTokens,
+                        },
+                  ),
+                  Effect.mapError(
+                    (error) =>
+                      new OrganizationProviderBudgetReadError({
+                        code: error.code === "forbidden" ? "forbidden" : "unavailable",
+                        message: error.message,
+                      }),
+                  ),
+                );
+              const global = yield* readCeiling({ kind: "global" });
+              if (global === null)
+                return yield* new OrganizationProviderBudgetReadError({
+                  code: "unavailable",
+                  message: "Global provider budget ceiling is unavailable.",
+                });
+              const organizationCeiling = yield* readCeiling({
+                kind: "organization",
+                organizationId: organization.id,
+              });
+              const projectPage = yield* readLinkedBudgetProjectPage(
+                organization.id,
+                input.afterProjectId,
+              ).pipe(
+                Effect.mapError(
+                  () =>
+                    new OrganizationProviderBudgetReadError({
+                      code: "unavailable",
+                      message: "Linked Project provider ceilings are unavailable.",
+                    }),
+                ),
+              );
+              return {
+                global,
+                organization: organizationCeiling,
+                ...projectPage,
+              };
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsMutate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsMutate,
+            requireInteractiveOrganizationSession(
+              currentSession,
+              organizationStore.mutate({ ...input, actor: "user" }),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsBindProject]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsBindProject,
+            requireInteractiveOrganizationSession(
+              currentSession,
+              organizationStore.bindProject({ ...input, actor: "user" }),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsDetachProject]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsDetachProject,
+            requireInteractiveOrganizationSession(
+              currentSession,
+              organizationStore.detachProject({ ...input, actor: "user" }),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsPublish]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsPublish,
+            requireInteractiveOrganizationSession(
+              currentSession,
+              organizationStore.publish({ ...input, actor: "user" }),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsSetLifecycle]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsSetLifecycle,
+            requireInteractiveOrganizationSession(
+              currentSession,
+              organizationStore.setLifecycle({ ...input, actor: "user" }),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsListAudit]: (input) =>
+          observeRpcEffect(WS_METHODS.organizationsListAudit, organizationStore.listAudit(input), {
+            "rpc.aggregate": "organizations",
+          }),
+        [WS_METHODS.organizationsRepositoryPreview]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsRepositoryPreview,
+            organizationRepositoryStore.preview(input),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsRepositoryLink]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsRepositoryLink,
+            organizationRepositoryStore.link(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsRepositoryLoad]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsRepositoryLoad,
+            organizationRepositoryStore.load(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsRepositorySync]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsRepositorySync,
+            organizationRepositoryStore.sync(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsRepositoryStatus]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsRepositoryStatus,
+            organizationRepositoryStore.status(input),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsRepositoryListRecords]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsRepositoryListRecords,
+            organizationRepositoryStore.listRecords(input),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsRepositoryResolveConflict]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsRepositoryResolveConflict,
+            organizationRepositoryStore.resolveConflict(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsArchitectApplyBatch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsArchitectApplyBatch,
+            requireInteractiveOrganizationSession(
+              currentSession,
+              organizationStore.applyArchitectBatch(input),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsArchitectList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsArchitectList,
+            organizationArchitectTranscriptStore.list(input),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsArchitectSend]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsArchitectSend,
+            !isInteractiveOrganizationSession(currentSession)
+              ? Effect.fail(
+                  new OrganizationArchitectError({
+                    code: "forbidden",
+                    message: "Architect messages require an interactive session.",
+                  }),
+                )
+              : Effect.gen(function* () {
+                  const principal = { subject: currentSession.subject };
+                  const begun = yield* organizationArchitectTranscriptStore.begin(input, principal);
+                  if (!begun.shouldGenerate) {
+                    if (begun.result !== null) return begun.result;
+                    return yield* new OrganizationArchitectError({
+                      code: "conflict",
+                      message:
+                        begun.status === "pending"
+                          ? "This Architect request is still pending. Refresh the conversation."
+                          : "This Architect request failed. Send a new message to retry.",
+                    });
+                  }
+                  return yield* Effect.gen(function* () {
+                    const organization = yield* organizationStore.get(input).pipe(
+                      Effect.mapError(
+                        () =>
+                          new OrganizationArchitectError({
+                            code: "unavailable",
+                            message: "Organization configuration is unavailable to the Architect.",
+                          }),
+                      ),
+                    );
+                    if (organization.draftRevision !== input.baseRevision) {
+                      return yield* new OrganizationArchitectError({
+                        code: "conflict",
+                        message: "Organization draft changed before Architect generation.",
+                      });
+                    }
+                    const conversation = yield* organizationArchitectTranscriptStore.list(input);
+                    const currentMessage = conversation.messages.find(
+                      (message) => message.id === input.messageId && message.role === "user",
+                    );
+                    if (currentMessage === undefined) {
+                      return yield* new OrganizationArchitectError({
+                        code: "unavailable",
+                        message: "Architect message is unavailable.",
+                      });
+                    }
+                    const instance = yield* providerInstances.getInstance(
+                      input.modelSelection.instanceId,
+                    );
+                    const generate = instance?.enabled
+                      ? instance.textGeneration.generateOrganizationArchitectTurn
+                      : undefined;
+                    if (generate === undefined) {
+                      return yield* new OrganizationArchitectError({
+                        code: "unavailable",
+                        message:
+                          "The selected provider does not support tool-free Architect conversation.",
+                      });
+                    }
+                    const transcript = conversation.messages
+                      .filter((message) => message.requestId !== input.messageId)
+                      .slice(-16)
+                      .map((message) => ({
+                        role: message.role === "user" ? ("user" as const) : ("assistant" as const),
+                        text: message.text,
+                      }));
+                    while (
+                      transcript.length > 0 &&
+                      transcript.reduce(
+                        (bytes, turn) => bytes + Buffer.byteLength(turn.text, "utf8"),
+                        0,
+                      ) > 12_000
+                    ) {
+                      transcript.shift();
+                    }
+                    const output = yield* generate({
+                      modelSelection: input.modelSelection,
+                      organization,
+                      transcript,
+                      userText: currentMessage.text,
+                    }).pipe(
+                      Effect.mapError(
+                        () =>
+                          new OrganizationArchitectError({
+                            code: "unavailable",
+                            message:
+                              "The Architect could not complete this request. Send a new message to retry.",
+                          }),
+                      ),
+                    );
+                    return yield* organizationArchitectTranscriptStore.complete(
+                      { organizationId: input.organizationId, messageId: input.messageId, output },
+                      principal,
+                    );
+                  }).pipe(
+                    Effect.catch((error) =>
+                      organizationArchitectTranscriptStore
+                        .fail(
+                          { organizationId: input.organizationId, messageId: input.messageId },
+                          principal,
+                        )
+                        .pipe(Effect.ignore, Effect.andThen(Effect.fail(error))),
+                    ),
+                  );
+                }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsMemoryList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsMemoryList,
+            organizationMemoryStore.list(input).pipe(Effect.map((records) => ({ records }))),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsMemoryHistory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsMemoryHistory,
+            organizationMemoryStore.history(input).pipe(Effect.map((revisions) => ({ revisions }))),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsMemoryCreate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsMemoryCreate,
+            organizationMemoryStore.create(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsMemoryCorrect]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsMemoryCorrect,
+            organizationMemoryStore.correct(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsMemorySupersede]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsMemorySupersede,
+            organizationMemoryStore.supersede(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsMemoryArchive]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsMemoryArchive,
+            organizationMemoryStore.archive(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsRegisterSource]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsRegisterSource,
+            requireInteractiveIntakeSession(
+              organizationIntakeStore.registerSource(
+                { ...input, ingestSubject: currentSession.subject },
+                { subject: currentSession.subject, canManageSources: true },
+              ),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsRotateSourceSecret]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsRotateSourceSecret,
+            requireInteractiveIntakeSession(
+              organizationIntakeStore.rotateSourceSecret(input.organizationId, input.sourceId, {
+                subject: currentSession.subject,
+                canManageSources: true,
+              }),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsSetSourceEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsSetSourceEnabled,
+            requireInteractiveIntakeSession(
+              organizationIntakeStore.setSourceEnabled(
+                input.organizationId,
+                input.sourceId,
+                input.enabled,
+                { subject: currentSession.subject, canManageSources: true },
+              ),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsListSources]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsListSources,
+            organizationIntakeStore
+              .listSources(input.organizationId)
+              .pipe(Effect.map((sources) => ({ sources }))),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsIngestManual]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsIngestManual,
+            requireInteractiveIntakeSession(
+              organizationIntakeStore
+                .ingest(input, {
+                  kind: "interactive-user",
+                  subject: currentSession.subject,
+                })
+                .pipe(
+                  Effect.flatMap((result) =>
+                    correlateRecordedIntake(
+                      organizationCorrelationCoordinator,
+                      result,
+                      organizationCorrelationRecovery,
+                    ),
+                  ),
+                ),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsRetryCorrelation]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsRetryCorrelation,
+            requireInteractiveIntakeSession(
+              organizationIntakeStore
+                .getObservation(input.organizationId, input.observationId)
+                .pipe(
+                  Effect.flatMap((observation) =>
+                    correlateRecordedIntake(
+                      organizationCorrelationCoordinator,
+                      {
+                        outcome: "duplicate",
+                        observation,
+                      },
+                      organizationCorrelationRecovery,
+                      true,
+                    ),
+                  ),
+                  Effect.map((result) => result.correlation!),
+                ),
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsListObservations]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsListObservations,
+            organizationIntakeStore
+              .listObservations(input.organizationId)
+              .pipe(Effect.map((observations) => ({ observations }))),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsListCorrelationJobs]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsListCorrelationJobs,
+            organizationIntakeStore
+              .listCorrelationJobs(input.organizationId)
+              .pipe(Effect.map((jobs) => ({ jobs }))),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsListFindings]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsListFindings,
+            organizationIntakeStore
+              .listTentativeFindings(input.organizationId)
+              .pipe(Effect.map((findings) => ({ findings }))),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsListIntakeAudit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsListIntakeAudit,
+            organizationIntakeStore
+              .listAudit(input.organizationId)
+              .pipe(Effect.map((entries) => ({ entries }))),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsListWork]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsListWork,
+            organizationWorkStore
+              .listWork(input.organizationId)
+              .pipe(Effect.map((items) => ({ items }))),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsListWorkIntents]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsListWorkIntents,
+            Effect.gen(function* () {
+              // The session supplies read authority; the client supplies only the scope key.
+              yield* organizationStore.get({ organizationId: input.organizationId }).pipe(
+                Effect.mapError(
+                  (error) =>
+                    new OrganizationWorkIntentReadError({
+                      code: error.code === "not_found" ? "not_found" : "unavailable",
+                      message: error.message,
+                    }),
+                ),
+              );
+              const intents = yield* organizationWorkIntentStore
+                .list(input.organizationId, input.afterIntentId, input.limit)
+                .pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new OrganizationWorkIntentReadError({
+                        code: error.code,
+                        message: error.message,
+                      }),
+                  ),
+                );
+              return yield* decodeWorkIntentPage({
+                intents,
+                nextCursor: intents.length === input.limit ? (intents.at(-1)?.id ?? null) : null,
+              }).pipe(
+                Effect.mapError(
+                  () =>
+                    new OrganizationWorkIntentReadError({
+                      code: "unavailable",
+                      message: "Saved work intent page is invalid.",
+                    }),
+                ),
+              );
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsReviewWork]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsReviewWork,
+            OrganizationWorkReviewStore.reviewOrganizationWorkForSession(
+              currentSession,
+              organizationWorkReviewStore,
+              input,
+            ),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsDecideWorkApproval]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsDecideWorkApproval,
+            decideOrganizationWorkApprovalForSession(currentSession, input),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsProposalList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsProposalList,
+            organizationProposalStore.list(input),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsProposalDecide]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsProposalDecide,
+            organizationProposalStore.decide(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsObservationModeGet]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsObservationModeGet,
+            organizationProposalStore.getObservationMode(input.organizationId),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsObservationModeSet]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsObservationModeSet,
+            organizationProposalStore.setObservationMode(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsDirectorList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsDirectorList,
+            organizationDirectorStore.list(input),
+            { "rpc.aggregate": "organizations" },
+          ),
+        [WS_METHODS.organizationsDirectorAsk]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.organizationsDirectorAsk,
+            organizationDirectorStore.ask(input, {
+              subject: currentSession.subject,
+              interactive: isInteractiveOrganizationSession(currentSession),
+            }),
+            { "rpc.aggregate": "organizations" },
+          ),
         [WS_METHODS.agentDashboardGetSnapshot]: (_input) =>
           observeRpcEffect(
             WS_METHODS.agentDashboardGetSnapshot,
@@ -4980,6 +5645,22 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               previewAutomationBroker,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provide(OrganizationIntakeStore.OrganizationIntakeStoreLive),
+              Layer.provide(OrganizationWorkRuntimeLayers.OrganizationWorkStoreReadOnlyLive),
+              Layer.provide(OrganizationWorkIntentStore.OrganizationWorkIntentStoreLive),
+              Layer.provide(OrganizationWorkReviewStore.OrganizationWorkReviewStoreLive),
+              Layer.provide(
+                OrganizationArchitectTranscriptStore.OrganizationArchitectTranscriptStoreLive,
+              ),
+              Layer.provide(OrganizationMemoryStore.OrganizationMemoryStoreLive),
+              Layer.provide(OrganizationRepositoryStore.OrganizationRepositoryStoreLive),
+              Layer.provide(OrganizationProposalStore.OrganizationProposalStoreLive),
+              Layer.provide(OrganizationDirectorStore.OrganizationDirectorStoreLive),
+              Layer.provide(
+                OrganizationCorrelationCoordinator.OrganizationCorrelationCoordinatorIntakeLive,
+              ),
+              Layer.provide(OrganizationCorrelationRecovery.OrganizationCorrelationRecoveryLive),
+              Layer.provide(OrganizationStore.OrganizationStoreLive),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
