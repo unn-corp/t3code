@@ -4,9 +4,9 @@ Organizations keep a mission, team structure, workflows, decisions, and evidence
 
 ## Design with AI
 
-Open an Organization and choose **Designer**. The canvas and Architect conversation show the same draft. Choose a configured provider and model, then use **Guide me through the design** or describe the team you want. The Architect asks focused questions about the mission, responsibilities, review relationships, workflows, resources, and authority. It may suggest roles and connections as the conversation progresses.
+Open an Organization and choose **Designer**. The canvas and Architect conversation show the same draft. Choose a configured provider and model, then use **Start setup walkthrough** or describe the team you want. Send the prepared message to begin. The Architect asks focused questions about the mission, responsibilities, review relationships, workflows, resources, and authority. It then guides you through Project work and GitHub sharing if you want them, and reviews what is still unconfirmed. It may suggest roles and connections as the conversation progresses.
 
-Review each suggested change beside the canvas. **Apply all to draft** commits the suggestions from one reply together, so related roles, connections, and workflow definitions arrive in one revision. You can also apply a single suggestion or edit the canvas and forms yourself. An older suggestion cannot overwrite a newer draft. **Publish** in Governance captures a validated configuration version; it does not start workers.
+Review each suggested change beside the canvas. **Apply all to draft** commits the suggestions from one reply together, so related roles, connections, and workflow definitions arrive in one revision. You can also apply a single suggestion or edit the canvas and forms yourself. An older suggestion cannot overwrite a newer draft. The Architect guides setup but cannot link Projects, configure Sources or budgets, publish, grant work authority, or connect GitHub for you. Complete those steps in their respective views and tell the Architect when they are done. **Publish** in Governance captures a validated configuration version; it does not start workers.
 
 ## Share through GitHub
 

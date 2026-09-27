@@ -91,6 +91,13 @@ export interface OrganizationArchitectTurnInput {
     Organization,
     "id" | "title" | "mission" | "draftRevision" | "graph" | "workflows"
   >;
+  /** Safe readiness facts only; no Project paths, source secrets, or credentials. */
+  setupState?: {
+    readonly lifecycle: Organization["lifecycle"];
+    readonly publishedRevision: number | null;
+    readonly linkedProjectCount: number;
+    readonly writeCapableProjectCount: number;
+  };
   transcript: ReadonlyArray<{ readonly role: "user" | "assistant"; readonly text: string }>;
   userText: string;
 }

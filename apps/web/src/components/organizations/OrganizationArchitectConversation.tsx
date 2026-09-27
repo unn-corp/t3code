@@ -33,6 +33,10 @@ import { Textarea } from "../ui/textarea";
 
 const SELECT_CLASS =
   "min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-ring";
+const START_SETUP_PROMPT =
+  "Walk me through designing and setting up this Organization. Start with one question about the mission and outcomes. Guide me through roles, handoffs, workflows, resources, and authority, then Project work, GitHub sharing, and a final setup review.";
+const CONTINUE_SETUP_PROMPT =
+  "Continue the Organization setup walkthrough from our conversation and current draft. Ask one focused question about the next unconfirmed design or setup step.";
 
 function proposalPresentation(
   change: OrganizationArchitectAllowedChange,
@@ -284,11 +288,21 @@ export function OrganizationArchitectConversation({
           <div className="min-w-0">
             <h2 className="text-lg font-semibold">Design with Architect</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Work through your mission, roles, handoffs, and decision authority together. Review
-              each suggested change on the canvas before publishing the draft.
+              Work through the design and setup together, from mission and workflows to Project work
+              and sharing. Review suggested changes on the canvas before publishing.
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setDraft(messages.length === 0 ? START_SETUP_PROMPT : CONTINUE_SETUP_PROMPT)
+              }
+              disabled={blocked || sending}
+            >
+              {messages.length === 0 ? "Start setup walkthrough" : "Continue walkthrough"}
+            </Button>
             <Button
               size="sm"
               variant="outline"
@@ -351,19 +365,6 @@ export function OrganizationArchitectConversation({
                 Start a guided design conversation, or ask for a review of the current canvas.
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={blocked || sending}
-                  onClick={() =>
-                    setDraft(
-                      "Walk me through designing this Organization. Start with one question about the mission and outcomes, then guide me through roles, handoffs, workflows, resources, and authority.",
-                    )
-                  }
-                >
-                  Start walkthrough
-                </Button>
                 <Button
                   type="button"
                   size="sm"
@@ -573,7 +574,7 @@ export function OrganizationArchitectConversation({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
               Organization configuration and this conversation are sent to the selected model.
-              Repository files are not supplied.
+              Repository files are not supplied. Enter credentials in their settings, not here.
             </p>
             <Button type="submit" disabled={!canSend}>
               <SendIcon /> {sending ? "Waiting for reply…" : "Send to Architect"}

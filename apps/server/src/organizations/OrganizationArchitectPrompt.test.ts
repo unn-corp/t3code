@@ -29,6 +29,12 @@ it.effect("Architect prompt projects only the selected configuration and transcr
     const prompt = yield* buildOrganizationArchitectPrompt({
       modelSelection: createModelSelection(ProviderInstanceId.make("claudeAgent"), "test-model"),
       organization,
+      setupState: {
+        lifecycle: "draft",
+        publishedRevision: null,
+        linkedProjectCount: 0,
+        writeCapableProjectCount: 0,
+      },
       transcript,
       userText: "What would you change?",
     });
@@ -38,6 +44,12 @@ it.effect("Architect prompt projects only the selected configuration and transcr
     expect(prompt).toContain("mission, intended outcomes, and success measures");
     expect(prompt).toContain("triggers, recurring workflows, handoffs");
     expect(prompt).toContain("needed resources, access, and decision authority");
+    expect(prompt).toContain("Project work is wanted");
+    expect(prompt).toContain("dedicated GitHub repository");
+    expect(prompt).toContain('"linkedProjectCount":0');
+    expect(prompt).toContain(
+      "Never claim a source, repository, budget, publication, or work grant is configured",
+    );
     expect(prompt).toContain("Ask one focused question");
     expect(prompt).toContain("Offer concrete structural proposals incrementally");
     expect(prompt).not.toContain("/private/repository");

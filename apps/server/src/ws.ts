@@ -2548,6 +2548,16 @@ const makeWsRpcLayer = (
                     const output = yield* generate({
                       modelSelection: input.modelSelection,
                       organization,
+                      setupState: {
+                        lifecycle: organization.lifecycle,
+                        publishedRevision: organization.publishedRevision,
+                        linkedProjectCount: organization.bindings.filter(
+                          (binding) => binding.detachedAt === null,
+                        ).length,
+                        writeCapableProjectCount: organization.bindings.filter(
+                          (binding) => binding.detachedAt === null && binding.access === "write",
+                        ).length,
+                      },
                       transcript,
                       userText: currentMessage.text,
                     }).pipe(
