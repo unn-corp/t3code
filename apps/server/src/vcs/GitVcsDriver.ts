@@ -1081,7 +1081,20 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
           timeoutMs: CHECKPOINT_CAPTURE_TIMEOUT_MS,
         });
-      }).pipe(Effect.ensuring(cleanupTempIndex));
+      }).pipe(
+        Effect.mapError((error) =>
+          error._tag === "PlatformError"
+            ? new VcsProcessExitError({
+                operation,
+                command: "git checkpoint",
+                cwd: input.cwd,
+                exitCode: 0,
+                detail: `Could not prepare the checkpoint index: ${error.message}`,
+              })
+            : error,
+        ),
+        Effect.ensuring(cleanupTempIndex),
+      );
     }),
 
     hasCheckpointRef: (input) =>
@@ -1141,7 +1154,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           /^warning: failed to remove \.\/: [^\n]+$/.test(cleaned.stderr.trim()) &&
           (yield* fileSystem.readDirectory(input.cwd).pipe(
             Effect.map((entries) => entries.length === 0),
-            Effect.catch(() => Effect.succeed(false)),
+            Effect.orElseSucceed(() => false),
           ));
         if (!emptiedWorkspace)
           return yield* new VcsProcessExitError({

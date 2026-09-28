@@ -73,8 +73,8 @@ const seedReadModel = Effect.gen(function* () {
 const importCommand = (
   commandId: string,
   sourceSessionId = SESSION,
-): Extract<OrchestrationCommand, { type: "thread.history.import" }> => ({
-  type: "thread.history.import",
+): Extract<OrchestrationCommand, { type: "thread.history.resume" }> => ({
+  type: "thread.history.resume",
   commandId: CommandId.make(commandId),
   threadId: THREAD,
   sourceSessionId,
@@ -115,7 +115,7 @@ const seedWithPriorImport = (sessionId: string) =>
     return model;
   });
 
-it.layer(NodeServices.layer)("thread.history.import", (it) => {
+it.layer(NodeServices.layer)("thread.history.resume", (it) => {
   it.effect("replays each turn as a message in order", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;

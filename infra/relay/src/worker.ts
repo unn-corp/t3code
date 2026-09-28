@@ -2,6 +2,7 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle/Postgres";
 import * as Config from "effect/Config";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -72,6 +73,7 @@ import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
 import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublishSignatures.ts";
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
+import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 import * as WebPushSubscriptions from "./agentActivity/WebPushSubscriptions.ts";
@@ -171,9 +173,9 @@ export const ApiLive = Api.make(
         (value) => Redacted.value(value).trim().length > 0,
       ),
     );
-    const webPushVapidSubject = yield* Config.string("WEB_PUSH_VAPID_SUBJECT");
-    const webPushVapidPublicKey = yield* Config.string("WEB_PUSH_VAPID_PUBLIC_KEY");
-    const webPushVapidPrivateKey = yield* Config.redacted("WEB_PUSH_VAPID_PRIVATE_KEY");
+    const webPushVapidSubject = yield* Config.String("WEB_PUSH_VAPID_SUBJECT");
+    const webPushVapidPublicKey = yield* Config.String("WEB_PUSH_VAPID_PUBLIC_KEY");
+    const webPushVapidPrivateKey = yield* Config.Redacted("WEB_PUSH_VAPID_PRIVATE_KEY");
     const webPushDeliveryJobSigningSecret = yield* randomWebPushDeliveryJobSigningSecret;
     const webPushDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(webPushDeliveryQueue);
     const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
@@ -198,6 +200,7 @@ export const ApiLive = Api.make(
     yield* yield* relayApiZone.zoneId;
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
     const managedEndpointZoneName = yield* managedEndpointZone.name;
+    const managedEndpointCleanupMode = yield* RelayConfiguration.managedEndpointCleanupModeConfig;
 
     //
     // 3. Runtime layers and app construction
@@ -223,6 +226,7 @@ export const ApiLive = Api.make(
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
         managedEndpointNamespace: stage,
+        managedEndpointCleanupMode,
       });
     });
 
@@ -251,7 +255,9 @@ export const ApiLive = Api.make(
       Layer.provideMerge(AgentActivityPublisher.layer),
       Layer.provideMerge(EnvironmentConnector.layer),
       Layer.provideMerge(EnvironmentLinker.layer),
-      Layer.provideMerge(EnvironmentPublishSignatures.layer),
+      Layer.provideMerge(
+        Layer.merge(EnvironmentPublishSignatures.layer, ManagedEndpointReaper.layer),
+      ),
       Layer.provideMerge(
         ManagedEndpointProvider.layerCloudflareBindings(
           managedEndpointTunnelBinding,
@@ -378,21 +384,45 @@ export const ApiLive = Api.make(
     );
 
     yield* Cloudflare.Workers.cron("*/5 * * * *", () =>
-      DpopProofs.DpopProofReplay.pipe(
-        Effect.flatMap((dpopProofs) => dpopProofs.pruneExpired),
-        // Terminal thread rows are kept briefly so finished agents show as
-        // Done/Failed in the Live Activity; sweep them once they age out.
-        Effect.andThen(
-          Effect.all([AgentActivityRows.AgentActivityRows, DateTime.now]).pipe(
-            Effect.flatMap(([activityRows, now]) =>
-              activityRows.pruneTerminal({
-                updatedBefore: DateTime.formatIso(DateTime.subtract(now, { minutes: 30 })),
-              }),
+      Effect.all(
+        [
+          DpopProofs.DpopProofReplay.pipe(
+            Effect.flatMap((dpopProofs) => dpopProofs.pruneExpired),
+            // Keep completed thread rows long enough to show their final state.
+            Effect.andThen(
+              Effect.all([AgentActivityRows.AgentActivityRows, DateTime.now]).pipe(
+                Effect.flatMap(([activityRows, now]) =>
+                  activityRows.pruneTerminal({
+                    updatedBefore: DateTime.formatIso(DateTime.subtract(now, { minutes: 30 })),
+                  }),
+                ),
+              ),
+            ),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause)
+                ? Effect.interrupt
+                : Effect.logWarning("Failed to prune expired relay state", { cause }),
             ),
           ),
-        ),
+          ManagedEndpointReaper.ManagedEndpointReaper.pipe(
+            Effect.flatMap((reaper) => reaper.sweep.pipe(Effect.timeout("2 minutes"))),
+            Effect.tap((result) =>
+              result.scanned > 0
+                ? Effect.logInfo("Finished managed tunnel cleanup", result)
+                : Effect.void,
+            ),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause)
+                ? Effect.interrupt
+                : Effect.logWarning("Failed to clean up inactive managed tunnels", { cause }),
+            ),
+          ),
+        ],
+        { concurrency: 2, discard: true },
+      ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
-        Effect.provide(runtimeLayer),
+        // Export cron spans to Axiom like HTTP spans; the scope flushes them before the run ends.
+        Effect.provide(Layer.merge(runtimeLayer, relayTraceLayer)),
       ),
     );
 

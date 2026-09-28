@@ -309,7 +309,6 @@ export function OpenWhisprVoiceInput({
     <ComposerControl
       type="button"
       size="sm"
-      variant="ghost"
       className="chat-voice-control size-14 overflow-visible rounded-full"
       disabled={
         disabled || isTranscribing || phase === "success" || (!available && !simulateInputLevel)

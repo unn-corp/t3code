@@ -186,8 +186,9 @@ describe("GitHubCli.layer", () => {
         capacity: 2,
         timeToLive: "1 minute",
       });
-      const results = yield* Effect.all(
-        ["github.com", "github.example.test"].map((host, index) =>
+      const results = yield* Effect.forEach(
+        ["github.com", "github.example.test"],
+        (host, index) =>
           Cache.get(cache, host).pipe(
             Effect.provideService(GitHubCli.PinnedGitHubCredential, {
               host,
@@ -195,7 +196,6 @@ describe("GitHubCli.layer", () => {
               credentialFingerprint: `fingerprint-${index}`,
             }),
           ),
-        ),
         { concurrency: 2 },
       );
       expect(results.map((result) => result.stdout)).toEqual(["credential-0", "credential-1"]);

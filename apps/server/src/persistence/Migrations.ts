@@ -105,6 +105,7 @@ import Migration0090 from "./Migrations/090_OrganizationEmergencyStops.ts";
 import Migration0091 from "./Migrations/091_OrganizationStandingWorkAuthorizations.ts";
 import Migration0092 from "./Migrations/092_OrganizationEmergencyProcessRecovery.ts";
 import Migration0093 from "./Migrations/093_OrganizationProviderLaunchMarkers.ts";
+import Migration0094 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -210,6 +211,7 @@ const migrationEntries = [
   [91, "OrganizationStandingWorkAuthorizations", Migration0091],
   [92, "OrganizationEmergencyProcessRecovery", Migration0092],
   [93, "OrganizationProviderLaunchMarkers", Migration0093],
+  [94, "ProjectionThreadsAutoSettleDisabledAt", Migration0094],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

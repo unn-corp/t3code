@@ -65,6 +65,14 @@ const makeProjection = (input: {
 }) =>
   ({
     getCommandReadModel: () => Effect.die("unused"),
+    listActivitiesByKind: () => Effect.die("unused"),
+    listThreadsWithPullRequests: () => Effect.die("unused"),
+    getDeletedWorktreeThreads: () => Effect.die("unused"),
+    getProjectShells: () => Effect.die("unused"),
+    getUserInputActivity: () => Effect.die("unused"),
+    getImportedAgentSessionSources: () => Effect.die("unused"),
+    getThreadRuntimeContext: () => Effect.die("unused"),
+    getTurnStartMessage: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: input.getShellSnapshot,
     getArchivedShellSnapshot: () => Effect.die("unused"),
@@ -120,6 +128,8 @@ const makeContinuousImprovementTestLayer = (input: {
       Layer.succeed(ServerRuntimeStartup.ServerRuntimeStartup, {
         awaitCommandReady: Effect.never.pipe(Effect.asVoid),
         markHttpListening: Effect.void,
+        markRunningProviderSessionsForContinuation: Effect.succeed([]),
+        clearProviderSessionContinuationMarkers: () => Effect.void,
         enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) => effect,
       }),
     ),

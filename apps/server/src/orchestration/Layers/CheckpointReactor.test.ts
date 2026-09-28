@@ -1688,7 +1688,7 @@ describe("CheckpointReactor", () => {
 
     await runtime.runPromise(
       harness.engine.dispatch({
-        type: "thread.history.import",
+        type: "thread.history.resume",
         commandId: CommandId.make("cmd-import-history-without-checkpoint"),
         threadId: ThreadId.make("thread-1"),
         sourceSessionId: "imported-session",

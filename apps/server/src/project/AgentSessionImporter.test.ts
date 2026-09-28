@@ -56,6 +56,7 @@ import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistr
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
+import { TerminalManager } from "../terminal/Manager.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 import { importRecentAgentThreads } from "./AgentSessionImporter.ts";
@@ -232,7 +233,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           upsert: (binding) => Effect.sync(() => void bindings.push(binding)),
           getProvider: () => Effect.die("unused"),
           recordImportedTranscript: () => Effect.void,
-          getBinding: () => Effect.succeed(Option.none()),
+          getBinding: () => Effect.succeedNone,
           listThreadIds: () => Effect.die("unused"),
           listBindings: () => Effect.die("unused"),
         });
@@ -249,9 +250,9 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         expect(scannedRoot).toBe(WORKSPACE_ROOT);
         expect(commands.map((command) => command.type)).toEqual([
           "thread.create",
-          "thread.history.import",
+          "thread.history.resume",
           "thread.create",
-          "thread.history.import",
+          "thread.history.resume",
         ]);
         expect(commands.filter((command) => command.type === "thread.create")).toMatchObject([
           { historyImport: true },
@@ -259,7 +260,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         ]);
         expect(
           commands
-            .filter((command) => command.type === "thread.history.import")
+            .filter((command) => command.type === "thread.history.resume")
             .flatMap((command) => command.turns.map((turn) => `${turn.role}:${turn.text}`)),
         ).toEqual(["user:Fix the bug", "assistant:Fixed", "user:Fix the bug", "assistant:Fixed"]);
         expect(bindings).toMatchObject([
@@ -371,7 +372,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
               );
             }
             if (command.type === "thread.create") threadCreated = true;
-            if (command.type === "thread.history.import") {
+            if (command.type === "thread.history.resume") {
               historyAttemptCount += 1;
               if (historyAttemptCount === 1) {
                 rejectedCommandIds.add(command.commandId);
@@ -451,7 +452,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           upsert: () => Effect.die("must not replace an active binding"),
           getProvider: () => Effect.die("unused"),
           recordImportedTranscript: () => Effect.void,
-          getBinding: () => Effect.succeed(Option.some(runningBinding)),
+          getBinding: () => Effect.succeedSome(runningBinding),
           listThreadIds: () => Effect.die("unused"),
           listBindings: () => Effect.die("unused"),
         });
@@ -506,7 +507,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           upsert: () => Effect.die("must not bind malformed or wrong-project sessions"),
           getProvider: () => Effect.die("unused"),
           recordImportedTranscript: () => Effect.die("unused"),
-          getBinding: () => Effect.succeed(Option.none()),
+          getBinding: () => Effect.succeedNone,
           listThreadIds: () => Effect.die("unused"),
           listBindings: () => Effect.die("unused"),
         });
@@ -594,7 +595,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       });
       const rejected = yield* Effect.result(
         engine.dispatch({
-          type: "thread.history.import",
+          type: "thread.history.resume",
           commandId: CommandId.make(`agent-session:history:${threadId}`),
           threadId,
           sourceSessionId: "rejected-session",
@@ -724,7 +725,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           historyImport: true,
         });
         yield* engine.dispatch({
-          type: "thread.history.import",
+          type: "thread.history.resume",
           commandId: CommandId.make("import-legacy-bounded-history"),
           threadId: legacy.threadId,
           sourceSessionId: "legacy-session",
@@ -746,7 +747,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           dispatch: (command) => {
             if (
               failHistory &&
-              command.type === "thread.history.import" &&
+              command.type === "thread.history.resume" &&
               command.threadId === failed.threadId
             ) {
               failHistory = false;
@@ -908,6 +909,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           Layer.provide(Layer.mock(GitWorkflowService)({})),
           Layer.provide(Layer.mock(VcsStatusBroadcaster)({})),
           Layer.provide(Layer.mock(TextGeneration)({})),
+          Layer.provide(Layer.mock(TerminalManager)({ closeIdle: () => Effect.void })),
           Layer.provide(ServerSettingsService.layerTest()),
         );
 

@@ -271,6 +271,10 @@ it.effect("starts the provider turn before snoozing the internal review thread",
     const projection = {
       getUserInputActivity: () => Effect.die("unused"),
       getCommandReadModel: () => Effect.die("unused"),
+      listActivitiesByKind: () => Effect.die("unused"),
+      listThreadsWithPullRequests: () => Effect.die("unused"),
+      getDeletedWorktreeThreads: () => Effect.die("unused"),
+      getProjectShells: () => Effect.die("unused"),
       getSnapshot: () => Effect.die("unused"),
       getShellSnapshot: () =>
         Effect.succeed({

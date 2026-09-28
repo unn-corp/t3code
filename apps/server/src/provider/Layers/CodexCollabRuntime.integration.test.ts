@@ -764,7 +764,11 @@ describe("CodexSessionRuntime collab integration", () => {
         goalStatus: "active",
         notifications: [],
       };
-      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.writeFileSync(
+        scriptPath,
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(script),
+        "utf8",
+      );
       const goalRequestsPath = `${scriptPath}.goal-requests`;
       NodeFS.rmSync(goalRequestsPath, { force: true });
       yield* Effect.addFinalizer(() =>
@@ -805,7 +809,11 @@ describe("CodexSessionRuntime collab integration", () => {
         goalGetError: true,
         notifications: [],
       };
-      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.writeFileSync(
+        scriptPath,
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(script),
+        "utf8",
+      );
       const interruptsPath = `${scriptPath}.interrupts`;
       NodeFS.rmSync(interruptsPath, { force: true });
       yield* Effect.addFinalizer(() =>
@@ -948,4 +956,77 @@ describe("CodexSessionRuntime collab integration", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+});
+
+describe("CodexSessionRuntime compaction", () => {
+  it.effect("restores T3 context after the root thread compacts", () =>
+    Effect.gen(function* () {
+      const compacted = (threadId: string) => ({
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId: `${threadId}-turn`,
+          completedAtMs: 0,
+          item: { type: "contextCompaction", id: `compaction-${threadId}` },
+        },
+      });
+      const script = {
+        rootThreadId: ROOT,
+        recordRequests: true,
+        // A child's compaction must not inject into the root thread.
+        notifications: [compacted(CHILD_A), compacted(ROOT)],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-compaction-context"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+        models: Effect.succeed([
+          { slug: "gpt-5.6-sol", name: "GPT-5.6 Sol", isCustom: false, capabilities: null },
+        ]),
+      });
+      const completedFiber = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "turn/completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep going", interactionMode: "default" });
+      yield* Fiber.join(completedFiber);
+
+      // The restore is awaited before later notifications, so it has landed.
+      const requests = readRecordedRequests();
+      assert.lengthOf(requests, 1);
+      const [inject] = requests;
+      assert.isDefined(inject);
+      assert.equal(inject.method, "thread/inject_items");
+      assert.equal(inject.params.threadId, ROOT);
+      const texts = (
+        inject.params.items as ReadonlyArray<{ role: string; content: [{ text: string }] }>
+      ).map((item) => {
+        assert.equal(item.role, "developer");
+        return item.content[0].text;
+      });
+      assert.lengthOf(texts, 1);
+      assert.match(
+        texts[0] ?? "",
+        /^<t3_code_runtime><runtime_info>.*as GPT-5\.6 Sol \(model slug: gpt-5\.6-sol\).*<\/t3_code_runtime>$/s,
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
