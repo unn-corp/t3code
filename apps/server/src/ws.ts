@@ -18,6 +18,8 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
+import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AgentDashboardError,
@@ -602,13 +604,59 @@ function readClientAnalyticsProps(request: HttpServerRequest.HttpServerRequest) 
   };
 }
 
-const makeWsRpcLayer = (
+const WsRpcGroupWithoutManagedCodex = WsRpcGroup.omit(
+  WS_METHODS.chatGptReconnectProfile,
+  WS_METHODS.chatGptImportProfile,
+  WS_METHODS.chatGptHandoffSubscribe,
+  WS_METHODS.codexAuthCallbackSubscribe,
+);
+
+const makeManagedCodexRpcLayer = (session: EnvironmentAuth.AuthenticatedSession) =>
+  Layer.mergeAll(
+    WsRpcGroup.toLayerHandler(
+      WS_METHODS.chatGptReconnectProfile,
+      Effect.map(
+        ProviderAuthService,
+        (providerAuth) => (input) => providerAuth.reconnectProfile(input),
+      ),
+    ),
+    WsRpcGroup.toLayerHandler(
+      WS_METHODS.chatGptImportProfile,
+      Effect.map(
+        ProviderAuthService,
+        (providerAuth) => (input) => providerAuth.importProfile(input),
+      ),
+    ),
+    WsRpcGroup.toLayerHandler(WS_METHODS.chatGptHandoffSubscribe, (input) =>
+      subscribeChatGptHandoff(input, session.sessionId),
+    ),
+    WsRpcGroup.toLayerHandler(WS_METHODS.codexAuthCallbackSubscribe, (input) => {
+      const method = WS_METHODS.codexAuthCallbackSubscribe;
+      const requiredScope = requiredScopeForRpcMethod(method);
+      const callback = subscribeCodexAuthCallback(input);
+      const stream: Stream.Stream<
+        Stream.Success<typeof callback>,
+        Stream.Error<typeof callback> | EnvironmentAuthorizationError,
+        Stream.Services<typeof callback>
+      > = session.scopes.includes(requiredScope)
+        ? callback
+        : Stream.fail(
+            new EnvironmentAuthorizationError({
+              message: `The authenticated token is missing required scope: ${requiredScope}.`,
+              requiredScope,
+            }),
+          );
+      return instrumentRpcStream(method, stream, { "rpc.aggregate": "provider" });
+    }),
+  );
+
+const makeWsRpcLayerBase = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
 ) =>
-  WsRpcGroup.toLayer(
+  WsRpcGroupWithoutManagedCodex.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
@@ -2176,7 +2224,7 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
-      return WsRpcGroup.of({
+      return WsRpcGroupWithoutManagedCodex.of({
         [WS_METHODS.organizationsList]: (_input) =>
           observeRpcEffect(WS_METHODS.organizationsList, organizationStore.list(), {
             "rpc.aggregate": "organizations",
@@ -5921,6 +5969,17 @@ const makeWsRpcLayer = (
           ),
       });
     }),
+  );
+
+const makeWsRpcLayer = (
+  currentSession: EnvironmentAuth.AuthenticatedSession,
+  clientOrigin: OrchestrationClientOrigin,
+  clientAnalyticsProps: Readonly<Record<string, unknown>>,
+  previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+) =>
+  Layer.mergeAll(
+    makeWsRpcLayerBase(currentSession, clientOrigin, clientAnalyticsProps, previewAutomationBroker),
+    makeManagedCodexRpcLayer(currentSession),
   );
 
 export const websocketRpcRouteLayer = Layer.unwrap(
