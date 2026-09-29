@@ -38,11 +38,14 @@ export function ProjectFavicon(props: {
   readonly workspaceRoot?: string | null;
   readonly faviconPath?: string | null;
   readonly projectIcon?: ProjectIconOverride | null;
+  readonly showProjectPhoto?: boolean;
 }) {
   const size = props.size ?? 42;
   const glyph = resolveProjectIconGlyph(props.projectIcon, props.projectTitle);
   const faviconUrl = useAtomValue(
-    props.workspaceRoot == null || glyph !== null
+    props.workspaceRoot == null ||
+      glyph !== null ||
+      (props.showProjectPhoto && props.projectIcon?.kind === "photo")
       ? EMPTY_FAVICON_URL
       : projectFaviconUrlAtom({
           environmentId: props.environmentId,
@@ -59,6 +62,17 @@ export function ProjectFavicon(props: {
         ? getProjectFaviconResourceKey(props.environmentId, props.workspaceRoot, props.faviconPath)
         : getProjectFaviconCacheKey(props.environmentId, props.workspaceRoot, renderableFaviconUrl)
       : null;
+
+  if (props.showProjectPhoto && props.projectIcon?.kind === "photo") {
+    return (
+      <Image
+        source={{ uri: props.projectIcon.dataUrl }}
+        accessibilityLabel={`${props.projectTitle} photo`}
+        style={{ width: size, height: size, borderRadius: size * 0.16 }}
+        contentFit="cover"
+      />
+    );
+  }
 
   if (glyph !== null) {
     return <ProjectIconGlyphView glyph={glyph} size={size} />;

@@ -12,7 +12,7 @@ import {
   type DragStartEvent,
   type Modifier,
 } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { SortableContext, useSortable } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -74,6 +74,7 @@ import {
   useReducer,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -368,7 +369,9 @@ function SidebarThreadTooltip({
         <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
           {projectDisplayName ? (
             <div className="flex min-w-0 items-center gap-2">
-              {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
+              {project ? (
+                <ProjectFavicon project={project} showPhoto={false} className="size-3 shrink-0" />
+              ) : null}
               <div className="min-w-0 truncate text-foreground/75">{projectDisplayName}</div>
             </div>
           ) : null}
@@ -512,14 +515,6 @@ function SnoozeMenuButton(props: {
   );
 }
 
-// Subset of useSortable applied to a sortable card. The listeners are passed
-// to a dedicated left-side handle so the rest of the card remains a native
-// touch-scrolling surface.
-type SortableSidebarRowBag = Pick<
-  ReturnType<typeof useSortable>,
-  "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
->;
-
 // Subset of useSortable applied to a thread row's root <li>. Listeners go
 // on the whole row (no dedicated handle): the pointer sensor's distance
 // constraint keeps plain clicks working, and we skip dnd-kit's aria
@@ -549,87 +544,17 @@ function SortableThreadRow(props: {
   return props.children(bag);
 }
 
-const SIDEBAR_GROUP_DRAG_PREFIX = "sidebar-group:";
-const SIDEBAR_THREAD_DRAG_PREFIX = "sidebar-thread:";
-
-function sidebarGroupDragId(projectKey: string): string {
-  return `${SIDEBAR_GROUP_DRAG_PREFIX}${projectKey}`;
-}
-
-function sidebarThreadDragId(threadKey: string): string {
-  return `${SIDEBAR_THREAD_DRAG_PREFIX}${threadKey}`;
-}
-
-function SortableSidebarThreadRow(props: {
-  id: string;
-  children: (bag: SortableSidebarRowBag) => ReactNode;
-}) {
-  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: props.id,
-    animateLayoutChanges: animateSidebarLayoutChanges,
-  });
-  return props.children({ listeners, setNodeRef, transform, transition, isDragging });
-}
-
-function SortableSidebarRepositoryGroup(props: {
-  group: SidebarProjectSnapshot;
-  threads: readonly EnvironmentThreadShell[];
-  children: (thread: EnvironmentThreadShell, bag: SortableSidebarRowBag) => ReactNode;
-}) {
-  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: sidebarGroupDragId(props.group.projectKey),
-    animateLayoutChanges: animateSidebarLayoutChanges,
-  });
-  return (
-    <li
-      ref={setNodeRef}
-      data-testid="sidebar-repository-group"
-      data-repository-key={props.group.projectKey}
-      style={{
-        transform: CSS.Translate.toString(transform),
-        transition,
-      }}
-      className={cn("list-none", isDragging && "z-20 opacity-80")}
-    >
-      <div
-        {...listeners}
-        data-testid="sidebar-repository-group-handle"
-        aria-label={`Reorder ${props.group.displayName} repository group`}
-        className="group/repository flex min-w-0 cursor-grab touch-none items-center gap-1.5 px-2.5 pb-1 pt-2 text-[11px] font-medium text-sidebar-muted-foreground/80 active:cursor-grabbing"
-      >
-        <ProjectFavicon project={props.group} className="size-3" />
-        <span className="min-w-0 flex-1 truncate">{props.group.displayName}</span>
-        <GripVerticalIcon
-          aria-hidden
-          className="size-3 shrink-0 opacity-0 transition-opacity group-hover/repository:opacity-60"
-        />
-      </div>
-      <ul role="list" className="flex flex-col gap-px">
-        <SortableContext
-          items={props.threads.map((thread) =>
-            sidebarThreadDragId(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-          )}
-          strategy={verticalListSortingStrategy}
-        >
-          {props.threads.map((thread) => {
-            const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-            return (
-              <SortableSidebarThreadRow key={threadKey} id={sidebarThreadDragId(threadKey)}>
-                {(bag) => props.children(thread, bag)}
-              </SortableSidebarThreadRow>
-            );
-          })}
-        </SortableContext>
-      </ul>
-    </li>
-  );
-}
-
 function SidebarRepositoryGroupHeader(props: {
   group: SidebarProjectSnapshot;
   activeCount: number;
   collapsed: boolean;
   onToggle: () => void;
+  onDragStart: (event: ReactDragEvent<HTMLButtonElement>) => void;
+  onDragOver: (event: ReactDragEvent<HTMLDivElement>) => void;
+  onDrop: (event: ReactDragEvent<HTMLDivElement>) => void;
+  onDragEnd: () => void;
+  isDragging: boolean;
+  isDropTarget: boolean;
 }) {
   return (
     <li
@@ -637,26 +562,48 @@ function SidebarRepositoryGroupHeader(props: {
       data-repository-key={props.group.projectKey}
       className="list-none"
     >
-      <button
-        type="button"
-        onClick={props.onToggle}
-        aria-expanded={!props.collapsed}
-        aria-label={`${props.collapsed ? "Expand" : "Collapse"} ${props.group.displayName} project group, ${props.activeCount} active ${props.activeCount === 1 ? "chat" : "chats"}`}
-        data-testid="sidebar-repository-group-toggle"
-        className="flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 pb-1 pt-2 text-left text-[11px] font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+      <div
+        onDragOver={props.onDragOver}
+        onDrop={props.onDrop}
+        className={cn(
+          "group/repository flex w-full min-w-0 items-center rounded-md pb-1 pl-2.5 pr-1 pt-2 text-[11px] font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+          props.isDragging && "opacity-50",
+          props.isDropTarget && "bg-sidebar-row-hover ring-1 ring-inset ring-primary/60",
+        )}
       >
-        <ProjectFavicon project={props.group} className="size-3" />
-        <span className="min-w-0 flex-1 truncate">{props.group.displayName}</span>
-        {props.collapsed ? (
-          <span className="inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-sidebar-row-hover px-1.5 text-[10px] tabular-nums text-sidebar-foreground">
-            {props.activeCount}
-          </span>
-        ) : null}
-        <ChevronDownIcon
-          aria-hidden
-          className={cn("size-3 shrink-0 transition-transform", props.collapsed && "-rotate-90")}
-        />
-      </button>
+        <button
+          type="button"
+          onClick={props.onToggle}
+          aria-expanded={!props.collapsed}
+          aria-label={`${props.collapsed ? "Expand" : "Collapse"} ${props.group.displayName} project group, ${props.activeCount} active ${props.activeCount === 1 ? "chat" : "chats"}`}
+          data-testid="sidebar-repository-group-toggle"
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+        >
+          <ProjectFavicon project={props.group} className="size-4" />
+          <span className="min-w-0 flex-1 truncate">{props.group.displayName}</span>
+          {props.collapsed ? (
+            <span className="inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-sidebar-row-hover px-1.5 text-[10px] tabular-nums text-sidebar-foreground">
+              {props.activeCount}
+            </span>
+          ) : null}
+          <ChevronDownIcon
+            aria-hidden
+            className={cn("size-3 shrink-0 transition-transform", props.collapsed && "-rotate-90")}
+          />
+        </button>
+        <button
+          type="button"
+          draggable
+          onDragStart={props.onDragStart}
+          onDragEnd={props.onDragEnd}
+          aria-label={`Reorder ${props.group.displayName} repository group`}
+          title="Drag to reorder repository sections"
+          data-testid="sidebar-repository-group-handle"
+          className="ml-1 flex size-5 shrink-0 cursor-grab items-center justify-center rounded-sm text-sidebar-muted-foreground/70 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring active:cursor-grabbing"
+        >
+          <GripVerticalIcon aria-hidden className="size-3.5" />
+        </button>
+      </div>
     </li>
   );
 }
@@ -902,7 +849,11 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             <SquarePenIcon aria-hidden className={draftPenClassName} />
             {props.project ? (
-              <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+              <ProjectFavicon
+                project={props.project}
+                showPhoto={false}
+                className="size-4 shrink-0"
+              />
             ) : null}
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
               {props.projectDisplayName}
@@ -1111,7 +1062,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Present on rows whose server supports every drop outcome: dnd-kit
   // sortable bag applied to the row root so the whole row drags (the
   // pointer sensor's distance constraint keeps plain clicks working).
-  sortable?: SortableSidebarRowBag | SortableThreadRowBag | undefined;
+  sortable?: SortableThreadRowBag | undefined;
   dropVerb: SidebarDropVerb | null;
   // While dragging, the pin marker stays only for a pinned thread still over
   // the pinned section. Any other position shows the verb badge instead, and
@@ -1767,7 +1718,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
+              {props.project ? (
+                <ProjectFavicon project={props.project} showPhoto={false} className="size-4" />
+              ) : null}
             </span>
             {draftIndicator}
             {title}
@@ -1939,7 +1892,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {props.project ? (
-                <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+                <ProjectFavicon
+                  project={props.project}
+                  showPhoto={false}
+                  className="size-4 shrink-0"
+                />
               ) : null}
               {props.projectDisplayName ? (
                 <span
@@ -2278,7 +2235,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           }
         >
           {props.project ? (
-            <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+            <ProjectFavicon project={props.project} showPhoto={false} className="size-4 shrink-0" />
           ) : null}
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex min-w-0 items-center gap-2.5">
@@ -2321,7 +2278,6 @@ export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threadOrder = useUiStateStore((store) => store.threadOrder);
-  const reorderThreads = useUiStateStore((store) => store.reorderThreads);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const threads = useThreadShells();
   const router = useRouter();
@@ -3015,29 +2971,9 @@ export default function Sidebar() {
     () => visibleActiveGroupThreads(activeThreadGroups, collapsedProjectGroups),
     [activeThreadGroups, collapsedProjectGroups],
   );
-  const activeSidebarGroupByDragId = useMemo(
-    () =>
-      new Map(
-        activeThreadGroups.flatMap(({ group }) =>
-          group ? [[sidebarGroupDragId(group.projectKey), group] as const] : [],
-        ),
-      ),
-    [activeThreadGroups],
-  );
-  const activeThreadGroupByDragId = useMemo(
-    () =>
-      new Map(
-        activeThreadGroups.flatMap(({ group, threads: groupThreads }) =>
-          group
-            ? groupThreads.map((thread) => {
-                const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-                return [sidebarThreadDragId(threadKey), group.projectKey] as const;
-              })
-            : [],
-        ),
-      ),
-    [activeThreadGroups],
-  );
+  const draggingProjectGroupKeyRef = useRef<string | null>(null);
+  const [draggingProjectGroupKey, setDraggingProjectGroupKey] = useState<string | null>(null);
+  const [dropProjectGroupKey, setDropProjectGroupKey] = useState<string | null>(null);
 
   // The snoozed shelf is collapsed by default: out of the way, never gone.
   // Collapsed threads don't render (and so don't participate in jump
@@ -4006,67 +3942,43 @@ export default function Sidebar() {
     ],
   );
 
-  const handleSidebarDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const activeId = String(event.active.id);
-      const overId = event.over === null ? null : String(event.over.id);
-      if (overId === null || activeId === overId) return;
-
-      const activeGroup = activeSidebarGroupByDragId.get(activeId);
-      if (activeGroup) {
-        const overGroup =
-          activeSidebarGroupByDragId.get(overId) ??
-          [...activeSidebarGroupByDragId.values()].find(
-            (group) => group.projectKey === activeThreadGroupByDragId.get(overId),
-          );
-        if (!overGroup) return;
-        if (activeGroup.projectKey === overGroup.projectKey) return;
-        const currentProjectOrder = [
-          ...new Set([
-            ...projectGroups.flatMap((group) =>
-              group.memberProjects.map((member) => member.physicalProjectKey),
-            ),
-            ...orderedProjects.map(getProjectOrderKey),
-          ]),
-        ];
-        reorderProjects(
-          currentProjectOrder,
-          activeGroup.memberProjects.map((member) => member.physicalProjectKey),
-          overGroup.memberProjects.map((member) => member.physicalProjectKey),
-        );
-        if (sidebarProjectSortOrder !== "manual") {
-          updateClientSettings({ sidebarProjectSortOrder: "manual" });
-        }
-        return;
-      }
-
-      const activeThreadGroupKey = activeThreadGroupByDragId.get(activeId);
-      const overThreadGroupKey = activeThreadGroupByDragId.get(overId);
-      if (!activeThreadGroupKey || activeThreadGroupKey !== overThreadGroupKey) return;
-      const currentThreadOrder = [
+  const clearProjectGroupDrag = useCallback(() => {
+    draggingProjectGroupKeyRef.current = null;
+    setDraggingProjectGroupKey(null);
+    setDropProjectGroupKey(null);
+  }, []);
+  const handleProjectGroupDrop = useCallback(
+    (targetProjectKey: string, event: ReactDragEvent<HTMLDivElement>) => {
+      const sourceProjectKey = draggingProjectGroupKeyRef.current;
+      if (sourceProjectKey === null || sourceProjectKey === targetProjectKey) return;
+      event.preventDefault();
+      clearProjectGroupDrag();
+      const source = projectGroups.find((group) => group.projectKey === sourceProjectKey);
+      const target = projectGroups.find((group) => group.projectKey === targetProjectKey);
+      if (!source || !target) return;
+      const currentProjectOrder = [
         ...new Set([
-          ...threadOrder,
-          ...activeThreads.map((thread) =>
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          ...projectGroups.flatMap((group) =>
+            group.memberProjects.map((member) => member.physicalProjectKey),
           ),
+          ...orderedProjects.map(getProjectOrderKey),
         ]),
       ];
-      reorderThreads(
-        currentThreadOrder,
-        [activeId.slice(SIDEBAR_THREAD_DRAG_PREFIX.length)],
-        [overId.slice(SIDEBAR_THREAD_DRAG_PREFIX.length)],
+      reorderProjects(
+        currentProjectOrder,
+        source.memberProjects.map((member) => member.physicalProjectKey),
+        target.memberProjects.map((member) => member.physicalProjectKey),
       );
+      if (sidebarProjectSortOrder !== "manual") {
+        updateClientSettings({ sidebarProjectSortOrder: "manual" });
+      }
     },
     [
-      activeSidebarGroupByDragId,
-      activeThreadGroupByDragId,
-      activeThreads,
+      clearProjectGroupDrag,
       orderedProjects,
       projectGroups,
       reorderProjects,
-      reorderThreads,
       sidebarProjectSortOrder,
-      threadOrder,
       updateClientSettings,
     ],
   );
@@ -5467,6 +5379,29 @@ export default function Sidebar() {
                                     activeCount={groupThreads.length}
                                     collapsed={collapsedProjectGroups.has(group.projectKey)}
                                     onToggle={() => toggleProjectGroup(group.projectKey)}
+                                    onDragStart={(event) => {
+                                      event.dataTransfer.effectAllowed = "move";
+                                      event.dataTransfer.setData(
+                                        "text/plain",
+                                        "t3-repository-group",
+                                      );
+                                      draggingProjectGroupKeyRef.current = group.projectKey;
+                                      setDraggingProjectGroupKey(group.projectKey);
+                                      setDropProjectGroupKey(null);
+                                    }}
+                                    onDragOver={(event) => {
+                                      const source = draggingProjectGroupKeyRef.current;
+                                      if (source === null || source === group.projectKey) return;
+                                      event.preventDefault();
+                                      event.dataTransfer.dropEffect = "move";
+                                      setDropProjectGroupKey(group.projectKey);
+                                    }}
+                                    onDrop={(event) =>
+                                      handleProjectGroupDrop(group.projectKey, event)
+                                    }
+                                    onDragEnd={clearProjectGroupDrag}
+                                    isDragging={draggingProjectGroupKey === group.projectKey}
+                                    isDropTarget={dropProjectGroupKey === group.projectKey}
                                   />,
                                 );
                               }
