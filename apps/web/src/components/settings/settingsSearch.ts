@@ -953,6 +953,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["github accounts machines permissions routing"],
   },
   {
+    id: "bitbucket-credentials",
+    title: "Bitbucket credentials",
+    to: "/settings/source-control",
+    searchTerms: ["bitbucket atlassian access token api token email credentials sign in"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "source-control-writing-style",
     title: "Source control writing style",
     to: "/settings/source-control",
