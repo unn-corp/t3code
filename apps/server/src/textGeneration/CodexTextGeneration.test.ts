@@ -327,6 +327,97 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
         }),
     ),
   );
+
+  it.effect("accepts Codex null placeholders for optional Architect role updates", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          reply: "The Architect should own architecture decisions.",
+          proposals: [
+            {
+              baseRevision: 3,
+              change: {
+                type: "update-role",
+                roleId: "architect",
+                title: null,
+                mandate: "Own architecture decisions.",
+                poolSize: null,
+              },
+            },
+          ],
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateOrganizationArchitectTurn!(
+            architectTurnInput("codex", "gpt-5.6-luna"),
+          );
+          expect(generated.proposals[0]?.change).toEqual({
+            type: "update-role",
+            roleId: "architect",
+            mandate: "Own architecture decisions.",
+          });
+        }),
+    ),
+  );
+
+  it.effect("preserves required nullable workflow fields in Architect proposals", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          reply: "Review the draft workflow.",
+          proposals: [
+            {
+              baseRevision: 3,
+              change: {
+                type: "upsert-workflow",
+                workflow: {
+                  id: "review-flow",
+                  title: "Review",
+                  version: 1,
+                  steps: [
+                    {
+                      id: "start",
+                      kind: "trigger",
+                      title: "Start",
+                      roleId: null,
+                      reviewsStepId: null,
+                    },
+                    {
+                      id: "done",
+                      kind: "finish",
+                      title: "Done",
+                      roleId: null,
+                      reviewsStepId: null,
+                    },
+                  ],
+                  transitions: [
+                    {
+                      id: "start-to-done",
+                      fromStepId: "start",
+                      toStepId: "done",
+                      maxTraversals: null,
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateOrganizationArchitectTurn!(
+            architectTurnInput("codex", "gpt-5.6-luna"),
+          );
+          const change = generated.proposals[0]?.change;
+          expect(change?.type).toBe("upsert-workflow");
+          if (change?.type !== "upsert-workflow") return;
+          expect(change.workflow.steps[0]?.roleId).toBeNull();
+          expect(change.workflow.transitions[0]?.maxTraversals).toBeNull();
+        }),
+    ),
+  );
   for (const selectedModel of ["gpt-5.6-luna", "openai.gpt-5.6-luna"]) {
     it.effect(`dispatches the qualified live model for ${selectedModel}`, () =>
       withFakeCodexEnv(

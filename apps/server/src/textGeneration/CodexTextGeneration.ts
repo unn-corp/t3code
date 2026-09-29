@@ -24,6 +24,7 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/Layers/codexLaunchArgs.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { normalizeCodexArchitectOutputJson } from "./CodexArchitectOutput.ts";
 import { OrganizationPatchProcessObserver } from "./OrganizationPatchProcessObserver.ts";
 import {
   buildBranchNamePrompt,
@@ -401,6 +402,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               detail: "Failed to read Codex output file.",
               cause,
             }),
+        ),
+        Effect.map((raw) =>
+          operation === "generateOrganizationArchitectTurn"
+            ? normalizeCodexArchitectOutputJson(raw)
+            : raw,
         ),
         Effect.flatMap(decodeOutput),
         Effect.catchTags({
