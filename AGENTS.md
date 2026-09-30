@@ -168,3 +168,7 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 - Don't verify with browsers or computer use unless the user explicitly agrees or requests it.
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+
+## Shared UI standards
+
+For new or materially changed UI, read the [UNNDEV UI adoption entry](docs/UNNDEV-UI-STANDARDS.md), its shared core and local profile. Preserve existing repository instructions and product-specific authority; this link does not authorize redesign or release actions.
