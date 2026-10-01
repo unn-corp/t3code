@@ -240,6 +240,7 @@ describe("decision follow-up selection", () => {
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
+    pullRequests: [],
     session: null,
     latestUserMessageAt: "2026-09-03T12:00:00.000Z",
     hasPendingApprovals: false,

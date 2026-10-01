@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off - schedule normalization is intentionally tested with fixed timestamps.
+// @effect-diagnostics nodeBuiltinImport:off -- test fixtures use temporary files.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -12,6 +12,7 @@ import {
   type AgentDashboardReviewSchedule,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
@@ -64,7 +65,7 @@ it.effect("preserves malformed schedule bytes and reports paused recovery", () =
         lastStatus: "failed",
         lastError: expect.stringContaining("decode"),
       });
-      expect(Date.parse(schedule.nextRunAt)).toBeGreaterThan(Date.now());
+      expect(Date.parse(schedule.nextRunAt)).toBeGreaterThan(yield* Clock.currentTimeMillis);
       expect(yield* Effect.promise(() => NodeFSP.readFile(schedulePath, "utf8"))).toBe(malformed);
       expect(logs.map(({ message }) => String(message)).join("\n")).toContain("decode");
     }).pipe(
@@ -97,7 +98,7 @@ it.effect("preserves unreadable schedule state and reports paused recovery", () 
         lastStatus: "failed",
         lastError: expect.stringContaining("read"),
       });
-      expect(Date.parse(schedule.nextRunAt)).toBeGreaterThan(Date.now());
+      expect(Date.parse(schedule.nextRunAt)).toBeGreaterThan(yield* Clock.currentTimeMillis);
       expect((yield* Effect.promise(() => NodeFSP.stat(schedulePath))).isDirectory()).toBe(true);
       expect(logs.map(({ message }) => String(message)).join("\n")).toContain("read");
     }).pipe(

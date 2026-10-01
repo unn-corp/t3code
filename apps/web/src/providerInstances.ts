@@ -16,7 +16,6 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   isAutomatedReviewCapableDriver,
-  PROVIDER_DISPLAY_NAMES,
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProviderDriverKind,
