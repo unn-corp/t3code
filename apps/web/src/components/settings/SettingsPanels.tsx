@@ -3739,6 +3739,7 @@ export function AutomationSettingsPanel() {
             <AutomationModelControl
               selection={settings.decisionFollowUp.modelSelection}
               ariaLabel="Decision follow-up"
+              automatedReviewOnly
               onChange={(modelSelection) =>
                 updateSettings({
                   decisionFollowUp: { ...settings.decisionFollowUp, modelSelection },

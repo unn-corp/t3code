@@ -393,9 +393,10 @@ const make = Effect.gen(function* () {
         cause,
       }),
   });
-  const recoveryBlocked = isScheduleRecovery(initialRead);
+  const initiallyRecoveryBlocked = isScheduleRecovery(initialRead);
   const initial = yield* scheduleFromReadResult(schedulePath, initialRead);
   const stateRef = yield* SynchronizedRef.make<AgentDashboardReviewSchedule>(initial);
+  const recoveryBlockedRef = yield* SynchronizedRef.make(initiallyRecoveryBlocked);
 
   const persist = (state: AgentDashboardReviewSchedule) =>
     Effect.tryPromise({
@@ -408,7 +409,28 @@ const make = Effect.gen(function* () {
         }),
     });
 
-  if (!recoveryBlocked) yield* persist(yield* SynchronizedRef.get(stateRef));
+  if (!initiallyRecoveryBlocked) yield* persist(yield* SynchronizedRef.get(stateRef));
+
+  const recoverRepairedSchedule = Effect.gen(function* () {
+    if (!(yield* SynchronizedRef.get(recoveryBlockedRef))) return true;
+
+    const repairedRead = yield* Effect.tryPromise({
+      try: () => readSchedule(schedulePath),
+      catch: (cause) =>
+        new AgentDashboardReviewSchedulerError({
+          operation: "read repaired schedule",
+          message: "Failed to check whether the findings portfolio schedule was repaired.",
+          cause,
+        }),
+    });
+    if (isScheduleRecovery(repairedRead)) return false;
+
+    const repaired = yield* scheduleFromReadResult(schedulePath, repairedRead);
+    yield* SynchronizedRef.set(stateRef, repaired);
+    yield* persist(repaired);
+    yield* SynchronizedRef.set(recoveryBlockedRef, false);
+    return true;
+  });
 
   const collectPortfolio = (observedAt: string) =>
     Effect.gen(function* () {
@@ -484,7 +506,7 @@ const make = Effect.gen(function* () {
 
   const run = (force: boolean): AgentDashboardReviewSchedulerService["runNow"] =>
     Effect.gen(function* () {
-      if (recoveryBlocked) return null;
+      if (!(yield* recoverRepairedSchedule)) return null;
       const automationSettings = yield* settings.getSettings.pipe(
         Effect.map((current) => current.repositoryReview),
         Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.repositoryReview),
@@ -628,7 +650,7 @@ const make = Effect.gen(function* () {
   const runScheduled = run(false).pipe(Effect.asVoid);
 
   const touchHeartbeat = Effect.gen(function* () {
-    if (recoveryBlocked) return;
+    if (!(yield* recoverRepairedSchedule)) return;
     const automationSettings = yield* settings.getSettings.pipe(
       Effect.map((current) => current.repositoryReview),
       Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.repositoryReview),

@@ -10,9 +10,12 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   CommandId,
+  isAutomatedReviewCapableDriver,
+  isProviderDriverKind,
   MessageId,
   ThreadId,
   type AgentDashboardAutomationRun,
@@ -21,8 +24,11 @@ import {
   type AgentDashboardRepositoryPolicy,
   type ContinuousImprovementSettings,
   type DecisionFollowUpSettings,
+  type ModelSelection,
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
+  type ProviderDriverKind,
+  type ServerSettings as ServerSettingsConfig,
 } from "@t3tools/contracts";
 
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
@@ -35,6 +41,7 @@ import * as ServerSettings from "../serverSettings.ts";
 export const DECISION_FOLLOW_UP_KIND = "decision-follow-up";
 const POLL_INTERVAL = Duration.seconds(30);
 const DECISION_FOLLOW_UP_MONITOR_INTERVAL = Duration.seconds(10);
+const DECISION_FOLLOW_UP_MONITOR_TIMEOUT = Duration.hours(24);
 
 const severityWeight = { info: 1, low: 2, medium: 3, high: 4, critical: 5 } as const;
 const riskWeight = { low: 1, medium: 2, high: 3, critical: 4 } as const;
@@ -226,14 +233,15 @@ export const selectDecisionFollowUpCandidates = (input: {
 }): ReadonlyArray<DecisionFollowUpCandidate> => {
   const projects = new Map(input.projects.map((project) => [String(project.id), project]));
   const reminderCutoff = input.nowMs - input.settings.reminderDays * 24 * 60 * 60 * 1_000;
-  // A queued or running follow-up has not delivered a completed reminder.
-  // Keep it eligible so a later scan can surface or retry a stalled run.
-  const recentlyAsked = new Set(
+  // Active conversations remain responsible for their finding. A failed or
+  // cancelled terminal run may be retried, while a successful run suppresses
+  // reminders for the configured window.
+  const suppressedFindingIds = new Set(
     input.recentRuns.flatMap((run) =>
       run.kind === DECISION_FOLLOW_UP_KIND &&
       run.jobId !== null &&
-      run.status === "succeeded" &&
-      Date.parse(run.createdAt) > reminderCutoff
+      (isDecisionFollowUpRunActive(run) ||
+        (run.status === "succeeded" && Date.parse(run.createdAt) > reminderCutoff))
         ? [run.jobId]
         : [],
     ),
@@ -245,7 +253,7 @@ export const selectDecisionFollowUpCandidates = (input: {
         finding.disposition.state !== "open" ||
         finding.thread !== null ||
         finding.actionability === null ||
-        recentlyAsked.has(finding.id) ||
+        suppressedFindingIds.has(finding.id) ||
         !AgentDashboardStore.repositoryAutomationsEnabled(
           input.policies,
           finding.repository.projectId,
@@ -343,6 +351,29 @@ export class AgentDashboardDecisionFollowUp extends Context.Service<
   AgentDashboardDecisionFollowUpService
 >()("t3/agentDashboard/AgentDashboardDecisionFollowUp") {}
 
+const providerDriverForModelSelection = (
+  settings: Pick<ServerSettingsConfig, "providerInstances" | "providers">,
+  selection: ModelSelection,
+): ProviderDriverKind | undefined => {
+  const configuredInstance = settings.providerInstances[selection.instanceId];
+  if (configuredInstance !== undefined) return configuredInstance.driver;
+  if (
+    isProviderDriverKind(selection.instanceId) &&
+    (settings.providers as Record<string, unknown>)[selection.instanceId] !== undefined
+  ) {
+    return selection.instanceId;
+  }
+  return undefined;
+};
+
+export const isDecisionFollowUpModelSelectionSupported = (
+  settings: Pick<ServerSettingsConfig, "providerInstances" | "providers">,
+  selection: ModelSelection,
+): boolean => {
+  const driver = providerDriverForModelSelection(settings, selection);
+  return driver !== undefined && isAutomatedReviewCapableDriver(driver);
+};
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const store = yield* AgentDashboardStore.AgentDashboardStore;
@@ -352,6 +383,7 @@ const make = Effect.gen(function* () {
   const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
   const orchestration = yield* OrchestrationEngine.OrchestrationEngineService;
   const lastScanAt = yield* Ref.make<number | null>(null);
+  const scanLock = yield* Semaphore.make(1);
   const scope = yield* Effect.scope;
 
   const randomUuid = crypto.randomUUIDv4.pipe(
@@ -434,8 +466,41 @@ const make = Effect.gen(function* () {
         });
         return;
       }
+      const monitorStartedAt = Date.parse(input.run.startedAt ?? input.run.createdAt);
+      const monitorDeadline =
+        monitorStartedAt + Duration.toMillis(DECISION_FOLLOW_UP_MONITOR_TIMEOUT);
 
       for (;;) {
+        const now = yield* DateTime.now;
+        if (DateTime.toEpochMillis(now) >= monitorDeadline) {
+          const failedAt = DateTime.formatIso(now);
+          yield* dispatch({
+            type: "thread.turn.interrupt",
+            commandId: yield* commandId("monitor-timeout-interrupt"),
+            threadId,
+            createdAt: failedAt,
+          }).pipe(Effect.ignore);
+          yield* dispatch({
+            type: "thread.session.stop",
+            commandId: yield* commandId("monitor-timeout-stop"),
+            threadId,
+            createdAt: failedAt,
+          }).pipe(Effect.ignore);
+          const failedRun = transitionDecisionFollowUpRun(input.run, {
+            state: "error",
+            error: "The decision conversation exceeded the 24-hour monitoring limit.",
+            at: failedAt,
+          });
+          yield* history.upsert(failedRun);
+          yield* persistExternalAction({
+            run: failedRun,
+            findingId,
+            status: "failed",
+            result: failedRun.error ?? "The decision conversation timed out.",
+            occurredAt: failedAt,
+          });
+          return;
+        }
         const threadResult = yield* Effect.result(projection.getThreadShellById(threadId));
         if (Result.isFailure(threadResult)) {
           yield* Effect.logWarning("Decision Follow-up could not inspect its conversation", {
@@ -667,7 +732,7 @@ const make = Effect.gen(function* () {
             findingId: run.jobId,
           }).pipe(Effect.forkIn(scope));
         }),
-      { concurrency: "unbounded", discard: true },
+      { concurrency: 4, discard: true },
     );
   }).pipe(
     Effect.catchCause((cause) =>
@@ -677,74 +742,86 @@ const make = Effect.gen(function* () {
 
   yield* resumeInterruptedFollowUps;
 
-  const runOnce: AgentDashboardDecisionFollowUpService["runOnce"] = Effect.gen(function* () {
-    const currentSettings = yield* settingsService.getSettings.pipe(
-      Effect.mapError(
-        (cause) =>
-          new AgentDashboardDecisionFollowUpError({
-            operation: "read settings",
-            message: "T3 could not read Decision Follow-up settings.",
-            cause,
-          }),
-      ),
-    );
-    const settings = currentSettings.decisionFollowUp;
-    if (!settings.enabled) return null;
-    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-    const previousScanAt = yield* Ref.get(lastScanAt);
-    if (previousScanAt !== null && nowMs - previousScanAt < settings.intervalMinutes * 60 * 1_000) {
-      return null;
-    }
-    yield* Ref.set(lastScanAt, nowMs);
-
-    const [findings, policies, recentRuns, shell] = yield* Effect.all([
-      store.readFindings,
-      store.readRepositoryPolicies,
-      history.list,
-      projection.getShellSnapshot(),
-    ]).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AgentDashboardDecisionFollowUpError({
-            operation: "select findings",
-            message: "T3 could not load findings for Decision Follow-up.",
-            cause,
-          }),
-      ),
-    );
-    const candidates = selectDecisionFollowUpCandidates({
-      findings,
-      projects: shell.projects,
-      policies,
-      recentRuns,
-      settings,
-      continuousImprovement: currentSettings.continuousImprovement,
-      nowMs,
-    });
-    let launched = 0;
-    yield* Effect.forEach(
-      candidates,
-      (candidate) =>
-        Effect.gen(function* () {
-          const stable = yield* Effect.tryPromise({
-            try: () => AgentDashboardStore.isStableRepositoryPath(candidate.project.workspaceRoot),
-            catch: () => false,
-          }).pipe(Effect.orElseSucceed(() => false));
-          if (!stable) return;
-          yield* launchConversation(candidate, settings.modelSelection);
-          launched += 1;
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Decision Follow-up skipped a finding", {
-              findingId: candidate.finding.id,
+  const runOnce: AgentDashboardDecisionFollowUpService["runOnce"] = scanLock.withPermits(1)(
+    Effect.gen(function* () {
+      const currentSettings = yield* settingsService.getSettings.pipe(
+        Effect.mapError(
+          (cause) =>
+            new AgentDashboardDecisionFollowUpError({
+              operation: "read settings",
+              message: "T3 could not read Decision Follow-up settings.",
               cause,
             }),
-          ),
         ),
-      { concurrency: 1, discard: true },
-    );
-    return launched;
-  });
+      );
+      const settings = currentSettings.decisionFollowUp;
+      if (!settings.enabled) return null;
+      if (!isDecisionFollowUpModelSelectionSupported(currentSettings, settings.modelSelection)) {
+        return yield* new AgentDashboardDecisionFollowUpError({
+          operation: "validate model selection",
+          message: `The Decision Follow-up provider instance '${settings.modelSelection.instanceId}' does not support the automated-review runtime. Select an available Codex provider instance.`,
+        });
+      }
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const previousScanAt = yield* Ref.get(lastScanAt);
+      if (
+        previousScanAt !== null &&
+        nowMs - previousScanAt < settings.intervalMinutes * 60 * 1_000
+      ) {
+        return null;
+      }
+      yield* Ref.set(lastScanAt, nowMs);
+
+      const [findings, policies, recentRuns, shell] = yield* Effect.all([
+        store.readFindings,
+        store.readRepositoryPolicies,
+        history.list,
+        projection.getShellSnapshot(),
+      ]).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AgentDashboardDecisionFollowUpError({
+              operation: "select findings",
+              message: "T3 could not load findings for Decision Follow-up.",
+              cause,
+            }),
+        ),
+      );
+      const candidates = selectDecisionFollowUpCandidates({
+        findings,
+        projects: shell.projects,
+        policies,
+        recentRuns,
+        settings,
+        continuousImprovement: currentSettings.continuousImprovement,
+        nowMs,
+      });
+      let launched = 0;
+      yield* Effect.forEach(
+        candidates,
+        (candidate) =>
+          Effect.gen(function* () {
+            const stable = yield* Effect.tryPromise({
+              try: () =>
+                AgentDashboardStore.isStableRepositoryPath(candidate.project.workspaceRoot),
+              catch: () => false,
+            }).pipe(Effect.orElseSucceed(() => false));
+            if (!stable) return;
+            yield* launchConversation(candidate, settings.modelSelection);
+            launched += 1;
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Decision Follow-up skipped a finding", {
+                findingId: candidate.finding.id,
+                cause,
+              }),
+            ),
+          ),
+        { concurrency: 1, discard: true },
+      );
+      return launched;
+    }),
+  );
 
   const tick = runOnce.pipe(
     Effect.tap((launched) =>

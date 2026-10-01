@@ -12,11 +12,13 @@ import {
   type DecisionFollowUpSettings,
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
+  type ServerSettings,
 } from "@t3tools/contracts";
 
 import {
   buildDecisionFollowUpPrompt,
   createDecisionFollowUpRun,
+  isDecisionFollowUpModelSelectionSupported,
   observeDecisionFollowUpThread,
   resolveDecisionFollowUpRecovery,
   selectDecisionFollowUpCandidates,
@@ -186,7 +188,7 @@ describe("decision follow-up selection", () => {
     ).toEqual([]);
   });
 
-  it("keeps reminders eligible while a follow-up is still running", () => {
+  it("suppresses duplicate reminders while a follow-up is still running", () => {
     const running = {
       ...createDecisionFollowUpRun({
         id: "decision:running",
@@ -207,8 +209,31 @@ describe("decision follow-up selection", () => {
         settings,
         continuousImprovement,
         nowMs: NOW,
-      }).map((item) => item.finding.id),
-    ).toEqual(["above-risk"]);
+      }),
+    ).toEqual([]);
+  });
+
+  it("accepts only providers that support the automated-review runtime", () => {
+    const providerSettings = {
+      providerInstances: {
+        codex_work: { driver: "codex" },
+        claude_work: { driver: "claudeAgent" },
+      },
+      providers: {},
+    } as unknown as Pick<ServerSettings, "providerInstances" | "providers">;
+
+    expect(
+      isDecisionFollowUpModelSelectionSupported(providerSettings, {
+        instanceId: ProviderInstanceId.make("codex_work"),
+        model: "gpt-5.6-luna",
+      }),
+    ).toBe(true);
+    expect(
+      isDecisionFollowUpModelSelectionSupported(providerSettings, {
+        instanceId: ProviderInstanceId.make("claude_work"),
+        model: "claude-sonnet",
+      }),
+    ).toBe(false);
   });
 
   const turn = (
