@@ -141,15 +141,17 @@ function DashboardUpdateRow({
             ) : null}
           </div>
         </div>
-        <Button
-          aria-label={`Dismiss update ${item.title}`}
-          disabled={dismissing}
-          onClick={() => onDismiss(item)}
-          size="icon-xs"
-          variant="ghost"
-        >
-          {dismissing ? <LoaderIcon className="animate-spin" /> : <XIcon />}
-        </Button>
+        {item.durableCard ? (
+          <Button
+            aria-label={`Dismiss update ${item.title}`}
+            disabled={dismissing}
+            onClick={() => onDismiss(item)}
+            size="icon-xs"
+            variant="ghost"
+          >
+            {dismissing ? <LoaderIcon className="animate-spin" /> : <XIcon />}
+          </Button>
+        ) : null}
       </div>
     </div>
   );
