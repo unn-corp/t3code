@@ -57,7 +57,7 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
-  it.effect("always grants pull-requests and gates browser and device access independently", () =>
+it.effect("always grants pull-requests and gates browser and device access independently", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);
     const withPreview = yield* registry.issue({
@@ -119,10 +119,10 @@ it.effect("builds MCP endpoints from the bound server host", () =>
     for (const [hostname, expectedEndpoint] of cases) {
       const registry = yield* makeRegistry(() => 1_000, makeFakeHttpServer(hostname));
       const issued = yield* registry.issue({
-          threadId: ThreadId.make(`thread-${hostname}`),
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          capabilities: new Set(["preview"]),
-          runtimeMode: "full-access",
+        threadId: ThreadId.make(`thread-${hostname}`),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["preview"]),
+        runtimeMode: "full-access",
       });
       expect(issued.config.endpoint).toBe(expectedEndpoint);
     }

@@ -1,11 +1,5 @@
 import type { RuntimeMode } from "@t3tools/contracts";
-import {
-  LockIcon,
-  LockOpenIcon,
-  PenLineIcon,
-  SparklesIcon,
-  type LucideIcon,
-} from "lucide-react";
+import { LockIcon, LockOpenIcon, PenLineIcon, SparklesIcon, type LucideIcon } from "lucide-react";
 
 export const RUNTIME_MODE_PRESENTATION: Record<
   RuntimeMode,
