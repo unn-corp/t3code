@@ -1,5 +1,5 @@
 import type { AgentNotificationEvent, AgentNotificationKind } from "@t3tools/contracts";
-import { projectThreadAwareness, type AgentAwarenessPhase } from "@t3tools/shared/agentAwareness";
+import { projectThreadAwarenessV2, type AgentAwarenessPhase } from "@t3tools/shared/agentAwareness";
 import { useEffect, useRef } from "react";
 
 import { useProjects, useThreadShells } from "../state/entities";
@@ -72,10 +72,10 @@ export function DesktopAgentNotificationCoordinator({ router }: { readonly route
       const project = projectsByKey.get(`${thread.environmentId}:${thread.projectId}`);
       if (!project) continue;
 
-      const awareness = projectThreadAwareness({
+      const awareness = projectThreadAwarenessV2({
         environmentId: thread.environmentId,
         project,
-        thread,
+        thread: thread.source,
       });
       const key = `${thread.environmentId}:${thread.id}`;
       const next = {

@@ -1,10 +1,15 @@
 import { type ReactNode } from "react";
 
 import { useResizableWidth } from "~/hooks/useResizableWidth";
-import { cn } from "~/lib/utils";
 
-import { RIGHT_PANEL_SHEET_CLASS_NAME } from "../rightPanelLayout";
-import { useViewportWidth } from "./preview/PreviewPanelShell";
+import { useSyncExternalStore } from "react";
+const subscribeViewport = (listener: () => void) => {
+  window.addEventListener("resize", listener);
+  return () => window.removeEventListener("resize", listener);
+};
+const getViewportWidth = () => window.innerWidth;
+const useViewportWidth = () =>
+  useSyncExternalStore(subscribeViewport, getViewportWidth, () => 1024);
 import { RightPanelResizeHandle } from "./preview/RightPanelResizeHandle";
 import { Sheet, SheetPopup } from "./ui/sheet";
 
@@ -47,14 +52,11 @@ export function RightPanelSheet(props: {
         side="right"
         showCloseButton={false}
         keepMounted
-        className={cn(
+        className={
           props.maximized
-            ? // Full-bleed. A slide-over capped at 24rem leaves most of a phone
-              // screen unused, and the panel's own chrome needs that room more
-              // than a peek at the chat behind it does.
-              "w-screen max-w-none border-s-0"
-            : RIGHT_PANEL_SHEET_CLASS_NAME,
-        )}
+            ? "w-screen max-w-none"
+            : "min-w-80 max-[760px]:min-w-0 wco:mt-[env(titlebar-area-height)] wco:h-[calc(100%-env(titlebar-area-height))] wco:max-h-[calc(100%-env(titlebar-area-height))]"
+        }
         // Inline width beats the class so a drag survives re-render, and
         // maxWidth has to come with it or the class ceiling clamps the drag.
         style={props.maximized ? undefined : { width: `${width}px`, maxWidth: "100vw" }}

@@ -15,7 +15,7 @@ import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as ServerConfig from "../config.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import * as AgentDashboardSecurityScheduler from "./AgentDashboardSecurityScheduler.ts";
 

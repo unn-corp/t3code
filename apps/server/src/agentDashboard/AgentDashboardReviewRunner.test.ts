@@ -21,8 +21,8 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as OrchestrationEngine from "../agentDashboard/AutomationOrchestration.ts";
+import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
@@ -321,8 +321,7 @@ it.effect("starts the provider turn before snoozing the internal review thread",
     const startup = {
       awaitCommandReady: Effect.void,
       markHttpListening: Effect.void,
-      markRunningProviderSessionsForContinuation: Effect.succeed([]),
-      clearProviderSessionContinuationMarkers: () => Effect.void,
+
       enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) => effect,
     } satisfies ServerRuntimeStartup.ServerRuntimeStartup["Service"];
     const reviewModelSelection = {

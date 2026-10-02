@@ -1,3 +1,4 @@
+import { PullRequestGlyph } from "./pullRequest/pullRequestIcons";
 /**
  * Desktop-only blue edge rail for quick project/thread glance information.
  * The hover drawer keeps lightweight status readouts and navigation actions
@@ -12,7 +13,6 @@ import {
   ActivityIcon,
   GaugeIcon,
   GitBranchIcon,
-  GitPullRequestIcon,
   ListFilterIcon,
   MessagesSquareIcon,
   PlusIcon,
@@ -80,7 +80,7 @@ function DockItemContent({
           {detail}
         </span>
       </span>
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] border border-sidebar-border/70 bg-sidebar text-sidebar-muted-foreground shadow-xs/5 transition-transform duration-150 ease-out group-hover/dock-item:scale-110 group-focus-visible/dock-item:scale-110 motion-reduce:transition-none motion-reduce:group-hover/dock-item:scale-100 motion-reduce:group-focus-visible/dock-item:scale-100">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-sidebar-border/70 bg-sidebar text-sidebar-muted-foreground shadow-xs/5 transition-transform duration-150 ease-out group-hover/dock-item:scale-110 group-focus-visible/dock-item:scale-110 motion-reduce:transition-none motion-reduce:group-hover/dock-item:scale-100 motion-reduce:group-focus-visible/dock-item:scale-100">
         {icon}
       </span>
     </>
@@ -150,7 +150,7 @@ function UsageRemainingReadout({ usage }: { readonly usage: GlanceRailUsage }) {
           />
         </span>
       </span>
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] border border-sidebar-border/70 bg-sidebar text-sidebar-muted-foreground shadow-xs/5 transition-transform duration-150 ease-out group-hover/dock-item:scale-110 motion-reduce:transition-none motion-reduce:group-hover/dock-item:scale-100">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-sidebar-border/70 bg-sidebar text-sidebar-muted-foreground shadow-xs/5 transition-transform duration-150 ease-out group-hover/dock-item:scale-110 motion-reduce:transition-none motion-reduce:group-hover/dock-item:scale-100">
         <GaugeIcon aria-hidden="true" className="size-5" />
       </span>
     </div>
@@ -195,7 +195,7 @@ export function GlanceRail() {
     activeServerConfig?.providers.find((provider) => provider.instanceId === instanceId) ?? null;
   const activeProvider =
     providerForInstance(composerActiveProvider) ??
-    providerForInstance(activeThreadShell?.session?.providerInstanceId) ??
+    providerForInstance(activeThreadShell?.runtime?.providerInstanceId) ??
     providerForInstance(activeThreadShell?.modelSelection.instanceId) ??
     providerForInstance(activeProjectDefaultModelSelection?.instanceId);
   const usageLimits = activeProvider?.usageLimits;
@@ -262,7 +262,7 @@ export function GlanceRail() {
       data-glance-rail=""
     >
       <div className="pointer-events-none absolute right-0 top-1/2 w-[min(18rem,calc(100vw-1rem))] -translate-y-1/2">
-        <div className="pointer-events-auto relative isolate translate-x-[calc(100%-0.25rem)] transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-linear-to-l before:from-black/55 before:via-black/25 before:to-transparent before:opacity-0 before:transition-opacity before:duration-200 before:content-[''] group-focus-within/glance:translate-x-0 group-focus-within/glance:before:opacity-100 group-hover/glance:translate-x-0 group-hover/glance:before:opacity-100 motion-reduce:transition-none motion-reduce:before:transition-none">
+        <div className="pointer-events-auto relative isolate translate-x-[calc(100%-0.25rem)] transition-transform duration-200 ease-drawer before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-linear-to-l before:from-black/55 before:via-black/25 before:to-transparent before:opacity-0 before:transition-opacity before:duration-200 before:content-[''] group-focus-within/glance:translate-x-0 group-focus-within/glance:before:opacity-100 group-hover/glance:translate-x-0 group-hover/glance:before:opacity-100 motion-reduce:transition-none motion-reduce:before:transition-none">
           <div className="max-h-[calc(100dvh-1.5rem)] overflow-y-auto p-2.5 text-sidebar-foreground">
             <div className="space-y-1.5 opacity-0 transition-opacity duration-150 group-focus-within/glance:opacity-100 group-hover/glance:opacity-100 motion-reduce:transition-none">
               <DockReadout
@@ -305,16 +305,13 @@ export function GlanceRail() {
                       onClick={() => setStatScope("project")}
                       type="button"
                     >
-                      <span
-                        className="block max-w-40 truncate"
-                        title={activeProjectTarget?.projectName}
-                      >
+                      <span className="block max-w-40 truncate">
                         {activeProjectTarget?.projectName ?? "No project"}
                       </span>
                     </button>
                   </span>
                 </span>
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] border border-sidebar-border/70 bg-sidebar text-sidebar-muted-foreground shadow-xs/5 transition-transform duration-150 ease-out group-hover/dock-item:scale-110 motion-reduce:transition-none motion-reduce:group-hover/dock-item:scale-100">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-sidebar-border/70 bg-sidebar text-sidebar-muted-foreground shadow-xs/5 transition-transform duration-150 ease-out group-hover/dock-item:scale-110 motion-reduce:transition-none motion-reduce:group-hover/dock-item:scale-100">
                   <ListFilterIcon aria-hidden="true" className="size-5" />
                 </span>
               </div>
@@ -394,7 +391,7 @@ export function GlanceRail() {
               >
                 <DockItemContent
                   detail="Review and merge changes"
-                  icon={<GitPullRequestIcon aria-hidden="true" className="size-5" />}
+                  icon={<PullRequestGlyph.pullRequest aria-hidden="true" className="size-5" />}
                   title="Pull requests"
                 />
               </Link>
@@ -411,7 +408,7 @@ export function GlanceRail() {
 
         <span
           aria-hidden="true"
-          className="pointer-events-auto absolute right-0 top-1/2 h-24 w-1 -translate-y-1/2 rounded-l-full bg-primary/75 shadow-[0_0_12px_color-mix(in_srgb,var(--primary)_35%,transparent)] transition-[height,top,transform] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-focus-within/glance:top-0 group-focus-within/glance:h-full group-focus-within/glance:translate-y-0 group-hover/glance:top-0 group-hover/glance:h-full group-hover/glance:translate-y-0 motion-reduce:transition-none"
+          className="pointer-events-auto absolute right-0 top-1/2 h-24 w-1 -translate-y-1/2 rounded-l-full bg-primary/75 glance-rail-highlight-shadow transition-[height,top,transform] duration-200 ease-drawer group-focus-within/glance:top-0 group-focus-within/glance:h-full group-focus-within/glance:translate-y-0 group-hover/glance:top-0 group-hover/glance:h-full group-hover/glance:translate-y-0 motion-reduce:transition-none"
         />
       </div>
     </aside>

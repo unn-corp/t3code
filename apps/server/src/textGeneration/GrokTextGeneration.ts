@@ -12,7 +12,7 @@ import {
   type GrokSettings,
   type ModelSelection,
 } from "@t3tools/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
@@ -288,6 +288,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       const { prompt, outputSchema } = buildBranchNamePrompt({
         message: input.message,
         attachments: input.attachments,
+        naming: input.naming,
       });
 
       const generated = yield* runGrokJson({
@@ -299,7 +300,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       });
 
       return {
-        branch: sanitizeBranchFragment(generated.branch),
+        branch: formatGeneratedBranchName(generated.branch, input.naming),
       };
     });
 

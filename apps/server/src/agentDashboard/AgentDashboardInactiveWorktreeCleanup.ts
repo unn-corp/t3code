@@ -22,7 +22,7 @@ import type {
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 

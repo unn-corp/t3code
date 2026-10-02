@@ -20,7 +20,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
 import * as AgentDashboardReviewJobService from "./AgentDashboardReviewJobService.ts";
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";

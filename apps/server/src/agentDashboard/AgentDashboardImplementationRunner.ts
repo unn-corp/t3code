@@ -21,7 +21,7 @@ import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import * as OrchestrationEngine from "../agentDashboard/AutomationOrchestration.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";

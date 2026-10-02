@@ -1,3 +1,4 @@
+import type * as React from "react";
 import type {
   EnvironmentId,
   GitHubAccountId,
@@ -6,18 +7,20 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { ChevronDownIcon } from "lucide-react";
+import { useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
-import { readLocalApi } from "~/localApi";
-import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
-import { useProjects } from "~/state/entities";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Button } from "../ui/button";
+import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { groupPullRequestChecks } from "./pullRequestDetail.logic";
 import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
@@ -33,13 +36,13 @@ import {
 function LazyChecksBody({
   environmentId,
   reference,
-  githubAccountId,
   threadRef,
+  githubAccountId,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  githubAccountId?: GitHubAccountId | null;
   threadRef: ScopedThreadRef | null;
+  githubAccountId?: GitHubAccountId | null | undefined;
 }) {
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
@@ -57,66 +60,77 @@ function LazyChecksBody({
   return (
     <ChecksBody
       checks={detailQuery.data.checks}
-      {...(githubAccountId === undefined ? {} : { githubAccountId })}
       threadRef={threadRef}
+      githubAccountId={githubAccountId}
     />
   );
 }
 
 function ChecksBody({
   checks,
-  githubAccountId,
   threadRef,
+  githubAccountId,
 }: {
   checks: ReadonlyArray<PullRequestCheck>;
-  githubAccountId?: GitHubAccountId | null;
   threadRef: ScopedThreadRef | null;
+  githubAccountId?: GitHubAccountId | null | undefined;
 }) {
   const openLink = useOpenLink(threadRef);
+  const [showAll, setShowAll] = useState(false);
+  const { attention, running, completed } = groupPullRequestChecks(checks);
+  const canCollapse = attention.length + running.length > 0 && completed.length > 0;
+  const visibleChecks = [...attention, ...running, ...(showAll || !canCollapse ? completed : [])];
   if (checks.length === 0) {
     return <p className="text-muted-foreground text-xs">No checks reported</p>;
   }
   return (
-    <ul className="flex flex-col gap-1">
-      {/* Keyed by position as well as by name: the host is the one that decides how many runs
+    <>
+      <ScrollArea className="max-h-64">
+        <ul className="flex flex-col gap-1">
+          {/* Keyed by position as well as by name: the host is the one that decides how many runs
           share a name, and a repeated key is a rendering fault rather than a wrong list. */}
-      {checks.map((check, index) => (
-        <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
-          <PullRequestCheckStatusIcon status={check.status} />
-          <Tooltip>
-            <TooltipTrigger
-              render={<span className="min-w-0 flex-1 truncate">{check.name}</span>}
-            />
-            <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-          </Tooltip>
-          <span className="shrink-0 text-muted-foreground">
-            {pullRequestCheckStatusLabel(check)}
-          </span>
-          {check.url === null ? null : (
-            <button
-              type="button"
-              className="shrink-0 text-primary hover:underline"
-              onClick={() => {
-                if (threadRef !== null) {
-                  void openLink(check.url ?? "").catch(() => undefined);
-                  return;
-                }
-                const api = readLocalApi();
-                if (api) {
-                  void openExternalWithGitHubAccount(
-                    api.shell,
-                    check.url ?? "",
-                    githubAccountId,
-                  ).catch(() => undefined);
-                }
-              }}
-            >
-              Details
-            </button>
-          )}
-        </li>
-      ))}
-    </ul>
+          {visibleChecks.map((check, index) => (
+            <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
+              <PullRequestCheckStatusIcon status={check.status} />
+              <Tooltip>
+                <TooltipTrigger
+                  render={<span className="min-w-0 flex-1 truncate">{check.name}</span>}
+                />
+                <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
+              </Tooltip>
+              <span className="shrink-0 text-muted-foreground">
+                {pullRequestCheckStatusLabel(check)}
+              </span>
+              {check.url === null ? null : (
+                <button
+                  type="button"
+                  className="shrink-0 text-primary hover:underline"
+                  onClick={() => {
+                    if (!check.url) return;
+                    void openLink(check.url, { githubAccountId }).catch((error: unknown) => {
+                      console.error(error);
+                      toastManager.add({ type: "error", title: "Unable to open check details" });
+                    });
+                  }}
+                >
+                  Details
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </ScrollArea>
+      {canCollapse ? (
+        <Button
+          variant="ghost"
+          size="xs"
+          aria-expanded={showAll}
+          onClick={() => setShowAll(!showAll)}
+        >
+          {showAll ? "Show less" : "Show all"}
+        </Button>
+      ) : null}
+    </>
   );
 }
 
@@ -133,9 +147,11 @@ export function PullRequestChecksPopover({
   stale = false,
   environmentId,
   reference,
-  githubAccountId,
   threadRef = null,
+  githubAccountId,
+  variant = "icon",
   className,
+  render,
 }: {
   checksState: PullRequestChecksState;
   /** The checks already in hand, for the detail header. Absent on a listing row. */
@@ -145,20 +161,14 @@ export function PullRequestChecksPopover({
   reference?: PullRequestRef;
   /** Thread the popover sits beside; a listing row has none. */
   threadRef?: ScopedThreadRef | null;
-  githubAccountId?: GitHubAccountId | null;
+  githubAccountId?: GitHubAccountId | null | undefined;
+  variant?: "icon" | "count";
   className?: string;
+  render?: React.ReactElement;
 }) {
-  const projects = useProjects();
-  const resolvedGitHubAccountId =
-    githubAccountId ??
-    (environmentId === undefined || reference === undefined
-      ? null
-      : (projects.find(
-          (project) =>
-            project.environmentId === environmentId && project.id === reference.projectId,
-        )?.githubAccountId ?? null));
   const presentation = pullRequestChecksStatePresentation(checksState);
   // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
+  const runningCount = checks?.filter((check) => check.status === "pending").length ?? 0;
   const summary = checks === undefined || stale ? null : summarizePullRequestChecks(checks);
   return (
     <Popover>
@@ -166,18 +176,36 @@ export function PullRequestChecksPopover({
           not valid inside one. The click is stopped here so opening the checks does not also
           select the row it sits on. */}
       <PopoverTrigger
-        nativeButton={false}
+        nativeButton={variant === "count"}
+        aria-label={
+          variant === "count"
+            ? `Open checks: ${summary ?? presentation.label}`
+            : `Checks: ${presentation.label}`
+        }
         render={
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label={`Checks: ${presentation.label}`}
-            className={cn("inline-flex shrink-0 cursor-pointer items-center", className)}
-          />
+          variant === "count" ? (
+            (render ?? <Button variant="ghost" size="sm" className={className} />)
+          ) : (
+            <span
+              role="button"
+              tabIndex={0}
+              className={cn("inline-flex shrink-0 cursor-pointer items-center", className)}
+            />
+          )
         }
         onClick={(event) => event.stopPropagation()}
       >
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
+        {variant === "count" ? (
+          <>
+            {checks !== undefined && runningCount > 0 ? (
+              <span className="tabular-nums">
+                {runningCount}/{checks.length}
+              </span>
+            ) : null}
+            <ChevronDownIcon aria-hidden className="size-3" />
+          </>
+        ) : null}
       </PopoverTrigger>
       <PopoverPopup align="start" width="md" side="bottom">
         <p className="mb-2 font-medium text-sm">{presentation.label}</p>
@@ -187,16 +215,12 @@ export function PullRequestChecksPopover({
             Check details are out of date. Refresh the pull request to update them.
           </p>
         ) : checks !== undefined ? (
-          <ChecksBody
-            checks={checks}
-            githubAccountId={resolvedGitHubAccountId}
-            threadRef={threadRef}
-          />
+          <ChecksBody checks={checks} threadRef={threadRef} githubAccountId={githubAccountId} />
         ) : environmentId !== undefined && reference !== undefined ? (
           <LazyChecksBody
             environmentId={environmentId}
+            githubAccountId={githubAccountId}
             reference={reference}
-            githubAccountId={resolvedGitHubAccountId}
             threadRef={threadRef}
           />
         ) : null}

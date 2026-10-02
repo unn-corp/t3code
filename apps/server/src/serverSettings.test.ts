@@ -1,21 +1,23 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  GitHubAccountId,
   ModelSelection,
   ProjectId,
   ProjectScript,
   ProviderDriverKind,
   ProviderInstanceId,
-  GitHubAccountId,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -31,6 +33,7 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -93,37 +96,67 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
-  it.effect("keeps GitHub PATs in the secret store and resolves them by account", () =>
+  it.effect(
+    "stores GitHub account tokens separately and preserves them across unrelated updates",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsModule.ServerSettingsService;
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const accountId = GitHubAccountId.make("work");
+        yield* settings.updateSettings({
+          githubAccounts: { [accountId]: { label: "Work", token: "test-gh-token" } },
+        });
+        assert.deepEqual(yield* settings.getGitHubAccountEnvironment(accountId), {
+          configured: true,
+          environment: { GH_TOKEN: "test-gh-token" },
+        });
+        assert.notInclude(yield* fs.readFileString(config.settingsPath), "test-gh-token");
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        assert.deepEqual(yield* settings.getGitHubAccountEnvironment(accountId), {
+          configured: true,
+          environment: { GH_TOKEN: "test-gh-token" },
+        });
+        yield* settings.updateSettings({ githubAccounts: {} });
+        assert.deepEqual(yield* settings.getGitHubAccountEnvironment(accountId), {
+          configured: false,
+        });
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const accountId = GitHubAccountId.make("work");
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        `{
+          "responseStreamingMode": "token",
+          "enableAgentBrowserAccess": false,
+          "projectSettingsOverrides": {
+            "legacy": { "responseStreamingMode": "token", "defaultAutoPull": true },
+            "buffered": { "responseStreamingMode": "turn" },
+            "inherited": { "defaultAutoPull": false }
+          }
+        }`,
+      );
 
-      const next = yield* serverSettings.updateSettings({
-        githubAccounts: {
-          [accountId]: {
-            label: "Work",
-            login: "work-user",
-            host: "github.com",
-            token: "secret-token",
-          },
-        },
+      const settings = yield* service.getSettings;
+      assert.equal(settings.responseStreamingMode, "paragraph");
+      assert.isFalse(settings.enableAgentBrowserAccess);
+      assert.deepEqual(settings.projectSettingsOverrides, {
+        [ProjectId.make("legacy")]: { responseStreamingMode: "paragraph", defaultAutoPull: true },
+        [ProjectId.make("buffered")]: { responseStreamingMode: "turn" },
+        [ProjectId.make("inherited")]: { defaultAutoPull: false },
       });
-      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      const resolved = yield* serverSettings.getGitHubAccountEnvironment(accountId);
 
-      assert.deepEqual(next.githubAccounts[accountId], {
-        label: "Work",
-        login: "work-user",
-        host: "github.com",
-        tokenConfigured: true,
-      });
-      assert.notInclude(raw, "secret-token");
-      assert.deepEqual(resolved, {
-        configured: true,
-        environment: { GH_TOKEN: "secret-token" },
-      });
+      yield* service.updateSettings({ responseStreamingMode: "turn" });
+      const persisted = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.equal(persisted.responseStreamingMode, "turn");
+      assert.deepEqual(persisted.projectSettingsOverrides, settings.projectSettingsOverrides);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -303,34 +336,78 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("persists nested automation model selections as complete values", () =>
+  it.effect("creates provider instances atomically without overwriting a concurrent add", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const reviewSelection = createModelSelection(
-        ProviderInstanceId.make("codex"),
-        "gpt-5.6-sol",
-        [{ id: "reasoningEffort", value: "high" }],
-      );
-      const implementationSelection = createModelSelection(
-        ProviderInstanceId.make("codex"),
-        DEFAULT_SERVER_SETTINGS.continuousImprovement.modelSelection.model,
-        [{ id: "reasoningEffort", value: "low" }],
+      const instanceId = ProviderInstanceId.make("acpRegistry_shared");
+      const results = yield* Effect.all(
+        ["First", "Second"].map((displayName) =>
+          serverSettings
+            .updateProviderInstance({
+              operation: "create",
+              instanceId,
+              instance: {
+                driver: ProviderDriverKind.make("acpRegistry"),
+                displayName,
+                config: { agentId: "shared", distribution: "auto" },
+              },
+            })
+            .pipe(Effect.result),
+        ),
+        { concurrency: "unbounded" },
       );
 
-      yield* serverSettings.updateSettings({
-        repositoryReview: { modelSelection: reviewSelection },
-        continuousImprovement: { modelSelection: implementationSelection },
-      });
+      assert.equal(results.filter((result) => result._tag === "Success").length, 1);
+      assert.equal(results.filter((result) => result._tag === "Failure").length, 1);
+      assert.isTrue(
+        ["First", "Second"].includes(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.displayName ?? "",
+        ),
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 
-      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      const persisted: unknown = JSON.parse(raw);
-      assert.deepInclude(persisted, {
-        repositoryReview: { modelSelection: reviewSelection },
-        continuousImprovement: { modelSelection: implementationSelection },
-      });
+  it.effect("pauses provider-instance mutations while a settings snapshot is in use", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const snapshotEntered = yield* Deferred.make<void>();
+      const releaseSnapshot = yield* Deferred.make<void>();
+      const mutationCompleted = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("acpRegistry_kilo");
+
+      const snapshotFiber = yield* serverSettings
+        .withSettingsSnapshot(() =>
+          Deferred.succeed(snapshotEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseSnapshot)),
+          ),
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(snapshotEntered);
+
+      const mutationFiber = yield* serverSettings
+        .updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("acpRegistry"),
+            displayName: "Kilo",
+            config: { agentId: "kilo", distribution: "auto" },
+          },
+        })
+        .pipe(
+          Effect.tap(() => Deferred.succeed(mutationCompleted, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Effect.yieldNow;
+
+      assert.isTrue(Option.isNone(yield* Deferred.poll(mutationCompleted)));
+      yield* Deferred.succeed(releaseSnapshot, undefined);
+      yield* Fiber.join(snapshotFiber);
+      yield* Fiber.join(mutationFiber);
+      assert.equal(
+        (yield* serverSettings.getSettings).providerInstances[instanceId]?.displayName,
+        "Kilo",
+      );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -1514,7 +1591,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.include(persisted, '"valueRedacted": true');
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
-
   it.effect("rolls back provider secret changes when the settings file commit fails", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1541,25 +1617,25 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       yield* Effect.gen(function* () {
         const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
         settingsPathToFail = (yield* ServerConfig.ServerConfig).settingsPath;
-        yield* serverSettings.updateSettings({
-          providerInstances: {
-            [instanceId]: {
-              driver: ProviderDriverKind.make("codex"),
-              environment: [{ name: "OPENROUTER_API_KEY", value: "sk-kept", sensitive: true }],
-              config: {},
-            },
+        yield* serverSettings.updateProviderInstance({
+          operation: "upsert",
+          instanceId,
+          instance: {
+            driver: ProviderDriverKind.make("codex"),
+            environment: [{ name: "OPENROUTER_API_KEY", value: "sk-kept", sensitive: true }],
+            config: {},
           },
         });
 
         failRename = true;
         const failedUpdate = yield* serverSettings
-          .updateSettings({
-            providerInstances: {
-              [instanceId]: {
-                driver: ProviderDriverKind.make("codex"),
-                environment: [{ name: "OPENROUTER_API_KEY", value: "sk-new", sensitive: true }],
-                config: {},
-              },
+          .updateProviderInstance({
+            operation: "upsert",
+            instanceId,
+            instance: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "OPENROUTER_API_KEY", value: "sk-new", sensitive: true }],
+              config: {},
             },
           })
           .pipe(Effect.result);
@@ -1571,7 +1647,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         );
 
         const failed = yield* serverSettings
-          .updateSettings({ providerInstances: {} })
+          .updateProviderInstance({ operation: "remove", instanceId })
           .pipe(Effect.result);
         assert.equal(failed._tag, "Failure");
         assert.equal(

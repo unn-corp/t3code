@@ -1,7 +1,7 @@
 import {
-  type ApprovalRequestId,
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
+  type RuntimeRequestId,
 } from "@t3tools/contracts";
 import { memo } from "react";
 import { EllipsisIcon, TriangleAlertIcon } from "lucide-react";
@@ -11,13 +11,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ComposerPendingApprovalActionsProps {
-  requestId: ApprovalRequestId;
+  requestId: RuntimeRequestId;
   isResponding: boolean;
-  /** Hidden on Grok: session-allow cancels the turn (pingdotgg/t3code#6502). */
-  hideSessionAllow?: boolean;
+  canRespond: boolean;
   options?: ReadonlyArray<ProviderApprovalOption> | undefined;
   onRespondToApproval: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,
   ) => Promise<unknown>;
 }
@@ -32,21 +31,14 @@ const DEFAULT_APPROVAL_OPTIONS = [
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
-  hideSessionAllow = false,
+  canRespond,
   options = DEFAULT_APPROVAL_OPTIONS,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
-  const visibleOptions = options.filter(
-    (option) =>
-      !(
-        hideSessionAllow &&
-        (option.decision === "acceptForSession" || option.decision === "acceptAlways")
-      ),
-  );
-  const primaryOptions = visibleOptions.filter(
+  const primaryOptions = options.filter(
     (option) => option.decision === "decline" || option.decision === "accept",
   );
-  const moreOptions = visibleOptions.filter(
+  const moreOptions = options.filter(
     (option) => option.decision !== "decline" && option.decision !== "accept",
   );
 
@@ -58,7 +50,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             key={option.decision}
             size="xs"
             variant={option.decision === "accept" ? "default" : "outline"}
-            disabled={isResponding}
+            disabled={isResponding || !canRespond}
             aria-description={option.warning}
             onClick={() => void onRespondToApproval(requestId, option.decision)}
           >

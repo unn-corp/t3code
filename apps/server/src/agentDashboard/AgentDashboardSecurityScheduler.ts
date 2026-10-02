@@ -18,7 +18,7 @@ import type { AgentDashboardSecuritySchedule } from "@t3tools/contracts";
 
 import * as AgentDashboardCollectors from "./AgentDashboardCollectors.ts";
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
 
 export const SECURITY_SCHEDULE_ID = "t3-security-collector";

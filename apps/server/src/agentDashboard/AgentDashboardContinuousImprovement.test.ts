@@ -25,7 +25,7 @@ import {
   type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -93,6 +93,10 @@ const makeProjection = (input: {
 
 const makeSettingsService = (getSettings: () => ServerSettingsValue) =>
   ({
+    updateProviderInstance: () => Effect.die("unused"),
+    withSettingsSnapshot: <A, E, R>(
+      use: (settings: import("@t3tools/contracts").ServerSettings) => Effect.Effect<A, E, R>,
+    ) => Effect.flatMap(Effect.sync(getSettings), use),
     start: Effect.void,
     ready: Effect.void,
     getSettings: Effect.sync(getSettings),
@@ -128,8 +132,7 @@ const makeContinuousImprovementTestLayer = (input: {
       Layer.succeed(ServerRuntimeStartup.ServerRuntimeStartup, {
         awaitCommandReady: Effect.never.pipe(Effect.asVoid),
         markHttpListening: Effect.void,
-        markRunningProviderSessionsForContinuation: Effect.succeed([]),
-        clearProviderSessionContinuationMarkers: () => Effect.void,
+
         enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) => effect,
       }),
     ),

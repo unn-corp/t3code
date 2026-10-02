@@ -836,33 +836,14 @@ function feedLevelForState(state: NativeAgentState): NativeAgentFeedItem["level"
 }
 
 function resolveAgentState(thread: EnvironmentThreadShell): NativeAgentState {
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput) {
-    return "needs-input";
-  }
-
-  switch (thread.latestTurn?.state) {
-    case "running":
-      return "running";
-    case "error":
-      return "error";
-    case "completed":
-      return "completed";
-    case "interrupted":
-      return "paused";
-  }
-
-  switch (thread.session?.status) {
-    case "starting":
-    case "running":
-      return "running";
-    case "error":
-      return "error";
-    case "stopped":
-    case "interrupted":
-      return "paused";
-    default:
-      return "idle";
-  }
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return "needs-input";
+  const status = thread.runtime?.status ?? thread.latestRun?.status;
+  if (status === "failed") return "error";
+  if (["preparing", "queued", "starting", "running", "waiting"].includes(status ?? ""))
+    return "running";
+  if (status === "completed") return "completed";
+  if (status === "interrupted" || status === "cancelled") return "paused";
+  return "idle";
 }
 
 export function nativeAgentStateLabel(state: NativeAgentState): string {
@@ -1333,17 +1314,17 @@ export function buildNativeResearchRecords(
       const activeThreads = group.threads.filter(
         (thread) =>
           thread.archivedAt === null &&
-          (thread.latestTurn?.state === "running" ||
-            thread.session?.status === "running" ||
-            thread.session?.status === "starting"),
+          (thread.latestRun?.status === "running" ||
+            thread.runtime?.status === "running" ||
+            thread.runtime?.status === "starting"),
       );
       const latestThread = group.threads.toSorted(compareDashboardRecency)[0] ?? null;
       const needsAttention = group.threads.some(
         (thread) =>
           thread.hasPendingApprovals ||
           thread.hasPendingUserInput ||
-          thread.latestTurn?.state === "error" ||
-          thread.session?.status === "error",
+          thread.latestRun?.status === "failed" ||
+          thread.runtime?.status === "failed",
       );
       const latestActivityAt =
         latestThread?.updatedAt ?? group.projects[0]?.updatedAt ?? new Date(0).toISOString();
@@ -1492,7 +1473,7 @@ export function buildNativeSuggestions(
       continue;
     }
 
-    if (thread.latestTurn?.state === "error" || thread.session?.status === "error") {
+    if (thread.latestRun?.status === "failed" || thread.runtime?.status === "failed") {
       suggestions.push({
         id: `suggestion:error:${thread.environmentId}:${thread.id}`,
         projectId: thread.projectId,

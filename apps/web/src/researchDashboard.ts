@@ -65,8 +65,9 @@ export interface DashboardThreadRecord {
     readonly instanceId: string;
     readonly model: string;
   };
-  readonly session: Pick<
-    NonNullable<EnvironmentThreadShell["session"]>,
+  readonly session?: { readonly status: string; readonly providerName: string | null } | null;
+  readonly runtime?: Pick<
+    NonNullable<EnvironmentThreadShell["runtime"]>,
     "status" | "providerName"
   > | null;
 }
@@ -84,10 +85,14 @@ export function resolveDashboardThreadState(thread: DashboardThreadRecord): Dash
     return "needs-input";
   }
 
-  switch (thread.session?.status) {
+  switch (thread.runtime?.status ?? thread.session?.status) {
+    case "preparing":
+    case "queued":
+    case "waiting":
     case "starting":
     case "running":
       return "running";
+    case "failed":
     case "error":
       return "error";
     case "ready":
