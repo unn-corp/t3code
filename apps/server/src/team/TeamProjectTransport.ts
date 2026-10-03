@@ -110,10 +110,14 @@ export const makeTeamProjectTransport = Effect.gen(function* () {
             Layer.succeed(
               Socket.WebSocketConstructor,
               (url, protocols) =>
-                new NodeSocket.NodeWS.WebSocket(url, protocols, {
-                  headers: { origin: credential.serviceUrl },
-                  maxPayload: MAX_RESPONSE_BYTES,
-                }) as unknown as globalThis.WebSocket,
+                new NodeSocket.NodeWS.WebSocket(
+                  url,
+                  typeof protocols === "string" || Array.isArray(protocols) ? protocols : [],
+                  {
+                    headers: { origin: credential.serviceUrl },
+                    maxPayload: MAX_RESPONSE_BYTES,
+                  },
+                ) as unknown as globalThis.WebSocket,
             ),
           ),
         ),

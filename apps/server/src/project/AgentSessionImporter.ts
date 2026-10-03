@@ -87,6 +87,7 @@ function hasImportBlockingActivity(
     thread.snoozedAt != null ||
     thread.pinnedAt != null ||
     thread.pinOrderKey != null ||
+    thread.autoSettleDisabledAt != null ||
     thread.titleRegeneration != null ||
     thread.linkedPullRequest != null ||
     thread.unsettledAt != null ||
@@ -289,7 +290,7 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         if (!currentImportedHistoryPresent) {
           const importedAt = DateTime.formatIso(yield* DateTime.now);
           yield* engine.dispatch({
-            type: "thread.history.import",
+            type: "thread.history.resume",
             commandId: CommandId.make(yield* crypto.randomUUIDv4),
             threadId,
             sourceSessionId: thread.providerSessionId,

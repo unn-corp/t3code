@@ -1,8 +1,8 @@
+import * as ByteSize from "effect/ByteSize";
 import { TeamRosterCommand, TeamCommand, type TeamIdentity } from "@t3tools/contracts/teamSpaces";
 import * as NodeCrypto from "node:crypto";
 import * as Config from "effect/Config";
 import * as Redacted from "effect/Redacted";
-import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
@@ -29,22 +29,22 @@ const encodeChange = Schema.encodeEffect(
 /** Separate from environment pairing: these credentials never grant host RPC access. */
 export const teamSpacesRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const secret = yield* Config.redacted("T3_TEAM_CLERK_SECRET_KEY").pipe(
+    const secret = yield* Config.Redacted("T3_TEAM_CLERK_SECRET_KEY").pipe(
       Config.withDefault(Redacted.make("")),
     );
     const secretKey = Redacted.value(secret);
-    const publishableKey = yield* Config.string("T3_TEAM_CLERK_PUBLISHABLE_KEY").pipe(
+    const publishableKey = yield* Config.String("T3_TEAM_CLERK_PUBLISHABLE_KEY").pipe(
       Config.withDefault(""),
     );
-    const origins = (yield* Config.string("T3_TEAM_ORIGINS").pipe(Config.withDefault("")))
+    const origins = (yield* Config.String("T3_TEAM_ORIGINS").pipe(Config.withDefault("")))
       .split(",")
       .filter(Boolean);
-    const oauthClientId = yield* Config.string("T3_TEAM_OAUTH_CLIENT_ID").pipe(
+    const oauthClientId = yield* Config.String("T3_TEAM_OAUTH_CLIENT_ID").pipe(
       Config.withDefault(""),
     );
-    const oauthIssuer = yield* Config.string("T3_TEAM_OAUTH_ISSUER").pipe(Config.withDefault(""));
+    const oauthIssuer = yield* Config.String("T3_TEAM_OAUTH_ISSUER").pipe(Config.withDefault(""));
     const creators = new Set(
-      (yield* Config.string("T3_TEAM_CREATORS").pipe(Config.withDefault("")))
+      (yield* Config.String("T3_TEAM_CREATORS").pipe(Config.withDefault("")))
         .split(",")
         .filter(Boolean),
     );
@@ -70,7 +70,7 @@ export const teamSpacesRouteLayer = Layer.unwrap(
         const authenticate = authentication.authenticate;
         const safe = <E, R>(effect: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
           effect.pipe(
-            Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(16384)),
+            Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16384)),
             Effect.catch((error) =>
               HttpServerResponse.json(
                 { error: error instanceof TeamDenied ? error.reason : "team_request_failed" },
@@ -145,7 +145,7 @@ export const teamSpacesRouteLayer = Layer.unwrap(
           const socket = yield* request.upgrade;
           yield* Effect.scoped(
             Effect.gen(function* () {
-              const write = yield* socket.writer;
+              const { write } = yield* socket.writer;
               const emit = Effect.gen(function* () {
                 yield* authenticate(
                   request.modify({
@@ -183,7 +183,10 @@ export const teamSpacesRouteLayer = Layer.unwrap(
               });
               yield* Effect.raceFirst(
                 Effect.raceFirst(output, expiry),
-                socket.runRaw(() => Effect.void),
+                Effect.gen(function* () {
+                  const { pull } = yield* socket.reader;
+                  while (true) yield* pull;
+                }),
               ).pipe(
                 Effect.catch(() => write(new Socket.CloseEvent(1008, "project_access_denied"))),
               );

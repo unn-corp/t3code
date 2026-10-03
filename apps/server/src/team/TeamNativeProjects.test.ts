@@ -593,7 +593,7 @@ for (const reason of [
           ),
         );
         const server = yield* HttpServer.HttpServer;
-        if (server.address._tag !== "TcpAddress")
+        if (server.address._tag !== "InetAddressV4" && server.address._tag !== "InetAddressV6")
           return yield* Effect.die("Expected TCP test server");
         const response = yield* HttpClient.post("/api/team/native/ticket", {
           headers: { authorization: "Bearer member", origin: "https://team.example.test" },
@@ -608,9 +608,13 @@ for (const reason of [
             ).pipe(
               Layer.provide(
                 Layer.succeed(Socket.WebSocketConstructor, (url, protocols) => {
-                  const socket = new NodeSocket.NodeWS.WebSocket(url, protocols, {
-                    headers: { origin: "https://team.example.test" },
-                  });
+                  const socket = new NodeSocket.NodeWS.WebSocket(
+                    url,
+                    typeof protocols === "string" || Array.isArray(protocols) ? protocols : [],
+                    {
+                      headers: { origin: "https://team.example.test" },
+                    },
+                  );
                   socket.on("close", () => Deferred.doneUnsafe(closed, Effect.void));
                   return socket as unknown as globalThis.WebSocket;
                 }),

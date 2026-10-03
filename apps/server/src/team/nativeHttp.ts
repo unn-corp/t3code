@@ -1,3 +1,4 @@
+import * as ByteSize from "effect/ByteSize";
 import { PRESENCE_WS_METHODS } from "@t3tools/contracts/teamPresence";
 import { TEAM_DIRECTORY_METHOD } from "@t3tools/contracts/teamProjects";
 import { TEAM_FILES_METHODS } from "@t3tools/contracts/teamFiles";
@@ -12,7 +13,6 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -124,7 +124,7 @@ const json = (value: unknown) =>
   HttpServerResponse.json(value, { headers: { "cache-control": "no-store" } });
 const safe = <E, R>(effect: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
   effect.pipe(
-    Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(2048)),
+    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(2048)),
     Effect.catchCause(() =>
       HttpServerResponse.json(
         { error: "project_access_denied" },

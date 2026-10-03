@@ -118,7 +118,7 @@ export const TeamSharedThreadSummary = Schema.Struct({
 export type TeamSharedThreadSummary = typeof TeamSharedThreadSummary.Type;
 export const TeamSharedMessage = Schema.Struct({
   id: MessageId,
-  role: Schema.Literals(["user", "assistant", "system"]),
+  role: Schema.Literals(["user", "assistant", "system", "reasoning"]),
   text: Schema.String,
   streaming: Schema.Boolean,
   author: Schema.NullOr(CollaborationUser),

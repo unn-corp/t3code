@@ -382,7 +382,7 @@ it.effect(
         Option.getOrThrow(yield* repository.getDiscussion({ threadId })).sideThreads,
         [],
       );
-      yield* repository.deleteById({ threadId });
+      yield* sql`DELETE FROM projection_threads WHERE thread_id = ${threadId}`;
       assert.deepEqual(yield* sql`SELECT thread_id FROM projection_thread_discussions`, []);
     }).pipe(Effect.provide(testLayer)),
 );

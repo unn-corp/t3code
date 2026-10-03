@@ -20,6 +20,7 @@ import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
+import { architectTurnInput } from "./OrganizationArchitectFixture.ts";
 import { execScriptSource, writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
@@ -79,6 +80,40 @@ function waitForFileContent(path: string): Effect.Effect<string> {
 }
 
 it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
+  it.effect("generates an Architect reply with the selected model", () =>
+    withFakeAcpAgent(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          reply: "Clarify QA ownership.",
+          proposals: [],
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateOrganizationArchitectTurn!(
+            architectTurnInput("cursor", "gpt-5.4"),
+          );
+          expect(generated.reply).toBe("Clarify QA ownership.");
+        }),
+    ),
+  );
+  it.effect("rejects tool requests in an isolated Architect conversation", () =>
+    withFakeAcpAgent(
+      {
+        T3_ACP_EMIT_TOOL_CALLS: "1",
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ reply: "Review QA.", proposals: [] }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateOrganizationArchitectTurn!(
+              architectTurnInput("cursor", "gpt-5.4"),
+            ),
+          );
+          expect(error.detail).toContain("attempted tool work");
+        }),
+    ),
+  );
   it.effect("uses ACP model config options instead of raw CLI model ids", () => {
     const requestLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-log-"),

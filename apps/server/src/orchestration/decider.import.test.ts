@@ -106,7 +106,7 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
 
       const events = yield* decideOrchestrationCommand({
         command: {
-          type: "thread.history.import",
+          type: "thread.history.resume",
           commandId: CommandId.make("command-import-history"),
           threadId,
           sourceSessionId: "session-1",

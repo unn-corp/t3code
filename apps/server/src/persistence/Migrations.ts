@@ -1,6 +1,3 @@
-import Migration0061 from "./Migrations/061_TeamCreationIntentReceipts.ts";
-import Migration0060 from "./Migrations/060_TeamPublicationIntents.ts";
-import Migration0059 from "./Migrations/059_TeamFiles.ts";
 /**
  * Migration runner with an inline loader.
  *
@@ -70,23 +67,68 @@ import Migration0051 from "./Migrations/047_ProjectionProjectIcon.ts";
 import Migration0052 from "./Migrations/048_ProjectionThreadBranchPullRequest.ts";
 import Migration0053 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
 import Migration0054 from "./Migrations/050_ProjectionThreadPullRequests.ts";
-import Migration0056 from "./Migrations/056_ThreadCollaboration.ts";
-import Migration0055 from "./Migrations/055_TeamSpaces.ts";
-import Migration0058 from "./Migrations/058_TeamPublicationMessageOrder.ts";
-import Migration0057 from "./Migrations/057_TeamPublication.ts";
-import Migration0063 from "./Migrations/063_TeamRoster.ts";
-import Migration0062 from "./Migrations/062_RepairForkMigrationCollisions.ts";
+import Migration0055 from "./Migrations/051_ProjectionThreadMessageContext.ts";
+import Migration0056 from "./Migrations/052_ProjectionThreadTitleState.ts";
+import Migration0057 from "./Migrations/053_PullRequestFilesViewed.ts";
+import Migration0058 from "./Migrations/058_ProjectionThreadActivitiesKindIndex.ts";
+import Migration0059 from "./Migrations/059_Organizations.ts";
+import Migration0060 from "./Migrations/060_OrganizationWorkflows.ts";
+import Migration0061 from "./Migrations/061_OrganizationIntake.ts";
+import Migration0062 from "./Migrations/062_OrganizationWork.ts";
+import Migration0063 from "./Migrations/063_OrganizationFindingEvidence.ts";
+import Migration0064 from "./Migrations/064_OrganizationArchitectTranscript.ts";
+import Migration0065 from "./Migrations/065_OrganizationArchitectTranscriptCompatibility.ts";
+import Migration0066 from "./Migrations/066_OrganizationMemory.ts";
+import Migration0067 from "./Migrations/067_OrganizationCorrelationRecovery.ts";
+import Migration0068 from "./Migrations/068_OrganizationProposals.ts";
+import Migration0069 from "./Migrations/069_OrganizationDirectorTranscript.ts";
+import Migration0070 from "./Migrations/070_OrganizationResourcePermits.ts";
+import Migration0071 from "./Migrations/071_OrganizationWorkScopes.ts";
+import Migration0072 from "./Migrations/072_OrganizationWorkArtifacts.ts";
+import Migration0073 from "./Migrations/073_OrganizationWorkQAReceipts.ts";
+import Migration0074 from "./Migrations/074_OrganizationWorkApprovalReceipts.ts";
+import Migration0075 from "./Migrations/075_OrganizationWorkIntegrationReceipts.ts";
+import Migration0076 from "./Migrations/076_OrganizationGitCandidateIntents.ts";
+import Migration0077 from "./Migrations/077_OrganizationScopePreparation.ts";
+import Migration0078 from "./Migrations/078_OrganizationReservedScopeUnits.ts";
+import Migration0079 from "./Migrations/079_OrganizationGitIntegrationIntents.ts";
+import Migration0080 from "./Migrations/080_OrganizationScopeReservationCompatibility.ts";
+import Migration0081 from "./Migrations/081_OrganizationProviderBudgets.ts";
+import Migration0082 from "./Migrations/082_OrganizationWorkIntents.ts";
+import Migration0083 from "./Migrations/083_OrganizationProviderBudgetAudit.ts";
+import Migration0084 from "./Migrations/084_OrganizationScopeLaunchRequested.ts";
+import Migration0085 from "./Migrations/085_OrganizationRepositories.ts";
+import Migration0086 from "./Migrations/086_OrganizationScopeRecoveryReceipts.ts";
+import Migration0087 from "./Migrations/087_OrganizationWorkIntentActivations.ts";
+import Migration0088 from "./Migrations/088_OrganizationLiveWorkFailures.ts";
+import Migration0089 from "./Migrations/089_OrganizationLiveWorkDrains.ts";
+import Migration0090 from "./Migrations/090_OrganizationEmergencyStops.ts";
+import Migration0091 from "./Migrations/091_OrganizationStandingWorkAuthorizations.ts";
+import Migration0092 from "./Migrations/092_OrganizationEmergencyProcessRecovery.ts";
+import Migration0093 from "./Migrations/093_OrganizationProviderLaunchMarkers.ts";
+import Migration0094 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
+import TeamMigration0061 from "./Migrations/061_TeamCreationIntentReceipts.ts";
+import TeamMigration0060 from "./Migrations/060_TeamPublicationIntents.ts";
+import TeamMigration0059 from "./Migrations/059_TeamFiles.ts";
+import TeamMigration0056 from "./Migrations/056_ThreadCollaboration.ts";
+import TeamMigration0055 from "./Migrations/055_TeamSpaces.ts";
+import TeamMigration0058 from "./Migrations/058_TeamPublicationMessageOrder.ts";
+import TeamMigration0057 from "./Migrations/057_TeamPublication.ts";
+import TeamMigration0063 from "./Migrations/063_TeamRoster.ts";
+import TeamMigration0062 from "./Migrations/062_RepairForkMigrationCollisions.ts";
 
-/**
- * Migration loader with all migrations defined inline.
- *
- * Key format: "{id}_{name}" where:
- * - id: numeric migration ID (determines execution order)
- * - name: descriptive name for the migration
- *
- * Uses Migrator.fromRecord which parses the key format and
- * returns migrations sorted by ID.
- */
+const legacyTeamEntries = [
+  [55, "TeamSpaces", TeamMigration0055],
+  [56, "ThreadCollaboration", TeamMigration0056],
+  [57, "TeamPublication", TeamMigration0057],
+  [58, "TeamPublicationMessageOrder", TeamMigration0058],
+  [59, "TeamFiles", TeamMigration0059],
+  [60, "TeamPublicationIntents", TeamMigration0060],
+  [61, "TeamCreationIntentReceipts", TeamMigration0061],
+  [62, "RepairForkMigrationCollisions", TeamMigration0062],
+  [63, "TeamRoster", TeamMigration0063],
+] as const;
+
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -142,23 +184,143 @@ const migrationEntries = [
   [52, "ProjectionThreadBranchPullRequest", Migration0052],
   [53, "ProjectionThreadsActiveOrderKey", Migration0053],
   [54, "ProjectionThreadPullRequests", Migration0054],
-  [55, "TeamSpaces", Migration0055],
-  [56, "ThreadCollaboration", Migration0056],
-  [57, "TeamPublication", Migration0057],
-  [58, "TeamPublicationMessageOrder", Migration0058],
-  [59, "TeamFiles", Migration0059],
-  [60, "TeamPublicationIntents", Migration0060],
-  [61, "TeamCreationIntentReceipts", Migration0061],
-  [62, "RepairForkMigrationCollisions", Migration0062],
-  [63, "TeamRoster", Migration0063],
+  [55, "ProjectionThreadMessageContext", Migration0055],
+  [56, "ProjectionThreadTitleState", Migration0056],
+  [57, "PullRequestFilesViewed", Migration0057],
+  [58, "ProjectionThreadActivitiesKindIndex", Migration0058],
+  [59, "Organizations", Migration0059],
+  [60, "OrganizationWorkflows", Migration0060],
+  [61, "OrganizationIntake", Migration0061],
+  [62, "OrganizationWork", Migration0062],
+  [63, "OrganizationFindingEvidence", Migration0063],
+  [64, "OrganizationArchitectTranscript", Migration0064],
+  [65, "OrganizationArchitectTranscriptCompatibility", Migration0065],
+  [66, "OrganizationMemory", Migration0066],
+  [67, "OrganizationCorrelationRecovery", Migration0067],
+  [68, "OrganizationProposals", Migration0068],
+  [69, "OrganizationDirectorTranscript", Migration0069],
+  [70, "OrganizationResourcePermits", Migration0070],
+  [71, "OrganizationWorkScopes", Migration0071],
+  [72, "OrganizationWorkArtifacts", Migration0072],
+  [73, "OrganizationWorkQAReceipts", Migration0073],
+  [74, "OrganizationWorkApprovalReceipts", Migration0074],
+  [75, "OrganizationWorkIntegrationReceipts", Migration0075],
+  [76, "OrganizationGitCandidateIntents", Migration0076],
+  [77, "OrganizationScopePreparation", Migration0077],
+  [78, "OrganizationReservedScopeUnits", Migration0078],
+  [79, "OrganizationGitIntegrationIntents", Migration0079],
+  [80, "OrganizationScopeReservationCompatibility", Migration0080],
+  [81, "OrganizationProviderBudgets", Migration0081],
+  [82, "OrganizationWorkIntents", Migration0082],
+  [83, "OrganizationProviderBudgetAudit", Migration0083],
+  [84, "OrganizationScopeLaunchRequested", Migration0084],
+  [85, "OrganizationRepositories", Migration0085],
+  [86, "OrganizationScopeRecoveryReceipts", Migration0086],
+  [87, "OrganizationWorkIntentActivations", Migration0087],
+  [88, "OrganizationLiveWorkFailures", Migration0088],
+  [89, "OrganizationLiveWorkDrains", Migration0089],
+  [90, "OrganizationEmergencyStops", Migration0090],
+  [91, "OrganizationStandingWorkAuthorizations", Migration0091],
+  [92, "OrganizationEmergencyProcessRecovery", Migration0092],
+  [93, "OrganizationProviderLaunchMarkers", Migration0093],
+  [94, "ProjectionThreadsAutoSettleDisabledAt", Migration0094],
+  [
+    95,
+    "TeamSpaces",
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const applied =
+        yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 55 AND name = 'TeamSpaces'`;
+      if (applied.length === 0) yield* TeamMigration0055;
+    }),
+  ],
+  [
+    96,
+    "ThreadCollaboration",
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const applied =
+        yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 56 AND name = 'ThreadCollaboration'`;
+      if (applied.length === 0) yield* TeamMigration0056;
+    }),
+  ],
+  [
+    97,
+    "TeamPublication",
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const applied =
+        yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 57 AND name = 'TeamPublication'`;
+      if (applied.length === 0) yield* TeamMigration0057;
+    }),
+  ],
+  [
+    98,
+    "TeamPublicationMessageOrder",
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const applied =
+        yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 58 AND name = 'TeamPublicationMessageOrder'`;
+      if (applied.length === 0) yield* TeamMigration0058;
+    }),
+  ],
+  [
+    99,
+    "TeamFiles",
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const applied =
+        yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 59 AND name = 'TeamFiles'`;
+      if (applied.length === 0) yield* TeamMigration0059;
+    }),
+  ],
+  [
+    100,
+    "TeamPublicationIntents",
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const applied =
+        yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 60 AND name = 'TeamPublicationIntents'`;
+      if (applied.length === 0) yield* TeamMigration0060;
+    }),
+  ],
+  [
+    101,
+    "TeamCreationIntentReceipts",
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const applied =
+        yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 61 AND name = 'TeamCreationIntentReceipts'`;
+      if (applied.length === 0) yield* TeamMigration0061;
+    }),
+  ],
+  [
+    102,
+    "RepairForkMigrationCollisions",
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const applied =
+        yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 62 AND name = 'RepairForkMigrationCollisions'`;
+      if (applied.length === 0) yield* TeamMigration0062;
+    }),
+  ],
+  [
+    103,
+    "TeamRoster",
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const applied =
+        yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 63 AND name = 'TeamRoster'`;
+      if (applied.length === 0) yield* TeamMigration0063;
+    }),
+  ],
 ] as const;
-
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
 
 // Desktop 0.0.42 shipped this history before the Teams build reused IDs 38-52.
 // This fork also shipped DiscordBridge / latest-turn backfill at IDs 36-37.
 // Keep the shipped histories intact. Future changes must append new IDs; the
-// repair at 62 applies the migrations the ID-only runner skipped in old installs.
+// repair at 102 applies the migrations the ID-only runner skipped in old installs.
 const previousDesktopMigrationNames = new Map<number, string>([
   [36, "ProjectionThreadsPinned"],
   [37, "ProjectionTurnsKeysetIndex"],
@@ -190,6 +352,9 @@ const validateMigrationHistory = Effect.fn("validateMigrationHistory")(function*
     SELECT migration_id,name FROM effect_sql_migrations ORDER BY migration_id
   `;
   const expectedNames = new Map<number, string>(migrationManifest);
+  const legacyTeams = history.some(
+    ({ migration_id, name }) => migration_id === 55 && name === "TeamSpaces",
+  );
   const latestId = history.at(-1)?.migration_id ?? 0;
   const recordedIds = new Set(history.map(({ migration_id }) => migration_id));
   for (const [id, name] of migrationManifest) {
@@ -201,7 +366,9 @@ const validateMigrationHistory = Effect.fn("validateMigrationHistory")(function*
     }
   }
   for (const { migration_id: id, name } of history) {
-    const expectedName = expectedNames.get(id);
+    const expectedName =
+      (legacyTeams ? legacyTeamEntries.find(([legacyId]) => legacyId === id)?.[1] : undefined) ??
+      expectedNames.get(id);
     if (expectedName === undefined) {
       return yield* new Migrator.MigrationError({
         kind: "BadState",
@@ -217,12 +384,17 @@ const validateMigrationHistory = Effect.fn("validateMigrationHistory")(function*
   }
 });
 
-const makeMigrationLoader = (throughId?: number) =>
+const makeMigrationLoader = (throughId?: number, legacyTeams = false) =>
   Migrator.fromRecord(
     Object.fromEntries(
       migrationEntries
         .filter(([id]) => throughId === undefined || id <= throughId)
-        .map(([id, name, migration]) => [`${id}_${name}`, migration]),
+        .map(([id, name, migration]) => {
+          const legacy = legacyTeams
+            ? legacyTeamEntries.find(([legacyId]) => legacyId === id)
+            : undefined;
+          return legacy ? [`${id}_${legacy[1]}`, legacy[2]] : [`${id}_${name}`, migration];
+        }),
     ),
   );
 
@@ -250,7 +422,34 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   yield* validateMigrationHistory();
-  const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  const sql = yield* SqlClient.SqlClient;
+  const table = yield* sql`SELECT name FROM sqlite_master WHERE name = 'effect_sql_migrations'`;
+  const legacy =
+    table.length === 0
+      ? []
+      : yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 55 AND name = 'TeamSpaces'`;
+  const legacyTeams = legacy.length > 0;
+  // Teams and UNN independently shipped IDs 55-63. Preserve both ledgers.
+  // Before UNN's dependent migrations run, apply its missing predecessors in
+  // one transaction with a durable receipt. Appended Teams entries recognize
+  // their original ledger entries and do not recreate tables or lose data.
+  if (legacyTeams && (toMigrationInclusive === undefined || toMigrationInclusive >= 64)) {
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`CREATE TABLE IF NOT EXISTS fork_migration_compatibility (name TEXT PRIMARY KEY)`;
+        const receipt =
+          yield* sql`SELECT name FROM fork_migration_compatibility WHERE name = 'unn-55-63'`;
+        if (receipt.length > 0) return;
+        for (const [id, , migration] of migrationEntries) {
+          if (id >= 55 && id <= 63) yield* migration;
+        }
+        yield* sql`INSERT INTO fork_migration_compatibility (name) VALUES ('unn-55-63')`;
+      }),
+    );
+  }
+  const executedMigrations = yield* run({
+    loader: makeMigrationLoader(toMigrationInclusive, legacyTeams),
+  });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

@@ -11,7 +11,7 @@ it.layer(NodeSqliteClient.layerMemory())("063_TeamRoster", (it) => {
     () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 62 });
+        yield* runMigrations({ toMigrationInclusive: 102 });
         yield* sql`INSERT INTO team_spaces(id,name) VALUES('existing','Existing')`;
         yield* sql`INSERT INTO team_members(space_id,user_id,role) VALUES('existing','creator','owner'),('existing','viewer','viewer')`;
         yield* sql`INSERT INTO team_events(space_id,actor,kind,text,created_at) VALUES('existing','creator','project.created','Existing',0)`;

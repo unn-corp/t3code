@@ -6,7 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
+const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 const MODEL_SELECTION = '{"instanceId":"codex","model":"gpt-5.6-sol"}';
 
@@ -14,7 +14,10 @@ layer("046_RepairAutomaticSettlementTimestamps", (it) => {
   it.effect("repairs automatic stamps and leaves manual settlement alone", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 45 });
+      // The fork inserted migrations after the upstream test was written, so
+      // this file's migration is registered as 50 (with 49 immediately before
+      // it), not as the filename's numeric prefix.
+      yield* runMigrations({ toMigrationInclusive: 49 });
 
       yield* sql`
         INSERT INTO projection_threads (
@@ -164,7 +167,7 @@ layer("046_RepairAutomaticSettlementTimestamps", (it) => {
       const eventsBefore =
         yield* sql`SELECT payload_json FROM orchestration_events ORDER BY event_id`;
 
-      yield* runMigrations({ toMigrationInclusive: 46 });
+      yield* runMigrations({ toMigrationInclusive: 50 });
 
       const threads = yield* sql<{
         readonly threadId: string;

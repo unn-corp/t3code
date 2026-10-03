@@ -1,6 +1,7 @@
 import {
   type ModelSelection,
   type ProviderSetupError,
+  OrganizationArchitectTurnOutput,
   TextGenerationError,
 } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
@@ -20,6 +21,10 @@ import { type AcpError, AcpRequestError } from "effect-acp/errors";
 import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
 import type { AcpSessionRuntime } from "../provider/acp/AcpSessionRuntime.ts";
+import {
+  buildOrganizationArchitectPrompt,
+  validateOrganizationArchitectOutput,
+} from "../organizations/OrganizationArchitectPrompt.ts";
 import type * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -238,7 +243,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
             yield* applyAntigravityAcpModelSelection({
               runtime,
               model: input.modelSelection.model,
-              defaultModel: yield* options.defaultModel ?? Effect.succeed(undefined),
+              defaultModel: yield* options.defaultModel ?? Effect.undefined,
               mapError: (cause) =>
                 new TextGenerationError({
                   operation,
@@ -394,17 +399,35 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
         ...buildThreadTitlePrompt({
           message: input.message,
           previousTitle: input.previousTitle,
+          linkedContext: input.linkedContext,
           attachments: input.attachments,
         }),
         modelSelection: input.modelSelection,
       });
-      return { title: sanitizeThreadTitle(generated.title) };
+      return {
+        title: sanitizeThreadTitle(generated.title),
+        ...(generated.needsRefinement ? { needsRefinement: true } : {}),
+      };
     });
+
+  const generateOrganizationArchitectTurn: NonNullable<
+    TextGeneration.TextGeneration["Service"]["generateOrganizationArchitectTurn"]
+  > = Effect.fn("AntigravityTextGeneration.generateOrganizationArchitectTurn")(function* (input) {
+    const prompt = yield* buildOrganizationArchitectPrompt(input);
+    const generated = yield* runAntigravityJson({
+      operation: "generateOrganizationArchitectTurn",
+      prompt,
+      outputSchema: OrganizationArchitectTurnOutput,
+      modelSelection: input.modelSelection,
+    });
+    return yield* validateOrganizationArchitectOutput(generated, input.organization.draftRevision);
+  });
 
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateOrganizationArchitectTurn,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

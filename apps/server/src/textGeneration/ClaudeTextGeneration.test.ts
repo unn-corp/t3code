@@ -1,13 +1,22 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "node:crypto";
 import { it } from "@effect/vitest";
-import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  OrganizationId,
+  OrganizationRoleId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import type { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -21,8 +30,50 @@ import {
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
+import { OrganizationPatchProcessObserver } from "./OrganizationPatchProcessObserver.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+const architectInput = {
+  modelSelection: createModelSelection(
+    ProviderInstanceId.make("claudeAgent"),
+    SYNTHETIC_CLAUDE_STANDARD_MODEL,
+  ),
+  organization: {
+    id: OrganizationId.make("org-architect-test"),
+    title: "Studio",
+    mission: "Build useful software",
+    draftRevision: 3,
+    workflows: [],
+    graph: {
+      roles: [
+        {
+          id: OrganizationRoleId.make("architect"),
+          kind: "architect" as const,
+          title: "Architect",
+          mandate: "Design the organization",
+          poolSize: 1,
+        },
+      ],
+      edges: [],
+    },
+  },
+  transcript: [{ role: "user" as const, text: "We need a QA role." }],
+  userText: "Suggest a plan.",
+};
+
+const patchCurrentContent = "export const answer = 1;\n";
+const patchBaseDigest = NodeCrypto.createHash("sha256").update(patchCurrentContent).digest("hex");
+const patchInput = {
+  modelSelection: createModelSelection(
+    ProviderInstanceId.make("claudeAgent"),
+    SYNTHETIC_CLAUDE_STANDARD_MODEL,
+  ),
+  taskText: "Change answer to 2.",
+  fileName: "answer.js",
+  currentContent: patchCurrentContent,
+  baseDigest: patchBaseDigest,
+};
 
 const ClaudeTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-claude-text-generation-test-",
@@ -106,11 +157,12 @@ function makeFakeClaudeBinary(dir: string) {
         "}",
         "",
         "const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;",
+        "if (process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL) await new Promise(() => {});",
         "if (stderrText) {",
         '  process.stderr.write(stderrText + "\\n");',
         "}",
         "",
-        'process.stdout.write(process.env.T3_FAKE_CLAUDE_OUTPUT ?? "");',
+        'process.stdout.write(process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT ? "x".repeat(Number(process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT)) : (process.env.T3_FAKE_CLAUDE_OUTPUT ?? ""));',
         "process.exitCode = Number(process.env.T3_FAKE_CLAUDE_EXIT_CODE ?? 0);",
         "",
       ].join("\n"),
@@ -122,6 +174,7 @@ function makeFakeClaudeBinary(dir: string) {
 function withFakeClaudeEnv<A, E, R>(
   input: {
     output: string;
+    outputRepeat?: number;
     exitCode?: number;
     stderr?: string;
     argsMustContain?: string;
@@ -129,6 +182,7 @@ function withFakeClaudeEnv<A, E, R>(
     stdinMustContain?: string;
     configDirMustBe?: string;
     cwdMustNotBe?: string;
+    waitForSignal?: boolean;
     claudeConfig?: Partial<ClaudeSettings>;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -140,6 +194,7 @@ function withFakeClaudeEnv<A, E, R>(
     const pathDelimiter = (yield* isHostWindows) ? ";" : ":";
     const previousPath = process.env.PATH;
     const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;
+    const previousOutputRepeat = process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT;
     const previousExitCode = process.env.T3_FAKE_CLAUDE_EXIT_CODE;
     const previousStderr = process.env.T3_FAKE_CLAUDE_STDERR;
     const previousArgsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
@@ -147,11 +202,19 @@ function withFakeClaudeEnv<A, E, R>(
     const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
     const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
     const previousCwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
+    const previousWaitForSignal = process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL;
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         process.env.PATH = `${binDir}${pathDelimiter}${previousPath ?? ""}`;
         process.env.T3_FAKE_CLAUDE_OUTPUT = input.output;
+        if (input.waitForSignal) process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL = "1";
+        else delete process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL;
+        if (input.outputRepeat !== undefined) {
+          process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT = String(input.outputRepeat);
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT;
+        }
 
         if (input.exitCode !== undefined) {
           process.env.T3_FAKE_CLAUDE_EXIT_CODE = String(input.exitCode);
@@ -203,6 +266,17 @@ function withFakeClaudeEnv<A, E, R>(
             delete process.env.T3_FAKE_CLAUDE_OUTPUT;
           } else {
             process.env.T3_FAKE_CLAUDE_OUTPUT = previousOutput;
+          }
+          if (previousOutputRepeat === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT;
+          } else {
+            process.env.T3_FAKE_CLAUDE_OUTPUT_REPEAT = previousOutputRepeat;
+          }
+
+          if (previousWaitForSignal === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL;
+          } else {
+            process.env.T3_FAKE_CLAUDE_WAIT_FOR_SIGNAL = previousWaitForSignal;
           }
 
           if (previousExitCode === undefined) {
@@ -260,6 +334,248 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
+  it.effect("interrupts and verifies exact patch CLI exit", () =>
+    withFakeClaudeEnv({ output: "", waitForSignal: true }, (textGeneration) =>
+      Effect.gen(function* () {
+        const spawned = yield* Deferred.make<number>();
+        const exited = yield* Deferred.make<number>();
+        const observer = {
+          environment: { T3_ORG_PROVIDER_LAUNCH_ID: "disposable-claude-marker" },
+          preparing: () => Effect.void,
+          spawned: (handle: ChildProcessSpawner.ChildProcessHandle) =>
+            Deferred.succeed(spawned, handle.pid).pipe(Effect.asVoid),
+          exited: (handle: ChildProcessSpawner.ChildProcessHandle) =>
+            Effect.gen(function* () {
+              expect(yield* handle.isRunning.pipe(Effect.orDie)).toBe(false);
+              yield* Deferred.succeed(exited, handle.pid);
+            }),
+        };
+        const fiber = yield* textGeneration.generateOrganizationPatchProposal!(patchInput).pipe(
+          Effect.provideService(OrganizationPatchProcessObserver, observer),
+          Effect.forkChild,
+        );
+        const processId = yield* Deferred.await(spawned);
+        yield* Fiber.interrupt(fiber);
+        expect(yield* Deferred.await(exited)).toBe(processId);
+      }),
+    ),
+  );
+  it.effect("verifies the patch CLI exit through the live observer", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            fileName: "answer.js",
+            baseDigest: patchBaseDigest,
+            replacementContent: "export const answer = 2;\n",
+            rationale: "Updates the answer.",
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const seen: string[] = [];
+          const observer = {
+            environment: { T3_ORG_PROVIDER_LAUNCH_ID: "disposable-claude-marker" },
+            preparing: () =>
+              Effect.sync(() => {
+                seen.push("preparing");
+              }),
+            spawned: (handle: ChildProcessSpawner.ChildProcessHandle) =>
+              Effect.sync(() => {
+                seen.push(`spawned:${handle.pid}`);
+              }),
+            exited: (handle: ChildProcessSpawner.ChildProcessHandle) =>
+              Effect.gen(function* () {
+                expect(yield* handle.isRunning.pipe(Effect.orDie)).toBe(false);
+                seen.push(`exited:${handle.pid}`);
+              }),
+          };
+          yield* textGeneration.generateOrganizationPatchProposal!(patchInput).pipe(
+            Effect.provideService(OrganizationPatchProcessObserver, observer),
+          );
+          expect(seen[0]).toBe("preparing");
+          expect(seen[1]).toMatch(/^spawned:\d+$/);
+          expect(seen[2]).toBe(`exited:${seen[1]!.slice(8)}`);
+        }),
+    ),
+  );
+  it.effect("proposes one bounded file replacement without checkout or tools", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            fileName: "answer.js",
+            baseDigest: patchBaseDigest,
+            replacementContent: "export const answer = 2;\n",
+            rationale: "Updates the answer.",
+          },
+        }),
+        cwdMustNotBe: process.cwd(),
+        stdinMustContain: "Change answer to 2.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationPatchProposal;
+          expect(generate).toBeDefined();
+          if (!generate) return;
+          const proposal = yield* generate(patchInput);
+          expect(proposal.fileName).toBe("answer.js");
+          expect(proposal.replacementContent).toContain("2");
+        }),
+    ),
+  );
+
+  it.effect("rejects patch path, digest, source hash and byte-limit violations", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            fileName: "../secret",
+            baseDigest: patchBaseDigest,
+            replacementContent: "changed",
+            rationale: "wrong path",
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationPatchProposal;
+          if (!generate) return;
+          expect((yield* Effect.flip(generate(patchInput))).detail).toContain("invalid structured");
+          expect(
+            (yield* Effect.flip(generate({ ...patchInput, baseDigest: "0".repeat(64) }))).detail,
+          ).toContain("digest");
+          expect(
+            (yield* Effect.flip(generate({ ...patchInput, fileName: "../escape" }))).detail,
+          ).toContain("invalid");
+        }),
+    ),
+  );
+
+  it.effect("rejects validly shaped patch output for another file or digest", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            fileName: "other.js",
+            baseDigest: patchBaseDigest,
+            replacementContent: "changed",
+            rationale: "wrong file",
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationPatchProposal;
+          if (!generate) return;
+          expect((yield* Effect.flip(generate(patchInput))).detail).toContain("does not match");
+        }),
+    ),
+  );
+
+  it.effect("caps raw patch subprocess output", () =>
+    withFakeClaudeEnv(
+      {
+        output: "",
+        outputRepeat: 262_145,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationPatchProposal;
+          if (!generate) return;
+          expect((yield* Effect.flip(generate(patchInput))).detail).toContain("size limit");
+        }),
+    ),
+  );
+  it.effect("generates revision-bound Architect proposals without checkout or tools", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            reply: "Add quality review before integration.",
+            proposals: [{ baseRevision: 3, change: { type: "set-title", title: "Studio Team" } }],
+          },
+        }),
+        cwdMustNotBe: process.cwd(),
+        stdinMustContain: "Suggest a plan.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationArchitectTurn;
+          expect(generate).toBeDefined();
+          if (!generate) return;
+          const result = yield* generate(architectInput);
+          expect(result.reply).toContain("quality review");
+          expect(result.proposals[0]?.baseRevision).toBe(3);
+        }),
+    ),
+  );
+
+  it.effect("rejects Architect proposals for another draft revision", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            reply: "Here is a suggestion.",
+            proposals: [{ baseRevision: 2, change: { type: "set-title", title: "Studio Team" } }],
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationArchitectTurn;
+          if (!generate) return;
+          const error = yield* Effect.flip(generate(architectInput));
+          expect(error.detail).toContain("revision");
+        }),
+    ),
+  );
+
+  it.effect("rejects disallowed Architect changes and oversized output", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            reply: "Remove the role.",
+            proposals: [{ baseRevision: 3, change: { type: "remove-role", roleId: "architect" } }],
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generate = textGeneration.generateOrganizationArchitectTurn;
+          if (!generate) return;
+          const error = yield* Effect.flip(generate(architectInput));
+          expect(error.detail).toContain("invalid structured output");
+        }),
+    ),
+  );
+
+  it.effect("rejects Architect inputs beyond the byte limit before spawning", () =>
+    withFakeClaudeEnv({ output: "" }, (textGeneration) =>
+      Effect.gen(function* () {
+        const generate = textGeneration.generateOrganizationArchitectTurn;
+        if (!generate) return;
+        const error = yield* Effect.flip(
+          generate({ ...architectInput, userText: "x".repeat(4_001) }),
+        );
+        expect(error.detail).toContain("4,000 UTF-8 bytes");
+      }),
+    ),
+  );
+
+  it.effect("caps Architect subprocess output", () =>
+    withFakeClaudeEnv({ output: "x".repeat(64_001) }, (textGeneration) =>
+      Effect.gen(function* () {
+        const generate = textGeneration.generateOrganizationArchitectTurn;
+        if (!generate) return;
+        const error = yield* Effect.flip(generate(architectInput));
+        expect(error.detail).toContain("size limit");
+      }),
+    ),
+  );
+
   it.effect("forwards Claude thinking settings without passing unsupported effort", () =>
     withFakeClaudeEnv(
       {

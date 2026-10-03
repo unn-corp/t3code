@@ -9,11 +9,31 @@ const decodeJsonThreadTitle = Schema.decodeOption(
 
 /** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
 export function toJsonSchemaObject(schema: Schema.Top): unknown {
-  const document = Schema.toJsonSchemaDocument(schema);
+  // The type side, so decoding defaults do not turn required fields into
+  // optional ones, and closed objects (`additionalProperties: false`):
+  // structured-output modes require both, and closed was the generator
+  // default before effect rc.113.
+  const document = Schema.toJsonSchemaDocument(Schema.toType(schema), {
+    onExcessProperty: "error",
+  });
   if (document.definitions && Object.keys(document.definitions).length > 0) {
     return { ...document.schema, $defs: document.definitions };
   }
   return document.schema;
+}
+
+/** Codex structured output requires every declared object property in `required`. */
+export function requireAllJsonSchemaProperties(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(requireAllJsonSchemaProperties);
+  if (value === null || typeof value !== "object") return value;
+  const result = Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [key, requireAllJsonSchemaProperties(nested)]),
+  );
+  const properties = result["properties"];
+  if (properties !== null && typeof properties === "object" && !Array.isArray(properties)) {
+    result["required"] = Object.keys(properties);
+  }
+  return result;
 }
 
 /** Truncate a text section to `maxChars`, appending a `[truncated]` marker when needed. */
@@ -46,7 +66,11 @@ export function sanitizePrTitle(raw: string): string {
   return "Update project changes";
 }
 
-/** Normalise a raw thread title to a compact single-line sidebar-safe label. */
+// Prompts ask for under 40 characters. This cap only stops a runaway model
+// from pushing a paragraph into the sidebar, header, and window title.
+const MAX_THREAD_TITLE_CHARS = 120;
+
+/** Normalise a raw thread title to a single line. Clients truncate for display. */
 export function sanitizeThreadTitle(raw: string): string {
   // Unwrap a JSON-formatted title before truncation can cut off the closing brace.
   const decoded = decodeJsonThreadTitle(raw);
@@ -63,11 +87,11 @@ export function sanitizeThreadTitle(raw: string): string {
     return "New thread";
   }
 
-  if (normalized.length <= 50) {
+  if (normalized.length <= MAX_THREAD_TITLE_CHARS) {
     return normalized;
   }
 
-  return `${normalized.slice(0, 47).trimEnd()}...`;
+  return `${normalized.slice(0, MAX_THREAD_TITLE_CHARS - 3).trimEnd()}...`;
 }
 
 /** CLI name to human-readable label, e.g. "codex" → "Codex CLI (`codex`)" */

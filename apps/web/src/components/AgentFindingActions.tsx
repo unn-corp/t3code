@@ -39,7 +39,7 @@ export function AgentFindingActions({
               onClick={action.onSelect}
               size={size}
               title={action.title}
-              variant={action.variant}
+              variant={action.variant ?? "default"}
             >
               <Icon className={action.pending ? "animate-spin" : undefined} />
               {action.pending ? (action.pendingLabel ?? action.label) : action.label}

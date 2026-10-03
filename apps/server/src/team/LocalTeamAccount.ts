@@ -225,7 +225,7 @@ const decode = <A>(schema: Schema.Codec<A, unknown>, value: unknown) =>
   );
 
 export const makeLocalTeamAccount = Effect.gen(function* () {
-  const configuredServiceUrl = yield* Config.string("T3_TEAM_SERVICE_URL").pipe(
+  const configuredServiceUrl = yield* Config.String("T3_TEAM_SERVICE_URL").pipe(
     Config.withDefault(""),
   );
   const defaultServiceUrl = configuredServiceUrl

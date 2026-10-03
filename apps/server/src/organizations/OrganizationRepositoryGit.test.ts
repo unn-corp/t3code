@@ -1,0 +1,61 @@
+import { assert, it } from "@effect/vitest";
+import { matchesGitHubRepositoryOrigin } from "./OrganizationRepositoryGit.ts";
+
+it("matches only the selected GitHub host and repository across supported Git origins", () => {
+  assert.equal(
+    matchesGitHubRepositoryOrigin(
+      "https://github.com/Owner/Knowledge.git",
+      "Owner/Knowledge",
+      "github.com",
+    ),
+    true,
+  );
+  assert.equal(
+    matchesGitHubRepositoryOrigin(
+      "git@ghe.example.com:Owner/Knowledge.git",
+      "Owner/Knowledge",
+      "ghe.example.com",
+    ),
+    true,
+  );
+  assert.equal(
+    matchesGitHubRepositoryOrigin(
+      "ssh://git@ghe.example.com/Owner/Knowledge",
+      "Owner/Knowledge",
+      "ghe.example.com",
+    ),
+    true,
+  );
+  assert.equal(
+    matchesGitHubRepositoryOrigin(
+      "https://github.com/Owner/Knowledge",
+      "Owner/Knowledge",
+      "ghe.example.com",
+    ),
+    false,
+  );
+  assert.equal(
+    matchesGitHubRepositoryOrigin(
+      "https://ghe.example.com/Other/Knowledge",
+      "Owner/Knowledge",
+      "ghe.example.com",
+    ),
+    false,
+  );
+  assert.equal(
+    matchesGitHubRepositoryOrigin(
+      "https://ghe.example.com/Owner/Knowledge-extra",
+      "Owner/Knowledge",
+      "ghe.example.com",
+    ),
+    false,
+  );
+  assert.equal(
+    matchesGitHubRepositoryOrigin(
+      "https://ghe.example.com/Owner/Knowledge",
+      "Owner/Knowledge",
+      "ghe.example.com/path",
+    ),
+    false,
+  );
+});

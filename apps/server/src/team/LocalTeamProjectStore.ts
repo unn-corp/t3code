@@ -368,7 +368,7 @@ export const makeLocalTeamProjectStore = Effect.gen(function* () {
       }
       case "thread.message-sent": {
         const message = event.payload;
-        if (message.role === "system") return [];
+        if (message.role === "system" || message.role === "reasoning") return [];
         if (message.text.length > 120000) return yield* localTeamError("limit");
         return [
           {

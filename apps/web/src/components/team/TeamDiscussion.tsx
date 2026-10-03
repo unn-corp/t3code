@@ -21,14 +21,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
-import {
-  Sheet,
-  SheetPopup,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-  SheetPanel,
-} from "../ui/sheet";
+import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetDescription } from "../ui/sheet";
 
 const QUICK_REACTIONS = ["Like", "Thanks", "Seen", "Celebrate"] as const;
 export const discussionSourceKey = (
@@ -319,7 +312,7 @@ function TeamDiscussionDrawer({
             prompts.
           </SheetDescription>
         </SheetHeader>
-        <SheetPanel>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6" data-slot="sheet-panel">
           <div className="flex flex-col gap-4 text-sm">
             <p className="text-xs text-muted-foreground">
               {presence.error || heartbeatError
@@ -621,7 +614,7 @@ function TeamDiscussionDrawer({
               </p>
             )}
           </div>
-        </SheetPanel>
+        </div>
       </SheetPopup>
     </Sheet>
   );

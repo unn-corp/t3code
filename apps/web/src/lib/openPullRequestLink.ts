@@ -2,13 +2,15 @@ import type {
   EnvironmentId,
   GitHubAccountId,
   LocalApi,
+  PullRequestRef,
   RepositoryIdentity,
   ScopedThreadRef,
   ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
-import { type MouseEvent, useCallback } from "react";
+import { type MouseEvent, useCallback, useMemo } from "react";
 
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
 import {
@@ -23,6 +25,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readLocalApi } from "~/localApi";
 
 import { useProjects, useServerConfigs } from "../state/entities";
+import { serverEnvironment } from "../state/server";
 import { usePrimaryEnvironmentId } from "../state/environments";
 
 export class PullRequestLinkOpenError extends Schema.TaggedError<PullRequestLinkOpenError>()(
@@ -152,6 +155,8 @@ export interface ChangeRequestLink {
   readonly host: string;
   readonly repository: string;
   readonly number: number;
+  /** Forgejo's HTTP host and port, separate from the portless repository identity. */
+  readonly authority?: string;
 }
 
 /** The host itself, one of its subdomains, or an install named after the provider. */
@@ -191,6 +196,12 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   if (isHostOf(host, "github.com", "github")) {
     const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
+  }
+  // Forgejo and Gitea use /pulls/ on arbitrary self-hosted domains.
+  const forgejo = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
+  if (forgejo) {
+    const link = claim(host, forgejo);
+    return link === null ? null : { ...link, authority: url.host.toLowerCase() };
   }
   // GitLab, self-hosted included: /{group}/[{subgroup}/...]{repo}/-/merge_requests/{n}. The `/-/`
   // separator is GitLab's own, so the hostname is not asked about.
@@ -245,6 +256,7 @@ export function matchesLinkedPullRequestUrl(
     linked !== null &&
     target !== null &&
     linked.host === target.host &&
+    linked.authority === target.authority &&
     linked.repository === target.repository &&
     linked.number === target.number
   );
@@ -275,13 +287,34 @@ function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink |
     : null;
 }
 
-/**
- * Returns a click handler that opens a pull request URL in the system browser.
- *
- * Stops event propagation/default so activating the link does not also trigger
- * an enclosing row or trigger (e.g. opening the branch dropdown), and surfaces a
- * toast when the local API is unavailable or the open fails.
- */
+function resolvedForgejoRepository(project: EnvironmentProject): URL | null {
+  const identity = project.repositoryIdentity;
+  if (identity?.provider !== "forgejo" || !identity.webUrl) return null;
+  try {
+    const url = new URL(identity.webUrl);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Keep Forgejo servers on different HTTP ports separate when selecting a project. */
+function matchesChangeRequestAuthority(
+  project: EnvironmentProject,
+  link: ChangeRequestLink,
+): boolean {
+  if (link.authority === undefined) return true;
+  try {
+    const remote = new URL(project.repositoryIdentity?.locator.remoteUrl ?? "");
+    if (remote.protocol === "http:" || remote.protocol === "https:") {
+      return remote.host.toLowerCase() === link.authority;
+    }
+  } catch {
+    // SSH remotes do not specify the server's HTTP port; tea resolves the configured login.
+  }
+  return true;
+}
+
 /**
  * The project a link belongs to, or nothing. Matched the way the server matches: the repository
  * identity is the full path below the host where one was recorded — which is what nested GitLab
@@ -294,9 +327,15 @@ export function findProjectForChangeRequest(
 ): EnvironmentProject | undefined {
   return projects.find((project) => {
     const identity = project.repositoryIdentity;
-    if (!identity) return false;
+    if (!identity || !matchesChangeRequestAuthority(project, link)) return false;
     const kind = identity.provider as SourceControlProviderKind | undefined;
     if (kind === undefined) return false;
+    const web = resolvedForgejoRepository(project);
+    if (web)
+      return (
+        web.host.toLowerCase() === (link.authority ?? link.host).toLowerCase() &&
+        web.pathname.replace(/^\/+|\/+$/g, "").toLowerCase() === link.repository.toLowerCase()
+      );
     if (kind === "azure-devops") {
       return (
         canonicalRepositoryKey(identity.canonicalKey.toLowerCase()) ===
@@ -309,9 +348,55 @@ export function findProjectForChangeRequest(
     return (
       repository !== null &&
       repository.toLowerCase() === link.repository.toLowerCase() &&
-      pullRequestHostOf(identity, kind) === link.host.toLowerCase()
+      (pullRequestHostOf(identity, kind) === link.host.toLowerCase() ||
+        pullRequestHostOf(identity, kind) === link.authority)
     );
   });
+}
+
+export function resolvePullRequestPreviewTarget({
+  environmentId,
+  projects,
+  pullRequestsEnabled,
+  url,
+}: {
+  environmentId: EnvironmentId | null;
+  projects: ReadonlyArray<EnvironmentProject>;
+  pullRequestsEnabled: boolean;
+  url: string;
+}): { environmentId: EnvironmentId; input: PullRequestRef } | null {
+  if (!pullRequestsEnabled || environmentId === null) return null;
+  const parsed = parseChangeRequestUrl(url);
+  if (parsed === null) return null;
+  const project = findProjectForChangeRequest(
+    projects.filter((candidate) => candidate.environmentId === environmentId),
+    parsed,
+  );
+  if (project === undefined) return null;
+  return {
+    environmentId,
+    input: {
+      projectId: project.id,
+      host: parsed.authority ?? parsed.host,
+      repository: sourceControlRepositorySelector(project.repositoryIdentity) ?? parsed.repository,
+      number: parsed.number,
+    },
+  };
+}
+
+export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null, url: string) {
+  const projects = useProjects();
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  return useMemo(
+    () =>
+      resolvePullRequestPreviewTarget({
+        environmentId,
+        projects,
+        pullRequestsEnabled: serverConfig?.environment.capabilities.pullRequests === true,
+        url,
+      }),
+    [environmentId, projects, serverConfig, url],
+  );
 }
 
 /**
@@ -335,11 +420,25 @@ export function findProjectOnChangeRequestHost(
   return projects.find((project) => {
     const identity = project.repositoryIdentity;
     const kind = identity?.provider as SourceControlProviderKind | undefined;
+    const web = resolvedForgejoRepository(project);
+    if (web) {
+      const mount = web.pathname
+        .replace(/^\/+|\/+$/g, "")
+        .split("/")
+        .slice(0, -2)
+        .join("/");
+      return (
+        web.host.toLowerCase() === (link.authority ?? link.host).toLowerCase() &&
+        (!mount || link.repository.toLowerCase().startsWith(`${mount.toLowerCase()}/`))
+      );
+    }
     return (
       identity != null &&
       kind !== undefined &&
       kind !== "azure-devops" &&
-      pullRequestHostOf(identity, kind) === link.host.toLowerCase()
+      matchesChangeRequestAuthority(project, link) &&
+      (pullRequestHostOf(identity, kind) === link.host.toLowerCase() ||
+        pullRequestHostOf(identity, kind) === link.authority)
     );
   });
 }
@@ -456,7 +555,7 @@ export function useOpenChangeRequestLink(
           projectId: project.id,
           ...(serverConfigs.get(project.environmentId)?.environment.capabilities
             .threadPullRequests === true
-            ? { host: parsed.host }
+            ? { host: parsed.authority ?? parsed.host }
             : {}),
           repository,
           url: targetUrl,
@@ -471,7 +570,7 @@ export function useOpenChangeRequestLink(
               state: previous.state ?? "all",
               repository,
               number: parsed.number,
-              selectedHost: parsed.host,
+              selectedHost: parsed.authority ?? parsed.host,
               selectedProjectId: project.id,
               selectedEnvironmentId: project.environmentId,
             }),
@@ -489,7 +588,7 @@ export function useOpenChangeRequestLink(
           state: "all",
           repository,
           number: parsed.number,
-          selectedHost: parsed.host,
+          selectedHost: parsed.authority ?? parsed.host,
           selectedProjectId: project.id,
           // Named so the page opens the right one of two servers holding this project.
           selectedEnvironmentId: project.environmentId,

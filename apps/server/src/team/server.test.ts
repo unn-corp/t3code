@@ -139,7 +139,8 @@ it.effect(
       );
       expect(logs.flat()).toContain(TEAM_SERVICE_READY);
       const server = Context.get(context, HttpServer.HttpServer);
-      if (server.address._tag !== "TcpAddress") throw new Error("Expected TCP test listener");
+      if (server.address._tag !== "InetAddressV4" && server.address._tag !== "InetAddressV6")
+        throw new Error("Expected TCP test listener");
       const origin = `http://127.0.0.1:${server.address.port}`;
       const request = (
         route: string,

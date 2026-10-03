@@ -30,8 +30,10 @@ import type { OrchestrationEngineShape } from "../orchestration/Services/Orchest
 import { TeamDenied, type TeamSpaces } from "./TeamSpaces.ts";
 
 const isPublicationError = Schema.is(TeamPublicationError);
-const decodeRegistration = Schema.decodeUnknownEffect(TeamPublicationRegister);
-const decodeBatch = Schema.decodeUnknownEffect(TeamPublicationBatch);
+const decodeRegistration = Schema.decodeUnknownEffect(TeamPublicationRegister, {
+  onExcessProperty: "error",
+});
+const decodeBatch = Schema.decodeUnknownEffect(TeamPublicationBatch, { onExcessProperty: "error" });
 const isInvariantError = Schema.is(OrchestrationCommandInvariantError);
 const isPreviouslyRejected = Schema.is(OrchestrationCommandPreviouslyRejectedError);
 const isReceiptConflict = Schema.is(OrchestrationCommandIdConflictError);

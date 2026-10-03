@@ -28,8 +28,13 @@ import {
   isAntigravityTextGenerationAvailable,
   makeAntigravityTextGeneration,
 } from "./AntigravityTextGeneration.ts";
+import { architectTurnInput } from "./OrganizationArchitectFixture.ts";
 
 type TextRuntime = Effect.Success<ReturnType<AntigravityTextGenerationOptions["makeRuntime"]>>;
+const architectResponse = JSON.stringify({
+  reply: "Give QA a clear review mandate.",
+  proposals: [],
+});
 
 const SESSION_ID = "047c62f6-607b-44db-bfbe-f83b67e9e8b1";
 const modelSelection = {
@@ -278,6 +283,19 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 });
 
 it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
+  it.effect("generates Architect guidance with the guarded text helper", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        outputs: [architectResponse],
+      });
+      const result = yield* fixture.textGeneration.generateOrganizationArchitectTurn!(
+        architectTurnInput("antigravity-test", "gemini-test"),
+      );
+      expect(result.reply).toContain("QA");
+      expect(fixture.state.workspaces).not.toContain(fixture.projectDirectory);
+      yield* fixture.assertCleaned;
+    }).pipe(Effect.scoped),
+  );
   it.effect(
     "generates all helper types in empty workspaces and removes only owned session files",
     () =>

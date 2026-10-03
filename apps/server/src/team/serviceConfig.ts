@@ -43,15 +43,15 @@ const isClerkPublishable = Schema.is(ClerkPublishable);
 
 // Errors name only the invalid settings, never the supplied credentials or URLs.
 export const requireTeamServiceConfiguration = Effect.gen(function* () {
-  const secret = yield* Config.redacted("T3_TEAM_CLERK_SECRET_KEY").pipe(
+  const secret = yield* Config.Redacted("T3_TEAM_CLERK_SECRET_KEY").pipe(
     Config.withDefault(Redacted.make("")),
   );
-  const publishable = yield* Config.string("T3_TEAM_CLERK_PUBLISHABLE_KEY").pipe(
+  const publishable = yield* Config.String("T3_TEAM_CLERK_PUBLISHABLE_KEY").pipe(
     Config.withDefault(""),
   );
-  const origins = yield* Config.string("T3_TEAM_ORIGINS").pipe(Config.withDefault(""));
-  const issuer = yield* Config.string("T3_TEAM_OAUTH_ISSUER").pipe(Config.withDefault(""));
-  const client = yield* Config.string("T3_TEAM_OAUTH_CLIENT_ID").pipe(Config.withDefault(""));
+  const origins = yield* Config.String("T3_TEAM_ORIGINS").pipe(Config.withDefault(""));
+  const issuer = yield* Config.String("T3_TEAM_OAUTH_ISSUER").pipe(Config.withDefault(""));
+  const client = yield* Config.String("T3_TEAM_OAUTH_CLIENT_ID").pipe(Config.withDefault(""));
   const secretValue = Redacted.value(secret);
   const invalid: string[] = [];
   const secretValid = isClerkSecret(secretValue);

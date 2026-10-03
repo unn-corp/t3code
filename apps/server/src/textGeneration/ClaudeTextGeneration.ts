@@ -14,12 +14,18 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { type ClaudeSettings, type ModelSelection } from "@t3tools/contracts";
+import {
+  OrganizationArchitectTurnOutput,
+  OrganizationPatchProposalOutput,
+  type ClaudeSettings,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { TextGenerationError } from "@t3tools/contracts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { OrganizationPatchProcessObserver } from "./OrganizationPatchProcessObserver.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -49,8 +55,23 @@ import {
   scopeClaudeModelCatalog,
 } from "../provider/ClaudeModelCatalog.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
+import {
+  buildOrganizationArchitectPrompt,
+  validateOrganizationArchitectOutput,
+} from "../organizations/OrganizationArchitectPrompt.ts";
+import {
+  buildOrganizationPatchPrompt,
+  validateOrganizationPatchProposal,
+} from "../organizations/OrganizationPatchPrompt.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
+const ARCHITECT_TIMEOUT_MS = 60_000;
+const ARCHITECT_STDOUT_MAX_BYTES = 64_000;
+const ARCHITECT_STDERR_MAX_BYTES = 8_000;
+const PATCH_TIMEOUT_MS = 60_000;
+const PATCH_STDOUT_MAX_BYTES = 256 * 1024;
+const PATCH_STDERR_MAX_BYTES = 8_000;
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 /**
  * Schema for the wrapper JSON returned by `claude -p --output-format json`.
@@ -85,15 +106,35 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const readStreamAsString = <E>(
     operation: string,
     stream: Stream.Stream<Uint8Array, E>,
+    maxBytes?: number,
   ): Effect.Effect<string, TextGenerationError> =>
     stream.pipe(
       Stream.decodeText(),
       Stream.runFold(
-        () => "",
-        (acc, chunk) => acc + chunk,
+        () => ({ text: "", bytes: 0, exceeded: false }),
+        (acc, chunk) => {
+          if (acc.exceeded) return acc;
+          const bytes = Buffer.byteLength(chunk, "utf8");
+          if (maxBytes !== undefined && acc.bytes + bytes > maxBytes) {
+            return { ...acc, exceeded: true };
+          }
+          return { text: acc.text + chunk, bytes: acc.bytes + bytes, exceeded: false };
+        },
+      ),
+      Effect.flatMap((output) =>
+        output.exceeded
+          ? Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Claude CLI output exceeded the structured output size limit.",
+              }),
+            )
+          : Effect.succeed(output.text),
       ),
       Effect.mapError((cause) =>
-        normalizeCliError("claude", operation, cause, "Failed to collect process output"),
+        isTextGenerationError(cause)
+          ? cause
+          : normalizeCliError("claude", operation, cause, "Failed to collect process output"),
       ),
     );
 
@@ -102,7 +143,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateOrganizationArchitectTurn"
+      | "generateOrganizationPatchProposal",
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -132,7 +175,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateOrganizationArchitectTurn"
+      | "generateOrganizationPatchProposal";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -185,14 +230,28 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
-      // Titles need only the supplied prompt, not configuration from the checkout.
+      // Titles and Architect turns need only the supplied prompt, never checkout context.
       const workingDirectory =
-        operation === "generateThreadTitle"
+        operation === "generateThreadTitle" ||
+        operation === "generateOrganizationArchitectTurn" ||
+        operation === "generateOrganizationPatchProposal"
           ? yield* fileSystem
-              .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
+              .makeTempDirectoryScoped({
+                prefix:
+                  operation === "generateThreadTitle"
+                    ? "t3code-claude-title-"
+                    : operation === "generateOrganizationArchitectTurn"
+                      ? "t3code-claude-architect-"
+                      : "t3code-claude-org-patch-",
+              })
               .pipe(
                 Effect.mapError((cause) =>
-                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
+                  normalizeCliError(
+                    "claude",
+                    operation,
+                    cause,
+                    "Failed to create isolated generation directory",
+                  ),
                 ),
               )
           : cwd;
@@ -219,8 +278,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         ],
         { env: claudeEnvironment },
       );
+      const observer =
+        operation === "generateOrganizationPatchProposal"
+          ? yield* OrganizationPatchProcessObserver
+          : null;
+      if (observer) yield* observer.preparing();
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: { ...claudeEnvironment, ...observer?.environment },
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
@@ -228,25 +292,68 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         },
       });
 
-      const child = yield* commandSpawner
-        .spawn(command)
-        .pipe(
-          Effect.mapError((cause) =>
-            normalizeCliError("claude", operation, cause, "Failed to spawn Claude CLI process"),
-          ),
-        );
-
-      const [stdout, stderr, exitCode] = yield* Effect.all(
-        [
-          readStreamAsString(operation, child.stdout),
-          readStreamAsString(operation, child.stderr),
-          child.exitCode.pipe(
+      const [stdout, stderr, exitCode] = yield* Effect.acquireUseRelease(
+        commandSpawner
+          .spawn(command)
+          .pipe(
             Effect.mapError((cause) =>
-              normalizeCliError("claude", operation, cause, "Failed to read Claude CLI exit code"),
+              normalizeCliError("claude", operation, cause, "Failed to spawn Claude CLI process"),
             ),
           ),
-        ],
-        { concurrency: "unbounded" },
+        (child) =>
+          Effect.gen(function* () {
+            if (observer) yield* observer.spawned(child);
+            return yield* Effect.all(
+              [
+                readStreamAsString(
+                  operation,
+                  child.stdout,
+                  operation === "generateOrganizationArchitectTurn"
+                    ? ARCHITECT_STDOUT_MAX_BYTES
+                    : operation === "generateOrganizationPatchProposal"
+                      ? PATCH_STDOUT_MAX_BYTES
+                      : undefined,
+                ),
+                readStreamAsString(
+                  operation,
+                  child.stderr,
+                  operation === "generateOrganizationArchitectTurn"
+                    ? ARCHITECT_STDERR_MAX_BYTES
+                    : operation === "generateOrganizationPatchProposal"
+                      ? PATCH_STDERR_MAX_BYTES
+                      : undefined,
+                ),
+                child.exitCode.pipe(
+                  Effect.mapError((cause) =>
+                    normalizeCliError(
+                      "claude",
+                      operation,
+                      cause,
+                      "Failed to read Claude CLI exit code",
+                    ),
+                  ),
+                ),
+              ],
+              { concurrency: "unbounded" },
+            );
+          }),
+        (child) =>
+          Effect.gen(function* () {
+            if (yield* child.isRunning) yield* child.kill({ forceKillAfter: "2 seconds" });
+            yield* Effect.exit(child.exitCode);
+            if (yield* child.isRunning)
+              return yield* new TextGenerationError({
+                operation,
+                detail: "Claude CLI process exit could not be verified.",
+              });
+            if (observer) yield* observer.exited(child);
+          }).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(TextGenerationError)(cause)
+                ? cause
+                : normalizeCliError("claude", operation, cause, "Failed to verify Claude CLI exit"),
+            ),
+          ),
       );
 
       if (exitCode !== 0) {
@@ -267,7 +374,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
     const rawStdout = yield* runClaudeCommand().pipe(
       Effect.scoped,
-      Effect.timeoutOption(CLAUDE_TIMEOUT_MS),
+      Effect.timeoutOption(
+        operation === "generateOrganizationArchitectTurn"
+          ? ARCHITECT_TIMEOUT_MS
+          : operation === "generateOrganizationPatchProposal"
+            ? PATCH_TIMEOUT_MS
+            : CLAUDE_TIMEOUT_MS,
+      ),
       Effect.flatMap(
         Option.match({
           onNone: () =>
@@ -392,6 +505,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       const { prompt, outputSchema } = buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
+        linkedContext: input.linkedContext,
         attachments: input.attachments,
       });
 
@@ -405,13 +519,44 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
       return {
         title: sanitizeThreadTitle(generated.title),
+        ...(generated.needsRefinement ? { needsRefinement: true } : {}),
       };
     });
+
+  const generateOrganizationArchitectTurn: NonNullable<
+    TextGeneration.TextGeneration["Service"]["generateOrganizationArchitectTurn"]
+  > = Effect.fn("ClaudeTextGeneration.generateOrganizationArchitectTurn")(function* (input) {
+    const prompt = yield* buildOrganizationArchitectPrompt(input);
+    const generated = yield* runClaudeJson({
+      operation: "generateOrganizationArchitectTurn",
+      cwd: process.cwd(),
+      prompt,
+      outputSchemaJson: OrganizationArchitectTurnOutput,
+      modelSelection: input.modelSelection,
+    });
+    return yield* validateOrganizationArchitectOutput(generated, input.organization.draftRevision);
+  });
+
+  const generateOrganizationPatchProposal: NonNullable<
+    TextGeneration.TextGeneration["Service"]["generateOrganizationPatchProposal"]
+  > = Effect.fn("ClaudeTextGeneration.generateOrganizationPatchProposal")(function* (input) {
+    const prompt = yield* buildOrganizationPatchPrompt(input);
+    const generated = yield* runClaudeJson({
+      operation: "generateOrganizationPatchProposal",
+      cwd: process.cwd(),
+      prompt,
+      outputSchemaJson: OrganizationPatchProposalOutput,
+      modelSelection: input.modelSelection,
+    });
+    return yield* validateOrganizationPatchProposal(generated, input);
+  });
 
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateOrganizationArchitectTurn,
+    generateOrganizationPatchProposal,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

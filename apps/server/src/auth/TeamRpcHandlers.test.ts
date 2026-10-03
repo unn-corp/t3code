@@ -26,10 +26,7 @@ import { requiredScopeForRpcMethod } from "./RpcAuthorization.ts";
 
 const source = NodeFS.readFileSync(new URL("../ws.ts", import.meta.url), "utf8");
 const start = source.indexOf("        [LOCAL_TEAM_FILES_METHOD]: (input) =>");
-const end = source.indexOf(
-  "        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>",
-  start,
-);
+const end = source.indexOf("      });", start);
 if (start < 0 || end < 0) throw new Error("Native personal RPC handlers were not found.");
 const handlerSource = source.slice(start, end);
 const boundaryStart = source.indexOf("      const authorizationError =");
@@ -103,6 +100,7 @@ return {observeRpcEffect,observeRpcStream};`,
     "localTeams",
     "observeRpcEffect",
     "observeRpcStream",
+    "presenceOwner",
     `return {${handlerSource}}`,
   )(
     LOCAL_TEAM_FILES_METHOD,
@@ -115,6 +113,7 @@ return {observeRpcEffect,observeRpcStream};`,
     localTeams,
     boundary.observeRpcEffect,
     boundary.observeRpcStream,
+    "test-presence-owner",
   ) as Record<
     string,
     (

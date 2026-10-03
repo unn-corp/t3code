@@ -10,7 +10,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   type CodexSettings,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+  OrganizationArchitectTurnOutput,
+  OrganizationPatchProposalOutput,
   type ModelSelection,
+  type ServerProviderModel,
   TextGenerationError,
 } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
@@ -21,6 +24,8 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/Layers/codexLaunchArgs.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { normalizeCodexArchitectOutputJson } from "./CodexArchitectOutput.ts";
+import { OrganizationPatchProcessObserver } from "./OrganizationPatchProcessObserver.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -29,13 +34,22 @@ import {
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
+  requireAllJsonSchemaProperties,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
+import {
+  buildOrganizationArchitectPrompt,
+  validateOrganizationArchitectOutput,
+} from "../organizations/OrganizationArchitectPrompt.ts";
+import {
+  buildOrganizationPatchPrompt,
+  validateOrganizationPatchProposal,
+} from "../organizations/OrganizationPatchPrompt.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -46,6 +60,7 @@ const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknow
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
   codexConfig: CodexSettings,
   environment?: NodeJS.ProcessEnv,
+  getModels: Effect.Effect<ReadonlyArray<ServerProviderModel>> = Effect.succeed([]),
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -94,14 +109,16 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       );
 
   const safeUnlink = (filePath: string): Effect.Effect<void, never> =>
-    fileSystem.remove(filePath).pipe(Effect.catch(() => Effect.void));
+    fileSystem.remove(filePath).pipe(Effect.ignore);
 
   const encodeJsonForOperation = (
     operation:
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateOrganizationArchitectTurn"
+      | "generateOrganizationPatchProposal",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -162,7 +179,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateOrganizationArchitectTurn"
+      | "generateOrganizationPatchProposal";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -170,14 +189,26 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     cleanupPaths?: ReadonlyArray<string>;
     modelSelection: ModelSelection;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
+    const outputSchema = toJsonSchemaObject(outputSchemaJson);
     const schemaJson = yield* encodeJsonForOperation(
       operation,
-      toJsonSchemaObject(outputSchemaJson),
+      operation === "generateOrganizationArchitectTurn" ||
+        operation === "generateOrganizationPatchProposal"
+        ? requireAllJsonSchemaProperties(outputSchema)
+        : outputSchema,
     );
     const schemaPath = yield* writeTempFile(operation, "codex-schema", schemaJson);
     const outputPath = yield* writeTempFile(operation, "codex-output", "");
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
+      const models = yield* getModels;
+      const requestedModel = modelSelection.model;
+      const model =
+        models.find((candidate) => candidate.slug === requestedModel)?.slug ??
+        models.find(
+          (candidate) => !candidate.isCustom && codexModelFamily(candidate.slug) === requestedModel,
+        )?.slug ??
+        requestedModel;
       const launchArgs = resolveCodexLaunchArgs(codexConfig.launchArgs, resolvedEnvironment);
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
@@ -193,7 +224,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "-s",
           "read-only",
           "--model",
-          modelSelection.model,
+          model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
           ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
@@ -206,37 +237,94 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         ],
         { env: resolvedEnvironment },
       );
+      const workingDirectory =
+        operation === "generateOrganizationArchitectTurn" ||
+        operation === "generateOrganizationPatchProposal"
+          ? yield* fileSystem
+              .makeTempDirectoryScoped({
+                prefix:
+                  operation === "generateOrganizationArchitectTurn"
+                    ? "t3code-codex-architect-"
+                    : "t3code-codex-org-patch-",
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new TextGenerationError({
+                      operation,
+                      detail: "Failed to create isolated generation directory.",
+                      cause,
+                    }),
+                ),
+              )
+          : cwd;
+      const observer =
+        operation === "generateOrganizationPatchProposal"
+          ? yield* OrganizationPatchProcessObserver
+          : null;
+      if (observer) yield* observer.preparing();
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: {
           ...resolvedEnvironment,
           ...(codexConfig.homePath ? { CODEX_HOME: expandHomePath(codexConfig.homePath) } : {}),
+          ...observer?.environment,
         },
-        cwd,
+        cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
         },
       });
 
-      const child = yield* commandSpawner
-        .spawn(command)
-        .pipe(
-          Effect.mapError((cause) =>
-            normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
-          ),
-        );
-
-      const [stdout, stderr, exitCode] = yield* Effect.all(
-        [
-          readStreamAsString(operation, child.stdout),
-          readStreamAsString(operation, child.stderr),
-          child.exitCode.pipe(
+      const [stdout, stderr, exitCode] = yield* Effect.acquireUseRelease(
+        commandSpawner
+          .spawn(command)
+          .pipe(
             Effect.mapError((cause) =>
-              normalizeCliError("codex", operation, cause, "Failed to read Codex CLI exit code"),
+              normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
             ),
           ),
-        ],
-        { concurrency: "unbounded" },
+        (handle) =>
+          Effect.gen(function* () {
+            if (observer) yield* observer.spawned(handle);
+            return yield* Effect.all(
+              [
+                readStreamAsString(operation, handle.stdout),
+                readStreamAsString(operation, handle.stderr),
+                handle.exitCode.pipe(
+                  Effect.mapError((cause) =>
+                    normalizeCliError(
+                      "codex",
+                      operation,
+                      cause,
+                      "Failed to read Codex CLI exit code",
+                    ),
+                  ),
+                ),
+              ],
+              { concurrency: "unbounded" },
+            );
+          }),
+        (handle) =>
+          Effect.gen(function* () {
+            const running = yield* handle.isRunning;
+            if (running) yield* handle.kill({ forceKillAfter: "2 seconds" });
+            // A signal exit may have no successful numeric exit code, but the
+            // handle must report that the exact spawned process has exited.
+            yield* Effect.exit(handle.exitCode);
+            if (yield* handle.isRunning)
+              return yield* new TextGenerationError({
+                operation,
+                detail: "Codex CLI process exit could not be verified.",
+              });
+            if (observer) yield* observer.exited(handle);
+          }).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(TextGenerationError)(cause)
+                ? cause
+                : normalizeCliError("codex", operation, cause, "Failed to verify Codex CLI exit"),
+            ),
+          ),
       );
 
       if (exitCode !== 0) {
@@ -253,8 +341,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       }
     });
 
-    const cleanup = Effect.all(
-      [schemaPath, outputPath, ...cleanupPaths].map((filePath) => safeUnlink(filePath)),
+    const cleanup = Effect.forEach(
+      [schemaPath, outputPath, ...cleanupPaths],
+      (filePath) => safeUnlink(filePath),
       {
         concurrency: "unbounded",
       },
@@ -263,7 +352,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return yield* Effect.gen(function* () {
       yield* runCodexCommand().pipe(
         Effect.scoped,
-        Effect.timeoutOption(CODEX_TIMEOUT_MS),
+        Effect.timeoutOption(
+          operation === "generateOrganizationArchitectTurn" ||
+            operation === "generateOrganizationPatchProposal"
+            ? 60_000
+            : CODEX_TIMEOUT_MS,
+        ),
         Effect.flatMap(
           Option.match({
             onNone: () =>
@@ -277,6 +371,29 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
       const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
 
+      if (
+        operation === "generateOrganizationArchitectTurn" ||
+        operation === "generateOrganizationPatchProposal"
+      ) {
+        const info = yield* fileSystem.stat(outputPath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: "Failed to inspect Codex structured output.",
+                cause,
+              }),
+          ),
+        );
+        if (
+          info.size > (operation === "generateOrganizationArchitectTurn" ? 64_000n : 256n * 1024n)
+        ) {
+          return yield* new TextGenerationError({
+            operation,
+            detail: "Codex output exceeded the structured output size limit.",
+          });
+        }
+      }
       return yield* fileSystem.readFileString(outputPath).pipe(
         Effect.mapError(
           (cause) =>
@@ -285,6 +402,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               detail: "Failed to read Codex output file.",
               cause,
             }),
+        ),
+        Effect.map((raw) =>
+          operation === "generateOrganizationArchitectTurn"
+            ? normalizeCodexArchitectOutputJson(raw)
+            : raw,
         ),
         Effect.flatMap(decodeOutput),
         Effect.catchTags({
@@ -388,6 +510,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const { prompt, outputSchema } = buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
+        linkedContext: input.linkedContext,
         attachments: input.attachments,
       });
 
@@ -402,13 +525,44 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
       return {
         title: sanitizeThreadTitle(generated.title),
+        ...(generated.needsRefinement ? { needsRefinement: true } : {}),
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
+
+  const generateOrganizationArchitectTurn: NonNullable<
+    TextGeneration.TextGeneration["Service"]["generateOrganizationArchitectTurn"]
+  > = Effect.fn("CodexTextGeneration.generateOrganizationArchitectTurn")(function* (input) {
+    const prompt = yield* buildOrganizationArchitectPrompt(input);
+    const generated = yield* runCodexJson({
+      operation: "generateOrganizationArchitectTurn",
+      cwd: process.cwd(),
+      prompt,
+      outputSchemaJson: OrganizationArchitectTurnOutput,
+      modelSelection: input.modelSelection,
+    });
+    return yield* validateOrganizationArchitectOutput(generated, input.organization.draftRevision);
+  });
+
+  const generateOrganizationPatchProposal: NonNullable<
+    TextGeneration.TextGeneration["Service"]["generateOrganizationPatchProposal"]
+  > = Effect.fn("CodexTextGeneration.generateOrganizationPatchProposal")(function* (input) {
+    const prompt = yield* buildOrganizationPatchPrompt(input);
+    const generated = yield* runCodexJson({
+      operation: "generateOrganizationPatchProposal",
+      cwd: process.cwd(),
+      prompt,
+      outputSchemaJson: OrganizationPatchProposalOutput,
+      modelSelection: input.modelSelection,
+    });
+    return yield* validateOrganizationPatchProposal(generated, input);
+  });
 
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateOrganizationArchitectTurn,
+    generateOrganizationPatchProposal,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

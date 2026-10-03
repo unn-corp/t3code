@@ -252,6 +252,7 @@ export const makeTeamNativeProjects = Effect.gen(function* () {
           localTracingEnabled: false,
           otlpTracesEnabled: false,
           otlpMetricsEnabled: false,
+          otlpLogsEnabled: false,
         },
         settings: DEFAULT_SERVER_SETTINGS,
         shellResumeCompletionMarker: true,

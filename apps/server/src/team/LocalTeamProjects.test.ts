@@ -707,7 +707,7 @@ it.effect(
           true,
         );
         const server = yield* HttpServer.HttpServer;
-        if (server.address._tag !== "TcpAddress")
+        if (server.address._tag !== "InetAddressV4" && server.address._tag !== "InetAddressV6")
           return yield* Effect.die("Expected TCP test server");
         const serviceUrl = `http://127.0.0.1:${server.address.port}`;
         const auth = {
@@ -1563,6 +1563,8 @@ const personalRetryClient = Effect.fnUntraced(function* (
     "dispatchNormalizedCommand",
     "cleanupFailedUploadedAttachments",
     "recordClientCommandAnalytics",
+    "ProjectCloneTracker",
+    "projectCloneTracker",
     `return {${personalCommandHandlerSource}}`,
   )(
     ORCHESTRATION_WS_METHODS,
@@ -1581,6 +1583,11 @@ const personalRetryClient = Effect.fnUntraced(function* (
     dispatchNormalizedCommand,
     () => Effect.void,
     () => Effect.void,
+    {
+      rejectCommandsDuringClone: () => Effect.void,
+      discardCloneForDeletedProject: () => Effect.void,
+    },
+    {},
   ) as Record<
     string,
     (

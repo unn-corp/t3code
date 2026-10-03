@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalTimers:off
-// This file is shipped as a standalone bundle and copied to a stable path by
-// `t3 service update`. Keep runtime imports limited to Node built-ins.
+// The launcher supervises the server child for the boot service and must keep
+// working across server versions, so it stays on Node built-ins with no Effect
+// runtime: it is the one part of the executable that cannot depend on the
+// rest of it being loadable.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -24,9 +26,13 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
+  SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
-import { isEntrypoint } from "./entrypoint.ts";
+import {
+  organizationLaunchSuspendMarkerPath,
+  quiesceOrganizationLaunchBroker,
+} from "./organizations/OrganizationScopeLaunchBrokerProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 120_000;
@@ -41,14 +47,24 @@ interface ManagedChild {
   readonly process: NodeChildProcess.ChildProcess;
 }
 
+// Mirrors pinnedRuntimePaths: a runtime is an unpacked release archive whose
+// executable runs on its own. Kept inline so this file stays on Node
+// built-ins only.
 const runtimePaths = (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  const executableName = process.platform === "win32" ? "t3.exe" : "t3";
   return {
     versionDir,
-    entryPath: NodePath.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
+    entryPath: NodePath.join(versionDir, executableName),
     sentinelPath: NodePath.join(versionDir, ".install-complete"),
   };
 };
+
+const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
+  command: paths.entryPath,
+  args: ["serve"],
+});
 
 /** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
@@ -92,6 +108,67 @@ async function syncDirectory(directory: string): Promise<void> {
   } finally {
     await handle.close();
   }
+}
+
+/** The marker survives a launcher crash and is checked by the launch broker. */
+async function suspendOrganizationLaunches(baseDir: string, updateId: string): Promise<void> {
+  const marker = organizationLaunchSuspendMarkerPath(baseDir);
+  const runtime = NodePath.dirname(marker);
+  await NodeFSP.mkdir(runtime, { recursive: true, mode: 0o700 });
+  const existing = await NodeFSP.readFile(marker, "utf8").catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  });
+  if (existing !== null) {
+    const value: unknown = JSON.parse(existing);
+    if (typeof value === "object" && value !== null && Reflect.get(value, "updateId") === updateId)
+      return;
+    throw new Error("Another Organization launch suspension is active.");
+  }
+  const staging = `${marker}.${NodeCrypto.randomUUID()}.staging`;
+  const handle = await NodeFSP.open(staging, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify({ version: 1, updateId })}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await NodeFSP.rename(staging, marker);
+  await syncDirectory(runtime);
+}
+
+async function resumeOrganizationLaunches(baseDir: string, updateId: string): Promise<void> {
+  const marker = organizationLaunchSuspendMarkerPath(baseDir);
+  const existing = await NodeFSP.readFile(marker, "utf8").catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  });
+  if (existing === null) return;
+  const value: unknown = JSON.parse(existing);
+  if (typeof value !== "object" || value === null || Reflect.get(value, "updateId") !== updateId)
+    throw new Error("Organization launch suspension belongs to another update.");
+  await NodeFSP.rm(marker);
+  await syncDirectory(NodePath.dirname(marker));
+}
+
+async function organizationLaunchesAreSuspended(
+  baseDir: string,
+  updateId: string,
+): Promise<boolean> {
+  const raw = await NodeFSP.readFile(organizationLaunchSuspendMarkerPath(baseDir), "utf8").catch(
+    (error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    },
+  );
+  if (raw === null) return false;
+  const value: unknown = JSON.parse(raw);
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Reflect.get(value, "version") === 1 &&
+    Reflect.get(value, "updateId") === updateId
+  );
 }
 
 /**
@@ -262,6 +339,8 @@ async function terminateChild(
 
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
+const restartPendingPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
 
 export class Launcher {
   readonly #baseDir: string;
@@ -273,12 +352,18 @@ export class Launcher {
   #stopRequested = false;
   #stopping = false;
   #done = false;
+  readonly #quiesceOrganizationLaunches: (baseDir: string) => Promise<void>;
   readonly #completion = Promise.withResolvers<void>();
 
-  constructor(baseDir: string, state: ServiceState) {
+  constructor(
+    baseDir: string,
+    state: ServiceState,
+    quiesceOrganizationLaunches = quiesceOrganizationLaunchBroker,
+  ) {
     this.#baseDir = baseDir;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
+    this.#quiesceOrganizationLaunches = quiesceOrganizationLaunches;
   }
 
   async run(): Promise<void> {
@@ -354,12 +439,22 @@ export class Launcher {
   async #recover(): Promise<void> {
     // A fresh launcher means servers are running again: any stop marker from
     // a previous explicit stop is stale and must not make a future update
-    // handoff release its tunnel.
+    // handoff release its tunnel. A restart deferred by `t3 update` is done
+    // no matter who restarted the service, but only once this launcher is
+    // the version the marker waits for: a launcher that came up between the
+    // CLI writing the marker and writing the new state still runs the old
+    // version, and the marker has to outlive it.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
+    const restartPending = restartPendingPath(this.#baseDir);
+    const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
+    if (awaitedVersion?.trim() === this.#state.activeVersion) {
+      await NodeFSP.rm(restartPending, { force: true }).catch(() => undefined);
+    }
     const update = this.#state.update;
     if (update?.status !== "pending") {
       if (update !== undefined) {
         await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
+        await resumeOrganizationLaunches(this.#baseDir, update.id);
       }
       await this.#startChild(this.#state.activeVersion, "active", update);
       return;
@@ -372,11 +467,24 @@ export class Launcher {
       await this.#returnToPrevious(update, "failed", "target-runtime-missing");
       return;
     }
+    if (!(await organizationLaunchesAreSuspended(this.#baseDir, update.id))) {
+      await this.#returnToPrevious(update, "failed", "scope-quiesce-not-proven");
+      return;
+    }
     await this.#startTrial(update);
   }
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
     // The previous child is dead here, so all three SQLite files are quiescent.
+    if (!(await organizationLaunchesAreSuspended(this.#baseDir, pending.id))) {
+      throw new Error("Organization launch suspension proof is missing for the trial.");
+    }
+    // A completed backup proves the pre-backup broker quiescence barrier was crossed.
+    // If no backup exists after a launcher crash, refuse the trial.
+    if (!(await pathExists(databaseBackupDir(this.#baseDir, pending.id)))) {
+      await this.#returnToPrevious(pending, "failed", "scope-quiesce-not-proven");
+      return;
+    }
     try {
       await backupDatabaseOnce(this.#baseDir, pending);
     } catch {
@@ -402,7 +510,8 @@ export class Launcher {
       childVersion: version,
       ...(update === undefined ? {} : { update }),
     };
-    const child = NodeChildProcess.spawn(process.execPath, [paths.entryPath, "serve"], {
+    const spawnArguments = runtimeSpawnArguments(paths);
+    const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
       env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
@@ -506,8 +615,21 @@ export class Launcher {
       return;
     }
     this.#timer = undefined;
+    try {
+      await suspendOrganizationLaunches(this.#baseDir, pending.id);
+      await this.#quiesceOrganizationLaunches(this.#baseDir);
+    } catch {
+      await this.#returnToPrevious(pending, "failed", "scope-quiesce-failed", child);
+      return;
+    }
     this.#child = null;
     await terminateChild(child.process);
+    try {
+      await backupDatabaseOnce(this.#baseDir, pending);
+    } catch {
+      await this.#returnToPrevious(pending, "failed", "db-backup-failed");
+      return;
+    }
     await this.#startTrial(pending);
   }
 
@@ -536,6 +658,7 @@ export class Launcher {
     this.#state = next;
     child.role = "active";
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
+    await resumeOrganizationLaunches(this.#baseDir, committed.id);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
   }
 
@@ -572,6 +695,13 @@ export class Launcher {
     this.#clearTimer();
     const pending = this.#state.update;
     if (pending?.status === "pending") {
+      // The active process can exit after persisting pending and before the
+      // delayed handoff creates the suspension marker. No trial may start
+      // without that durable proof; return to the previous version instead.
+      if (!(await organizationLaunchesAreSuspended(this.#baseDir, pending.id))) {
+        await this.#returnToPrevious(pending, "failed", "scope-quiesce-not-proven");
+        return;
+      }
       await this.#startTrial(pending);
       return;
     }
@@ -598,11 +728,12 @@ export class Launcher {
     await writeServiceState(this.#statePath, next);
     this.#state = next;
     await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+    await resumeOrganizationLaunches(this.#baseDir, pending.id);
     await this.#startChild(next.activeVersion, "active", outcome);
   }
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const baseDir = process.env.T3CODE_HOME?.trim();
   if (baseDir === undefined || baseDir === "") {
     throw new Error("T3CODE_HOME is required by the T3 Code service launcher.");
@@ -610,18 +741,4 @@ async function main(): Promise<void> {
   const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
   const state = await readServiceState(statePath);
   await new Launcher(baseDir, state).run();
-}
-
-if (
-  isEntrypoint({
-    moduleUrl: import.meta.url,
-    entryPath: process.argv[1],
-    runtimeMain: import.meta.main,
-  })
-) {
-  main().catch((cause: unknown) => {
-    const error = cause instanceof Error ? cause : new Error(String(cause));
-    process.stderr.write(`[service-launcher] ${error.message}\n`);
-    process.exitCode = 1;
-  });
 }

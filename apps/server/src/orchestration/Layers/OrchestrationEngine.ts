@@ -306,6 +306,21 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               // Check every user-message producer before persisting any events;
               // only the accepted receipt above permits a collaborative retry.
               if (envelope.collaborationUser !== undefined) {
+                // UNN may reuse a pre-persisted user message without emitting a
+                // message event. Collaborative commands still require a fresh ID;
+                // accepted retries already returned their durable receipt above.
+                if (envelope.command.type === "thread.turn.start") {
+                  const messageId = envelope.command.message.messageId;
+                  if (
+                    (yield* sql`SELECT 1 FROM projection_thread_messages WHERE message_id = ${messageId} LIMIT 1`)
+                      .length > 0
+                  ) {
+                    return yield* new OrchestrationCommandInvariantError({
+                      commandType: envelope.command.type,
+                      detail: `Message id '${messageId}' already exists. Use a new message id.`,
+                    });
+                  }
+                }
                 const messageIds = new Set<string>();
                 for (const event of eventBases) {
                   if (event.type !== "thread.message-sent" || event.payload.role !== "user") {
@@ -454,7 +469,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   collaborationSubject: envelope.collaborationUser?.subject ?? null,
                   error: error.message,
                 })
-                .pipe(Effect.catch(() => Effect.void));
+                .pipe(Effect.ignore);
             }
           }
 

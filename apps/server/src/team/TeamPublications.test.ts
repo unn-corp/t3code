@@ -29,7 +29,9 @@ import { makeTeamPublications, publicationHash } from "./TeamPublications.ts";
 import type { TeamPrincipal } from "./TeamAuthentication.ts";
 import { nativeThreadStream } from "./nativeStreams.ts";
 
-const decodeBatchOption = Schema.decodeUnknownOption(TeamPublicationBatch);
+const decodeBatchOption = Schema.decodeUnknownOption(TeamPublicationBatch, {
+  onExcessProperty: "error",
+});
 const decodeClientOption = Schema.decodeUnknownOption(ClientOrchestrationCommand);
 
 const principal = (userId: string): TeamPrincipal => ({

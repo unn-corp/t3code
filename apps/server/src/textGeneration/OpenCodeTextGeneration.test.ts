@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -14,6 +15,9 @@ import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../provider/OpenCodeServerOwner.ts";
 import * as OpenCodeTextGeneration from "./OpenCodeTextGeneration.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { architectTurnInput } from "./OrganizationArchitectFixture.ts";
+
+const architectResponse = JSON.stringify({ reply: "Define QA ownership.", proposals: [] });
 
 const runtimeMock = {
   state: {
@@ -23,6 +27,12 @@ const runtimeMock = {
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
     sessionCreateCalls: 0,
+    sessionPermissions: [] as ReadonlyArray<unknown>[],
+    clientDirectories: [] as string[],
+    abortCalls: [] as string[],
+    hangPrompt: false,
+    promptWasAborted: false,
+    onPromptStart: undefined as (() => void) | undefined,
     connectionError: undefined as Error | undefined,
     sessionCreateError: undefined as unknown,
     sessionResult: undefined as { data?: { id: string } } | undefined,
@@ -38,6 +48,12 @@ const runtimeMock = {
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateCalls = 0;
+    this.state.sessionPermissions.length = 0;
+    this.state.clientDirectories.length = 0;
+    this.state.abortCalls.length = 0;
+    this.state.hangPrompt = false;
+    this.state.promptWasAborted = false;
+    this.state.onPromptStart = undefined;
     this.state.connectionError = undefined;
     this.state.sessionCreateError = undefined;
     this.state.sessionResult = undefined;
@@ -91,22 +107,40 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           external: Boolean(serverUrl),
         }),
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
-  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
+  createOpenCodeSdkClient: ({ baseUrl, serverPassword, directory }) =>
     ({
       session: {
-        create: async () => {
+        create: async (input: { readonly permission?: ReadonlyArray<unknown> }) => {
           runtimeMock.state.sessionCreateCalls += 1;
+          runtimeMock.state.sessionPermissions.push(input.permission ?? []);
+          runtimeMock.state.clientDirectories.push(directory);
           if (runtimeMock.state.sessionCreateError !== undefined) {
             throw runtimeMock.state.sessionCreateError;
           }
           return runtimeMock.state.sessionResult ?? { data: { id: `${baseUrl}/session` } };
         },
-        prompt: async (input: { readonly parts: ReadonlyArray<unknown> }) => {
+        prompt: async (
+          input: { readonly parts: ReadonlyArray<unknown> },
+          options?: { readonly signal?: AbortSignal },
+        ) => {
           runtimeMock.state.promptUrls.push(baseUrl);
           runtimeMock.state.promptParts.push(input.parts);
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
+          runtimeMock.state.onPromptStart?.();
+          if (runtimeMock.state.hangPrompt) {
+            return await new Promise<never>((_resolve, reject) => {
+              options?.signal?.addEventListener(
+                "abort",
+                () => {
+                  runtimeMock.state.promptWasAborted = true;
+                  reject(new Error("Prompt cancelled"));
+                },
+                { once: true },
+              );
+            });
+          }
           if (runtimeMock.state.promptRequestError !== undefined) {
             throw runtimeMock.state.promptRequestError;
           }
@@ -125,6 +159,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
               },
             }
           );
+        },
+        abort: async (input: { readonly sessionID: string }) => {
+          runtimeMock.state.abortCalls.push(input.sessionID);
+          return { data: true };
         },
       },
     }) as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
@@ -235,6 +273,49 @@ const advanceIdleClock = Effect.gen(function* () {
 });
 
 it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
+  it.effect("times out Architect generation and aborts its OpenCode session", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.hangPrompt = true;
+        let signalPromptStart: () => void = () => undefined;
+        const promptStarted = new Promise<void>((resolve) => {
+          signalPromptStart = resolve;
+        });
+        runtimeMock.state.onPromptStart = signalPromptStart;
+
+        const request = yield* Effect.forkChild(
+          textGeneration.generateOrganizationArchitectTurn!(
+            architectTurnInput("opencode", "openai/gpt-5"),
+          ),
+        );
+        yield* Effect.promise(() => promptStarted);
+        yield* TestClock.adjust(Duration.millis(60_000));
+
+        const error = yield* Effect.flip(Fiber.join(request));
+        expect(error.detail).toBe("OpenCode Architect request timed out.");
+        expect(runtimeMock.state.promptWasAborted).toBe(true);
+        expect(runtimeMock.state.abortCalls).toEqual(["http://127.0.0.1:4301/session"]);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+  it.effect("keeps Architect generation in an isolated, tool-denying session", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: { parts: [{ type: "text", text: architectResponse }] },
+        };
+        const result = yield* textGeneration.generateOrganizationArchitectTurn!(
+          architectTurnInput("opencode", "openai/gpt-5"),
+        );
+        expect(result.reply).toBe("Define QA ownership.");
+        expect(runtimeMock.state.sessionPermissions[0]).toEqual([
+          { permission: "*", pattern: "*", action: "deny" },
+        ]);
+        expect(runtimeMock.state.clientDirectories[0]).not.toBe(process.cwd());
+        expect(runtimeMock.state.abortCalls).toEqual([]);
+      }),
+    ),
+  );
   it.effect("excludes generic files from thread title generation", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
