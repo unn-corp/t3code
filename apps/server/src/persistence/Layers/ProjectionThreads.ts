@@ -1,3 +1,5 @@
+import { CollaborationUser, SideThread, SideThreadShellSummary } from "@t3tools/contracts";
+import { summarizeSideThreads } from "@t3tools/shared/sideThread";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -11,6 +13,7 @@ import {
   GetProjectionThreadInput,
   ListProjectionThreadsByProjectInput,
   ProjectionThread,
+  ProjectionThreadDiscussion,
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
@@ -18,6 +21,7 @@ import { ModelSelection, ThreadLinkedPullRequest } from "@t3tools/contracts";
 
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
+    createdBy: Schema.NullOr(Schema.fromJsonString(CollaborationUser)),
     modelSelection: Schema.fromJsonString(ModelSelection),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
@@ -61,7 +65,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
-          deleted_at
+          deleted_at,
+          created_by_json
         )
         VALUES (
           ${row.threadId},
@@ -92,7 +97,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
           ${row.hasActionableProposedPlan},
-          ${row.deletedAt}
+          ${row.deletedAt},
+          ${row.createdBy ? JSON.stringify(row.createdBy) : null}
         )
         ON CONFLICT (thread_id)
         DO UPDATE SET
@@ -123,7 +129,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
-          deleted_at = excluded.deleted_at
+          deleted_at = excluded.deleted_at,
+          created_by_json = excluded.created_by_json
       `,
   });
 
@@ -161,7 +168,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `,
@@ -201,7 +209,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_threads
         WHERE project_id = ${projectId}
         ORDER BY created_at ASC, thread_id ASC
@@ -216,6 +225,57 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         WHERE thread_id = ${threadId}
       `,
   });
+
+  const getDiscussionRow = SqlSchema.findOneOption({
+    Request: GetProjectionThreadInput,
+    Result: ProjectionThreadDiscussion.mapFields(
+      Struct.assign({ sideThreads: Schema.fromJsonString(Schema.Array(SideThread)) }),
+    ),
+    execute: ({ threadId }) => sql`
+      SELECT threads.thread_id AS "threadId", COALESCE(discussions.side_threads_json, '[]') AS "sideThreads", threads.updated_at AS "updatedAt"
+      FROM projection_threads AS threads
+      LEFT JOIN projection_thread_discussions AS discussions ON discussions.thread_id = threads.thread_id
+      WHERE threads.thread_id = ${threadId}
+    `,
+  });
+
+  const updateDiscussionRow = SqlSchema.void({
+    Request: ProjectionThreadDiscussion.mapFields(
+      Struct.assign({
+        sideThreads: Schema.fromJsonString(Schema.Array(SideThread)),
+        teamDiscussion: Schema.NullOr(Schema.fromJsonString(SideThreadShellSummary)),
+      }),
+    ),
+    execute: (row) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`
+            INSERT INTO projection_thread_discussions (thread_id, side_threads_json)
+            VALUES (${row.threadId}, ${row.sideThreads})
+            ON CONFLICT (thread_id) DO UPDATE SET side_threads_json = excluded.side_threads_json
+          `;
+          return yield* sql`
+            UPDATE projection_threads
+            SET team_discussion_json = ${row.teamDiscussion},
+                updated_at = ${row.updatedAt}
+            WHERE thread_id = ${row.threadId}
+          `;
+        }),
+      ),
+  });
+
+  const getDiscussion: ProjectionThreadRepositoryShape["getDiscussion"] = (input) =>
+    getDiscussionRow(input).pipe(
+      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getDiscussion:query")),
+    );
+
+  const updateDiscussion: ProjectionThreadRepositoryShape["updateDiscussion"] = (input) =>
+    updateDiscussionRow({
+      ...input,
+      teamDiscussion: summarizeSideThreads(input.threadId, input.sideThreads) ?? null,
+    }).pipe(
+      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.updateDiscussion:query")),
+    );
 
   const upsert: ProjectionThreadRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadRow(row).pipe(
@@ -238,6 +298,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
     );
 
   return {
+    getDiscussion,
+    updateDiscussion,
     upsert,
     getById,
     listByProjectId,

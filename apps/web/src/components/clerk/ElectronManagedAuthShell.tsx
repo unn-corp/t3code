@@ -14,13 +14,15 @@ import { clerkAppearance } from "./clerkAppearance";
 export default function ElectronManagedAuthShell({
   publishableKey,
   children,
+  managedRelay = true,
 }: {
   readonly publishableKey: string;
   readonly children: ReactNode;
+  readonly managedRelay?: boolean;
 }) {
   return (
     <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey} passkeys={passkeys}>
-      <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
+      {managedRelay ? <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider> : children}
     </ClerkProvider>
   );
 }

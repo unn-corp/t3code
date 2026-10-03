@@ -1,7 +1,51 @@
+import {
+  PRESENCE_WS_METHODS,
+  LOCAL_PRESENCE_WS_METHODS,
+  PresenceHeartbeatInput,
+  PresenceHeartbeatResult,
+  PresenceSnapshot,
+} from "./teamPresence.ts";
+import {
+  TeamMemberDirectory,
+  TeamMembershipCommand,
+  TEAM_DIRECTORY_METHOD,
+  LOCAL_TEAM_DIRECTORY_METHOD,
+  LOCAL_TEAM_MEMBERS_METHOD,
+  LOCAL_TEAM_ACCEPT_METHOD,
+} from "./teamProjects.ts";
+import { TeamCommandResult } from "./teamSpaces.ts";
+import {
+  TEAM_FILES_METHODS,
+  TeamRepositoryCommand,
+  TeamRepositoryResult,
+  TeamFileError,
+  LOCAL_TEAM_FILES_STATE_METHOD,
+  LOCAL_TEAM_FILES_METHOD,
+  LocalTeamFilesControl,
+  LocalTeamFilesResult,
+} from "./teamFiles.ts";
+import { OrchestrationThreadDetailWindow } from "./orchestration.ts";
+import {
+  LOCAL_TEAM_METHODS,
+  LocalTeamProjectState,
+  LocalTeamProjectControl,
+  LocalTeamProjectControlResult,
+  LocalTeamProjectError,
+  TeamSharedProjectStreamItem,
+  TeamSharedThreadStreamItem,
+  TeamSharedThreadSnapshot,
+} from "./teamProjects.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  TEAM_PUBLICATION_METHODS,
+  TeamPublicationRegister,
+  TeamPublicationBatch,
+  TeamPublicationAck,
+  TeamPublicationError,
+} from "./teamPublication.ts";
+import { NonNegativeInt, TrimmedNonEmptyString, ProjectId, ThreadId } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -1493,7 +1537,138 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+/** Project-scoped team connections deliberately expose no host/environment operations. */
+export const TeamNativeRpcGroup = RpcGroup.make(
+  Rpc.make(PRESENCE_WS_METHODS.heartbeat, {
+    payload: PresenceHeartbeatInput,
+    success: PresenceHeartbeatResult,
+    error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(PRESENCE_WS_METHODS.subscribe, {
+    payload: Schema.Struct({}),
+    success: PresenceSnapshot,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  }),
+  Rpc.make(TEAM_DIRECTORY_METHOD, {
+    payload: Schema.Struct({}),
+    success: TeamMemberDirectory,
+    error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(TEAM_FILES_METHODS.command, {
+    payload: TeamRepositoryCommand,
+    success: TeamRepositoryResult,
+    error: TeamFileError,
+  }),
+  Rpc.make(TEAM_FILES_METHODS.subscribe, {
+    payload: Schema.Struct({}),
+    success: NonNegativeInt,
+    error: TeamFileError,
+    stream: true,
+  }),
+  Rpc.make(TEAM_PUBLICATION_METHODS.register, {
+    payload: TeamPublicationRegister,
+    success: TeamPublicationAck,
+    error: TeamPublicationError,
+  }),
+  Rpc.make(TEAM_PUBLICATION_METHODS.publish, {
+    payload: TeamPublicationBatch,
+    success: TeamPublicationAck,
+    error: TeamPublicationError,
+  }),
+  WsServerProbeRpc,
+  WsServerGetConfigRpc,
+  WsSubscribeServerConfigRpc,
+  WsOrchestrationDispatchCommandRpc,
+  WsOrchestrationSearchThreadsRpc,
+  WsOrchestrationGetArchivedShellSnapshotRpc,
+  WsOrchestrationSubscribeShellRpc,
+  WsOrchestrationSubscribeThreadRpc,
+);
+
+const localTeamError = Schema.Union([LocalTeamProjectError, EnvironmentAuthorizationError]);
 export const WsRpcGroup = RpcGroup.make(
+  Rpc.make(LOCAL_PRESENCE_WS_METHODS.heartbeat, {
+    payload: Schema.Struct({ projectId: ProjectId, focus: PresenceHeartbeatInput }),
+    success: PresenceHeartbeatResult,
+    error: localTeamError,
+  }),
+  Rpc.make(LOCAL_PRESENCE_WS_METHODS.subscribe, {
+    payload: Schema.Struct({ projectId: ProjectId }),
+    success: PresenceSnapshot,
+    error: localTeamError,
+    stream: true,
+  }),
+  Rpc.make(LOCAL_TEAM_DIRECTORY_METHOD, {
+    payload: Schema.Struct({ projectId: ProjectId }),
+    success: TeamMemberDirectory,
+    error: localTeamError,
+  }),
+  Rpc.make(LOCAL_TEAM_MEMBERS_METHOD, {
+    payload: Schema.Struct({ projectId: ProjectId, command: TeamMembershipCommand }),
+    success: TeamCommandResult,
+    error: localTeamError,
+  }),
+  Rpc.make(LOCAL_TEAM_ACCEPT_METHOD, {
+    payload: Schema.Struct({
+      generation: Schema.String,
+      token: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+    }),
+    success: TeamCommandResult,
+    error: localTeamError,
+  }),
+  Rpc.make(LOCAL_TEAM_FILES_STATE_METHOD, {
+    payload: Schema.Struct({ projectId: ProjectId }),
+    success: LocalTeamFilesResult,
+    error: Schema.Union([TeamFileError, LocalTeamProjectError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(LOCAL_TEAM_FILES_METHOD, {
+    payload: LocalTeamFilesControl,
+    success: LocalTeamFilesResult,
+    error: Schema.Union([TeamFileError, LocalTeamProjectError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(LOCAL_TEAM_METHODS.subscribeState, {
+    payload: Schema.Struct({}),
+    success: Schema.Array(LocalTeamProjectState),
+    error: localTeamError,
+    stream: true,
+  }),
+  Rpc.make(LOCAL_TEAM_METHODS.state, {
+    payload: Schema.Struct({}),
+    success: Schema.Array(LocalTeamProjectState),
+    error: localTeamError,
+  }),
+  Rpc.make(LOCAL_TEAM_METHODS.control, {
+    payload: LocalTeamProjectControl,
+    success: LocalTeamProjectControlResult,
+    error: localTeamError,
+  }),
+  Rpc.make(LOCAL_TEAM_METHODS.subscribeProject, {
+    payload: Schema.Struct({ projectId: ProjectId }),
+    success: TeamSharedProjectStreamItem,
+    error: localTeamError,
+    stream: true,
+  }),
+  Rpc.make(LOCAL_TEAM_METHODS.subscribeThread, {
+    payload: Schema.Struct({ projectId: ProjectId, threadId: ThreadId }),
+    success: TeamSharedThreadStreamItem,
+    error: localTeamError,
+    stream: true,
+  }),
+  Rpc.make(LOCAL_TEAM_METHODS.snapshot, {
+    payload: Schema.Struct({
+      projectId: ProjectId,
+      threadId: ThreadId,
+      window: Schema.optional(OrchestrationThreadDetailWindow),
+    }),
+    success: TeamSharedThreadSnapshot,
+    error: localTeamError,
+  }),
+  Rpc.make(LOCAL_TEAM_METHODS.discuss, {
+    payload: Schema.Struct({ projectId: ProjectId, command: ClientOrchestrationCommand }),
+    success: Schema.Struct({ sequence: NonNegativeInt }),
+    error: localTeamError,
+  }),
   WsAgentDashboardGetSnapshotRpc,
   WsAgentDashboardDismissFeedCardRpc,
   WsAgentDashboardClearFeedRpc,

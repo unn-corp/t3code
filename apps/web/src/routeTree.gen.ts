@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UsageRouteImport } from './routes/usage'
+import { Route as SpacesRouteImport } from './routes/spaces'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ResearchRouteImport } from './routes/research'
 import { Route as PairRouteImport } from './routes/pair'
@@ -42,6 +43,7 @@ import { Route as AgentDashboardFeedRouteImport } from './routes/agent-dashboard
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as ChatSharedEnvironmentIdProjectIdSharedThreadIdRouteImport } from './routes/_chat.shared.$environmentId.$projectId.$sharedThreadId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -51,6 +53,11 @@ const WelcomeRoute = WelcomeRouteImport.update({
 const UsageRoute = UsageRouteImport.update({
   id: '/usage',
   path: '/usage',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpacesRoute = SpacesRouteImport.update({
+  id: '/spaces',
+  path: '/spaces',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -209,6 +216,12 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatSharedEnvironmentIdProjectIdSharedThreadIdRoute =
+  ChatSharedEnvironmentIdProjectIdSharedThreadIdRouteImport.update({
+    id: '/shared/$environmentId/$projectId/$sharedThreadId',
+    path: '/shared/$environmentId/$projectId/$sharedThreadId',
+    getParentRoute: () => ChatRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -217,6 +230,7 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/research': typeof ResearchRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/spaces': typeof SpacesRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
@@ -243,12 +257,14 @@ export interface FileRoutesByFullPath {
   '/agent-dashboard/': typeof AgentDashboardIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/shared/$environmentId/$projectId/$sharedThreadId': typeof ChatSharedEnvironmentIdProjectIdSharedThreadIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/research': typeof ResearchRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/spaces': typeof SpacesRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
@@ -276,6 +292,7 @@ export interface FileRoutesByTo {
   '/agent-dashboard': typeof AgentDashboardIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/shared/$environmentId/$projectId/$sharedThreadId': typeof ChatSharedEnvironmentIdProjectIdSharedThreadIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -285,6 +302,7 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/research': typeof ResearchRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/spaces': typeof SpacesRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
@@ -312,6 +330,7 @@ export interface FileRoutesById {
   '/agent-dashboard/': typeof AgentDashboardIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/_chat/shared/$environmentId/$projectId/$sharedThreadId': typeof ChatSharedEnvironmentIdProjectIdSharedThreadIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -322,6 +341,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/research'
     | '/settings'
+    | '/spaces'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
@@ -348,12 +368,14 @@ export interface FileRouteTypes {
     | '/agent-dashboard/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/shared/$environmentId/$projectId/$sharedThreadId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
     | '/pair'
     | '/research'
     | '/settings'
+    | '/spaces'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
@@ -381,6 +403,7 @@ export interface FileRouteTypes {
     | '/agent-dashboard'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/shared/$environmentId/$projectId/$sharedThreadId'
   id:
     | '__root__'
     | '/_chat'
@@ -389,6 +412,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/research'
     | '/settings'
+    | '/spaces'
     | '/usage'
     | '/welcome'
     | '/_chat/pull-requests'
@@ -416,6 +440,7 @@ export interface FileRouteTypes {
     | '/agent-dashboard/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/_chat/shared/$environmentId/$projectId/$sharedThreadId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -425,6 +450,7 @@ export interface RootRouteChildren {
   PairRoute: typeof PairRoute
   ResearchRoute: typeof ResearchRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  SpacesRoute: typeof SpacesRoute
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
   ConnectCallbackRoute: typeof ConnectCallbackRoute
@@ -445,6 +471,13 @@ declare module '@tanstack/react-router' {
       path: '/usage'
       fullPath: '/usage'
       preLoaderRoute: typeof UsageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spaces': {
+      id: '/spaces'
+      path: '/spaces'
+      fullPath: '/spaces'
+      preLoaderRoute: typeof SpacesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -664,6 +697,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/shared/$environmentId/$projectId/$sharedThreadId': {
+      id: '/_chat/shared/$environmentId/$projectId/$sharedThreadId'
+      path: '/shared/$environmentId/$projectId/$sharedThreadId'
+      fullPath: '/shared/$environmentId/$projectId/$sharedThreadId'
+      preLoaderRoute: typeof ChatSharedEnvironmentIdProjectIdSharedThreadIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
   }
 }
 
@@ -672,6 +712,7 @@ interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatSharedEnvironmentIdProjectIdSharedThreadIdRoute: typeof ChatSharedEnvironmentIdProjectIdSharedThreadIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -679,6 +720,8 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatSharedEnvironmentIdProjectIdSharedThreadIdRoute:
+    ChatSharedEnvironmentIdProjectIdSharedThreadIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
@@ -748,6 +791,7 @@ const rootRouteChildren: RootRouteChildren = {
   PairRoute: PairRoute,
   ResearchRoute: ResearchRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  SpacesRoute: SpacesRoute,
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
   ConnectCallbackRoute: ConnectCallbackRoute,

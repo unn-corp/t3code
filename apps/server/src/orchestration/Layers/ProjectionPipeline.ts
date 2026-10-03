@@ -1,3 +1,4 @@
+import { canonicalizeSideThreads, sideThreadIdForThread } from "@t3tools/shared/sideThread";
 import {
   ApprovalRequestId,
   isImportedAgentSessionMessageId,
@@ -513,6 +514,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             projectIcon: event.payload.projectIcon ?? null,
             scripts: event.payload.scripts,
             createdAt: event.payload.createdAt,
+            ...(event.metadata.collaborationUser
+              ? { createdBy: event.metadata.collaborationUser }
+              : {}),
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
           });
@@ -627,6 +631,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             branchPullRequest: null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
+            ...(event.metadata.collaborationUser
+              ? { createdBy: event.metadata.collaborationUser }
+              : {}),
             updatedAt: event.payload.updatedAt,
             archivedAt: null,
             settledOverride: null,
@@ -644,6 +651,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
             deletedAt: null,
+          });
+          yield* projectionThreadRepository.updateDiscussion({
+            threadId: event.payload.threadId,
+            sideThreads: [],
+            updatedAt: event.payload.updatedAt,
           });
           return;
 
@@ -987,6 +999,251 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "sidethread.created": {
+          const existingRow = yield* projectionThreadRepository.getDiscussion({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.updateDiscussion({
+            ...existingRow.value,
+            sideThreads: canonicalizeSideThreads(event.payload.threadId, [
+              ...(existingRow.value.sideThreads ?? []),
+              {
+                id: event.payload.sideThreadId,
+                ...(event.payload.anchorMessageId !== undefined
+                  ? { anchorMessageId: event.payload.anchorMessageId }
+                  : {}),
+                createdBy: event.payload.createdBy,
+                createdAt: event.payload.createdAt,
+                updatedAt: event.payload.createdAt,
+                archivedAt: null,
+                messages: [],
+              },
+            ]),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "sidethread.message-posted": {
+          const existingRow = yield* projectionThreadRepository.getDiscussion({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
+          yield* projectionThreadRepository.updateDiscussion({
+            ...existingRow.value,
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id === sideThreadId
+                ? {
+                    ...sideThread,
+                    messages: [
+                      ...sideThread.messages,
+                      {
+                        id: event.payload.messageId,
+                        text: event.payload.text,
+                        author: event.payload.author,
+                        ...(event.payload.mentions !== undefined
+                          ? { mentions: event.payload.mentions }
+                          : {}),
+                        ...(event.payload.quotedMessageId !== undefined
+                          ? { quotedMessageId: event.payload.quotedMessageId }
+                          : {}),
+                        ...(event.payload.attachments !== undefined
+                          ? { attachments: event.payload.attachments }
+                          : {}),
+                        ...(event.payload.linkedRef !== undefined
+                          ? { linkedRef: event.payload.linkedRef }
+                          : {}),
+                        ...(event.payload.replyToSideThreadMessageId !== undefined
+                          ? {
+                              replyToSideThreadMessageId: event.payload.replyToSideThreadMessageId,
+                            }
+                          : {}),
+                        createdAt: event.payload.createdAt,
+                        updatedAt: event.payload.createdAt,
+                      },
+                    ],
+                    updatedAt: event.payload.createdAt,
+                  }
+                : sideThread,
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "sidethread.message-reacted": {
+          const existingRow = yield* projectionThreadRepository.getDiscussion({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) return;
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
+          yield* projectionThreadRepository.updateDiscussion({
+            ...existingRow.value,
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id !== sideThreadId
+                ? sideThread
+                : {
+                    ...sideThread,
+                    messages: sideThread.messages.map((message) => {
+                      if (message.id !== event.payload.messageId) return message;
+                      const reactions = [...(message.reactions ?? [])];
+                      const index = reactions.findIndex(
+                        (reaction) => reaction.emoji === event.payload.emoji,
+                      );
+                      const currentUsers = index === -1 ? [] : reactions[index]!.users;
+                      const users =
+                        event.payload.action === "added"
+                          ? [
+                              ...currentUsers.filter(
+                                (user) => user.subject !== event.payload.user.subject,
+                              ),
+                              event.payload.user,
+                            ]
+                          : currentUsers.filter(
+                              (user) => user.subject !== event.payload.user.subject,
+                            );
+                      if (users.length === 0 && index !== -1) reactions.splice(index, 1);
+                      else if (index === -1) reactions.push({ emoji: event.payload.emoji, users });
+                      else reactions[index] = { emoji: event.payload.emoji, users };
+                      return { ...message, reactions };
+                    }),
+                    updatedAt: event.payload.createdAt,
+                  },
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "sidethread.message-edited": {
+          const existingRow = yield* projectionThreadRepository.getDiscussion({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) return;
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
+          yield* projectionThreadRepository.updateDiscussion({
+            ...existingRow.value,
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id === sideThreadId
+                ? {
+                    ...sideThread,
+                    messages: sideThread.messages.map((message) =>
+                      message.id === event.payload.messageId
+                        ? {
+                            ...message,
+                            text: event.payload.text,
+                            updatedAt: event.payload.editedAt,
+                            editedAt: event.payload.editedAt,
+                          }
+                        : message,
+                    ),
+                    updatedAt: event.payload.editedAt,
+                  }
+                : sideThread,
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "sidethread.marked-read": {
+          const existingRow = yield* projectionThreadRepository.getDiscussion({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) return;
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
+          yield* projectionThreadRepository.updateDiscussion({
+            ...existingRow.value,
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id === sideThreadId
+                ? {
+                    ...sideThread,
+                    readBy: [
+                      ...(sideThread.readBy ?? []).filter(
+                        (marker) => marker.user.subject !== event.payload.user.subject,
+                      ),
+                      { user: event.payload.user, lastReadAt: event.payload.lastReadAt },
+                    ],
+                  }
+                : sideThread,
+            ),
+            updatedAt: existingRow.value.updatedAt,
+          });
+          return;
+        }
+
+        case "sidethread.archived": {
+          const existingRow = yield* projectionThreadRepository.getDiscussion({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
+          yield* projectionThreadRepository.updateDiscussion({
+            ...existingRow.value,
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id === sideThreadId
+                ? {
+                    ...sideThread,
+                    archivedAt: event.payload.archivedAt,
+                    updatedAt: event.payload.archivedAt,
+                  }
+                : sideThread,
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "sidethread.unarchived": {
+          const existingRow = yield* projectionThreadRepository.getDiscussion({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          const sideThreadId = sideThreadIdForThread(event.payload.threadId);
+          yield* projectionThreadRepository.updateDiscussion({
+            ...existingRow.value,
+            sideThreads: canonicalizeSideThreads(
+              event.payload.threadId,
+              existingRow.value.sideThreads ?? [],
+            ).map((sideThread) =>
+              sideThread.id === sideThreadId
+                ? {
+                    ...sideThread,
+                    archivedAt: null,
+                    updatedAt: event.payload.unarchivedAt,
+                  }
+                : sideThread,
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
         // A message cannot change any summary field except latestUserMessageAt,
         // which is a monotonic maximum that folds in directly. The full refresh
         // would re-read every message body in the thread per user message.
@@ -1143,6 +1400,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               threadId: event.payload.threadId,
               turnId: event.payload.turnId,
               role: event.payload.role,
+              ...(event.payload.role === "user" && event.metadata.collaborationUser
+                ? { author: event.metadata.collaborationUser }
+                : {}),
               text: event.payload.text,
               ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
               createdAt: event.payload.createdAt,
@@ -1171,6 +1431,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
             role: event.payload.role,
+            ...(event.payload.role === "user" && event.metadata.collaborationUser
+              ? { author: event.metadata.collaborationUser }
+              : {}),
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
             isStreaming: false,
@@ -1579,6 +1842,31 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.message-sent": {
+          // Published history needs real pagination anchors without emitting a
+          // turn-start request, creating a provider session, or a checkpoint.
+          if (
+            event.metadata.publication &&
+            event.payload.role === "user" &&
+            event.payload.turnId !== null
+          ) {
+            yield* projectionTurnRepository.upsertByTurnId({
+              threadId: event.payload.threadId,
+              turnId: event.payload.turnId,
+              pendingMessageId: event.payload.messageId,
+              assistantMessageId: null,
+              sourceProposedPlanThreadId: null,
+              sourceProposedPlanId: null,
+              state: "completed",
+              requestedAt: event.payload.createdAt,
+              startedAt: null,
+              completedAt: event.payload.updatedAt,
+              checkpointTurnCount: null,
+              checkpointRef: null,
+              checkpointStatus: null,
+              checkpointFiles: [],
+            });
+            return;
+          }
           if (event.payload.turnId === null || event.payload.role !== "assistant") {
             return;
           }
@@ -2013,6 +2301,20 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             for (const attachment of Object.values(payload.value.attachmentsByQuestionId).flat()) {
               const relativePath = attachmentRelativePath(attachment);
               if (relativePath) retainedPaths.add(relativePath);
+            }
+          }
+          const thread = yield* projectionThreadRepository.getDiscussion({
+            threadId: ThreadId.make(threadId),
+          });
+          if (Option.isSome(thread)) {
+            for (const discussion of thread.value.sideThreads ?? []) {
+              for (const message of discussion.messages) {
+                for (const attachment of message.attachments ?? []) {
+                  if (attachment.type !== "image") continue;
+                  const relativePath = attachmentRelativePath(attachment);
+                  if (relativePath) retainedPaths.add(relativePath);
+                }
+              }
             }
           }
           prunedThreadRelativePaths.set(threadId, retainedPaths);

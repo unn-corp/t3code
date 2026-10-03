@@ -1,0 +1,11 @@
+# Use with compose.yaml on Mothership, behind its existing Traefik proxy.
+services:
+  app:
+    image: ${T3_TEAM_IMAGE:?Set the reviewed Teams image digest}
+    networks:
+      - default
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true

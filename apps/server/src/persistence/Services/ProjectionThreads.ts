@@ -7,6 +7,8 @@
  * @module ProjectionThreadRepository
  */
 import {
+  CollaborationUser,
+  SideThread,
   CommandId,
   IsoDateTime,
   ModelSelection,
@@ -55,8 +57,17 @@ export const ProjectionThread = Schema.Struct({
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
+  createdBy: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
+
+/** Loaded only for discussion mutations and full thread reads. */
+export const ProjectionThreadDiscussion = Schema.Struct({
+  threadId: ThreadId,
+  sideThreads: Schema.Array(SideThread),
+  updatedAt: IsoDateTime,
+});
+export type ProjectionThreadDiscussion = typeof ProjectionThreadDiscussion.Type;
 
 export const GetProjectionThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -77,6 +88,16 @@ export type ListProjectionThreadsByProjectInput = typeof ListProjectionThreadsBy
  * ProjectionThreadRepositoryShape - Service API for projected thread records.
  */
 export interface ProjectionThreadRepositoryShape {
+  /** Discussion bodies never travel through the ordinary metadata read/write path. */
+  readonly getDiscussion: (
+    input: GetProjectionThreadInput,
+  ) => Effect.Effect<Option.Option<ProjectionThreadDiscussion>, ProjectionRepositoryError>;
+
+  /** Atomically replace the body and its derived shell summary. */
+  readonly updateDiscussion: (
+    discussion: ProjectionThreadDiscussion,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
   /**
    * Insert or replace a projected thread row.
    *

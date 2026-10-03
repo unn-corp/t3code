@@ -8,6 +8,20 @@ import {
   createEnvironmentRpcCommand,
 } from "./runtime.ts";
 import {
+  type CreateSideThreadInput,
+  createSideThread,
+  type PostSideThreadMessageInput,
+  postSideThreadMessage,
+  type ReactToSideThreadMessageInput,
+  reactToSideThreadMessage,
+  type EditSideThreadMessageInput,
+  editSideThreadMessage,
+  type MarkSideThreadReadInput,
+  markSideThreadRead,
+  type UnarchiveSideThreadInput,
+  unarchiveSideThread,
+  type ArchiveSideThreadInput,
+  archiveSideThread,
   type ArchiveThreadInput,
   type CreateThreadInput,
   type DeleteThreadInput,
@@ -60,6 +74,13 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export type {
+  UnarchiveSideThreadInput,
+  ArchiveSideThreadInput,
+  MarkSideThreadReadInput,
+  EditSideThreadMessageInput,
+  ReactToSideThreadMessageInput,
+  PostSideThreadMessageInput,
+  CreateSideThreadInput,
   ArchiveThreadInput,
   CreateThreadInput,
   DeleteThreadInput,
@@ -96,6 +117,50 @@ export function createThreadEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.threadId]),
   };
   return {
+    createSideThread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:create",
+      execute: (input: CreateSideThreadInput) => createSideThread(input),
+      scheduler,
+      concurrency,
+    }),
+    postSideThreadMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:post-message",
+      execute: (input: PostSideThreadMessageInput) => postSideThreadMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    reactToSideThreadMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:react-message",
+      execute: (input: ReactToSideThreadMessageInput) => reactToSideThreadMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    editSideThreadMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:edit-message",
+      execute: (input: EditSideThreadMessageInput) => editSideThreadMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    markSideThreadRead: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:mark-read",
+      execute: (input: MarkSideThreadReadInput) => markSideThreadRead(input),
+      scheduler,
+      concurrency,
+    }),
+    archiveSideThread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:archive",
+      execute: (input: ArchiveSideThreadInput) => archiveSideThread(input),
+      scheduler,
+      concurrency,
+    }),
+
+    unarchiveSideThread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:sidethread:unarchive",
+      execute: (input: UnarchiveSideThreadInput) => unarchiveSideThread(input),
+      scheduler,
+      concurrency,
+    }),
+
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),

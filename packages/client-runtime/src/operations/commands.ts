@@ -1,5 +1,9 @@
+import { canExecuteTeamSource } from "../state/teamExecution.ts";
+import type { TeamThreadSource } from "@t3tools/contracts/teamProjects";
+import { LOCAL_TEAM_METHODS } from "@t3tools/contracts/teamProjects";
 import {
   CommandId,
+  OrchestrationDispatchCommandError,
   ORCHESTRATION_WS_METHODS,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
@@ -22,6 +26,7 @@ type CommandInput<T extends CommandType> = Omit<
   "type" | "commandId" | "createdAt"
 > & {
   readonly commandId?: CommandId;
+  readonly teamSource?: TeamThreadSource;
 } & ("createdAt" extends keyof CommandOf<T>
     ? {
         readonly createdAt?: CommandOf<T>["createdAt"];
@@ -31,7 +36,14 @@ type CommandInput<T extends CommandType> = Omit<
 export type CreateProjectInput = CommandInput<"project.create">;
 export type UpdateProjectInput = CommandInput<"project.meta.update">;
 export type DeleteProjectInput = CommandInput<"project.delete">;
-export type CreateThreadInput = CommandInput<"thread.create">;
+export type TeamPublicationChoice = {
+  readonly projectId: import("@t3tools/contracts").ProjectId;
+  readonly generation: string;
+  readonly shared: boolean;
+};
+export type CreateThreadInput = CommandInput<"thread.create"> & {
+  readonly teamPublication?: TeamPublicationChoice;
+};
 export type DeleteThreadInput = CommandInput<"thread.delete">;
 export type ArchiveThreadInput = CommandInput<"thread.archive">;
 export type UnarchiveThreadInput = CommandInput<"thread.unarchive">;
@@ -48,13 +60,23 @@ export type LinkThreadPullRequestInput = CommandInput<"thread.pull-request.link"
 export type UnlinkThreadPullRequestInput = CommandInput<"thread.pull-request.unlink">;
 export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
-export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
+export type StartThreadTurnInput = CommandInput<"thread.turn.start"> & {
+  readonly teamPublication?: TeamPublicationChoice;
+};
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type DismissThreadUserInputInput = CommandInput<"thread.user-input.dismiss">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+
+export type CreateSideThreadInput = CommandInput<"sidethread.create">;
+export type PostSideThreadMessageInput = CommandInput<"sidethread.message.post">;
+export type ReactToSideThreadMessageInput = CommandInput<"sidethread.message.react">;
+export type EditSideThreadMessageInput = CommandInput<"sidethread.message.edit">;
+export type MarkSideThreadReadInput = CommandInput<"sidethread.mark-read">;
+export type ArchiveSideThreadInput = CommandInput<"sidethread.archive">;
+export type UnarchiveSideThreadInput = CommandInput<"sidethread.unarchive">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -86,9 +108,67 @@ function timestampedCommandMetadata(input: {
   });
 }
 
-function dispatch(command: ClientOrchestrationCommand) {
-  return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
+function dispatch(
+  command: ClientOrchestrationCommand & { readonly teamSource?: TeamThreadSource },
+) {
+  const { teamSource, ...localCommand } = command;
+  if (
+    teamSource &&
+    (!("threadId" in localCommand) || !canExecuteTeamSource(teamSource, localCommand.threadId))
+  )
+    return Effect.fail(
+      new OrchestrationDispatchCommandError({
+        message:
+          "This shared conversation is read-only. Continue with your own agent in a local thread.",
+      }),
+    );
+  return request(ORCHESTRATION_WS_METHODS.dispatchCommand, localCommand);
 }
+
+const saveNewThreadSharing = Effect.fn("EnvironmentCommands.saveNewThreadSharing")(
+  function* (input: {
+    readonly commandId: import("@t3tools/contracts").CommandId;
+    readonly threadId: import("@t3tools/contracts").ThreadId;
+    readonly projectId: import("@t3tools/contracts").ProjectId;
+    readonly worktreePath: string | null;
+    readonly teamSource?: TeamThreadSource;
+    readonly teamPublication?: TeamPublicationChoice;
+  }) {
+    if (input.teamSource && !canExecuteTeamSource(input.teamSource, input.threadId))
+      return yield* new OrchestrationDispatchCommandError({
+        message: "Shared conversations cannot run local agent commands.",
+      });
+    let choice = input.teamPublication;
+    if (!choice) {
+      const projects = yield* request(LOCAL_TEAM_METHODS.state, {});
+      const link = projects.find((project) => project.link.projectId === input.projectId)?.link;
+      if (link)
+        choice = {
+          projectId: link.projectId,
+          generation: link.generation,
+          shared: input.worktreePath === null,
+        };
+    }
+    if (choice && input.worktreePath !== null) choice = { ...choice, shared: false };
+    if (choice)
+      yield* request(LOCAL_TEAM_METHODS.control, {
+        action: "intent",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        ...choice,
+      });
+  },
+  (effect) =>
+    effect.pipe(
+      Effect.mapError(
+        () =>
+          new OrchestrationDispatchCommandError({
+            message:
+              "Could not save the shared conversation choice. Refresh your Teams connection before starting work.",
+          }),
+      ),
+    ),
+);
 
 export const createProject: (input: CreateProjectInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.createProject",
@@ -126,8 +206,10 @@ export const createThread: (input: CreateThreadInput) => CommandEffect = Effect.
   "EnvironmentCommands.createThread",
 )(function* (input) {
   const metadata = yield* timestampedCommandMetadata(input);
+  yield* saveNewThreadSharing({ ...input, commandId: metadata.commandId });
+  const { teamPublication: _teamPublication, ...localInput } = input;
   return yield* dispatch({
-    ...input,
+    ...localInput,
     type: "thread.create",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
@@ -299,8 +381,20 @@ export const startThreadTurn: (input: StartThreadTurnInput) => CommandEffect = E
   "EnvironmentCommands.startThreadTurn",
 )(function* (input) {
   const metadata = yield* timestampedCommandMetadata(input);
+  const { teamPublication, ...localInput } = input;
+  if (input.bootstrap?.createThread)
+    yield* saveNewThreadSharing({
+      commandId: metadata.commandId,
+      threadId: input.threadId,
+      projectId: input.bootstrap.createThread.projectId,
+      worktreePath: input.bootstrap.prepareWorktree
+        ? "pending-worktree"
+        : input.bootstrap.createThread.worktreePath,
+      ...(input.teamSource ? { teamSource: input.teamSource } : {}),
+      ...(teamPublication ? { teamPublication } : {}),
+    });
   return yield* dispatch({
-    ...input,
+    ...localInput,
     type: "thread.turn.start",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
@@ -370,6 +464,87 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
   return yield* dispatch({
     ...input,
     type: "thread.session.stop",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const createSideThread: (input: CreateSideThreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.createSideThread",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "sidethread.create",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const postSideThreadMessage: (input: PostSideThreadMessageInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.postSideThreadMessage")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "sidethread.message.post",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+export const reactToSideThreadMessage: (input: ReactToSideThreadMessageInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.reactToSideThreadMessage")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "sidethread.message.react",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+export const editSideThreadMessage: (input: EditSideThreadMessageInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.editSideThreadMessage")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "sidethread.message.edit",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+export const markSideThreadRead: (input: MarkSideThreadReadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.markSideThreadRead",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "sidethread.mark-read",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const archiveSideThread: (input: ArchiveSideThreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.archiveSideThread",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "sidethread.archive",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const unarchiveSideThread: (input: UnarchiveSideThreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.unarchiveSideThread",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "sidethread.unarchive",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

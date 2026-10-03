@@ -1,8 +1,10 @@
+import { useTeamProjectDialog } from "../team/NativeTeamProjects";
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
   SettingsIcon,
+  UsersIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
@@ -198,6 +200,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </SidebarMenuItem>
       ) : (
         <>
+          <SidebarUtilityItem
+            icon={<UsersIcon />}
+            label="Team projects"
+            onClick={() => {
+              closeMobileSidebar();
+              useTeamProjectDialog.getState().open({ action: "open" });
+            }}
+          />
           <SidebarUtilityItem
             icon={<SettingsIcon />}
             label="Settings"

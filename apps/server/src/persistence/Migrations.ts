@@ -1,3 +1,6 @@
+import Migration0061 from "./Migrations/061_TeamCreationIntentReceipts.ts";
+import Migration0060 from "./Migrations/060_TeamPublicationIntents.ts";
+import Migration0059 from "./Migrations/059_TeamFiles.ts";
 /**
  * Migration runner with an inline loader.
  *
@@ -10,6 +13,7 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -66,6 +70,12 @@ import Migration0051 from "./Migrations/047_ProjectionProjectIcon.ts";
 import Migration0052 from "./Migrations/048_ProjectionThreadBranchPullRequest.ts";
 import Migration0053 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
 import Migration0054 from "./Migrations/050_ProjectionThreadPullRequests.ts";
+import Migration0056 from "./Migrations/056_ThreadCollaboration.ts";
+import Migration0055 from "./Migrations/055_TeamSpaces.ts";
+import Migration0058 from "./Migrations/058_TeamPublicationMessageOrder.ts";
+import Migration0057 from "./Migrations/057_TeamPublication.ts";
+import Migration0063 from "./Migrations/063_TeamRoster.ts";
+import Migration0062 from "./Migrations/062_RepairForkMigrationCollisions.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -132,9 +142,80 @@ const migrationEntries = [
   [52, "ProjectionThreadBranchPullRequest", Migration0052],
   [53, "ProjectionThreadsActiveOrderKey", Migration0053],
   [54, "ProjectionThreadPullRequests", Migration0054],
+  [55, "TeamSpaces", Migration0055],
+  [56, "ThreadCollaboration", Migration0056],
+  [57, "TeamPublication", Migration0057],
+  [58, "TeamPublicationMessageOrder", Migration0058],
+  [59, "TeamFiles", Migration0059],
+  [60, "TeamPublicationIntents", Migration0060],
+  [61, "TeamCreationIntentReceipts", Migration0061],
+  [62, "RepairForkMigrationCollisions", Migration0062],
+  [63, "TeamRoster", Migration0063],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
+
+// Desktop 0.0.42 shipped this history before the Teams build reused IDs 38-52.
+// This fork also shipped DiscordBridge / latest-turn backfill at IDs 36-37.
+// Keep the shipped histories intact. Future changes must append new IDs; the
+// repair at 62 applies the migrations the ID-only runner skipped in old installs.
+const previousDesktopMigrationNames = new Map<number, string>([
+  [36, "ProjectionThreadsPinned"],
+  [37, "ProjectionTurnsKeysetIndex"],
+  [38, "ProjectionThreadsPinOrderKey"],
+  [39, "ProjectionProjectsDefaultThreadEnvMode"],
+  [40, "ProjectionProjectFaviconPath"],
+  [41, "AuthSessionClientConnection"],
+  [42, "ProjectionThreadLinkedPullRequest"],
+  [43, "ProjectionThreadsUnsettledAt"],
+  [44, "ClearAutomaticProjectModelDefaults"],
+  [45, "ProjectionProjectsAutoPull"],
+  [46, "RepairAutomaticSettlementTimestamps"],
+  [47, "ProjectionProjectIcon"],
+  [48, "ProjectionThreadBranchPullRequest"],
+  [49, "ProjectionThreadsActiveOrderKey"],
+  [50, "ProjectionThreadPullRequests"],
+  [51, "ProjectionThreadMessageContext"],
+  [52, "ProjectionThreadTitleState"],
+]);
+
+const validateMigrationHistory = Effect.fn("validateMigrationHistory")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const trackingTable = yield* sql`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='effect_sql_migrations'
+  `;
+  if (trackingTable.length === 0) return;
+
+  const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+    SELECT migration_id,name FROM effect_sql_migrations ORDER BY migration_id
+  `;
+  const expectedNames = new Map<number, string>(migrationManifest);
+  const latestId = history.at(-1)?.migration_id ?? 0;
+  const recordedIds = new Set(history.map(({ migration_id }) => migration_id));
+  for (const [id, name] of migrationManifest) {
+    if (id <= latestId && !recordedIds.has(id)) {
+      return yield* new Migrator.MigrationError({
+        kind: "BadState",
+        message: `Database history is missing migration ${id}_${name} below its latest ID ${latestId}. Use a compatible build; this build will not silently skip missing migrations.`,
+      });
+    }
+  }
+  for (const { migration_id: id, name } of history) {
+    const expectedName = expectedNames.get(id);
+    if (expectedName === undefined) {
+      return yield* new Migrator.MigrationError({
+        kind: "BadState",
+        message: `Database migration ${id}_${name} belongs to a newer build. Use that build or a compatible upgrade; this build will not skip unknown migrations.`,
+      });
+    }
+    if (name !== expectedName && name !== previousDesktopMigrationNames.get(id)) {
+      return yield* new Migrator.MigrationError({
+        kind: "BadState",
+        message: `Database migration ${id}_${name} does not match ${id}_${expectedName}. Migration IDs must not be reused. Use a compatible build; the database was not migrated.`,
+      });
+    }
+  }
+});
 
 const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
@@ -168,6 +249,7 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  yield* validateMigrationHistory();
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0

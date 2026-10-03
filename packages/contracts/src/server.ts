@@ -5,6 +5,8 @@ import {
   ExecutionEnvironmentDescriptor,
   ServerSelfUpdateMethod,
 } from "./environment.ts";
+import { TeamRole } from "./teamSpaces.ts";
+import { CollaborationUser } from "./orchestration.ts";
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
   ForwardCompatibleArray,
@@ -545,7 +547,21 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
   );
 }
 
+export const ServerTeamProject = Schema.Struct({
+  agentExecution: Schema.Literal("local"),
+  projectId: ProjectId,
+  member: CollaborationUser,
+  role: TeamRole,
+  capabilities: Schema.Struct({
+    threads: Schema.Boolean,
+    discussion: Schema.Boolean,
+    execution: Schema.Boolean,
+    attachments: Schema.Boolean,
+  }),
+});
+
 export const ServerConfig = Schema.Struct({
+  teamProject: Schema.optionalKey(ServerTeamProject),
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
   cwd: TrimmedNonEmptyString,

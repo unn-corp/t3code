@@ -1,5 +1,7 @@
 import {
   EventId,
+  CollaborationUser,
+  type SideThreadAuthor,
   MAX_SCRIPT_ID_LENGTH,
   SCRIPT_RUN_COMMAND_PATTERN,
   MessageId,
@@ -21,7 +23,7 @@ import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeysEqual,
 } from "@t3tools/shared/threadPullRequests";
-import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import { isSideThreadIdForThread } from "@t3tools/shared/sideThread";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -173,11 +175,36 @@ type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
 
+const isCollaborationUser = Schema.is(CollaborationUser);
+
+function requireSideThreadAuthor(
+  collaborationUser: CollaborationUser | undefined,
+  commandType: OrchestrationCommand["type"],
+): Effect.Effect<SideThreadAuthor, OrchestrationCommandInvariantError> {
+  if (isCollaborationUser(collaborationUser)) return Effect.succeed(collaborationUser);
+  return Effect.fail(
+    new OrchestrationCommandInvariantError({
+      commandType,
+      detail: "Discussion commands require an authenticated collaboration identity.",
+    }),
+  );
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
   readModel,
+  collaborationUser,
 }: {
   readonly commands: ReadonlyArray<OrchestrationCommand>;
+  readonly collaborationUser?: CollaborationUser;
   readonly readModel: OrchestrationReadModel;
 }): Effect.fn.Return<
   ReadonlyArray<PlannedOrchestrationEvent>,
@@ -192,6 +219,7 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
     const decided = yield* decideOrchestrationCommand({
       command: nextCommand,
       readModel: nextReadModel,
+      ...(collaborationUser ? { collaborationUser } : {}),
     });
     const nextEvents = Array.isArray(decided) ? decided : [decided];
     for (const nextEvent of nextEvents) {
@@ -211,16 +239,442 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   command,
   readModel,
   userInputActivity,
+  discussionMessageExists,
+  collaborationUser,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
+  /** Durable existence check for a quoted/anchor message omitted from the command snapshot. */
+  readonly discussionMessageExists?: boolean;
+  readonly collaborationUser?: CollaborationUser;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
   Crypto.Crypto
 > {
   switch (command.type) {
+    case "sidethread.create": {
+      const createdBy = yield* requireSideThreadAuthor(collaborationUser, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot accept discussion changes.`,
+        });
+      }
+      if (!isSideThreadIdForThread(command.sideThreadId, command.threadId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' is not the canonical discussion for thread '${command.threadId}'.`,
+        });
+      }
+      if (
+        command.anchorMessageId !== undefined &&
+        !(
+          discussionMessageExists ??
+          thread.messages.some((message) => message.id === command.anchorMessageId)
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Anchor message '${command.anchorMessageId}' does not exist.`,
+        });
+      }
+      if ((thread.sideThreads?.length ?? 0) > 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' already has its team discussion.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.created",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          ...(command.anchorMessageId !== undefined
+            ? { anchorMessageId: command.anchorMessageId }
+            : {}),
+          createdBy,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.message.post": {
+      if (command.text.length > 20_000 || (command.mentions?.length ?? 0) > 20) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Discussion message exceeds its content or mention limit.",
+        });
+      }
+      const author = yield* requireSideThreadAuthor(collaborationUser, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot accept discussion changes.`,
+        });
+      }
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      if (sideThread === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' does not exist.`,
+        });
+      }
+      if (sideThread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' is archived.`,
+        });
+      }
+      if (sideThread.messages.some((message) => message.id === command.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread message '${command.messageId}' already exists.`,
+        });
+      }
+      if (sideThread.messages.length >= 500) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' reached the 500 message limit.`,
+        });
+      }
+      if (command.text.trim().length === 0 && (command.attachments?.length ?? 0) === 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A SideThread message needs text or an attachment.",
+        });
+      }
+      if ((command.attachments?.length ?? 0) > 8) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A SideThread message cannot contain more than 8 attachments.",
+        });
+      }
+      const unsafeGif = (command.attachments ?? []).find(
+        (attachment) =>
+          attachment.type === "gif" &&
+          (!isHttpsUrl(attachment.url) || !isHttpsUrl(attachment.previewUrl)),
+      );
+      if (unsafeGif?.type === "gif") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "SideThread GIF attachments must use HTTPS URLs.",
+        });
+      }
+      const mentions = [
+        ...new Map((command.mentions ?? []).map((user) => [user.subject, user])).values(),
+      ];
+      if (mentions.length > 20) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A SideThread message cannot mention more than 20 teammates.",
+        });
+      }
+      if (
+        command.quotedMessageId !== undefined &&
+        !(
+          discussionMessageExists ??
+          thread.messages.some((message) => message.id === command.quotedMessageId)
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Quoted message '${command.quotedMessageId}' does not exist.`,
+        });
+      }
+      if (
+        command.replyToSideThreadMessageId !== undefined &&
+        !sideThread.messages.some((message) => message.id === command.replyToSideThreadMessageId)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Reply target '${command.replyToSideThreadMessageId}' does not exist.`,
+        });
+      }
+      if (
+        command.linkedRef !== undefined &&
+        !readModel.threads.some(
+          (candidate) =>
+            candidate.id === command.linkedRef?.threadId &&
+            candidate.projectId === thread.projectId &&
+            candidate.deletedAt === null &&
+            candidate.archivedAt === null,
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Linked thread '${command.linkedRef.threadId}' is not an active thread in this project.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.message-posted",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          messageId: command.messageId,
+          author,
+          text: command.text,
+          ...(mentions.length > 0 ? { mentions } : {}),
+          ...(command.quotedMessageId !== undefined
+            ? { quotedMessageId: command.quotedMessageId }
+            : {}),
+          ...(command.attachments !== undefined ? { attachments: command.attachments } : {}),
+          ...(command.linkedRef !== undefined ? { linkedRef: command.linkedRef } : {}),
+          ...(command.replyToSideThreadMessageId !== undefined
+            ? { replyToSideThreadMessageId: command.replyToSideThreadMessageId }
+            : {}),
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.message.react": {
+      const user = yield* requireSideThreadAuthor(collaborationUser, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot accept discussion changes.`,
+        });
+      }
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      const message = sideThread?.messages.find((entry) => entry.id === command.messageId);
+      if (sideThread === undefined || message === undefined || sideThread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread message '${command.messageId}' cannot be reacted to.`,
+        });
+      }
+      if (
+        command.emoji.trim().length === 0 ||
+        command.emoji.length > 32 ||
+        ((message.reactions?.length ?? 0) >= 32 &&
+          !message.reactions?.some((reaction) => reaction.emoji === command.emoji))
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Discussion reaction limit exceeded.",
+        });
+      }
+      const alreadyReacted = (message.reactions ?? []).some(
+        (reaction) =>
+          reaction.emoji === command.emoji &&
+          reaction.users.some((candidate) => candidate.subject === user.subject),
+      );
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.message-reacted",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          messageId: command.messageId,
+          user,
+          emoji: command.emoji,
+          action: alreadyReacted ? "removed" : "added",
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.message.edit": {
+      if (command.text.trim().length === 0 || command.text.length > 20_000) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Discussion edits need text within the content limit.",
+        });
+      }
+      const editor = yield* requireSideThreadAuthor(collaborationUser, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot accept discussion changes.`,
+        });
+      }
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      const message = sideThread?.messages.find((entry) => entry.id === command.messageId);
+      if (sideThread === undefined || message === undefined || sideThread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread message '${command.messageId}' cannot be edited.`,
+        });
+      }
+      if (message.author.subject !== editor.subject) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Only the original author can edit this message.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.message-edited",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          messageId: command.messageId,
+          editor,
+          text: command.text,
+          editedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.mark-read": {
+      const user = yield* requireSideThreadAuthor(collaborationUser, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot accept discussion changes.`,
+        });
+      }
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      if (sideThread === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' does not exist.`,
+        });
+      }
+      const previous = (sideThread.readBy ?? []).find(
+        (marker) => marker.user.subject === user.subject,
+      );
+      const requestedReadAt =
+        command.lastReadAt > command.createdAt ? command.createdAt : command.lastReadAt;
+      const lastReadAt =
+        previous !== undefined && previous.lastReadAt >= requestedReadAt
+          ? previous.lastReadAt
+          : requestedReadAt;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.marked-read",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          user,
+          lastReadAt,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.archive": {
+      yield* requireSideThreadAuthor(collaborationUser, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot accept discussion changes.`,
+        });
+      }
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      if (sideThread === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' does not exist.`,
+        });
+      }
+      if (sideThread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' is already archived.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.archived",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          archivedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "sidethread.unarchive": {
+      yield* requireSideThreadAuthor(collaborationUser, command.type);
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (thread.archivedAt !== null || thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot accept discussion changes.`,
+        });
+      }
+      const sideThread = (thread.sideThreads ?? []).find(
+        (entry) => entry.id === command.sideThreadId,
+      );
+      if (sideThread === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' does not exist.`,
+        });
+      }
+      if (sideThread.archivedAt === null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `SideThread '${command.sideThreadId}' is not archived.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "sidethread.unarchived",
+        payload: {
+          threadId: command.threadId,
+          sideThreadId: command.sideThreadId,
+          unarchivedAt: command.createdAt,
+        },
+      };
+    }
+
     case "project.create": {
       yield* requireProjectAbsent({
         readModel,
@@ -334,6 +788,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       }
       if (activeThreads.length > 0) {
         return yield* decideCommandSequence({
+          ...(collaborationUser ? { collaborationUser } : {}),
           readModel,
           commands: [
             ...activeThreads.map(
@@ -922,6 +1377,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ([key, value]) => !["type", "commandId", "threadId"].includes(key) && value !== undefined,
         );
         return yield* decideCommandSequence({
+          ...(collaborationUser ? { collaborationUser } : {}),
           readModel,
           commands: [
             ...(hasMetadata ? [metadata] : []),
@@ -955,6 +1411,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ([key, value]) => !["type", "commandId", "threadId"].includes(key) && value !== undefined,
         );
         return yield* decideCommandSequence({
+          ...(collaborationUser ? { collaborationUser } : {}),
           readModel,
           commands: [
             ...(hasMetadata ? [metadata] : []),
@@ -1511,6 +1968,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         // Commit the answer and its message together. The normal turn path
         // steers a running agent or resumes an idle session.
         return yield* decideCommandSequence({
+          ...(collaborationUser ? { collaborationUser } : {}),
           readModel,
           commands: [
             {
@@ -1788,6 +2246,55 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           streaming: true,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.publication.archive": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const base = yield* withEventBase({
+        aggregateKind: "thread",
+        aggregateId: command.threadId,
+        occurredAt: command.updatedAt,
+        commandId: command.commandId,
+      });
+      return command.archived
+        ? {
+            ...base,
+            type: "thread.archived",
+            payload: {
+              threadId: command.threadId,
+              archivedAt: thread.archivedAt ?? command.updatedAt,
+              updatedAt: command.updatedAt,
+            },
+          }
+        : {
+            ...base,
+            type: "thread.unarchived",
+            payload: { threadId: command.threadId, updatedAt: command.updatedAt },
+          };
+    }
+
+    case "thread.publication.message": {
+      yield* requireThread({ readModel, command, threadId: command.threadId });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+          metadata: { publication: true },
+        })),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          turnId: command.turnId,
+          role: command.role,
+          text: command.text,
+          streaming: command.streaming,
+          createdAt: command.createdAt,
+          updatedAt: command.updatedAt,
         },
       };
     }

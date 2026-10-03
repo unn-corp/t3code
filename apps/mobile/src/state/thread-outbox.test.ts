@@ -1483,3 +1483,36 @@ describe("thread outbox", () => {
     ).toBe("restore");
   });
 });
+
+it("rejects peer execution before queue publication, storage, and restored payload decoding", async () => {
+  const registry = AtomRegistry.make();
+  onTestFinished(() => registry.dispose());
+  const write = vi.fn(async () => {});
+  const storage: ThreadOutboxStorage = {
+    load: async () => ({ messages: [], errors: [] }),
+    write,
+    remove: async () => {},
+  };
+  const manager = createThreadOutboxManager({ registry, storage });
+  const message = queuedMessage({ messageId: "peer", createdAt: "2026-06-08T10:00:01.000Z" });
+  const teamSource: import("@t3tools/contracts/teamProjects").TeamThreadSource = {
+    displayProjectRef: { projectId: ProjectId.make("project") },
+    readSource: { kind: "shared", sourceId: "peer", threadId: message.threadId },
+    executionRef: null,
+    discussionRef: null,
+    assetSource: "unavailable",
+    fileSource: "unavailable",
+    contentFormat: "plain-text",
+    access: { execute: false, publish: false, discuss: true, markRead: true },
+  };
+  await expect(manager.enqueue({ ...message, teamSource })).rejects.toThrow("read-only");
+  expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
+  expect(write).not.toHaveBeenCalled();
+  expect(() => encodeQueuedThreadMessage({ ...message, teamSource })).toThrow("read-only");
+  expect(() =>
+    decodeQueuedThreadMessage({
+      ...(encodeQueuedThreadMessage(message) as Record<string, unknown>),
+      teamSource,
+    }),
+  ).toThrow("read-only");
+});

@@ -460,6 +460,13 @@ export const ProjectIconOverride = Schema.Union([
 ]);
 export type ProjectIconOverride = typeof ProjectIconOverride.Type;
 
+/** Stable authenticated account attached to collaborative content. */
+export const CollaborationUser = Schema.Struct({
+  subject: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  displayName: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+});
+export type CollaborationUser = typeof CollaborationUser.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
@@ -481,6 +488,7 @@ export const OrchestrationProject = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
+  createdBy: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
 });
 export type OrchestrationProject = typeof OrchestrationProject.Type;
 
@@ -496,8 +504,112 @@ export const OrchestrationMessage = Schema.Struct({
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  author: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
 });
 export type OrchestrationMessage = typeof OrchestrationMessage.Type;
+
+export const SideThreadId = TrimmedNonEmptyString.check(Schema.isMaxLength(512)).pipe(
+  Schema.brand("SideThreadId"),
+);
+export type SideThreadId = typeof SideThreadId.Type;
+export const SideThreadMessageId = TrimmedNonEmptyString.check(Schema.isMaxLength(512)).pipe(
+  Schema.brand("SideThreadMessageId"),
+);
+export type SideThreadMessageId = typeof SideThreadMessageId.Type;
+
+export const SideThreadAuthor = CollaborationUser;
+export type SideThreadAuthor = typeof SideThreadAuthor.Type;
+
+export const SideThreadGifAttachment = Schema.Struct({
+  type: Schema.Literal("gif"),
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  previewUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  width: NonNegativeInt,
+  height: NonNegativeInt,
+  providerId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
+});
+export type SideThreadGifAttachment = typeof SideThreadGifAttachment.Type;
+
+export const SideThreadAttachment = Schema.Union([ChatImageAttachment, SideThreadGifAttachment]);
+export type SideThreadAttachment = typeof SideThreadAttachment.Type;
+
+export const SideThreadPostAttachment = Schema.Union([
+  UploadChatImageAttachment,
+  SideThreadGifAttachment,
+]);
+export type SideThreadPostAttachment = typeof SideThreadPostAttachment.Type;
+
+export const SideThreadLinkedRef = Schema.Struct({
+  kind: Schema.Literal("agent-thread"),
+  threadId: ThreadId,
+});
+export type SideThreadLinkedRef = typeof SideThreadLinkedRef.Type;
+
+export const SideThreadMessageReaction = Schema.Struct({
+  emoji: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
+  users: Schema.Array(SideThreadAuthor),
+});
+export type SideThreadMessageReaction = typeof SideThreadMessageReaction.Type;
+
+export const SideThreadReadMarker = Schema.Struct({
+  user: SideThreadAuthor,
+  lastReadAt: IsoDateTime,
+});
+export type SideThreadReadMarker = typeof SideThreadReadMarker.Type;
+
+export const SideThreadMessage = Schema.Struct({
+  id: SideThreadMessageId,
+  author: SideThreadAuthor,
+  text: Schema.String.check(Schema.isMaxLength(20_000)),
+  mentions: Schema.optional(Schema.Array(SideThreadAuthor).check(Schema.isMaxLength(20))),
+  quotedMessageId: Schema.optional(MessageId),
+  attachments: Schema.optional(Schema.Array(SideThreadAttachment).check(Schema.isMaxLength(8))),
+  reactions: Schema.optional(Schema.Array(SideThreadMessageReaction)),
+  linkedRef: Schema.optional(SideThreadLinkedRef),
+  replyToSideThreadMessageId: Schema.optional(SideThreadMessageId),
+  createdAt: IsoDateTime,
+  updatedAt: Schema.optional(IsoDateTime),
+  editedAt: Schema.optional(IsoDateTime),
+});
+export type SideThreadMessage = typeof SideThreadMessage.Type;
+
+export const SideThread = Schema.Struct({
+  id: SideThreadId,
+  anchorMessageId: Schema.optional(MessageId),
+  createdBy: SideThreadAuthor,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  archivedAt: Schema.NullOr(IsoDateTime),
+  messages: Schema.Array(SideThreadMessage),
+  readBy: Schema.optional(Schema.Array(SideThreadReadMarker)),
+});
+export type SideThread = typeof SideThread.Type;
+
+export const SideThreadShellMessagePreview = Schema.Struct({
+  id: SideThreadMessageId,
+  author: SideThreadAuthor,
+  text: Schema.String.check(Schema.isMaxLength(500)),
+  mentions: Schema.Array(SideThreadAuthor),
+  hasAttachments: Schema.Boolean,
+  createdAt: IsoDateTime,
+  editedAt: Schema.optional(IsoDateTime),
+});
+export type SideThreadShellMessagePreview = typeof SideThreadShellMessagePreview.Type;
+
+/** Bounded collaboration metadata carried by thread-shell snapshots. */
+export const SideThreadShellSummary = Schema.Struct({
+  id: SideThreadId,
+  anchorMessageId: Schema.optional(MessageId),
+  createdBy: SideThreadAuthor,
+  updatedAt: IsoDateTime,
+  archivedAt: Schema.NullOr(IsoDateTime),
+  messageCount: NonNegativeInt,
+  latestMessage: Schema.NullOr(SideThreadShellMessagePreview),
+  latestMentions: Schema.Array(SideThreadShellMessagePreview),
+  participants: Schema.Array(SideThreadAuthor),
+  readBy: Schema.Array(SideThreadReadMarker),
+});
+export type SideThreadShellSummary = typeof SideThreadShellSummary.Type;
 
 export const OrchestrationProposedPlanId = TrimmedNonEmptyString;
 export type OrchestrationProposedPlanId = typeof OrchestrationProposedPlanId.Type;
@@ -755,6 +867,8 @@ export const OrchestrationThread = Schema.Struct({
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
+  createdBy: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
+  sideThreads: Schema.optional(Schema.Array(SideThread)),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
@@ -781,6 +895,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  createdBy: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
@@ -841,6 +956,8 @@ export const OrchestrationThreadShell = Schema.Struct({
       }),
     ),
   ),
+  createdBy: Schema.optionalKey(Schema.NullOr(CollaborationUser)),
+  teamDiscussion: Schema.optional(SideThreadShellSummary),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -1306,6 +1423,81 @@ const ThreadSessionStopCommand = Schema.Struct({
   onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
+const SideThreadCreateCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.create"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  anchorMessageId: Schema.optional(MessageId),
+  createdAt: IsoDateTime,
+});
+
+const ClientSideThreadMessagePostCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.message.post"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  text: Schema.String.check(Schema.isMaxLength(20_000)),
+  mentions: Schema.optional(Schema.Array(SideThreadAuthor).check(Schema.isMaxLength(20))),
+  quotedMessageId: Schema.optional(MessageId),
+  attachments: Schema.optional(Schema.Array(SideThreadPostAttachment).check(Schema.isMaxLength(8))),
+  linkedRef: Schema.optional(SideThreadLinkedRef),
+  replyToSideThreadMessageId: Schema.optional(SideThreadMessageId),
+  createdAt: IsoDateTime,
+});
+
+const SideThreadMessagePostCommand = ClientSideThreadMessagePostCommand.mapFields(
+  Struct.assign({
+    attachments: Schema.optional(Schema.Array(SideThreadAttachment).check(Schema.isMaxLength(8))),
+  }),
+);
+
+const SideThreadMessageReactCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.message.react"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  emoji: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
+  createdAt: IsoDateTime,
+});
+
+const SideThreadMessageEditCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.message.edit"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  createdAt: IsoDateTime,
+});
+
+const SideThreadMarkReadCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.mark-read"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  lastReadAt: IsoDateTime,
+  createdAt: IsoDateTime,
+});
+
+const SideThreadArchiveCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.archive"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  createdAt: IsoDateTime,
+});
+
+const SideThreadUnarchiveCommand = Schema.Struct({
+  type: Schema.Literal("sidethread.unarchive"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  createdAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -1334,6 +1526,13 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputDismissCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  SideThreadCreateCommand,
+  SideThreadMessagePostCommand,
+  SideThreadMessageReactCommand,
+  SideThreadMessageEditCommand,
+  SideThreadMarkReadCommand,
+  SideThreadArchiveCommand,
+  SideThreadUnarchiveCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -1366,6 +1565,13 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputDismissCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  SideThreadCreateCommand,
+  ClientSideThreadMessagePostCommand,
+  SideThreadMessageReactCommand,
+  SideThreadMessageEditCommand,
+  SideThreadMarkReadCommand,
+  SideThreadArchiveCommand,
+  SideThreadUnarchiveCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1463,6 +1669,28 @@ const ThreadHistoryImportCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+/** Issued only by the authenticated cloud publication boundary; never a client command. */
+const ThreadPublicationArchiveCommand = Schema.Struct({
+  type: Schema.Literal("thread.publication.archive"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  archived: Schema.Boolean,
+  updatedAt: IsoDateTime,
+});
+
+const ThreadPublicationMessageCommand = Schema.Struct({
+  type: Schema.Literal("thread.publication.message"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  turnId: TurnId,
+  role: Schema.Literals(["user", "assistant"]),
+  text: Schema.String.check(Schema.isMaxLength(120000)),
+  streaming: Schema.Boolean,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.regeneration.complete"),
   commandId: CommandId,
@@ -1505,6 +1733,8 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
   ThreadHistoryImportCommand,
+  ThreadPublicationMessageCommand,
+  ThreadPublicationArchiveCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -1555,6 +1785,13 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "sidethread.created",
+  "sidethread.message-posted",
+  "sidethread.message-reacted",
+  "sidethread.message-edited",
+  "sidethread.marked-read",
+  "sidethread.archived",
+  "sidethread.unarchived",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1850,6 +2087,67 @@ export const OrchestrationClientOrigin = Schema.Struct({
 });
 export type OrchestrationClientOrigin = typeof OrchestrationClientOrigin.Type;
 
+export const SideThreadCreatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  anchorMessageId: Schema.optional(MessageId),
+  createdBy: SideThreadAuthor,
+  createdAt: IsoDateTime,
+});
+
+export const SideThreadMessagePostedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  author: SideThreadAuthor,
+  text: Schema.String.check(Schema.isMaxLength(20_000)),
+  mentions: Schema.optional(Schema.Array(SideThreadAuthor).check(Schema.isMaxLength(20))),
+  quotedMessageId: Schema.optional(MessageId),
+  attachments: Schema.optional(Schema.Array(SideThreadAttachment).check(Schema.isMaxLength(8))),
+  linkedRef: Schema.optional(SideThreadLinkedRef),
+  replyToSideThreadMessageId: Schema.optional(SideThreadMessageId),
+  createdAt: IsoDateTime,
+});
+
+export const SideThreadMessageReactedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  user: SideThreadAuthor,
+  emoji: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
+  action: Schema.Literals(["added", "removed"]),
+  createdAt: IsoDateTime,
+});
+
+export const SideThreadMessageEditedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  messageId: SideThreadMessageId,
+  editor: SideThreadAuthor,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(20_000)),
+  editedAt: IsoDateTime,
+});
+
+export const SideThreadMarkedReadPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  user: SideThreadAuthor,
+  lastReadAt: IsoDateTime,
+  createdAt: IsoDateTime,
+});
+
+export const SideThreadArchivedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  archivedAt: IsoDateTime,
+});
+
+export const SideThreadUnarchivedPayload = Schema.Struct({
+  threadId: ThreadId,
+  sideThreadId: SideThreadId,
+  unarchivedAt: IsoDateTime,
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1857,7 +2155,11 @@ export const OrchestrationEventMetadata = Schema.Struct({
   requestId: Schema.optional(ApprovalRequestId),
   ingestedAt: Schema.optional(IsoDateTime),
   historyImport: Schema.optional(Schema.Boolean),
+  /** Safe published history; this does not represent a local provider turn. */
+  publication: Schema.optional(Schema.Literal(true)),
   origin: Schema.optional(OrchestrationClientOrigin),
+  /** Authenticated collaboration identity supplied by trusted server dispatch. */
+  collaborationUser: Schema.optional(CollaborationUser),
 });
 export type OrchestrationEventMetadata = typeof OrchestrationEventMetadata.Type;
 
@@ -2038,6 +2340,41 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.created"),
+    payload: SideThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.message-posted"),
+    payload: SideThreadMessagePostedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.message-reacted"),
+    payload: SideThreadMessageReactedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.message-edited"),
+    payload: SideThreadMessageEditedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.marked-read"),
+    payload: SideThreadMarkedReadPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.archived"),
+    payload: SideThreadArchivedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("sidethread.unarchived"),
+    payload: SideThreadUnarchivedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

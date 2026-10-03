@@ -1,0 +1,58 @@
+name: t3-team-service
+
+services:
+  app:
+    image: arcwright/team-service:local-v1
+    build:
+      context: ../..
+      dockerfile: infra/team-service/Dockerfile
+      args:
+        T3_TEAM_UID: ${T3_TEAM_UID:-1000}
+        T3_TEAM_GID: ${T3_TEAM_GID:-1000}
+    restart: unless-stopped
+    init: true
+    user: "${T3_TEAM_UID:-1000}:${T3_TEAM_GID:-1000}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2.0
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 256
+    stop_grace_period: 45s
+    ports:
+      - "127.0.0.1:3910:3910"
+    environment:
+      T3_TEAM_CLERK_PUBLISHABLE_KEY: ${T3_TEAM_CLERK_PUBLISHABLE_KEY:-}
+      T3_TEAM_ORIGINS: ${T3_TEAM_ORIGINS:-}
+      T3_TEAM_OAUTH_ISSUER: ${T3_TEAM_OAUTH_ISSUER:-}
+      T3_TEAM_OAUTH_CLIENT_ID: ${T3_TEAM_OAUTH_CLIENT_ID:-}
+      T3_TEAM_CREATORS: ${T3_TEAM_CREATORS:-}
+    volumes:
+      - team-data:/data
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=134217728,mode=1777
+    secrets:
+      - clerk_secret_key
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3910/api/team/config', { signal: AbortSignal.timeout(4000) }).then(async r => { if (!r.ok || (await r.json()).enabled !== true) process.exit(1); }).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  team-data:
+
+secrets:
+  clerk_secret_key:
+    file: ${T3_TEAM_SECRETS_DIR:-./secrets}/clerk_secret_key

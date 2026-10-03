@@ -1,3 +1,4 @@
+import { SharedProjectThreads } from "./team/SharedProjectThreads";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
@@ -5352,6 +5353,22 @@ export default function Sidebar() {
             </div>
           ) : null}
         </SidebarGroup>
+        {projectGroups
+          .filter(
+            (group) => !scopedProjectGroup || group.projectKey === scopedProjectGroup.projectKey,
+          )
+          .map((group) => (
+            <div key={group.projectKey} className="px-2">
+              {group.memberProjects.map((member) => (
+                <SharedProjectThreads
+                  key={member.physicalProjectKey}
+                  environmentId={member.environmentId}
+                  projectId={member.id}
+                  title={group.displayName}
+                />
+              ))}
+            </div>
+          ))}
       </SidebarContent>
       <SidebarChromeFooter />
     </>

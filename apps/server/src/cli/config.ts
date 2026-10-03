@@ -473,3 +473,50 @@ export const DurationFromString = Schema.String.pipe(
     }),
   ),
 );
+
+// Dedicated service flags omit desktop bootstrap, pairing, providers, and tunnels.
+export const teamServiceCommandFlags = { port: portFlag, host: hostFlag, baseDir: baseDirFlag };
+
+export const resolveTeamServiceConfig = Effect.fn("resolveTeamServiceConfig")(function* (
+  flags: {
+    readonly port: Option.Option<number>;
+    readonly host: Option.Option<string>;
+    readonly baseDir: Option.Option<string>;
+  },
+  cliLogLevel: Option.Option<LogLevel.LogLevel>,
+) {
+  const baseDir = yield* resolveBaseDir(
+    (Option.getOrUndefined(flags.baseDir) ??
+      (yield* Config.string("T3CODE_HOME").pipe(Config.withDefault("")))) ||
+      undefined,
+  );
+  const paths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+  return ServerConfig.make({
+    ...paths,
+    baseDir,
+    cwd: process.cwd(),
+    port: Option.getOrElse(flags.port, () => 3910),
+    host: Option.getOrElse(flags.host, () => "127.0.0.1"),
+    staticDir: yield* ServerConfig.resolveStaticDir(),
+    devUrl: undefined,
+    devAllowedOrigins: [],
+    logLevel: Option.getOrElse(cliLogLevel, () => "Info"),
+    traceMinLevel: "Info",
+    traceTimingEnabled: false,
+    traceBatchWindowMs: 1000,
+    traceMaxBytes: 10 * 1024 * 1024,
+    traceMaxFiles: 10,
+    otlpTracesUrl: undefined,
+    otlpMetricsUrl: undefined,
+    otlpExportIntervalMs: 10000,
+    otlpServiceName: "t3-team-service",
+    mode: "web",
+    noBrowser: true,
+    startupPresentation: "headless",
+    desktopBootstrapToken: undefined,
+    autoBootstrapProjectFromCwd: false,
+    logWebSocketEvents: false,
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+  });
+});

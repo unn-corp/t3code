@@ -7,6 +7,11 @@ import type {
 } from "@t3tools/contracts";
 
 export interface EnvironmentProject extends OrchestrationProjectShell {
+  readonly sharedTeam?: {
+    readonly serviceUrl: string;
+    readonly sharedProjectId: string;
+    readonly subject: string;
+  };
   readonly environmentId: EnvironmentId;
 }
 

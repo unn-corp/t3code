@@ -5,6 +5,7 @@ import * as Path from "effect/Path";
 import {
   type ClientOrchestrationCommand,
   type UserInputAttachments,
+  type SideThreadAttachment,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type IsoDateTime,
   type OrchestrationCommand,
@@ -133,7 +134,8 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 
     if (
       canonicalCommand.type !== "thread.turn.start" &&
-      canonicalCommand.type !== "thread.user-input.respond"
+      canonicalCommand.type !== "thread.user-input.respond" &&
+      canonicalCommand.type !== "sidethread.message.post"
     ) {
       return canonicalCommand as OrchestrationCommand;
     }
@@ -141,7 +143,9 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
     const attachments =
       canonicalCommand.type === "thread.turn.start"
         ? canonicalCommand.message.attachments
-        : Object.values(canonicalCommand.attachmentsByQuestionId ?? {}).flat();
+        : canonicalCommand.type === "sidethread.message.post"
+          ? (canonicalCommand.attachments ?? []).filter((attachment) => attachment.type !== "gif")
+          : Object.values(canonicalCommand.attachmentsByQuestionId ?? {}).flat();
     if (
       canonicalCommand.type === "thread.user-input.respond" &&
       attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS
@@ -263,6 +267,9 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
                 }),
             ),
           );
+          if (canonicalCommand.type === "sidethread.message.post") {
+            claimedAttachmentPaths.push(attachmentPath);
+          }
           yield* fileSystem.writeFile(attachmentPath, bytes).pipe(
             Effect.mapError(
               () =>
@@ -277,6 +284,16 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       { concurrency: 1 },
     ).pipe(Effect.tapError(() => removeClaimedAttachmentPaths(claimedAttachmentPaths)));
 
+    if (canonicalCommand.type === "sidethread.message.post") {
+      let imageIndex = 0;
+      const discussionAttachments = (canonicalCommand.attachments ?? []).map((attachment) =>
+        attachment.type === "gif" ? attachment : normalizedAttachments[imageIndex++]!,
+      ) as ReadonlyArray<SideThreadAttachment>;
+      return {
+        ...canonicalCommand,
+        attachments: discussionAttachments,
+      } satisfies OrchestrationCommand;
+    }
     if (canonicalCommand.type === "thread.user-input.respond") {
       let index = 0;
       const attachmentsByQuestionId = Object.fromEntries(
@@ -308,6 +325,19 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 export const cleanupFailedUploadedAttachments = Effect.fn(
   "Normalizer.cleanupFailedUploadedAttachments",
 )(function* (command: ClientOrchestrationCommand, normalizedCommand: OrchestrationCommand) {
+  if (normalizedCommand.type === "sidethread.message.post") {
+    const serverConfig = yield* ServerConfig;
+    const paths = (normalizedCommand.attachments ?? []).flatMap((attachment) => {
+      if (attachment.type !== "image") return [];
+      const path = resolveAttachmentPath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachment,
+      });
+      return path ? [path] : [];
+    });
+    yield* removeClaimedAttachmentPaths(paths);
+    return;
+  }
   const originalAttachments =
     command.type === "thread.turn.start"
       ? command.message.attachments

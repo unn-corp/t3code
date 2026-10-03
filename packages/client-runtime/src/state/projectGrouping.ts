@@ -122,13 +122,15 @@ function deriveRepositoryScopedKey(
 export function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "sharedTeam"
   >,
   options?: {
     readonly groupingMode?: SidebarProjectGroupingMode;
   },
 ): string {
   const groupingMode = options?.groupingMode ?? "repository";
+  if (project.sharedTeam)
+    return `teams:${JSON.stringify([project.sharedTeam.serviceUrl, project.sharedTeam.sharedProjectId, project.sharedTeam.subject])}`;
   if (groupingMode === "separate") {
     return derivePhysicalProjectKey(project);
   }
@@ -143,7 +145,7 @@ export function deriveLogicalProjectKey(
 export function deriveLogicalProjectKeyFromSettings(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "sharedTeam"
   >,
   settings: ProjectGroupingSettings,
 ): string {

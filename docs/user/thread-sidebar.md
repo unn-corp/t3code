@@ -122,3 +122,28 @@ On web and desktop, use **Agents** to follow work delegated to subagents.
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
+
+## Team conversations
+
+Shared projects appear alongside ordinary projects. Start a conversation with your
+usual provider and model, then choose **Shared with project members** or **Local only**
+before sending its first message. Shared is the default in a shared checkout.
+Separate worktree conversations stay local. Choosing visibility does not start an
+agent. Existing conversations need an explicit **Share conversation** action.
+
+Shared teammate conversations open as read-only text, with their author, provider,
+model, and member-reported work state. Personal files, attachments, terminals, and
+agent controls are unavailable there. **Continue with my agent** opens a local draft
+containing an attributed quote; review it before sending. It does not start a turn
+or share the new draft.
+
+Open **Team discussion** to comment, reply, quote conversation messages, link another
+conversation in the project, react, and mention members. Comments do not become agent
+prompts. Contributors and owners can post and archive or reopen discussions; authors
+can edit their own comments. Viewers can read and mark discussions as read. Unread
+and mention notices use your project's read marks. Active discussion members and
+brief typing notices are shown while the drawer is open.
+
+A failed publication leaves the accepted agent turn local with a sharing status and
+retry action. Retry sharing without resending the agent message. **Stop future sharing**
+preserves already published history; publishing again deliberately resumes sharing.

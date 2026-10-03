@@ -1,3 +1,16 @@
+import { LOCAL_PRESENCE_WS_METHODS } from "@t3tools/contracts/teamPresence";
+import {
+  LOCAL_TEAM_DIRECTORY_METHOD,
+  LOCAL_TEAM_MEMBERS_METHOD,
+  LOCAL_TEAM_ACCEPT_METHOD,
+} from "@t3tools/contracts/teamProjects";
+import {
+  LOCAL_TEAM_FILES_STATE_METHOD,
+  LOCAL_TEAM_FILES_METHOD,
+} from "@t3tools/contracts/teamFiles";
+import { LOCAL_TEAM_METHODS } from "@t3tools/contracts/teamProjects";
+import { LocalTeamProjects } from "./team/LocalTeamProjects.ts";
+import { isThreadDetailEvent } from "./orchestration/ThreadDetailEvents.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -356,31 +369,7 @@ function projectSetupScriptCompatibilityDetail(
   }
 }
 
-export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
-  OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.imported-history-cleared"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
-  }
-> {
-  return (
-    event.type === "thread.message-sent" ||
-    // Streamed so an open thread drops the prior imported history live, before the
-    // replacement import's messages arrive.
-    event.type === "thread.imported-history-cleared" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
-}
+export { isThreadDetailEvent } from "./orchestration/ThreadDetailEvents.ts";
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
@@ -536,6 +525,8 @@ const makeWsRpcLayer = (
               ),
               Effect.orElseSucceed(() => null),
             );
+      const localTeams = yield* LocalTeamProjects;
+      const presenceOwner = globalThis.crypto.randomUUID();
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const threadDeletionReactor = yield* ThreadDeletionReactor;
       const analytics = yield* AnalyticsService.AnalyticsService;
@@ -754,10 +745,11 @@ const makeWsRpcLayer = (
         method: string,
         effect: Effect.Effect<A, E, R>,
         traceAttributes?: Readonly<Record<string, unknown>>,
+        payload?: unknown,
       ) =>
         instrumentRpcEffect(
           method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
+          authorizeEffect(requiredScopeForRpcMethod(method, payload), effect),
           traceAttributes,
         );
       const observeRpcStream = <A, E, R>(
@@ -2154,86 +2146,169 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "agent-dashboard" },
           ),
+        [LOCAL_TEAM_FILES_METHOD]: (input) =>
+          observeRpcEffect(LOCAL_TEAM_FILES_METHOD, localTeams.filesControl(input)),
+        [LOCAL_TEAM_FILES_STATE_METHOD]: (input) =>
+          observeRpcEffect(
+            LOCAL_TEAM_FILES_STATE_METHOD,
+            localTeams.filesControl({ action: "state", ...input }),
+          ),
+        [LOCAL_PRESENCE_WS_METHODS.heartbeat]: (input) =>
+          observeRpcEffect(
+            LOCAL_PRESENCE_WS_METHODS.heartbeat,
+            localTeams.heartbeat(input.projectId, input.focus, presenceOwner),
+          ),
+        [LOCAL_PRESENCE_WS_METHODS.subscribe]: (input) =>
+          observeRpcStream(
+            LOCAL_PRESENCE_WS_METHODS.subscribe,
+            localTeams.subscribePresence(input.projectId, presenceOwner),
+          ),
+        [LOCAL_TEAM_DIRECTORY_METHOD]: (input) =>
+          observeRpcEffect(LOCAL_TEAM_DIRECTORY_METHOD, localTeams.directory(input.projectId)),
+        [LOCAL_TEAM_MEMBERS_METHOD]: (input) =>
+          observeRpcEffect(
+            LOCAL_TEAM_MEMBERS_METHOD,
+            localTeams.membership(input.projectId, input.command),
+          ),
+        [LOCAL_TEAM_ACCEPT_METHOD]: (input) =>
+          observeRpcEffect(
+            LOCAL_TEAM_ACCEPT_METHOD,
+            localTeams.acceptInvitation(input.generation, input.token),
+          ),
+        [LOCAL_TEAM_METHODS.subscribeState]: () =>
+          observeRpcStream(LOCAL_TEAM_METHODS.subscribeState, localTeams.subscribeState),
+        [LOCAL_TEAM_METHODS.state]: () =>
+          observeRpcEffect(LOCAL_TEAM_METHODS.state, localTeams.state),
+        [LOCAL_TEAM_METHODS.control]: (input) =>
+          observeRpcEffect(LOCAL_TEAM_METHODS.control, localTeams.control(input), undefined, input),
+        [LOCAL_TEAM_METHODS.subscribeProject]: (input) =>
+          observeRpcStream(
+            LOCAL_TEAM_METHODS.subscribeProject,
+            localTeams.subscribeProject(input.projectId),
+          ),
+        [LOCAL_TEAM_METHODS.subscribeThread]: (input) =>
+          observeRpcStream(
+            LOCAL_TEAM_METHODS.subscribeThread,
+            localTeams.subscribeThread(input.projectId, input.threadId),
+          ),
+        [LOCAL_TEAM_METHODS.snapshot]: (input) =>
+          observeRpcEffect(
+            LOCAL_TEAM_METHODS.snapshot,
+            localTeams.snapshot(input.projectId, input.threadId, input.window),
+          ),
+        [LOCAL_TEAM_METHODS.discuss]: (input) =>
+          observeRpcEffect(
+            LOCAL_TEAM_METHODS.discuss,
+            localTeams.discuss(input.projectId, input.command),
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
-            Effect.gen(function* () {
-              const normalizedCommand = yield* normalizeDispatchCommand(command);
-              // Archive removes the thread from the client, so this transport
-              // closes its session and terminals after the command lands.
-              // Settlement cleanup is driven by thread.settled events in the
-              // provider reactor, including settlements that have no client.
-              const archiveCommand =
-                normalizedCommand.type === "thread.archive" ? normalizedCommand : undefined;
-              // Best-effort on purpose: the user's archive must not
-              // fail because this cleanup read blipped, so a failed read
-              // logs and skips the stop instead of propagating.
-              const shouldStopSessionAfterCommand = archiveCommand
-                ? yield* projectionSnapshotQuery.getThreadShellById(archiveCommand.threadId).pipe(
-                    Effect.map(
-                      Option.match({
-                        onNone: () => false,
-                        onSome: (thread) =>
-                          thread.session !== null && thread.session.status !== "stopped",
-                      }),
-                    ),
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning(
-                        "failed to read thread session state before session-stop check",
-                        { threadId: archiveCommand.threadId, cause },
-                      ).pipe(Effect.as(false)),
-                    ),
-                  )
-                : false;
-              const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
-                Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
-              );
-              yield* recordClientCommandAnalytics(normalizedCommand);
-              if (archiveCommand) {
-                if (shouldStopSessionAfterCommand) {
-                  yield* Effect.gen(function* () {
-                    const stopCommand = yield* normalizeDispatchCommand({
-                      type: "thread.session.stop",
-                      commandId: CommandId.make(
-                        `session-stop-for-archive:${archiveCommand.commandId}`,
-                      ),
-                      threadId: archiveCommand.threadId,
-                      createdAt: yield* nowIso,
-                    });
-
-                    yield* dispatchNormalizedCommand(stopCommand);
-                  }).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("failed to stop provider session during archive", {
-                        threadId: archiveCommand.threadId,
-                        cause,
-                      }),
+            localTeams
+              .withCreation(
+                command,
+                Effect.gen(function* () {
+                  const normalizedCommand = yield* normalizeDispatchCommand(command);
+                  yield* localTeams.guard(normalizedCommand).pipe(
+                    Effect.mapError(
+                      () =>
+                        new OrchestrationDispatchCommandError({
+                          message: "Shared project access does not allow starting local work.",
+                        }),
                     ),
                   );
-                }
+                  const creationReceipt = yield* localTeams.creationReceipt(normalizedCommand).pipe(
+                    Effect.mapError(
+                      () =>
+                        new OrchestrationDispatchCommandError({
+                          message: "Shared project creation receipt is no longer available.",
+                        }),
+                    ),
+                  );
+                  if (creationReceipt) return creationReceipt;
+                  // Archive removes the thread from the client, so this transport
+                  // closes its session and terminals after the command lands.
+                  // Settlement cleanup is driven by thread.settled events in the
+                  // provider reactor, including settlements that have no client.
+                  const archiveCommand =
+                    normalizedCommand.type === "thread.archive" ? normalizedCommand : undefined;
+                  // Best-effort on purpose: the user's archive must not
+                  // fail because this cleanup read blipped, so a failed read
+                  // logs and skips the stop instead of propagating.
+                  const shouldStopSessionAfterCommand = archiveCommand
+                    ? yield* projectionSnapshotQuery
+                        .getThreadShellById(archiveCommand.threadId)
+                        .pipe(
+                          Effect.map(
+                            Option.match({
+                              onNone: () => false,
+                              onSome: (thread) =>
+                                thread.session !== null && thread.session.status !== "stopped",
+                            }),
+                          ),
+                          Effect.catchCause((cause) =>
+                            Effect.logWarning(
+                              "failed to read thread session state before session-stop check",
+                              { threadId: archiveCommand.threadId, cause },
+                            ).pipe(Effect.as(false)),
+                          ),
+                        )
+                    : false;
+                  const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
+                    Effect.tapError(() =>
+                      cleanupFailedUploadedAttachments(command, normalizedCommand),
+                    ),
+                  );
+                  // Publication follows the durable creation receipt. Its failure must never replay an accepted local turn.
+                  yield* localTeams.afterReceipt(normalizedCommand);
+                  yield* recordClientCommandAnalytics(normalizedCommand);
+                  if (archiveCommand) {
+                    if (shouldStopSessionAfterCommand) {
+                      yield* Effect.gen(function* () {
+                        const stopCommand = yield* normalizeDispatchCommand({
+                          type: "thread.session.stop",
+                          commandId: CommandId.make(
+                            `session-stop-for-archive:${archiveCommand.commandId}`,
+                          ),
+                          threadId: archiveCommand.threadId,
+                          createdAt: yield* nowIso,
+                        });
 
-                // Archive removes the thread from view, so its user-opened
-                // terminal panes close with it.
-                yield* terminalManager.close({ threadId: archiveCommand.threadId }).pipe(
-                  Effect.catch((error) =>
-                    Effect.logWarning("failed to close thread terminals after archive", {
-                      threadId: archiveCommand.threadId,
-                      error: error.message,
-                    }),
-                  ),
-                );
-              }
-              return result;
-            }).pipe(
-              Effect.mapError((cause) =>
-                isOrchestrationDispatchCommandError(cause)
-                  ? cause
-                  : new OrchestrationDispatchCommandError({
-                      message: "Failed to dispatch orchestration command",
-                      cause,
-                    }),
+                        yield* dispatchNormalizedCommand(stopCommand);
+                      }).pipe(
+                        Effect.catchCause((cause) =>
+                          Effect.logWarning("failed to stop provider session during archive", {
+                            threadId: archiveCommand.threadId,
+                            cause,
+                          }),
+                        ),
+                      );
+                    }
+
+                    // Archive removes the thread from view, so its user-opened
+                    // terminal panes close with it.
+                    yield* terminalManager.close({ threadId: archiveCommand.threadId }).pipe(
+                      Effect.catch((error) =>
+                        Effect.logWarning("failed to close thread terminals after archive", {
+                          threadId: archiveCommand.threadId,
+                          error: error.message,
+                        }),
+                      ),
+                    );
+                  }
+                  return result;
+                }),
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  isOrchestrationDispatchCommandError(cause)
+                    ? cause
+                    : new OrchestrationDispatchCommandError({
+                        message: "Failed to dispatch orchestration command",
+                        cause,
+                      }),
+                ),
               ),
-            ),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.getWorkflowScript]: (input) =>
@@ -4155,6 +4230,7 @@ const makeWsRpcLayer = (
 
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
+    const localTeams = yield* LocalTeamProjects;
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const baseServerSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const config = yield* ServerConfig.ServerConfig;
@@ -4225,6 +4301,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              Layer.provide(Layer.succeed(LocalTeamProjects, localTeams)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

@@ -1,0 +1,20 @@
+# Install in Traefik's watched dynamic configuration directory on Mothership.
+http:
+  routers:
+    t3-teams-http:
+      rule: Host(`t3teams.unnportal.io`)
+      service: t3-teams
+      entryPoints: [web]
+      middlewares: [redirect-to-https]
+    t3-teams-https:
+      rule: Host(`t3teams.unnportal.io`)
+      service: t3-teams
+      entryPoints: [websecure]
+      tls:
+        certResolver: letsencrypt
+  services:
+    t3-teams:
+      loadBalancer:
+        servers:
+          - url: http://t3-team-service-app-1:3910
+        passHostHeader: true

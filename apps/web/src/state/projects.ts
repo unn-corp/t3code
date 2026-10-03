@@ -1,3 +1,4 @@
+import { teamLinksValueAtom } from "./teamProjects";
 import { createEnvironmentProjectAtoms } from "@t3tools/client-runtime/state/projects";
 import { createProjectEnvironmentAtoms } from "@t3tools/client-runtime/state/projects";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
@@ -20,6 +21,7 @@ export const projectContentSearch = createEnvironmentRpcQueryAtomFamily(connecti
   idleTtlMs: 60_000,
 });
 export const environmentProjects = createEnvironmentProjectAtoms({
+  teamLinksAtom: teamLinksValueAtom,
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: environmentSnapshotAtom,
 });

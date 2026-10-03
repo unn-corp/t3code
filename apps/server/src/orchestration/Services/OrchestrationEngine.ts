@@ -12,6 +12,7 @@
  */
 import type {
   OrchestrationClientOrigin,
+  CollaborationUser,
   OrchestrationCommand,
   OrchestrationEvent,
   ThreadId,
@@ -72,7 +73,11 @@ export interface OrchestrationEngineShape {
    */
   readonly dispatch: (
     command: OrchestrationCommand,
-    options?: { readonly origin?: OrchestrationClientOrigin },
+    options?: {
+      readonly origin?: OrchestrationClientOrigin;
+      /** Server-authenticated identity. Never populate this from client command fields. */
+      readonly collaborationUser?: CollaborationUser;
+    },
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**

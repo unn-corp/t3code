@@ -1,3 +1,4 @@
+import type { LocalTeamProjectState } from "@t3tools/contracts/teamProjects";
 import type {
   EnvironmentId,
   OrchestrationProjectShell,
@@ -16,6 +17,9 @@ const EMPTY_PROJECTS: ReadonlyArray<OrchestrationProjectShell> = Object.freeze([
 const EMPTY_PROJECT_INDEX: ReadonlyMap<ProjectId, OrchestrationProjectShell> = new Map();
 
 export function createEnvironmentProjectAtoms(input: {
+  readonly teamLinksAtom?: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<ReadonlyArray<LocalTeamProjectState>>;
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
@@ -57,13 +61,31 @@ export function createEnvironmentProjectAtoms(input: {
     const ref = parseProjectKey(key);
     let previousSource: OrchestrationProjectShell | null = null;
     let previousValue: EnvironmentProject | null = null;
+    let previousTeamKey = "";
     return Atom.make((get) => {
       const source = get(environmentProjectIndexAtom(ref.environmentId)).get(ref.projectId) ?? null;
-      if (source === previousSource) {
+      const link = input.teamLinksAtom
+        ? get(input.teamLinksAtom(ref.environmentId)).find(
+            (item) => item.link.projectId === ref.projectId,
+          )?.link
+        : undefined;
+      const sharedTeam = link
+        ? {
+            serviceUrl: link.serviceUrl,
+            sharedProjectId: link.sharedProjectId,
+            subject: link.subject,
+          }
+        : undefined;
+      const teamKey = JSON.stringify(sharedTeam);
+      if (source === previousSource && teamKey === previousTeamKey) {
         return previousValue;
       }
       previousSource = source;
-      previousValue = source === null ? null : scopeProject(ref.environmentId, source);
+      previousTeamKey = teamKey;
+      previousValue =
+        source === null
+          ? null
+          : { ...scopeProject(ref.environmentId, source), ...(sharedTeam ? { sharedTeam } : {}) };
       return previousValue;
     }).pipe(Atom.withLabel(`environment-project:${key}`));
   });

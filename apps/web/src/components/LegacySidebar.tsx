@@ -1,3 +1,5 @@
+import { SharedProjectThreads } from "./team/SharedProjectThreads";
+import { useTeamProjectDialog } from "./team/NativeTeamProjects";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { GitPullRequestIcon } from "lucide-react";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -1678,7 +1680,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "copy-path" | "delete" | "share",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1688,6 +1690,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           const id = `${action}:${member.physicalProjectKey}`;
           actionHandlers.set(id, () => {
             switch (action) {
+              case "share":
+                useTeamProjectDialog.getState().open({
+                  action: "share",
+                  environmentId: member.environmentId,
+                  projectId: member.id,
+                });
+                return;
               case "rename":
                 openProjectRenameDialog(member);
                 return;
@@ -1711,7 +1720,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "copy-path" | "delete" | "share",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1753,6 +1762,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const clicked = await api.contextMenu.show(
           [
+            buildTargetedItem("share", "Share this project"),
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),
@@ -2460,6 +2470,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         </Tooltip>
       </div>
 
+      {projectExpanded &&
+        project.memberProjects.map((member) => (
+          <SharedProjectThreads
+            key={member.physicalProjectKey}
+            environmentId={member.environmentId}
+            projectId={member.id}
+          />
+        ))}
       <SidebarProjectThreadList
         projectKey={project.projectKey}
         projectExpanded={projectExpanded}

@@ -279,3 +279,27 @@ describe("buildProjectGroups", () => {
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
   });
 });
+
+it("gives Teams authority precedence over identical Git origins and titles", () => {
+  const boundary = {
+    serviceUrl: "https://teams.example",
+    sharedProjectId: "one",
+    subject: "member",
+  };
+  const projects = [
+    makeProject("a", "/a", { sharedTeam: boundary }),
+    makeProject("b", "/b", { sharedTeam: boundary }),
+    makeProject("c", "/c", { sharedTeam: { ...boundary, sharedProjectId: "two" } }),
+    makeProject("d", "/d"),
+    makeProject("e", "/e", { sharedTeam: { ...boundary, subject: "other" } }),
+  ];
+  for (const mode of ["repository", "repository_path", "separate"] as const) {
+    const groups = buildProjectGroups({ projects, settings: settings(mode) });
+    expect(groups).toHaveLength(4);
+    expect(
+      groups
+        .find((group) => group.members.length === 2)
+        ?.members.map((member) => member.project.id),
+    ).toEqual(["a", "b"]);
+  }
+});

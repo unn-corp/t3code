@@ -1,3 +1,13 @@
+import {
+  LocalTeamRosterCommand,
+  LocalTeamDirectory,
+  LocalTeamRosterResult,
+  LocalTeamAccountState,
+  LocalTeamAccountStart,
+  LocalTeamAccountCancel,
+  LocalTeamAccountDisconnect,
+  LocalTeamAccountProjects,
+} from "./teamSpaces.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -614,9 +624,69 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+const EnvironmentTeamAccountErrors = [
+  EnvironmentAuthInvalidError,
+  EnvironmentScopeRequiredError,
+  EnvironmentHttpBadRequestError,
+];
+class EnvironmentTeamsHttpApi extends HttpApiGroup.make("teams")
+  .add(
+    HttpApiEndpoint.get("teamDirectory", "/api/teams/team-directory", {
+      headers: OptionalBearerHeaders,
+      success: LocalTeamDirectory,
+      error: EnvironmentTeamAccountErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("teamCommand", "/api/teams/team-command", {
+      headers: OptionalBearerHeaders,
+      payload: LocalTeamRosterCommand,
+      success: LocalTeamRosterResult,
+      error: EnvironmentTeamAccountErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("state", "/api/teams/account", {
+      headers: OptionalBearerHeaders,
+      success: LocalTeamAccountState,
+      error: EnvironmentTeamAccountErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("start", "/api/teams/account/start", {
+      headers: OptionalBearerHeaders,
+      payload: LocalTeamAccountStart,
+      success: LocalTeamAccountState,
+      error: EnvironmentTeamAccountErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancel", "/api/teams/account/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: LocalTeamAccountCancel,
+      success: LocalTeamAccountState,
+      error: EnvironmentTeamAccountErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("disconnect", "/api/teams/account/disconnect", {
+      headers: OptionalBearerHeaders,
+      success: LocalTeamAccountDisconnect,
+      error: EnvironmentTeamAccountErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("projects", "/api/teams/projects", {
+      headers: OptionalBearerHeaders,
+      success: LocalTeamAccountProjects,
+      error: EnvironmentTeamAccountErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
-  .add(EnvironmentConnectHttpApi) {}
+  .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentTeamsHttpApi) {}

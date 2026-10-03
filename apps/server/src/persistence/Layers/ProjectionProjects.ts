@@ -1,3 +1,4 @@
+import { CollaborationUser } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -18,6 +19,8 @@ import {
 
 const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
+    createdBy: Schema.NullOr(Schema.fromJsonString(CollaborationUser)),
+
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     autoPull: Schema.Number,
     projectIcon: Schema.NullOr(Schema.fromJsonString(ProjectIconOverride)),
@@ -46,7 +49,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           scripts_json,
           created_at,
           updated_at,
-          deleted_at
+          deleted_at,
+          created_by_json
         )
         VALUES (
           ${row.projectId},
@@ -61,7 +65,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${JSON.stringify(row.scripts)},
           ${row.createdAt},
           ${row.updatedAt},
-          ${row.deletedAt}
+          ${row.deletedAt},
+          ${row.createdBy ? JSON.stringify(row.createdBy) : null}
         )
         ON CONFLICT (project_id)
         DO UPDATE SET
@@ -76,7 +81,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           scripts_json = excluded.scripts_json,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
-          deleted_at = excluded.deleted_at
+          deleted_at = excluded.deleted_at,
+          created_by_json = excluded.created_by_json
       `,
   });
 
@@ -98,7 +104,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_projects
         WHERE project_id = ${projectId}
       `,
@@ -122,7 +129,8 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          created_by_json AS "createdBy"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
       `,

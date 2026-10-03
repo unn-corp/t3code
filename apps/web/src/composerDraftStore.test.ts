@@ -2774,3 +2774,33 @@ describe("createDeferredStorage", () => {
     expect(base.setItem).toHaveBeenCalledWith("key", "s:v2");
   });
 });
+
+it("publishes and persists intrinsic Local intent atomically with a new continuation draft", () => {
+  const projectRef = scopeProjectRef(
+    EnvironmentId.make("continuation-environment"),
+    ProjectId.make("continuation-project"),
+  );
+  const draftId = DraftId.make("continuation-draft");
+  const observed: Array<boolean | undefined> = [];
+  const unsubscribe = useComposerDraftStore.subscribe((state) => {
+    const draft = state.getDraftSession(draftId);
+    if (draft) observed.push(draft.teamLocalOnly);
+  });
+  try {
+    useComposerDraftStore
+      .getState()
+      .setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), projectRef, draftId, {
+        threadId: ThreadId.make("continuation-thread"),
+        envMode: "local",
+        teamLocalOnly: true,
+      });
+    expect(observed.length).toBeGreaterThan(0);
+    expect(observed.every((local) => local === true)).toBe(true);
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const restored = merge(persisted, useComposerDraftStore.getState());
+    expect(restored.draftThreadsByThreadKey[draftId]?.teamLocalOnly).toBe(true);
+  } finally {
+    unsubscribe();
+  }
+});

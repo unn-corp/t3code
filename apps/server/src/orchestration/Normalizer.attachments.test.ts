@@ -10,6 +10,8 @@ import {
   ApprovalRequestId,
   MessageId,
   ThreadId,
+  SideThreadId,
+  SideThreadMessageId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -56,6 +58,69 @@ function turnStartCommand(input: {
 }
 
 describe("normalizeDispatchCommand attachments", () => {
+  it.effect("persists discussion images without raw uploads and cleans rejected posts", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const gif = {
+        type: "gif" as const,
+        url: "https://example.test/demo.gif",
+        previewUrl: "https://example.test/demo.gif",
+        width: 32,
+        height: 32,
+      };
+      const command: ClientOrchestrationCommand = {
+        type: "sidethread.message.post",
+        commandId: CommandId.make("discussion-image"),
+        threadId: ThreadId.make("thread-discussion"),
+        sideThreadId: SideThreadId.make("thread:thread-discussion"),
+        messageId: SideThreadMessageId.make("discussion-image"),
+        text: "Look at this",
+        createdAt: "2099-01-01T00:00:00.000Z",
+        attachments: [
+          gif,
+          {
+            type: "image",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,cGl4ZWxz",
+            sizeBytes: 6,
+          },
+        ],
+      };
+      const normalized = yield* normalizeDispatchCommand(command);
+      expect(normalized.type).toBe("sidethread.message.post");
+      if (normalized.type !== "sidethread.message.post") return;
+      expect(normalized.createdAt).not.toBe(command.createdAt);
+      expect(normalized.attachments?.[0]).toEqual(gif);
+      const image = normalized.attachments?.[1];
+      if (image?.type !== "image") throw new Error("Missing normalized discussion image");
+      expect(image).not.toHaveProperty("dataUrl");
+      expect(image.id.startsWith("thread-discussion-")).toBe(true);
+      const path = NodePath.join(config.attachmentsDir, `${image.id}.png`);
+      expect(NodeFS.readFileSync(path)).toEqual(Buffer.from("pixels"));
+      yield* cleanupFailedUploadedAttachments(command, normalized);
+      expect(NodeFS.existsSync(path)).toBe(false);
+      const before = NodeFS.readdirSync(config.attachmentsDir).sort();
+      const invalid = yield* Effect.result(
+        normalizeDispatchCommand({
+          ...command,
+          attachments: [
+            ...(command.attachments ?? []),
+            {
+              type: "image",
+              name: "invalid.png",
+              mimeType: "image/png",
+              dataUrl: "data:image/png;base64,",
+              sizeBytes: 0,
+            },
+          ],
+        }),
+      );
+      expect(invalid._tag).toBe("Failure");
+      expect(NodeFS.readdirSync(config.attachmentsDir).sort()).toEqual(before);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("preserves inline image attachments from existing mobile clients", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

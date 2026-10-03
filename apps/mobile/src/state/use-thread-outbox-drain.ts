@@ -1,3 +1,4 @@
+import { requireTeamExecution } from "@t3tools/client-runtime/state/teamExecution";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentProject,
@@ -688,6 +689,7 @@ export function useThreadOutboxDrain(): void {
         serverEnvironment.configValueAtom(queuedMessage.environmentId),
       );
       if (!serverConfig) return false;
+      requireTeamExecution(queuedMessage.teamSource, queuedMessage.threadId);
       const settings = resolveQueuedThreadSettings(queuedMessage, thread, serverConfig.providers);
       if (isModelSelectionUnavailable(serverConfig, settings.modelSelection)) {
         return restoreQueuedMessage(
@@ -798,6 +800,7 @@ export function useThreadOutboxDrain(): void {
         input: {
           commandId: queuedMessage.commandId,
           threadId: queuedMessage.threadId,
+          teamSource: queuedMessage.teamSource,
           message: {
             messageId: queuedMessage.messageId,
             role: "user",
@@ -841,6 +844,7 @@ export function useThreadOutboxDrain(): void {
       creation: QueuedThreadCreation,
       projectCwd: string,
     ) => {
+      requireTeamExecution(queuedMessage.teamSource, queuedMessage.threadId);
       const modelSelection = queuedMessage.modelSelection;
       if (modelSelection === undefined) {
         return false;

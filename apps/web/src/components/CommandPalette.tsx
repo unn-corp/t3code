@@ -1,4 +1,5 @@
 "use client";
+import { useTeamProjectDialog } from "./team/NativeTeamProjects";
 
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 
@@ -1385,6 +1386,18 @@ function OpenCommandPaletteDialog(props: {
         },
       ];
 
+      for (const action of ["open", "create"] as const) {
+        sourceItems.push({
+          kind: "action",
+          value: `action:add-project:${environmentId}:shared:${action}`,
+          title: action === "open" ? "Open shared project" : "Create shared project",
+          description: "Shared files with local agents and providers",
+          searchTerms: ["teams", "shared", "project", action],
+          icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+          run: async () => useTeamProjectDialog.getState().open({ action, environmentId }),
+        });
+      }
+
       const orderedSources: ReadonlyArray<AddProjectRemoteSource> = [
         "url",
         ...sortAddProjectProviderSources(readinessBySource),
@@ -1847,6 +1860,31 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  for (const action of ["open", "create", "share"] as const) {
+    actionItems.push({
+      kind: "action",
+      value: `action:shared-project:${action}`,
+      title:
+        action === "open"
+          ? "Open shared project"
+          : action === "create"
+            ? "Create shared project"
+            : "Share this project",
+      searchTerms: ["teams", "shared", "project", action],
+      disabled: action === "share" && contextualProjectRef === null,
+      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+      run: async () =>
+        useTeamProjectDialog.getState().open({
+          action,
+          ...(contextualProjectRef
+            ? {
+                environmentId: contextualProjectRef.environmentId,
+                ...(action === "share" ? { projectId: contextualProjectRef.projectId } : {}),
+              }
+            : {}),
+        }),
+    });
+  }
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   const settingsSearchItems: CommandPaletteActionItem[] = searchSettings(
     deferredQuery,

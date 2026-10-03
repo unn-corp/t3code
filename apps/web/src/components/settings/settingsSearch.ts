@@ -899,6 +899,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "teams-connection",
+    title: "Teams",
+    to: "/settings/connections",
+    searchTerms: [
+      "team shared projects collaboration account sign in device code service disconnect",
+    ],
+  },
+  {
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",

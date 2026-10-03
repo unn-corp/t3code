@@ -1,3 +1,4 @@
+import { TeamsConnectionsSettings } from "./TeamsConnection";
 import { ChevronsLeftRightEllipsisIcon, PlusIcon, QrCodeIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -3131,6 +3132,7 @@ export function ConnectionsSettings() {
 
   return (
     <SettingsPageContainer>
+      <TeamsConnectionsSettings />
       {canManageLocalBackend ? (
         <>
           <SettingsSection

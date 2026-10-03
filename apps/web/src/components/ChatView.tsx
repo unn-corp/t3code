@@ -1,3 +1,8 @@
+import {
+  LocalConversationTeamControls,
+  readTeamConversationChoice,
+} from "./team/LocalConversationTeamControls";
+import { teamProjects } from "../state/teamProjects";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
@@ -2037,6 +2042,10 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
+  const localTeamLinks = useEnvironmentQuery(teamProjects.state({ environmentId, input: {} }));
+  const activeTeamLink = localTeamLinks.data?.find(
+    (entry) => entry.link.projectId === activeProject?.id,
+  )?.link;
   // Environment settings with the active project's overrides applied.
   const activeProjectSettings = useMemo(
     () => resolveProjectSettings(settings, activeProject?.id ?? null, activeProject ?? undefined),
@@ -7287,6 +7296,23 @@ export default function ChatView(props: ChatViewProps) {
         environmentId,
         input: {
           threadId: threadIdForSend,
+          ...(isLocalDraftThread && activeTeamLink
+            ? {
+                teamPublication: {
+                  projectId: activeTeamLink.projectId,
+                  generation: activeTeamLink.generation,
+                  shared:
+                    !activeThread.worktreePath &&
+                    !baseBranchForWorktree &&
+                    readTeamConversationChoice(
+                      environmentId,
+                      activeTeamLink,
+                      threadIdForSend,
+                      draftThread?.teamLocalOnly ?? false,
+                    ),
+                },
+              }
+            : {}),
           message: {
             messageId: messageIdForSend,
             role: "user",
@@ -8689,6 +8715,20 @@ export default function ChatView(props: ChatViewProps) {
                       </div>
                     </div>
                   ) : null}
+                  {activeProject && activeThread && (
+                    <LocalConversationTeamControls
+                      key={activeThreadKey}
+                      environmentId={environmentId}
+                      projectId={activeProject.id}
+                      threadId={activeThread.id}
+                      isDraft={isLocalDraftThread}
+                      localOnly={draftThread?.teamLocalOnly ?? false}
+                      worktreePath={
+                        activeThread.worktreePath ??
+                        (envMode === "worktree" ? "pending-worktree" : null)
+                      }
+                    />
+                  )}
                   <div
                     className="relative"
                     style={

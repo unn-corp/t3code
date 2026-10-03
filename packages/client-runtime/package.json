@@ -246,7 +246,22 @@
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"
-    }
+    },
+    "./teamSpaces": "./src/teamSpaces.ts",
+    "./state/teamExecution": {
+      "types": "./src/state/teamExecution.ts",
+      "default": "./src/state/teamExecution.ts"
+    },
+    "./state/teamProjects": {
+      "types": "./src/state/teamProjects.ts",
+      "default": "./src/state/teamProjects.ts"
+    },
+    "./state/localTeamAccount": {
+      "types": "./src/state/localTeamAccount.ts",
+      "default": "./src/state/localTeamAccount.ts"
+    },
+    "./state/teamProjectActions": "./src/state/teamProjectActions.ts",
+    "./state/teamPresenceHeartbeat": "./src/state/teamPresenceHeartbeat.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

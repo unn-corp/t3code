@@ -1,3 +1,5 @@
+import { TeamThreadSource } from "@t3tools/contracts/teamProjects";
+import { requireTeamExecution } from "@t3tools/client-runtime/state/teamExecution";
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   clampFileAttachmentUploadBytes,
@@ -44,6 +46,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
+  teamSource: Schema.optional(TeamThreadSource),
   schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION, 4]),
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -74,6 +77,7 @@ export interface QueuedThreadCreation {
 }
 
 export interface QueuedThreadMessage {
+  readonly teamSource?: typeof TeamThreadSource.Type;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly messageId: MessageId;
@@ -121,6 +125,7 @@ export function modelSelectionsEqual(left: ModelSelectionType, right: ModelSelec
 }
 
 export function encodeQueuedThreadMessage(message: QueuedThreadMessage): unknown {
+  requireTeamExecution(message.teamSource, message.threadId);
   return encodeStoredQueuedThreadMessage({
     schemaVersion: THREAD_OUTBOX_SCHEMA_VERSION,
     ...message,
@@ -129,6 +134,7 @@ export function encodeQueuedThreadMessage(message: QueuedThreadMessage): unknown
 
 export function decodeQueuedThreadMessage(value: unknown): QueuedThreadMessage {
   const { schemaVersion: _, ...message } = decodeStoredQueuedThreadMessage(value);
+  requireTeamExecution(message.teamSource, message.threadId);
   return message;
 }
 

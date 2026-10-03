@@ -1,5 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
@@ -11,6 +13,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { RPC_REQUIRED_SCOPES, requiredScopeForRpcMethod } from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
+  it("allows shared file status reads while reserving host mutations for administrators", () => {
+    expect(requiredScopeForRpcMethod("teams.files.state")).toBe(AuthAccessReadScope);
+    expect(requiredScopeForRpcMethod("teams.files.control")).toBe(AuthAccessWriteScope);
+  });
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });

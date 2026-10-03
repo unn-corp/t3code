@@ -1,5 +1,17 @@
+import { LOCAL_PRESENCE_WS_METHODS } from "@t3tools/contracts/teamPresence";
+import {
+  LOCAL_TEAM_DIRECTORY_METHOD,
+  LOCAL_TEAM_MEMBERS_METHOD,
+  LOCAL_TEAM_ACCEPT_METHOD,
+} from "@t3tools/contracts/teamProjects";
+import {
+  LOCAL_TEAM_FILES_STATE_METHOD,
+  LOCAL_TEAM_FILES_METHOD,
+} from "@t3tools/contracts/teamFiles";
+import { LOCAL_TEAM_METHODS } from "@t3tools/contracts/teamProjects";
 import {
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -21,6 +33,20 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * runtime failure.
  */
 export const RPC_REQUIRED_SCOPES = {
+  [LOCAL_PRESENCE_WS_METHODS.heartbeat]: AuthOrchestrationReadScope,
+  [LOCAL_PRESENCE_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
+  [LOCAL_TEAM_DIRECTORY_METHOD]: AuthOrchestrationReadScope,
+  [LOCAL_TEAM_MEMBERS_METHOD]: AuthAccessWriteScope,
+  [LOCAL_TEAM_ACCEPT_METHOD]: AuthAccessWriteScope,
+  [LOCAL_TEAM_FILES_METHOD]: AuthAccessWriteScope,
+  [LOCAL_TEAM_FILES_STATE_METHOD]: AuthAccessReadScope,
+  [LOCAL_TEAM_METHODS.subscribeState]: AuthOrchestrationReadScope,
+  [LOCAL_TEAM_METHODS.state]: AuthOrchestrationReadScope,
+  [LOCAL_TEAM_METHODS.control]: AuthAccessWriteScope,
+  [LOCAL_TEAM_METHODS.subscribeProject]: AuthOrchestrationReadScope,
+  [LOCAL_TEAM_METHODS.subscribeThread]: AuthOrchestrationReadScope,
+  [LOCAL_TEAM_METHODS.snapshot]: AuthOrchestrationReadScope,
+  [LOCAL_TEAM_METHODS.discuss]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
@@ -183,7 +209,17 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
-export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {
+export function requiredScopeForRpcMethod(method: string, payload?: unknown): AuthEnvironmentScope {
+  if (
+    method === LOCAL_TEAM_METHODS.control &&
+    typeof payload === "object" &&
+    payload !== null &&
+    "action" in payload &&
+    (payload.action === "intent" ||
+      payload.action === "publish" ||
+      payload.action === "stop-publication")
+  )
+    return AuthOrchestrationOperateScope;
   if (!Object.hasOwn(RPC_REQUIRED_SCOPES, method)) {
     throw new Error(`RPC method ${method} has no declared authorization scope.`);
   }

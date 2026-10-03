@@ -1,4 +1,11 @@
 import {
+  SideThreadUnarchivedPayload as ContractsSideThreadUnarchivedPayloadSchema,
+  SideThreadArchivedPayload as ContractsSideThreadArchivedPayloadSchema,
+  SideThreadMarkedReadPayload as ContractsSideThreadMarkedReadPayloadSchema,
+  SideThreadMessageEditedPayload as ContractsSideThreadMessageEditedPayloadSchema,
+  SideThreadMessageReactedPayload as ContractsSideThreadMessageReactedPayloadSchema,
+  SideThreadMessagePostedPayload as ContractsSideThreadMessagePostedPayloadSchema,
+  SideThreadCreatedPayload as ContractsSideThreadCreatedPayloadSchema,
   ProjectCreatedPayload as ContractsProjectCreatedPayloadSchema,
   ProjectMetaUpdatedPayload as ContractsProjectMetaUpdatedPayloadSchema,
   ProjectDeletedPayload as ContractsProjectDeletedPayloadSchema,
@@ -73,3 +80,17 @@ export const ThreadApprovalResponseRequestedPayload =
 export const ThreadCheckpointRevertRequestedPayload =
   ContractsThreadCheckpointRevertRequestedPayloadSchema;
 export const ThreadSessionStopRequestedPayload = ContractsThreadSessionStopRequestedPayloadSchema;
+
+export const SideThreadCreatedPayload = ContractsSideThreadCreatedPayloadSchema;
+
+export const SideThreadMessagePostedPayload = ContractsSideThreadMessagePostedPayloadSchema;
+
+export const SideThreadMessageReactedPayload = ContractsSideThreadMessageReactedPayloadSchema;
+
+export const SideThreadMessageEditedPayload = ContractsSideThreadMessageEditedPayloadSchema;
+
+export const SideThreadMarkedReadPayload = ContractsSideThreadMarkedReadPayloadSchema;
+
+export const SideThreadArchivedPayload = ContractsSideThreadArchivedPayloadSchema;
+
+export const SideThreadUnarchivedPayload = ContractsSideThreadUnarchivedPayloadSchema;

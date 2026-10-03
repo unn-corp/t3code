@@ -1,3 +1,5 @@
+import { LOCAL_PRESENCE_WS_METHODS } from "@t3tools/contracts/teamPresence";
+import { LOCAL_TEAM_METHODS } from "@t3tools/contracts/teamProjects";
 import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -40,6 +42,10 @@ export type EnvironmentRpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
 
 export type EnvironmentSubscriptionRpcTag =
+  | typeof LOCAL_PRESENCE_WS_METHODS.subscribe
+  | typeof LOCAL_TEAM_METHODS.subscribeState
+  | typeof LOCAL_TEAM_METHODS.subscribeProject
+  | typeof LOCAL_TEAM_METHODS.subscribeThread
   | typeof WS_METHODS.providerAuthSubscribe
   | typeof WS_METHODS.providerInstallSubscribe
   | typeof ORCHESTRATION_WS_METHODS.subscribeShell

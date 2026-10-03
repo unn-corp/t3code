@@ -90,6 +90,7 @@ const READ_PAGE_SIZE = 500;
 function inferActorKind(
   event: Omit<OrchestrationEvent, "sequence">,
 ): Schema.Schema.Type<typeof OrchestrationActorKind> {
+  if (event.metadata.collaborationUser !== undefined) return "client";
   if (event.commandId !== null && event.commandId.startsWith("provider:")) {
     return "provider";
   }

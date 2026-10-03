@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./sideThread": {
+      "types": "./src/sideThread.ts",
+      "import": "./src/sideThread.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"

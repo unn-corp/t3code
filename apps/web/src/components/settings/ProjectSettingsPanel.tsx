@@ -1,3 +1,4 @@
+import { NativeTeamProjectSettings } from "../team/NativeTeamProjects";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -1014,6 +1015,14 @@ function ProjectDetail({
                 </Button>
               </div>
             }
+          />
+        </SettingsSection>
+
+        <SettingsSection title="Shared project">
+          <NativeTeamProjectSettings
+            key={`${representative.environmentId}:${representative.id}`}
+            environmentId={representative.environmentId}
+            projectId={representative.id}
           />
         </SettingsSection>
 

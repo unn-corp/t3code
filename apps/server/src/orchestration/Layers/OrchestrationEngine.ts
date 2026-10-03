@@ -1,5 +1,6 @@
 import type {
   OrchestrationClientOrigin,
+  CollaborationUser,
   OrchestrationEvent,
   OrchestrationReadModel,
   ProjectId,
@@ -57,6 +58,7 @@ const isOrchestrationCommandIdConflictError = Schema.is(OrchestrationCommandIdCo
 interface CommandEnvelope {
   command: OrchestrationCommand;
   origin: OrchestrationClientOrigin | undefined;
+  collaborationUser: CollaborationUser | undefined;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   startedAtMs: number;
 }
@@ -150,7 +152,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           // work that never happened.
           if (
             existingReceipt.value.aggregateKind !== aggregateRef.aggregateKind ||
-            existingReceipt.value.aggregateId !== aggregateRef.aggregateId
+            existingReceipt.value.aggregateId !== aggregateRef.aggregateId ||
+            (existingReceipt.value.collaborationSubject ?? null) !==
+              (envelope.collaborationUser?.subject ?? null)
           ) {
             return yield* new OrchestrationCommandIdConflictError({
               commandId: envelope.command.commandId,
@@ -242,9 +246,28 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        // Command snapshots intentionally omit native messages. Check a quoted
+        // message by its thread and id so references still work after restart.
+        const discussionMessageId =
+          envelope.command.type === "sidethread.create"
+            ? envelope.command.anchorMessageId
+            : envelope.command.type === "sidethread.message.post"
+              ? envelope.command.quotedMessageId
+              : undefined;
+        const discussionMessageExists =
+          discussionMessageId === undefined
+            ? undefined
+            : (yield* sql`SELECT 1 FROM projection_thread_messages
+            WHERE thread_id = ${aggregateRef.aggregateId} AND message_id = ${discussionMessageId} LIMIT 1`.pipe(
+                Effect.mapError(
+                  toPersistenceSqlError("OrchestrationEngine.discussionMessageExists"),
+                ),
+              )).length > 0;
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
+          ...(discussionMessageExists === undefined ? {} : { discussionMessageExists }),
+          ...(envelope.collaborationUser ? { collaborationUser: envelope.collaborationUser } : {}),
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),
@@ -264,15 +287,44 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         // Stamp the dispatching client's origin onto every event the command
         // produced. The decider stays pure; attribution is an engine concern.
         const eventBases =
-          envelope.origin === undefined
+          envelope.origin === undefined && envelope.collaborationUser === undefined
             ? plannedEvents
             : plannedEvents.map((planned) => ({
                 ...planned,
-                metadata: { ...planned.metadata, origin: envelope.origin },
+                metadata: {
+                  ...planned.metadata,
+                  ...(envelope.origin ? { origin: envelope.origin } : {}),
+                  ...(envelope.collaborationUser
+                    ? { collaborationUser: envelope.collaborationUser }
+                    : {}),
+                },
               }));
         const committedCommand = yield* sql
           .withTransaction(
             Effect.gen(function* () {
+              // Message ids are global, and command snapshots omit old messages.
+              // Check every user-message producer before persisting any events;
+              // only the accepted receipt above permits a collaborative retry.
+              if (envelope.collaborationUser !== undefined) {
+                const messageIds = new Set<string>();
+                for (const event of eventBases) {
+                  if (event.type !== "thread.message-sent" || event.payload.role !== "user") {
+                    continue;
+                  }
+                  const messageId = event.payload.messageId;
+                  if (
+                    messageIds.has(messageId) ||
+                    (yield* sql`SELECT 1 FROM projection_thread_messages
+                      WHERE message_id = ${messageId} LIMIT 1`).length > 0
+                  ) {
+                    return yield* new OrchestrationCommandInvariantError({
+                      commandType: envelope.command.type,
+                      detail: `Message id '${messageId}' already exists. Use a new message id.`,
+                    });
+                  }
+                  messageIds.add(messageId);
+                }
+              }
               const committedEvents: OrchestrationEvent[] = [];
               const attachmentCleanups: Effect.Effect<void>[] = [];
               let nextCommandReadModel = commandReadModel;
@@ -300,6 +352,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 acceptedAt: lastSavedEvent.occurredAt,
                 resultSequence: lastSavedEvent.sequence,
                 status: "accepted",
+                collaborationSubject: envelope.collaborationUser?.subject ?? null,
                 error: null,
               });
 
@@ -398,6 +451,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   acceptedAt: yield* nowIso,
                   resultSequence: commandReadModel.snapshotSequence,
                   status: "rejected",
+                  collaborationSubject: envelope.collaborationUser?.subject ?? null,
                   error: error.message,
                 })
                 .pipe(Effect.catch(() => Effect.void));
@@ -441,6 +495,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       yield* Queue.offer(commandQueue, {
         command,
         origin: options?.origin,
+        collaborationUser: options?.collaborationUser,
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
       });

@@ -1,3 +1,4 @@
+import { requireTeamExecution } from "@t3tools/client-runtime/state/teamExecution";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
@@ -115,6 +116,11 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
   // the message back out if it fails (durability only matters for crash
   // recovery, not for the in-session queue).
   const enqueue = (message: QueuedThreadMessage): Promise<void> => {
+    try {
+      requireTeamExecution(message.teamSource, message.threadId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     bumpRevision(message.messageId);
     setMessages([
       ...currentMessages().filter((candidate) => candidate.messageId !== message.messageId),

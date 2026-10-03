@@ -1,8 +1,12 @@
+import { LOCAL_TEAM_METHODS } from "@t3tools/contracts/teamProjects";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import {
   CommandId,
   EnvironmentId,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
@@ -23,6 +27,7 @@ import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   archiveThread,
+  createThread,
   createProject,
   reorderActiveThread,
   settleThread,
@@ -47,8 +52,11 @@ const TARGET = new PrimaryConnectionTarget({
 
 const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(function* (
   dispatched: ClientOrchestrationCommand[],
+  saveIntent: () => Effect.Effect<void> = () => Effect.void,
 ) {
   const client = {
+    [LOCAL_TEAM_METHODS.state]: () => Effect.succeed([]),
+    [LOCAL_TEAM_METHODS.control]: () => saveIntent().pipe(Effect.as({ state: null })),
     [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
       Effect.sync(() => {
         dispatched.push(command);
@@ -194,3 +202,63 @@ describe("environment commands", () => {
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 });
+
+it.effect("waits for the durable shared choice before requesting thread creation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const supervisor = yield* makeSupervisor(dispatched, () =>
+        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      );
+      const creation = yield* createThread({
+        threadId: ThreadId.make("shared-new"),
+        projectId: ProjectId.make("project"),
+        title: "New shared thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claude"),
+          model: "chosen-local-provider",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        teamPublication: { projectId: ProjectId.make("project"), generation: "one", shared: true },
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(entered);
+      expect(dispatched).toEqual([]);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(creation)).toEqual({ sequence: 1 });
+      expect(dispatched[0]?.type).toBe("thread.create");
+      expect(dispatched[0]).not.toHaveProperty("teamPublication");
+    }),
+  ).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+);
+
+it.effect("rejects peer commands centrally before contacting a personal environment", () =>
+  Effect.gen(function* () {
+    const dispatched: ClientOrchestrationCommand[] = [];
+    const supervisor = yield* makeSupervisor(dispatched);
+    const threadId = ThreadId.make("thread-1");
+    const source: import("@t3tools/contracts/teamProjects").TeamThreadSource = {
+      displayProjectRef: { projectId: ProjectId.make("project") },
+      readSource: { kind: "shared", sourceId: "peer", threadId },
+      executionRef: null,
+      discussionRef: null,
+      assetSource: "unavailable",
+      fileSource: "unavailable",
+      contentFormat: "plain-text",
+      access: { execute: false, publish: false, discuss: true, markRead: true },
+    };
+    const result = yield* archiveThread({ threadId, teamSource: source }).pipe(
+      Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      Effect.exit,
+    );
+    expect(result._tag).toBe("Failure");
+    expect(dispatched).toEqual([]);
+  }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+);

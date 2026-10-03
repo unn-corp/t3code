@@ -1,4 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { sideThreadIdForThread } from "@t3tools/shared/sideThread";
+import { createAttachmentId } from "../../attachmentStore.ts";
+import { createEmptyReadModel, projectEvent } from "../projector.ts";
+import { isThreadDetailEvent } from "../../ws.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -10,6 +14,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
+  SideThreadMessageId,
   ProjectId,
   ThreadId,
   TurnId,
@@ -106,6 +111,9 @@ async function createOrchestrationSystem(
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
   return {
     engine,
+    config: () => runtime.runPromise(Effect.service(ServerConfig)),
+    readShell: (threadId: ThreadId) =>
+      runtime.runPromise(snapshotQuery.getThreadShellById(threadId)),
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
     readThread: (threadId: ThreadId) =>
       runtime.runPromise(snapshotQuery.getThreadDetailById(threadId)),
@@ -2122,5 +2130,516 @@ describe("OrchestrationEngine", () => {
     expect(withoutOrigin?.metadata.origin).toBeUndefined();
 
     await system.dispose();
+  });
+});
+
+const createdAt = "2026-10-01T12:00:00.000Z";
+const alice = { subject: "clerk:alice", displayName: "Alice" };
+const bob = { subject: "clerk:bob", displayName: "Bob" };
+const projectId = ProjectId.make("shared-native-project");
+const threadId = ThreadId.make("shared-native-thread");
+const sideThreadId = sideThreadIdForThread(threadId);
+const messageId = MessageId.make("native-user-message");
+
+const createThread: OrchestrationCommand = {
+  type: "thread.create",
+  commandId: CommandId.make("server:bootstrap-thread-create"),
+  threadId,
+  projectId,
+  title: "Native shared thread",
+  modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "sonnet" },
+  runtimeMode: "approval-required",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  createdAt,
+};
+const startThread: OrchestrationCommand = {
+  type: "thread.turn.start",
+  commandId: CommandId.make("start-thread"),
+  threadId,
+  message: { messageId, role: "user", text: "Use my chosen provider", attachments: [] },
+  runtimeMode: "approval-required",
+  interactionMode: "default",
+  createdAt,
+};
+const createDiscussion: OrchestrationCommand = {
+  type: "sidethread.create",
+  commandId: CommandId.make("create-discussion"),
+  threadId,
+  sideThreadId,
+  anchorMessageId: messageId,
+  createdAt,
+};
+const post: OrchestrationCommand = {
+  type: "sidethread.message.post",
+  commandId: CommandId.make("post-discussion"),
+  threadId,
+  sideThreadId,
+  messageId: SideThreadMessageId.make("discussion-message"),
+  text: "Review this",
+  quotedMessageId: messageId,
+  createdAt,
+};
+
+describe("trusted native collaboration", () => {
+  it.each([
+    { name: "another member", member: bob, targetThreadId: threadId, restart: false },
+    { name: "the original member", member: alice, targetThreadId: threadId, restart: false },
+    {
+      name: "another thread",
+      member: bob,
+      targetThreadId: ThreadId.make("another-shared-thread"),
+      restart: false,
+    },
+    { name: "a restarted engine", member: bob, targetThreadId: threadId, restart: true },
+  ])("rejects native message reuse by $name while preserving exact retries", async (testCase) => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-message-ids-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("create-project"),
+          projectId,
+          title: "Shared project",
+          workspaceRoot: directory,
+          createdAt,
+        }),
+      );
+      await system.run(system.engine.dispatch(createThread, { collaborationUser: alice }));
+      if (testCase.targetThreadId !== threadId) {
+        await system.run(
+          system.engine.dispatch(
+            {
+              ...createThread,
+              commandId: CommandId.make("another-thread-create"),
+              threadId: testCase.targetThreadId,
+            },
+            { collaborationUser: bob },
+          ),
+        );
+      }
+      const accepted = await system.run(
+        system.engine.dispatch(startThread, { collaborationUser: alice }),
+      );
+      if (testCase.restart) {
+        await system.dispose();
+        system = await createOrchestrationSystem(databasePath);
+      }
+      expect(
+        await system.run(system.engine.dispatch(startThread, { collaborationUser: alice })),
+      ).toEqual(accepted);
+      const eventsBefore = await system.run(Stream.runCollect(system.engine.readEvents(0)));
+      await expect(
+        system.run(
+          system.engine.dispatch(
+            {
+              ...startThread,
+              commandId: CommandId.make("reuse-message-id"),
+              threadId: testCase.targetThreadId,
+              message: { ...startThread.message, text: "Replacement text" },
+            },
+            { collaborationUser: testCase.member },
+          ),
+        ),
+      ).rejects.toThrow("already exists");
+      expect(await system.run(Stream.runCollect(system.engine.readEvents(0)))).toEqual(
+        eventsBefore,
+      );
+      expect(
+        await system.run(system.engine.dispatch(startThread, { collaborationUser: alice })),
+      ).toEqual(accepted);
+      expect(Option.getOrThrow(await system.readThread(threadId)).messages).toMatchObject([
+        { id: messageId, text: startThread.message.text, author: alice },
+      ]);
+      if (testCase.targetThreadId !== threadId) {
+        expect(
+          Option.getOrThrow(await system.readThread(testCase.targetThreadId)).messages,
+        ).toEqual([]);
+      }
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([false, true])(
+    "rejects colliding async answer messages atomically (attachments: %s)",
+    async (withAttachments) => {
+      const system = await createOrchestrationSystem();
+      const requestId = ApprovalRequestId.make("shared-question");
+      const answerMessageId = MessageId.make(`async-answer:${requestId}`);
+      const answerThreadId = ThreadId.make("answer-thread");
+      try {
+        await system.run(
+          system.engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("create-project"),
+            projectId,
+            title: "Shared project",
+            workspaceRoot: "/tmp/collaboration-message-ids",
+            createdAt,
+          }),
+        );
+        await system.run(system.engine.dispatch(createThread, { collaborationUser: alice }));
+        await system.run(
+          system.engine.dispatch(
+            { ...startThread, message: { ...startThread.message, messageId: answerMessageId } },
+            { collaborationUser: alice },
+          ),
+        );
+        await system.run(
+          system.engine.dispatch(
+            {
+              ...createThread,
+              commandId: CommandId.make("answer-thread-create"),
+              threadId: answerThreadId,
+            },
+            { collaborationUser: bob },
+          ),
+        );
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make("async-question"),
+            threadId: answerThreadId,
+            createdAt,
+            activity: {
+              id: EventId.make("async-question"),
+              kind: "user-input.requested",
+              summary: "User input requested",
+              tone: "info",
+              turnId: null,
+              createdAt,
+              payload: {
+                requestId,
+                responseMode: "message",
+                questions: [
+                  { id: "question", header: "Question", question: "Which file?", options: [] },
+                ],
+              },
+            },
+          }),
+        );
+        const eventsBefore = await system.run(Stream.runCollect(system.engine.readEvents(0)));
+        await expect(
+          system.run(
+            system.engine.dispatch(
+              {
+                type: "thread.user-input.respond",
+                commandId: CommandId.make("async-answer"),
+                threadId: answerThreadId,
+                requestId,
+                answers: { question: "Bob's answer" },
+                ...(withAttachments
+                  ? {
+                      attachmentsByQuestionId: {
+                        question: [
+                          {
+                            type: "file" as const,
+                            id: "answer-thread-00000000-0000-4000-8000-0000000000aa-txt",
+                            name: "spec.txt",
+                            mimeType: "text/plain",
+                            sizeBytes: 4,
+                          },
+                        ],
+                      },
+                    }
+                  : {}),
+                createdAt,
+              },
+              { collaborationUser: bob },
+            ),
+          ),
+        ).rejects.toThrow("already exists");
+        expect(await system.run(Stream.runCollect(system.engine.readEvents(0)))).toEqual(
+          eventsBefore,
+        );
+        expect(Option.getOrThrow(await system.readThread(threadId)).messages).toMatchObject([
+          { id: answerMessageId, text: startThread.message.text, author: alice },
+        ]);
+        const answerThread = Option.getOrThrow(await system.readThread(answerThreadId));
+        expect(answerThread.messages).toEqual([]);
+        expect(answerThread.activities.map((activity) => activity.kind)).toEqual([
+          "user-input.requested",
+        ]);
+      } finally {
+        await system.dispose();
+      }
+    },
+  );
+
+  it("preserves existing personal message replacement behavior", async () => {
+    const system = await createOrchestrationSystem();
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("create-project"),
+          projectId,
+          title: "Personal project",
+          workspaceRoot: "/tmp/personal-message-ids",
+          createdAt,
+        }),
+      );
+      await system.run(system.engine.dispatch(createThread));
+      await system.run(system.engine.dispatch(startThread));
+      await system.run(
+        system.engine.dispatch({
+          ...startThread,
+          commandId: CommandId.make("personal-replacement"),
+          message: { ...startThread.message, text: "Personal replacement" },
+        }),
+      );
+      expect(Option.getOrThrow(await system.readThread(threadId)).messages).toMatchObject([
+        { id: messageId, text: "Personal replacement" },
+      ]);
+    } finally {
+      await system.dispose();
+    }
+  });
+
+  it("persists bootstrap authorship and discussions through snapshots, replay and restart", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-collaboration-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    try {
+      await system.run(
+        system.engine.dispatch(
+          {
+            type: "project.create",
+            commandId: CommandId.make("create-project"),
+            projectId,
+            title: "Shared project",
+            workspaceRoot: directory,
+            createdAt,
+          },
+          { collaborationUser: alice },
+        ),
+      );
+      await system.run(system.engine.dispatch(createThread, { collaborationUser: alice }));
+      await system.run(system.engine.dispatch(startThread, { collaborationUser: alice }));
+      const beforeRestart = await system.readModel();
+      expect(beforeRestart.projects[0]?.createdBy).toEqual(alice);
+      expect(beforeRestart.threads[0]?.createdBy).toEqual(alice);
+      expect(beforeRestart.threads[0]?.messages[0]?.author).toEqual(alice);
+      expect(beforeRestart.threads[0]?.modelSelection.instanceId).toBe("claude");
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      // Native messages are absent from command snapshots; anchor/quote validation
+      // must use their persisted thread-scoped records after restart.
+      await system.run(system.engine.dispatch(createDiscussion, { collaborationUser: alice }));
+      await system.run(system.engine.dispatch(post, { collaborationUser: bob }));
+      await system.run(
+        system.engine.dispatch(
+          {
+            type: "sidethread.message.react",
+            commandId: CommandId.make("react-discussion"),
+            threadId,
+            sideThreadId,
+            messageId: post.messageId,
+            emoji: "eyes",
+            createdAt,
+          },
+          { collaborationUser: alice },
+        ),
+      );
+      await system.run(
+        system.engine.dispatch(
+          {
+            type: "sidethread.mark-read",
+            commandId: CommandId.make("read-discussion"),
+            threadId,
+            sideThreadId,
+            lastReadAt: createdAt,
+            createdAt,
+          },
+          { collaborationUser: alice },
+        ),
+      );
+      const detail = Option.getOrThrow(await system.readThread(threadId));
+      expect(detail.createdBy).toEqual(alice);
+      expect(detail.messages[0]?.author).toEqual(alice);
+      expect(detail.sideThreads?.[0]?.messages[0]?.author).toEqual(bob);
+      expect(detail.sideThreads?.[0]?.messages[0]?.reactions?.[0]?.users).toEqual([alice]);
+      const shell = await system.readShell(threadId);
+      expect(Option.getOrThrow(shell).teamDiscussion?.latestMessage?.author).toEqual(bob);
+      expect(Option.getOrThrow(shell).createdBy).toEqual(alice);
+      const events = await system.run(Stream.runCollect(system.engine.readEvents(0)));
+      const replay = await system.run(
+        Effect.gen(function* () {
+          let model = createEmptyReadModel(createdAt);
+          for (const event of events) model = yield* projectEvent(model, event);
+          return model;
+        }),
+      );
+      expect(replay.threads[0]?.sideThreads).toEqual(detail.sideThreads);
+      expect(replay.threads[0]?.messages[0]?.author).toEqual(alice);
+      for (const event of events.filter((e) => e.type.startsWith("sidethread.")))
+        expect(isThreadDetailEvent(event)).toBe(true);
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      const restarted = Option.getOrThrow(await system.readThread(threadId));
+      expect(restarted.sideThreads).toEqual(detail.sideThreads);
+      await expect(
+        system.run(
+          system.engine.dispatch(
+            {
+              ...post,
+              commandId: CommandId.make("after-restart"),
+              messageId: SideThreadMessageId.make("after-restart"),
+              replyToSideThreadMessageId: post.messageId,
+            },
+            { collaborationUser: alice },
+          ),
+        ),
+      ).resolves.toBeDefined();
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects missing authors and identity-replayed receipts without overwriting attribution", async () => {
+    const system = await createOrchestrationSystem();
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("create-project"),
+          projectId,
+          title: "Shared project",
+          workspaceRoot: "/tmp/collaboration-receipts",
+          createdAt,
+        }),
+      );
+      await system.run(system.engine.dispatch(createThread));
+      await system.run(system.engine.dispatch(startThread));
+      const personal = await system.readModel();
+      expect(personal.projects[0]?.createdBy).toBeUndefined();
+      expect(personal.threads[0]?.createdBy).toBeUndefined();
+      expect(personal.threads[0]?.messages[0]?.author).toBeUndefined();
+      await expect(
+        system.run(
+          system.engine.dispatch({
+            ...createDiscussion,
+            commandId: CommandId.make("anonymous-discussion"),
+          }),
+        ),
+      ).rejects.toThrow("authenticated collaboration identity");
+      const result = await system.run(
+        system.engine.dispatch(createDiscussion, { collaborationUser: alice }),
+      );
+      await expect(
+        system.run(system.engine.dispatch(createDiscussion, { collaborationUser: bob })),
+      ).rejects.toThrow();
+      await expect(system.run(system.engine.dispatch(createDiscussion))).rejects.toThrow();
+      expect(
+        await system.run(system.engine.dispatch(createDiscussion, { collaborationUser: alice })),
+      ).toEqual(result);
+      await system.run(system.engine.dispatch(post, { collaborationUser: alice }));
+      const edit: OrchestrationCommand = {
+        type: "sidethread.message.edit",
+        commandId: CommandId.make("edit-discussion"),
+        threadId,
+        sideThreadId,
+        messageId: post.messageId,
+        text: "Edited by Alice",
+        createdAt,
+      };
+      await system.run(system.engine.dispatch(edit, { collaborationUser: alice }));
+      await expect(
+        system.run(system.engine.dispatch(edit, { collaborationUser: bob })),
+      ).rejects.toThrow();
+      await expect(
+        system.run(
+          system.engine.dispatch(
+            { ...edit, commandId: CommandId.make("bob-edit") },
+            { collaborationUser: bob },
+          ),
+        ),
+      ).rejects.toThrow("original author");
+      const detail = Option.getOrThrow(await system.readThread(threadId));
+      expect(detail.sideThreads?.[0]?.messages[0]).toMatchObject({
+        text: "Edited by Alice",
+        author: alice,
+      });
+    } finally {
+      await system.dispose();
+    }
+  });
+  it("keeps discussion attachments when an agent turn is reverted", async () => {
+    const system = await createOrchestrationSystem();
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("create-project"),
+          projectId,
+          title: "Shared project",
+          workspaceRoot: "/tmp/collaboration-attachments",
+          createdAt,
+        }),
+      );
+      await system.run(system.engine.dispatch(createThread, { collaborationUser: alice }));
+      await system.run(
+        system.engine.dispatch(
+          {
+            type: "sidethread.create",
+            commandId: CommandId.make("attachment-discussion"),
+            threadId,
+            sideThreadId,
+            createdAt,
+          },
+          { collaborationUser: alice },
+        ),
+      );
+      const attachmentId = createAttachmentId(threadId);
+      if (!attachmentId) throw new Error("Expected a safe attachment ID");
+      const config = await system.config();
+      await NodeFSP.mkdir(config.attachmentsDir, { recursive: true });
+      const path = NodePath.join(config.attachmentsDir, `${attachmentId}.png`);
+      await NodeFSP.writeFile(path, "pixels");
+      await system.run(
+        system.engine.dispatch(
+          {
+            type: "sidethread.message.post",
+            commandId: CommandId.make("attachment-post"),
+            threadId,
+            sideThreadId,
+            messageId: SideThreadMessageId.make("attachment-post"),
+            text: "Review image",
+            createdAt,
+            attachments: [
+              {
+                type: "image",
+                id: attachmentId,
+                name: "review.png",
+                mimeType: "image/png",
+                sizeBytes: 6,
+              },
+            ],
+          },
+          { collaborationUser: alice },
+        ),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.revert.complete",
+          commandId: CommandId.make("server:revert"),
+          threadId,
+          turnCount: 0,
+          createdAt,
+        }),
+      );
+      expect(await NodeFSP.readFile(path, "utf8")).toBe("pixels");
+      expect(
+        Option.getOrThrow(await system.readThread(threadId)).sideThreads?.[0]?.messages,
+      ).toHaveLength(1);
+    } finally {
+      await system.dispose();
+    }
   });
 });
