@@ -33,6 +33,66 @@ const TestLayer = Layer.mergeAll(
 );
 
 it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
+  it.effect(
+    "reports durable transcript progress and resumes failed threads without reimporting completed ones",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+        for (let index = 0; index < 12; index++) {
+          yield* sql`
+          INSERT INTO orchestration_v2_legacy_imports
+            (thread_id, source_updated_at, shell_imported_at)
+          VALUES (${`progress:${String(index).padStart(2, "0")}`}, '2026-01-01', '2026-01-01')
+        `;
+        }
+        yield* sql.unsafe(`
+        CREATE TRIGGER fail_one_transcript BEFORE UPDATE ON orchestration_v2_legacy_imports
+        WHEN NEW.thread_id = 'progress:05' AND NEW.transcript_imported_at IS NOT NULL
+        BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END
+      `);
+        const progress: LegacyV1ThreadImporter.LegacyV1TranscriptImportProgress[] = [];
+        const summary = yield* importer.importPendingTranscripts((value) =>
+          Effect.gen(function* () {
+            const rows = yield* sql<{ count: number }>`
+            SELECT count(*) AS count FROM orchestration_v2_legacy_imports
+            WHERE transcript_imported_at IS NOT NULL
+          `;
+            assert.equal(value.completedThreadCount, rows[0]?.count);
+            progress.push(value);
+          }).pipe(Effect.orDie),
+        );
+        assert.deepEqual(
+          progress.map((value) => [value.completedThreadCount, value.failedThreadCount]),
+          [
+            [0, 0],
+            [9, 1],
+            [11, 1],
+          ],
+        );
+        assert.equal(summary.completedThreadCount, 11);
+        assert.equal(summary.failedThreadCount, 1);
+        assert.equal(summary.totalThreadCount, 12);
+        yield* sql.unsafe("DROP TRIGGER fail_one_transcript");
+        const retry = yield* importer.importPendingTranscripts();
+        assert.equal(retry.totalThreadCount, 1);
+        assert.equal(retry.completedThreadCount, 1);
+        assert.equal(retry.failedThreadCount, 0);
+        const rows = yield* sql<{ count: number }>`
+        SELECT count(*) AS count FROM orchestration_v2_legacy_imports
+        WHERE transcript_imported_at IS NOT NULL AND last_error IS NULL
+      `;
+        assert.equal(rows[0]?.count, 12);
+        const completedProgress: LegacyV1ThreadImporter.LegacyV1TranscriptImportProgress[] = [];
+        yield* importer.importPendingTranscripts((value) =>
+          Effect.sync(() => {
+            completedProgress.push(value);
+          }),
+        );
+        assert.deepEqual(completedProgress, []);
+      }),
+  );
+
   it.effect("uses the created-thread index for startup migration checks", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

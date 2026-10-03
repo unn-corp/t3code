@@ -494,6 +494,8 @@ const make = (options?: StartupOptions) =>
           payload: {
             status: "running",
             totalThreadCount: legacyMigrationThreadCount,
+            completedThreadCount: 0,
+            failedThreadCount: 0,
           },
         });
       }
@@ -535,29 +537,62 @@ const make = (options?: StartupOptions) =>
         }),
       );
 
-      const importPendingTranscripts = legacyV1ThreadImporter.importPendingTranscripts.pipe(
+      let migrationProgress = {
+        totalThreadCount: legacyMigrationThreadCount,
+        completedThreadCount: 0,
+        failedThreadCount: 0,
+      };
+      const importPendingTranscripts = legacyV1ThreadImporter
+        .importPendingTranscripts((progress) => {
+          migrationProgress = progress;
+          return lifecycleEvents
+            .publish({
+              version: 1,
+              type: "legacyThreadMigration",
+              payload: { status: "running", ...progress },
+            })
+            .pipe(Effect.asVoid);
+        })
+        .pipe(
+          Effect.tap((summary) =>
+            summary.importedThreadCount === 0
+              ? Effect.void
+              : Effect.logInfo("Hydrated legacy v1 thread transcripts", summary),
+          ),
+        );
+      yield* importPendingTranscripts.pipe(
         Effect.tap((summary) =>
-          summary.importedThreadCount === 0
+          summary.totalThreadCount === 0 && legacyMigrationThreadCount === 0
             ? Effect.void
-            : Effect.logInfo("Hydrated legacy v1 thread transcripts", summary),
+            : lifecycleEvents.publish({
+                version: 1,
+                type: "legacyThreadMigration",
+                payload: {
+                  status: "complete",
+                  totalThreadCount: summary.totalThreadCount,
+                  completedThreadCount: summary.completedThreadCount,
+                  failedThreadCount: summary.failedThreadCount,
+                },
+              }),
         ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Legacy v1 transcript background import stopped", { cause }).pipe(
+            Effect.andThen(
+              lifecycleEvents.publish({
+                version: 1,
+                type: "legacyThreadMigration",
+                payload: {
+                  status: "complete",
+                  ...migrationProgress,
+                  failedThreadCount:
+                    migrationProgress.totalThreadCount - migrationProgress.completedThreadCount,
+                },
+              }),
+            ),
+          ),
+        ),
+        forkParked,
       );
-      yield* (
-        legacyMigrationThreadCount > 0
-          ? importPendingTranscripts.pipe(
-              Effect.tap(() =>
-                lifecycleEvents.publish({
-                  version: 1,
-                  type: "legacyThreadMigration",
-                  payload: {
-                    status: "complete",
-                    totalThreadCount: legacyMigrationThreadCount,
-                  },
-                }),
-              ),
-            )
-          : importPendingTranscripts
-      ).pipe(forkParked);
 
       yield* forkParked(
         Effect.gen(function* () {

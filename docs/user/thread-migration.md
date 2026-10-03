@@ -4,6 +4,13 @@ On your first V2 launch, T3 Code copies the V1 database, `state.sqlite`, into `s
 in the same data directory and migrates the copy. Your threads appear automatically, with full
 transcripts imported as needed. You do not need to run an import command.
 
+The desktop opens a startup window while preparing the database. This first upgrade can take
+several minutes for large histories. Keep T3 Code open and allow space for a second copy of your
+database on the machine hosting the environment. After the app opens, conversation restoration
+continues in the background. Its notice shows completed conversations; you can keep working.
+If you close T3 Code, unfinished restoration resumes the next time it starts. A conversation that
+could not be restored can be retried by opening it, or by restarting T3 Code when convenient.
+
 V1 continues using its original database while V2 uses the copy. The database import can run while
 V1 is open. Opening V2 again resumes your V2 history. The copy happens only once: later conversations
 and changes in either version do not sync to the other. Settings, attachments, and workspace files

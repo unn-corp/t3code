@@ -52,6 +52,8 @@ it.effect(
         payload: {
           status: "running",
           totalThreadCount: 12,
+          completedThreadCount: 10,
+          failedThreadCount: 0,
         },
       });
       yield* lifecycleEvents.publish({
@@ -60,6 +62,8 @@ it.effect(
         payload: {
           status: "complete",
           totalThreadCount: 12,
+          completedThreadCount: 11,
+          failedThreadCount: 1,
         },
       });
 
@@ -72,5 +76,7 @@ it.effect(
       ]);
       const migration = snapshot.events.find((event) => event.type === "legacyThreadMigration");
       assert.equal(migration?.payload.status, "complete");
+      assert.equal(migration?.payload.completedThreadCount, 11);
+      assert.equal(migration?.payload.failedThreadCount, 1);
     }).pipe(Effect.provide(ServerLifecycleEvents.layer)),
 );

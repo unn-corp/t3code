@@ -90,6 +90,12 @@ export interface LegacyV1ImportSummary {
   readonly importedMessageCount: number;
 }
 
+export interface LegacyV1TranscriptImportProgress {
+  readonly totalThreadCount: number;
+  readonly completedThreadCount: number;
+  readonly failedThreadCount: number;
+}
+
 export class LegacyV1ThreadImportError extends Schema.TaggedError<LegacyV1ThreadImportError>()(
   "LegacyV1ThreadImportError",
   {
@@ -111,7 +117,12 @@ export interface LegacyV1ThreadImporterShape {
   readonly ensureTranscript: (
     threadId: ThreadId,
   ) => Effect.Effect<LegacyV1ImportSummary, LegacyV1ThreadImportError>;
-  readonly importPendingTranscripts: Effect.Effect<LegacyV1ImportSummary, never>;
+  readonly importPendingTranscripts: (
+    onProgress?: (progress: LegacyV1TranscriptImportProgress) => Effect.Effect<void>,
+  ) => Effect.Effect<
+    LegacyV1ImportSummary & LegacyV1TranscriptImportProgress,
+    LegacyV1ThreadImportError
+  >;
 }
 
 export class LegacyV1ThreadImporter extends Context.Service<
@@ -774,48 +785,61 @@ const make = Effect.gen(function* () {
           ),
         );
 
-  const importPendingTranscripts = Effect.gen(function* () {
-    const rows = yield* sql<LegacyImportRow>`
+  const importPendingTranscripts = Effect.fn("LegacyV1ThreadImporter.importPendingTranscripts")(
+    function* (onProgress?: (progress: LegacyV1TranscriptImportProgress) => Effect.Effect<void>) {
+      const rows = yield* sql<LegacyImportRow>`
       SELECT thread_id, transcript_imported_at
       FROM orchestration_v2_legacy_imports
       WHERE transcript_imported_at IS NULL
       ORDER BY shell_imported_at ASC, thread_id ASC
-    `;
-    let importedThreadCount = 0;
-    let importedMessageCount = 0;
-    for (const row of rows) {
-      const result = yield* ensureTranscript(ThreadId.make(row.thread_id)).pipe(
-        Effect.tapError((error) =>
-          Effect.logWarning("Failed to hydrate migrated v1 thread transcript", {
-            threadId: row.thread_id,
-            cause: error,
-          }),
+    `.pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyV1ThreadImportError({ operation: "inspect pending transcripts", cause }),
         ),
-        Effect.catch(() =>
-          sql`
+      );
+      let importedThreadCount = 0;
+      let importedMessageCount = 0;
+      let completedThreadCount = 0;
+      let failedThreadCount = 0;
+      const progress = () => ({
+        totalThreadCount: rows.length,
+        completedThreadCount,
+        failedThreadCount,
+      });
+      if (onProgress && rows.length > 0) yield* onProgress(progress());
+      for (const row of rows) {
+        const result = yield* ensureTranscript(ThreadId.make(row.thread_id)).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("Failed to hydrate migrated v1 thread transcript", {
+              threadId: row.thread_id,
+              cause: error,
+            }),
+          ),
+          Effect.catch(() =>
+            Effect.gen(function* () {
+              failedThreadCount++;
+              yield* sql`
             UPDATE orchestration_v2_legacy_imports
             SET last_error = 'Transcript hydration failed; retry on next open.'
             WHERE thread_id = ${row.thread_id}
-          `.pipe(
-            Effect.as({ importedThreadCount: 0, importedMessageCount: 0 }),
-            Effect.orElseSucceed(() => ({
-              importedThreadCount: 0,
-              importedMessageCount: 0,
-            })),
+          `.pipe(Effect.ignore);
+              return { importedThreadCount: 0, importedMessageCount: 0, failed: true };
+            }),
           ),
-        ),
-      );
-      importedThreadCount += result.importedThreadCount;
-      importedMessageCount += result.importedMessageCount;
-      yield* Effect.yieldNow;
-    }
-    return { importedThreadCount, importedMessageCount };
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Legacy v1 transcript background import stopped", { cause }).pipe(
-        Effect.as({ importedThreadCount: 0, importedMessageCount: 0 }),
-      ),
-    ),
+        );
+        importedThreadCount += result.importedThreadCount;
+        importedMessageCount += result.importedMessageCount;
+        if (!("failed" in result)) completedThreadCount++;
+        // Publish bounded, durable progress rather than an event for every message.
+        const processed = completedThreadCount + failedThreadCount;
+        if (onProgress && (processed % 10 === 0 || processed === rows.length)) {
+          yield* onProgress(progress());
+        }
+        yield* Effect.yieldNow;
+      }
+      return { importedThreadCount, importedMessageCount, ...progress() };
+    },
   );
 
   return LegacyV1ThreadImporter.of({

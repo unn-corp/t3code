@@ -235,14 +235,9 @@ const bootstrap = Effect.gen(function* () {
   }
 
   if (!(yield* Ref.get(state.quitting))) {
-    // The main window waits for the primary backend. In wsl-only mode that is
-    // the WSL backend, which can be slow to cold-boot — show a "Connecting to
-    // WSL" splash immediately so the app feels responsive instead of presenting
-    // no window until WSL is ready. (Dual mode opens fast off the Windows
-    // primary, so no splash there.)
-    if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
-      yield* desktopWindow.showConnectingSplash;
-    }
+    // Database upgrades can delay readiness on any platform. Keep startup
+    // visible until the real window has loaded, including WSL cold boots.
+    yield* desktopWindow.showConnectingSplash;
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
     yield* appActivation.start.pipe(

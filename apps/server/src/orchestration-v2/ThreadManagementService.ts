@@ -748,7 +748,14 @@ const legacyV1ThreadImporterNoopLayer = Layer.succeed(
     pendingThreadCount: Effect.succeed(0),
     reconcileShells: Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
     ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
-    importPendingTranscripts: Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+    importPendingTranscripts: () =>
+      Effect.succeed({
+        importedThreadCount: 0,
+        importedMessageCount: 0,
+        totalThreadCount: 0,
+        completedThreadCount: 0,
+        failedThreadCount: 0,
+      }),
   }),
 );
 

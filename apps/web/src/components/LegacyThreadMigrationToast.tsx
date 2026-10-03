@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 
 import { primaryServerLegacyThreadMigrationAtom } from "../state/server";
 import { toastManager } from "./ui/toast";
+import { legacyThreadMigrationNotice } from "./LegacyThreadMigrationToast.logic";
 
 type MigrationToastId = ReturnType<typeof toastManager.add>;
 
@@ -11,18 +12,13 @@ export function LegacyThreadMigrationToast() {
   const toastIdRef = useRef<MigrationToastId | null>(null);
 
   useEffect(() => {
-    if (migration?.status === "running") {
-      if (toastIdRef.current !== null) {
-        return;
+    const notice = legacyThreadMigrationNotice(migration);
+    if (notice) {
+      if (toastIdRef.current === null) {
+        toastIdRef.current = toastManager.add(notice);
+      } else {
+        toastManager.update(toastIdRef.current, notice);
       }
-      toastIdRef.current = toastManager.add({
-        type: "loading",
-        title: "Restoring your threads…",
-        description: `Migrating ${migration.totalThreadCount.toLocaleString()} ${
-          migration.totalThreadCount === 1 ? "thread" : "threads"
-        } from the previous version. You can keep working while this finishes.`,
-        timeout: 0,
-      });
       return;
     }
 
