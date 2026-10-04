@@ -73,8 +73,9 @@ export function registerPwaServiceWorker(): Promise<PwaServiceWorkerState> {
  * stale shell keeps asking for files that no longer exist and the app pins
  * itself to an old build. The server now sends no-cache for the shell, which
  * prevents that going forward, but a client already holding a stale copy has
- * no way to notice on its own. This is that way out, and it is deliberately
- * blunt: unregister the workers, drop every cache, reload.
+ * no way to notice on its own. Remove legacy workers, drop every cache, and
+ * reload. The current notification worker does not cache files; preserve its
+ * registration because it owns this installation's push subscription.
  *
  * Pairing and settings live in localStorage and IndexedDB, which are left
  * alone, so this does not sign the device out or lose its environments.
@@ -83,7 +84,17 @@ export async function clearPwaCachesAndReload(): Promise<void> {
   if (typeof window === "undefined") return;
   try {
     const registrations = (await navigator.serviceWorker?.getRegistrations()) ?? [];
-    await Promise.all(registrations.map((registration) => registration.unregister()));
+    const notificationWorkerUrl = new URL("/service-worker.js", window.location.origin).href;
+    await Promise.all(
+      registrations
+        .filter(
+          (registration) =>
+            ![registration.active, registration.waiting, registration.installing].some(
+              (worker) => worker?.scriptURL === notificationWorkerUrl,
+            ),
+        )
+        .map((registration) => registration.unregister()),
+    );
   } catch {
     // A browser that refuses the registration list still benefits from the
     // cache drop and the reload below.

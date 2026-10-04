@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { useProjects, useThreadShells } from "../state/entities";
 import { getClientSettings } from "../hooks/useSettings";
 import type { AppRouter } from "../router";
+import { buildThreadRouteParams, resolveAgentNotificationThreadRef } from "../threadRoutes";
 import { playAgentNotificationSound } from "./sound";
 
 type ThreadSnapshot = {
@@ -52,8 +53,13 @@ export function DesktopAgentNotificationCoordinator({ router }: { readonly route
     const subscribe = window.desktopBridge?.onAgentNotificationNavigate;
     if (typeof subscribe !== "function") return;
     return subscribe((deepLink) => {
-      // The main process sends only the contract's relative thread route.
-      void router.navigate({ to: deepLink as never });
+      const threadRef = resolveAgentNotificationThreadRef(deepLink);
+      if (threadRef) {
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+      }
     });
   }, [router]);
 

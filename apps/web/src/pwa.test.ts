@@ -88,3 +88,31 @@ it("still refreshes the same URL when cache cleanup is refused", async () => {
   await clearPwaCachesAndReload();
   expect(reload).toHaveBeenCalledOnce();
 });
+
+it("preserves the notification registration and its push subscription during refresh", async () => {
+  const unsubscribe = vi.fn();
+  const subscription = { endpoint: "https://push.example/device", unsubscribe };
+  const notificationWorker = {
+    active: { scriptURL: "https://t3.example/service-worker.js" },
+    scope: "https://t3.example/",
+    unregister: vi.fn().mockResolvedValue(true),
+    pushManager: { getSubscription: vi.fn().mockResolvedValue(subscription) },
+  };
+  const legacyWorker = {
+    active: { scriptURL: "https://t3.example/sw.js" },
+    unregister: vi.fn().mockResolvedValue(true),
+  };
+  Object.assign(navigator.serviceWorker, {
+    getRegistrations: vi.fn().mockResolvedValue([notificationWorker, legacyWorker]),
+  });
+  const deleteCache = vi.fn().mockResolvedValue(true);
+  Object.assign(window, { caches: { keys: async () => ["old-shell"], delete: deleteCache } });
+  const { clearPwaCachesAndReload } = await import("./pwa");
+  await clearPwaCachesAndReload();
+  expect(notificationWorker.unregister).not.toHaveBeenCalled();
+  expect(unsubscribe).not.toHaveBeenCalled();
+  expect(legacyWorker.unregister).toHaveBeenCalledOnce();
+  expect(await notificationWorker.pushManager.getSubscription()).toBe(subscription);
+  expect(deleteCache).toHaveBeenCalledWith("old-shell");
+  expect(reload).toHaveBeenCalledOnce();
+});

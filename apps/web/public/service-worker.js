@@ -4,6 +4,33 @@
 // Connect account. This worker intentionally has no account/session data.
 // This worker intentionally does not cache API or thread data: auth/session
 // state must always be fetched from the current environment.
+self.addEventListener("install", (event) => event.waitUntil(self.skipWaiting()));
+self.addEventListener("activate", (event) => event.waitUntil(clients.claim()));
+
+// The transport uses /threads/:environment/:thread; the web router omits /threads.
+// Accept canonical URLs too, including notifications stored by this worker.
+function notificationDestination(deepLink) {
+  if (deepLink === "/") return "/";
+  if (typeof deepLink !== "string" || deepLink.includes("\\")) return null;
+  const match =
+    /^\/(?:threads\/)?((?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+)\/((?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+)$/.exec(
+      deepLink,
+    );
+  if (!match) return null;
+  try {
+    if (
+      match
+        .slice(1)
+        .map(decodeURIComponent)
+        .some((part) => part === "." || part === "..")
+    )
+      return null;
+  } catch {
+    return null;
+  }
+  return `/${match[1]}/${match[2]}`;
+}
+
 self.addEventListener("push", (event) => {
   let payload = null;
   try {
@@ -12,13 +39,8 @@ self.addEventListener("push", (event) => {
     return;
   }
   if (!payload || typeof payload !== "object" || typeof payload.deepLink !== "string") return;
-  if (
-    payload.deepLink !== "/" &&
-    !/^\/threads\/(?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+\/(?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+$/.test(
-      payload.deepLink,
-    )
-  )
-    return;
+  const deepLink = notificationDestination(payload.deepLink);
+  if (deepLink === null) return;
 
   const generic = payload.showProjectAndThreadNames !== true;
   const title =
@@ -32,7 +54,7 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      data: { deepLink: payload.deepLink },
+      data: { deepLink },
       tag: typeof payload.eventId === "string" ? payload.eventId : undefined,
     }),
   );
@@ -40,15 +62,8 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const deepLink = event.notification.data?.deepLink;
-  if (
-    typeof deepLink !== "string" ||
-    (deepLink !== "/" &&
-      !/^\/threads\/(?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+\/(?![^/]*%(?:2[fF]|5[cC]))(?:[^/?#%]|%[\dA-Fa-f]{2})+$/.test(
-        deepLink,
-      ))
-  )
-    return;
+  const deepLink = notificationDestination(event.notification.data?.deepLink);
+  if (deepLink === null) return;
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((openClients) => {
       const sameOriginClients = openClients.filter(

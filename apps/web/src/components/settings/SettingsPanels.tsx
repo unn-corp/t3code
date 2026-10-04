@@ -216,7 +216,6 @@ import {
 } from "../../agentNotifications/sound";
 import {
   getBrowserNotificationStatus,
-  getExistingBrowserPushSubscription,
   showBrowserNotificationPreview,
   subscribeBrowserPush,
   unsubscribeBrowserPush,
@@ -228,6 +227,7 @@ import {
   testPwaPushSubscription,
 } from "../../agentNotifications/pwaPushRelay";
 import { usePwaNotificationSetup } from "../../agentNotifications/usePwaNotificationSetup";
+import { usePwaPushSubscriptionSync } from "../../agentNotifications/usePwaPushSubscriptionSync";
 import { DictationMicrophonePicker } from "./DictationMicrophonePicker";
 import { DictationKeybindRecorder } from "./DictationKeybindRecorder";
 import { DictationSetupAgentButton } from "./DictationSetupAgentButton";
@@ -1372,16 +1372,27 @@ function PwaNotificationSettings() {
     vapidPublicKey,
   ]);
 
-  useEffect(() => {
-    if (!notificationPreferences.enabled || subscriptionIdRef.current === null) return;
-    void getExistingBrowserPushSubscription()
-      .then((subscription) => {
-        if (subscription) return persistRemoteSubscription(subscription, notificationPreferences);
-      })
-      .catch(() => {
-        // A later enable interaction will repair a browser subscription that disappeared.
+  const synchronizeSubscription = useCallback(
+    (subscription: PushSubscription) =>
+      persistRemoteSubscription(subscription, notificationPreferences),
+    [notificationPreferences, persistRemoteSubscription],
+  );
+  const repairMissingSubscription = useCallback(() => {
+    const subscriptionId = subscriptionIdRef.current;
+    subscriptionIdRef.current = null;
+    window.localStorage.removeItem("t3code.webPushSubscriptionId");
+    updatePreferences({ enabled: false });
+    if (subscriptionId) {
+      void removePwaPushSubscription(subscriptionId).catch(() => {
+        // The browser no longer has a subscription to deliver to.
       });
-  }, [notificationPreferences, persistRemoteSubscription]);
+    }
+  }, [updatePreferences]);
+  usePwaPushSubscriptionSync({
+    enabled: notificationPreferences.enabled,
+    onSubscription: synchronizeSubscription,
+    onMissingSubscription: repairMissingSubscription,
+  });
 
   const disableNotifications = useCallback(() => {
     void unsubscribeBrowserPush();

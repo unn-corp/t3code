@@ -1,5 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { AgentNotificationDeepLink } from "@t3tools/contracts";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { Schema } from "effect";
 import type { DraftId } from "./composerDraftStore";
 
 export type ThreadRouteTarget =
@@ -93,6 +95,20 @@ export function resolveThreadRouteRef(
   }
 
   return scopeThreadRef(params.environmentId as EnvironmentId, params.threadId as ThreadId);
+}
+
+const isAgentNotificationDeepLink = Schema.is(AgentNotificationDeepLink);
+
+/** Translate the notification transport URL into the web router's thread params. */
+export function resolveAgentNotificationThreadRef(deepLink: string): ScopedThreadRef | null {
+  if (!isAgentNotificationDeepLink(deepLink) || deepLink.includes("\\")) return null;
+  try {
+    const [, , environmentId, threadId] = deepLink.split("/").map(decodeURIComponent);
+    if ([environmentId, threadId].some((part) => part === "." || part === "..")) return null;
+    return resolveThreadRouteRef({ environmentId, threadId });
+  } catch {
+    return null;
+  }
 }
 
 export function resolveThreadRouteTarget(

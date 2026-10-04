@@ -7,6 +7,7 @@ import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
+  resolveAgentNotificationThreadRef,
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
@@ -192,5 +193,33 @@ describe("threadRoutes", () => {
         draftThreadExists: false,
       }),
     ).toBe("missing");
+  });
+});
+
+describe("desktop notification thread routes", () => {
+  it("translates the transport route to typed web route params", () => {
+    const ref = resolveAgentNotificationThreadRef("/threads/remote/thread-1");
+    expect(ref).not.toBeNull();
+    expect(buildThreadRouteParams(ref!)).toEqual({ environmentId: "remote", threadId: "thread-1" });
+  });
+  it("decodes encoded identifiers once before passing them to the router", () => {
+    const ref = resolveAgentNotificationThreadRef("/threads/remote%20host/thread%3A1");
+    expect(buildThreadRouteParams(ref!)).toEqual({
+      environmentId: "remote host",
+      threadId: "thread:1",
+    });
+  });
+  it.each([
+    "https://other.example/",
+    "/settings",
+    "/threads/a/b?token=x",
+    "/threads/a%2Fb/c",
+    "/threads/a%zz/c",
+    "/threads/a%FF/c",
+    "/threads/../thread",
+    "/threads/a/%2e%2e",
+    "/threads/a\\b/c",
+  ])("ignores unsafe destinations: %s", (link) => {
+    expect(resolveAgentNotificationThreadRef(link)).toBeNull();
   });
 });

@@ -8,7 +8,7 @@ const workerSource = NodeFS.readFileSync(
   "utf8",
 );
 const origin = "https://t3.example";
-const deepLink = "/threads/remote/thread-1";
+const deepLink = "/remote/thread-1";
 
 function client(path: string) {
   return {
@@ -40,7 +40,7 @@ async function clickNotification(openClients: ReturnType<typeof client>[], link 
 }
 
 it("focuses the matching thread without reloading it, even when another tab comes first", async () => {
-  const other = client("/threads/remote/thread-2");
+  const other = client("/remote/thread-2");
   const matching = client(`${deepLink}?panel=files#entry-2`);
   const { openWindow } = await clickNotification([other, matching]);
   expect(matching.focus).toHaveBeenCalledOnce();
@@ -73,3 +73,100 @@ it.each(["https://other.example/", "/threads/remote%2Fother/thread-1", "/setting
     expect(openWindow).not.toHaveBeenCalled();
   },
 );
+
+it("translates a saved legacy notification to the canonical thread URL", async () => {
+  const other = client("/");
+  await clickNotification([other], "/threads/remote/thread-1");
+  expect(other.navigate).toHaveBeenCalledWith(deepLink);
+});
+
+it("focuses a canonical thread tab for a legacy notification", async () => {
+  const matching = client(deepLink);
+  await clickNotification([matching], "/threads/remote/thread-1");
+  expect(matching.focus).toHaveBeenCalledOnce();
+  expect(matching.navigate).not.toHaveBeenCalled();
+});
+
+it.each(["/threads/remote%20host/thread%3A1", "/remote%20host/thread%3A1"])(
+  "preserves encoded thread identifiers: %s",
+  async (link) => {
+    const matching = client("/remote%20host/thread%3A1");
+    await clickNotification([matching], link);
+    expect(matching.focus).toHaveBeenCalledOnce();
+    expect(matching.navigate).not.toHaveBeenCalled();
+  },
+);
+
+it("opens the app root for a generic notification", async () => {
+  const { openWindow } = await clickNotification([], "/");
+  expect(openWindow).toHaveBeenCalledWith("/");
+});
+
+it("stores a canonical destination when receiving a push without exposing private titles", async () => {
+  const event = {
+    data: { json: () => ({ deepLink: "/threads/remote/thread-1", title: "Private thread" }) },
+    waitUntil: vi.fn<(work: Promise<unknown>) => void>(),
+  };
+  const handlers = new Map<string, (pushEvent: typeof event) => void>();
+  const showNotification = vi.fn().mockResolvedValue(undefined);
+  NodeVM.runInNewContext(workerSource, {
+    self: {
+      registration: { showNotification },
+      addEventListener: (name: string, handler: (pushEvent: typeof event) => void) =>
+        handlers.set(name, handler),
+    },
+  });
+  handlers.get("push")?.(event);
+  await event.waitUntil.mock.calls[0]?.[0];
+  expect(showNotification).toHaveBeenCalledWith("T3 Code", {
+    body: "Agent activity needs your attention.",
+    data: { deepLink },
+    tag: undefined,
+  });
+});
+
+it("activates worker updates without waiting for existing app windows to close", async () => {
+  const handlers = new Map<
+    string,
+    (event: { waitUntil: (work: Promise<unknown>) => void }) => void
+  >();
+  const skipWaiting = vi.fn().mockResolvedValue(undefined);
+  const claim = vi.fn().mockResolvedValue(undefined);
+  NodeVM.runInNewContext(workerSource, {
+    self: {
+      skipWaiting,
+      addEventListener: (
+        name: string,
+        handler: (event: { waitUntil: (work: Promise<unknown>) => void }) => void,
+      ) => handlers.set(name, handler),
+    },
+    clients: { claim },
+  });
+  const pending: Promise<unknown>[] = [];
+  const event = { waitUntil: (work: Promise<unknown>) => pending.push(work) };
+  handlers.get("install")?.(event);
+  handlers.get("activate")?.(event);
+  await Promise.all(pending);
+  expect(skipWaiting).toHaveBeenCalledOnce();
+  expect(claim).toHaveBeenCalledOnce();
+  expect(pending).toHaveLength(2);
+});
+
+it.each([
+  "/remote%2Fother/thread-1",
+  "/remote%5Cother/thread-1",
+  "/remote%zz/thread-1",
+  "/remote%FF/thread-1",
+  "/remote/thread-1?token=x",
+  "/remote/thread-1/extra",
+  "/../thread-1",
+  "/%2e%2e/thread-1",
+  "/threads/remote/..",
+  "/threads/remote\\other/thread-1",
+])("rejects an unsafe thread destination: %s", async (link) => {
+  const existing = client("/");
+  const { event, openWindow } = await clickNotification([existing], link);
+  expect(event.waitUntil).not.toHaveBeenCalled();
+  expect(existing.navigate).not.toHaveBeenCalled();
+  expect(openWindow).not.toHaveBeenCalled();
+});
