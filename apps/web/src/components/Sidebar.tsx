@@ -714,7 +714,7 @@ function SidebarRepositoryGroupHeader(props: {
           onDragEnd={props.onDragEnd}
           aria-label={`Reorder ${props.group.displayName} repository group`}
           data-testid="sidebar-repository-group-handle"
-          className="ml-1 hidden md:pointer-fine:flex size-5 shrink-0 cursor-grab items-center justify-center rounded-sm text-sidebar-muted-foreground/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring active:cursor-grabbing"
+          className="ml-1 flex size-5 shrink-0 cursor-grab items-center justify-center rounded-sm text-sidebar-muted-foreground/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring active:cursor-grabbing"
         >
           <GripVerticalIcon aria-hidden className="size-3.5" />
         </button>
@@ -2025,8 +2025,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           {accessibleTitle}
           <div
             className={cn(
-              "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
-              sortable && "md:pointer-fine:ps-8",
+              "relative z-10 h-[4.875rem] py-(--sidebar-content-inset)",
+              sortable
+                ? "pe-(--sidebar-row-content-inset) ps-11 sm:ps-8"
+                : "px-(--sidebar-row-content-inset)",
             )}
           >
             {sortable ? (
@@ -2034,7 +2036,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 {...sortable.listeners}
                 data-testid="sidebar-thread-drag-handle"
                 aria-label={`Reorder ${thread.title} conversation`}
-                className="absolute inset-y-0 start-0 z-20 hidden w-8 touch-none cursor-grab items-center justify-center text-sidebar-muted-foreground/45 active:cursor-grabbing md:pointer-fine:flex"
+                className="absolute inset-y-0 start-0 z-20 flex w-11 touch-none cursor-grab items-center justify-center text-sidebar-muted-foreground/45 active:cursor-grabbing sm:w-8"
                 onClick={(event) => event.stopPropagation()}
               >
                 <GripVerticalIcon

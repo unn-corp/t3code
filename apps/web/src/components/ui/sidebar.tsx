@@ -245,6 +245,8 @@ function Sidebar({
       <SidebarInstanceContext value={instanceContextValue}>
         <Sheet onOpenChange={setOpenMobile} open={openMobile}>
           <SheetPopup
+            // Prepare navigation rows and their grips before the opening animation.
+            keepMounted
             className={cn(
               "w-(--sidebar-width) max-w-none bg-sidebar surface-grain p-0 text-sidebar-foreground",
               className,
