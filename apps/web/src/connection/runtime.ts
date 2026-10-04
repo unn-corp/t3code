@@ -1,3 +1,4 @@
+import * as OpenWhisprLoader from "@t3tools/client-runtime/state/openwhispr-http";
 import { Connection } from "@t3tools/client-runtime/connection";
 import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
 import {
@@ -24,6 +25,7 @@ const snapshotLoaderLayer = Layer.mergeAll(
   ShellSnapshotLoader.layer,
   ThreadHistoryController.layer,
   PullRequestDiffLoader.layer,
+  OpenWhisprLoader.layer,
 );
 
 type ConnectionLayerSource =

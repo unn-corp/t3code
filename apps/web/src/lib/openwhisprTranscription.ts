@@ -1,36 +1,31 @@
-const OPENWHISPR_WHISPER_URL = "http://127.0.0.1:8178/inference";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { OpenWhisprLoader } from "@t3tools/client-runtime/state/openwhispr-http";
+import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import * as Effect from "effect/Effect";
+import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { readPreparedConnection } from "../state/session";
 
-type WhisperJsonResponse = {
-  readonly text?: unknown;
-};
-
-function isWhisperJsonResponse(value: unknown): value is WhisperJsonResponse {
-  return typeof value === "object" && value !== null && "text" in value;
-}
-
-/** Transcribe audio through the user's local OpenWhispr whisper.cpp service. */
-export async function transcribeWithOpenWhispr(audio: Blob, signal?: AbortSignal): Promise<string> {
-  const form = new FormData();
-  form.append("file", audio, "t3-voice.wav");
-  form.append("response_format", "json");
-
-  const response = await fetch(OPENWHISPR_WHISPER_URL, {
-    method: "POST",
-    body: form,
+/** Transcribe on the selected environment, using its cookie, bearer, or relay authorization. */
+export async function transcribeWithOpenWhispr(
+  environmentId: EnvironmentId | null,
+  audio: Blob,
+  signal?: AbortSignal,
+): Promise<string> {
+  signal?.throwIfAborted();
+  const prepared = environmentId === null ? null : readPreparedConnection(environmentId);
+  if (!prepared) throw new Error("Connect to the T3 server before dictating.");
+  const bytes = new Uint8Array(await audio.arrayBuffer());
+  signal?.throwIfAborted();
+  const atom = connectionAtomRuntime.atom(
+    Effect.flatMap(OpenWhisprLoader, (loader) => loader.transcribe(prepared, bytes)),
+  );
+  const result = await executeAtomQuery(appAtomRegistry, atom, {
     ...(signal ? { signal } : {}),
+    reportFailure: false,
   });
-
-  if (!response.ok) {
-    throw new Error(`OpenWhispr returned HTTP ${response.status}.`);
-  }
-
-  const payload: unknown = await response.json();
-  if (!isWhisperJsonResponse(payload) || typeof payload.text !== "string") {
-    throw new Error("OpenWhispr returned an invalid transcription response.");
-  }
-
-  const transcript = payload.text.trim();
-  return transcript === "[BLANK_AUDIO]" ? "" : transcript;
+  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+  return result.value.text;
 }
 
 function writeAscii(view: DataView, offset: number, value: string): void {

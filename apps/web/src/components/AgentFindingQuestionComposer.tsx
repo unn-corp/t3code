@@ -1,5 +1,6 @@
 import {
   DEFAULT_RUNTIME_MODE,
+  type EnvironmentId,
   type ModelSelection,
   type ProviderInstanceId,
   type RuntimeMode,
@@ -32,6 +33,7 @@ function appendTranscript(prompt: string, transcript: string): string {
 }
 
 export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionComposer({
+  environmentId,
   findingId,
   findingTitle,
   busy,
@@ -44,6 +46,7 @@ export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionCo
   onSubmit,
   onVoiceActivityChange,
 }: {
+  readonly environmentId: EnvironmentId | null;
   readonly findingId: string;
   readonly findingTitle: string;
   readonly busy: boolean;
@@ -192,6 +195,8 @@ export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionCo
                     </div>
                     <div className="relative z-10 flex h-17.5 items-center justify-center">
                       <OpenWhisprVoiceInput
+                        key={environmentId}
+                        environmentId={environmentId}
                         phase={voiceInputPhase}
                         disabled={disabled || voiceDisabled}
                         onTranscript={(transcript) =>

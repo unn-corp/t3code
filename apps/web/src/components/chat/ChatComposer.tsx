@@ -518,9 +518,7 @@ function useComposerRestingTransition(
         Array.from(element.querySelectorAll<HTMLElement>(selector)).find(
           (candidate) => candidate.getClientRects().length > 0,
         ) ?? null;
-      const prompt = visibleTransitionElement(
-        '[data-composer-prompt-surface="true"], [data-chat-composer-transition-prompt="true"]',
-      );
+      const prompt = visibleTransitionElement('[data-composer-prompt-surface="true"]');
       const action = visibleTransitionElement('[data-chat-composer-transition-actions="true"]');
       const footer = element.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
       const continuousControls =
@@ -934,7 +932,7 @@ function useComposerRestingTransition(
           (candidate) => candidate.getClientRects().length > 0,
         ) ?? null;
       const promptRect = visibleTransitionElement(
-        '[data-composer-prompt-surface="true"], [data-chat-composer-transition-prompt="true"]',
+        '[data-composer-prompt-surface="true"]',
       )?.getBoundingClientRect();
       const actionTop = visibleTransitionElement(
         '[data-chat-composer-transition-actions="true"]',
@@ -2816,8 +2814,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
-  const showCollapsedMobilePromptRow =
-    isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
   const showComposerAttachAction =
     fileStagingLimit !== null &&
     pendingUserInputs.length === 0 &&
@@ -2948,16 +2944,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const showResumeAction =
     canResume && !composerDraftHasUserContent(composerDraft) && !isEditingQueuedMessage;
-  const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
-    isSendBusy ||
-    isSendDisabled ||
-    isConnecting ||
-    noProviderAvailable ||
-    projectSelectionRequired ||
-    environmentUnavailable !== null ||
-    (!composerSendState.hasSendableContent && !showResumeAction);
-  const collapsedComposerPrimaryActionLabel = showResumeAction ? "Resume thread" : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -6671,62 +6657,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 no audio detected
               </div>
             ) : null}
-            {showCollapsedMobilePromptRow ? (
-              <div className="flex items-center justify-between gap-2 px-3 py-2">
-                <button
-                  type="button"
-                  data-chat-composer-transition-prompt="true"
-                  className={cn(
-                    "min-w-0 flex-1 truncate bg-transparent p-0 text-left text-sm focus:outline-none",
-                    (activePendingProgress ? activePendingProgress.customAnswer : prompt.trim())
-                      ? "text-foreground"
-                      : "text-placeholder",
-                  )}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={isChoiceOnlyPendingQuestion ? undefined : expandMobileComposer}
-                  disabled={isChoiceOnlyPendingQuestion}
-                  aria-label="Expand composer"
-                >
-                  {activePendingProgress
-                    ? isChoiceOnlyPendingQuestion
-                      ? "Choose an option above"
-                      : activePendingProgress.customAnswer ||
-                        "Type your own answer, or leave this blank to use the selected option"
-                    : prompt.trim() ||
-                      (showProviderUnavailable
-                        ? "Enable a provider in Settings"
-                        : "Ask anything...")}
-                </button>
-                {collapsedComposerImagePreviews}
-                <button
-                  type="button"
-                  data-chat-composer-transition-actions="true"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-64"
-                  disabled={collapsedComposerPrimaryActionDisabled}
-                  aria-label={collapsedComposerPrimaryActionLabel}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (showResumeAction) onResume();
-                    else submitComposer();
-                  }}
-                >
-                  {showResumeAction ? (
-                    <PlayIcon className="size-4 fill-current" aria-hidden="true" />
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                      <path
-                        d="M8 3L8 13M8 3L4 7M8 3L12 7"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            ) : null}
             <div
               ref={setComposerMenuAnchor}
               data-chat-composer-body="true"
@@ -7140,10 +7070,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isComposerResting &&
                     ((settings.contextWindowMeterEnabled && activeContextWindow) ||
                     reserveContextWindowMeter
-                      ? "pr-28"
+                      ? "pr-44"
                       : showComposerAttachAction
-                        ? "pr-20"
-                        : "pr-12"),
+                        ? "pr-36"
+                        : "pr-28"),
                 )}
               >
                 {previewFile ? (
@@ -7329,6 +7259,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
                   <OpenWhisprVoiceInput
+                    key={composerDraftTargetKey}
+                    environmentId={environmentId}
                     phase={voiceInputPhase}
                     disabled={
                       isConnecting ||

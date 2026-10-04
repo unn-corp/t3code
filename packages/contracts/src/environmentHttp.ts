@@ -3,6 +3,7 @@ import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
@@ -574,6 +575,42 @@ class EnvironmentProjectsHttpApi extends HttpApiGroup.make("projects")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+export const OPENWHISPR_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+export const OPENWHISPR_TIMEOUT_MS = 60_000;
+
+export class OpenWhisprTranscriptionError extends Schema.TaggedError<OpenWhisprTranscriptionError>()(
+  "OpenWhisprTranscriptionError",
+  { reason: Schema.Literals(["unavailable", "invalid_response", "timeout", "invalid_audio"]) },
+  { httpApiStatus: 502 },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "timeout":
+        return "OpenWhispr transcription timed out. Try a shorter recording.";
+      case "invalid_audio":
+        return "The recording is empty or too large. Try a shorter recording.";
+      case "invalid_response":
+        return "OpenWhispr returned an invalid transcription response.";
+      case "unavailable":
+        return "OpenWhispr is unavailable on the connected T3 server. Start its transcription service and try again.";
+    }
+  }
+}
+
+class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice").add(
+  HttpApiEndpoint.post("transcribe", "/api/voice/openwhispr", {
+    headers: OptionalBearerHeaders,
+    payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array({ contentType: "audio/wav" })),
+    success: Schema.Struct({ text: Schema.String }),
+    error: [
+      OpenWhisprTranscriptionError,
+      EnvironmentAuthInvalidError,
+      EnvironmentScopeRequiredError,
+      EnvironmentInternalError,
+    ],
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 /** Large, compressible pull-request payloads travel over HTTP rather than the RPC socket. */
 class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").add(
   HttpApiEndpoint.post("diff", "/api/pull-requests/diff", {
@@ -652,6 +689,7 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   ) {}
 
 export class EnvironmentHttpApi extends HttpApi.make("environment")
+  .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)

@@ -1,3 +1,6 @@
+import { cn } from "../lib/utils";
+import { PullRequestGlyph } from "./pullRequest/pullRequestIcons";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "./ui/input-group";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -29,7 +32,6 @@ import {
   FileSearchIcon,
   FlaskConicalIcon,
   FolderGit2Icon,
-  GitPullRequestIcon,
   GithubIcon,
   LightbulbIcon,
   LoaderIcon,
@@ -97,7 +99,6 @@ import { AgentFindingQuestionComposer } from "./AgentFindingQuestionComposer";
 import { AgentProjectPullRequests } from "./AgentProjectPullRequests";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { Card, CardDescription, CardHeader, CardPanel, CardTitle } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
 import {
@@ -1344,27 +1345,33 @@ export function AgentFindings({
         ].map((stage) => (
           <Button
             aria-pressed={statusFilter === stage.status}
-            className="h-auto min-h-14 justify-between gap-3 px-3 py-2"
+            className="h-auto min-h-14"
+            size="lg"
             key={stage.status}
             onClick={() => setStatusFilter(stage.status)}
             variant={statusFilter === stage.status ? "secondary" : "outline"}
           >
-            <span className="text-left text-xs font-medium leading-tight">{stage.label}</span>
-            <span className="text-base tabular-nums">{stage.count}</span>
+            <span className="flex w-full items-center justify-between gap-3">
+              <span className="text-left text-xs font-medium leading-tight">{stage.label}</span>
+              <span className="text-base tabular-nums">{stage.count}</span>
+            </span>
           </Button>
         ))}
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_12rem_11rem_10rem_10rem]">
         <div className="relative min-w-0 md:col-span-2 lg:col-span-1">
-          <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            aria-label="Search findings"
-            className="pl-9"
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Search findings, projects, sources, or evidence"
-            value={query}
-          />
+          <InputGroup>
+            <InputGroupAddon>
+              <SearchIcon />
+            </InputGroupAddon>
+            <InputGroupInput
+              aria-label="Search findings"
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              placeholder="Search findings, projects, sources, or evidence"
+              value={query}
+            />
+          </InputGroup>
         </div>
         <Select value={projectFilter} onValueChange={(value) => value && setProjectFilter(value)}>
           <SelectTrigger aria-label="Filter findings by project" className="w-full">
@@ -1643,7 +1650,7 @@ export function AgentFindings({
                             className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border ${run.status === "failed" ? "border-destructive/30 bg-destructive/10 text-destructive" : run.status === "succeeded" ? "border-success/30 bg-success/10 text-success" : "border-info/30 bg-info/10 text-info"}`}
                           >
                             {run.status === "succeeded" ? (
-                              <GitPullRequestIcon className="size-4" />
+                              <PullRequestGlyph.pullRequest className="size-4" />
                             ) : run.status === "failed" || run.status === "partial" ? (
                               <CircleAlertIcon className="size-4" />
                             ) : (
@@ -1705,7 +1712,7 @@ export function AgentFindings({
                                 size="sm"
                                 variant="outline"
                               >
-                                <GitPullRequestIcon />
+                                <PullRequestGlyph.pullRequest />
                                 Open PR
                               </Button>
                             ) : null}
@@ -1849,8 +1856,13 @@ export function AgentFindings({
                             key={record.id}
                             tabIndex={-1}
                           >
-                            <Card className={cardClass}>
-                              <CardHeader className="gap-3 p-4 sm:p-5">
+                            <div
+                              className={cn(
+                                "relative flex flex-col rounded-2xl border bg-card text-card-foreground shadow-xs/5",
+                                cardClass,
+                              )}
+                            >
+                              <div className="grid gap-3 p-4 sm:p-5">
                                 <div className="flex min-w-0 items-start gap-3">
                                   <Checkbox
                                     aria-label={`Select ${finding.title}`}
@@ -1866,9 +1878,9 @@ export function AgentFindings({
                                   />
                                   <div className="min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-2">
-                                      <CardTitle className="text-base leading-snug">
+                                      <h3 className="font-semibold text-base leading-snug">
                                         {finding.title}
-                                      </CardTitle>
+                                      </h3>
                                       <Badge size="sm" variant="outline">
                                         {typeLabel}
                                       </Badge>
@@ -1884,9 +1896,9 @@ export function AgentFindings({
                                         </Badge>
                                       ) : null}
                                     </div>
-                                    <CardDescription className="mt-1 max-w-3xl whitespace-pre-wrap leading-relaxed">
+                                    <p className="mt-1 max-w-3xl whitespace-pre-wrap text-sm text-muted-foreground leading-relaxed">
                                       {finding.summary}
-                                    </CardDescription>
+                                    </p>
                                   </div>
                                   <div
                                     aria-label={`${typeLabel} finding`}
@@ -1896,8 +1908,8 @@ export function AgentFindings({
                                     <TypeIcon className="size-7" />
                                   </div>
                                 </div>
-                              </CardHeader>
-                              <CardPanel className="flex flex-col gap-4 border-t border-border/60 p-4 sm:p-5">
+                              </div>
+                              <div className="flex flex-col gap-4 border-t border-border/60 p-4 sm:p-5">
                                 {finding.evidence.length > 0 ? (
                                   <ul className="grid gap-1 text-sm text-foreground/80">
                                     {finding.evidence.slice(0, 3).map((evidence) => (
@@ -2039,6 +2051,11 @@ export function AgentFindings({
                                 </div>
                                 <div className="border-t border-border/60 pt-4">
                                   <AgentFindingQuestionComposer
+                                    environmentId={
+                                      dashboardSnapshot.environmentId ??
+                                      primaryEnvironment?.environmentId ??
+                                      null
+                                    }
                                     busy={askingFindingId === record.id}
                                     disabled={askingFindingId !== null}
                                     findingId={record.id}
@@ -2060,8 +2077,8 @@ export function AgentFindings({
                                     }
                                   />
                                 </div>
-                              </CardPanel>
-                            </Card>
+                              </div>
+                            </div>
                           </div>
                         );
                       })}
@@ -2073,37 +2090,39 @@ export function AgentFindings({
           })}
         </div>
       ) : (
-        <Empty className="min-h-72 border border-dashed border-border/70 bg-card">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <CheckCircle2Icon />
-            </EmptyMedia>
-            <EmptyTitle>
-              {records.length === 0
-                ? "No findings yet"
-                : statusFilter === "ready-to-act"
-                  ? "No findings are ready for automation"
-                  : statusFilter === "needs-qualification"
-                    ? "No findings need qualification"
-                    : statusFilter === "policy-review"
-                      ? "No findings need approval"
-                      : statusFilter === "pipeline"
-                        ? "The active pipeline is clear"
-                        : "No matching findings"}
-            </EmptyTitle>
-            <EmptyDescription>
-              {records.length === 0
-                ? "Collect findings to review research, security, engineering, and repository advice here."
-                : statusFilter === "ready-to-act"
-                  ? "Qualified findings will appear here when their risk and confidence fit the Automation settings."
-                  : statusFilter === "needs-qualification"
-                    ? "New or changed signals will return here when a qualification pass is needed."
-                    : statusFilter === "policy-review"
-                      ? "Qualified findings outside the automation guardrails will wait here for a decision."
-                      : "Try another project, type, status, or search term."}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+        <div className="border border-dashed border-border/70 bg-card">
+          <Empty className="min-h-72">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <CheckCircle2Icon />
+              </EmptyMedia>
+              <EmptyTitle>
+                {records.length === 0
+                  ? "No findings yet"
+                  : statusFilter === "ready-to-act"
+                    ? "No findings are ready for automation"
+                    : statusFilter === "needs-qualification"
+                      ? "No findings need qualification"
+                      : statusFilter === "policy-review"
+                        ? "No findings need approval"
+                        : statusFilter === "pipeline"
+                          ? "The active pipeline is clear"
+                          : "No matching findings"}
+              </EmptyTitle>
+              <EmptyDescription>
+                {records.length === 0
+                  ? "Collect findings to review research, security, engineering, and repository advice here."
+                  : statusFilter === "ready-to-act"
+                    ? "Qualified findings will appear here when their risk and confidence fit the Automation settings."
+                    : statusFilter === "needs-qualification"
+                      ? "New or changed signals will return here when a qualification pass is needed."
+                      : statusFilter === "policy-review"
+                        ? "Qualified findings outside the automation guardrails will wait here for a decision."
+                        : "Try another project, type, status, or search term."}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </div>
       )}
 
       <Dialog
@@ -2119,112 +2138,114 @@ export function AgentFindings({
               Review complete evidence, then record ownership, notes, or a deliberate snooze.
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel className="grid gap-5">
-            {manageRecord ? (
-              <>
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant={severityVariant(manageRecord.finding.severity)}>
-                    {manageRecord.finding.severity}
-                  </Badge>
-                  <Badge variant="outline">{TYPE_PRESENTATION[manageRecord.type].singular}</Badge>
-                  <Badge variant={statusVariant(manageRecord.status)}>
-                    {STATUS_LABELS[manageRecord.status]}
-                  </Badge>
-                  <Badge
-                    variant={
-                      PIPELINE_PRESENTATION[
-                        dashboardFindingPipelineStage(manageRecord, improvementGuardrails)
-                      ].variant
-                    }
-                  >
-                    {
-                      PIPELINE_PRESENTATION[
-                        dashboardFindingPipelineStage(manageRecord, improvementGuardrails)
-                      ].label
-                    }
-                  </Badge>
-                </div>
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">
-                  {manageRecord.finding.summary}
-                </p>
-                {manageRecord.finding.evidence.length > 0 ? (
-                  <section>
-                    <h3 className="text-sm font-semibold">Evidence</h3>
-                    <ul className="mt-2 grid gap-1.5 text-sm text-foreground/80">
-                      {manageRecord.finding.evidence.map((evidence) => (
-                        <li className="break-words" key={evidence}>
-                          • {evidence}
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                ) : null}
-                {manageRecord.finding.actionability ? (
-                  <section className="grid gap-2 rounded-xl border bg-muted/20 p-3 text-sm">
-                    <h3 className="font-semibold">Proposed work</h3>
-                    <p>{manageRecord.finding.actionability.proposal}</p>
-                    <h3 className="mt-1 font-semibold">Expected value</h3>
-                    <p>{manageRecord.finding.actionability.expectedValue}</p>
-                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <span>{manageRecord.finding.actionability.riskTier} risk</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{manageRecord.finding.actionability.estimatedEffort} effort</span>
-                    </div>
-                    {manageRecord.finding.actionability.qualificationReason ? (
-                      <>
-                        <h3 className="mt-1 font-semibold">Qualification decision</h3>
-                        <p>{manageRecord.finding.actionability.qualificationReason}</p>
-                      </>
-                    ) : null}
-                  </section>
-                ) : null}
-                <div className="grid gap-4 sm:grid-cols-2">
+          <DialogPanel>
+            <div className="grid gap-5">
+              {manageRecord ? (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant={severityVariant(manageRecord.finding.severity)}>
+                      {manageRecord.finding.severity}
+                    </Badge>
+                    <Badge variant="outline">{TYPE_PRESENTATION[manageRecord.type].singular}</Badge>
+                    <Badge variant={statusVariant(manageRecord.status)}>
+                      {STATUS_LABELS[manageRecord.status]}
+                    </Badge>
+                    <Badge
+                      variant={
+                        PIPELINE_PRESENTATION[
+                          dashboardFindingPipelineStage(manageRecord, improvementGuardrails)
+                        ].variant
+                      }
+                    >
+                      {
+                        PIPELINE_PRESENTATION[
+                          dashboardFindingPipelineStage(manageRecord, improvementGuardrails)
+                        ].label
+                      }
+                    </Badge>
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">
+                    {manageRecord.finding.summary}
+                  </p>
+                  {manageRecord.finding.evidence.length > 0 ? (
+                    <section>
+                      <h3 className="text-sm font-semibold">Evidence</h3>
+                      <ul className="mt-2 grid gap-1.5 text-sm text-foreground/80">
+                        {manageRecord.finding.evidence.map((evidence) => (
+                          <li className="break-words" key={evidence}>
+                            • {evidence}
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                  {manageRecord.finding.actionability ? (
+                    <section className="grid gap-2 rounded-xl border bg-muted/20 p-3 text-sm">
+                      <h3 className="font-semibold">Proposed work</h3>
+                      <p>{manageRecord.finding.actionability.proposal}</p>
+                      <h3 className="mt-1 font-semibold">Expected value</h3>
+                      <p>{manageRecord.finding.actionability.expectedValue}</p>
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        <span>{manageRecord.finding.actionability.riskTier} risk</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{manageRecord.finding.actionability.estimatedEffort} effort</span>
+                      </div>
+                      {manageRecord.finding.actionability.qualificationReason ? (
+                        <>
+                          <h3 className="mt-1 font-semibold">Qualification decision</h3>
+                          <p>{manageRecord.finding.actionability.qualificationReason}</p>
+                        </>
+                      ) : null}
+                    </section>
+                  ) : null}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel>Assignee</FieldLabel>
+                      <Input
+                        disabled={updatingFindingId !== null}
+                        onChange={(event) => setManageAssignee(event.currentTarget.value)}
+                        placeholder="Name or team"
+                        value={manageAssignee}
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel>Snooze duration</FieldLabel>
+                      <Select
+                        value={snoozeDays}
+                        onValueChange={(value) => value && setSnoozeDays(value)}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectPopup alignItemWithTrigger={false}>
+                          <SelectItem value="1">1 day</SelectItem>
+                          <SelectItem value="3">3 days</SelectItem>
+                          <SelectItem value="7">1 week</SelectItem>
+                          <SelectItem value="30">30 days</SelectItem>
+                        </SelectPopup>
+                      </Select>
+                    </Field>
+                  </div>
                   <Field>
-                    <FieldLabel>Assignee</FieldLabel>
-                    <Input
+                    <FieldLabel>Decision note</FieldLabel>
+                    <Textarea
                       disabled={updatingFindingId !== null}
-                      onChange={(event) => setManageAssignee(event.currentTarget.value)}
-                      placeholder="Name or team"
-                      value={manageAssignee}
+                      onChange={(event) => setManageNote(event.currentTarget.value)}
+                      placeholder="Record context for the next person who reviews this finding."
+                      rows={4}
+                      value={manageNote}
                     />
                   </Field>
-                  <Field>
-                    <FieldLabel>Snooze duration</FieldLabel>
-                    <Select
-                      value={snoozeDays}
-                      onValueChange={(value) => value && setSnoozeDays(value)}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectPopup alignItemWithTrigger={false}>
-                        <SelectItem value="1">1 day</SelectItem>
-                        <SelectItem value="3">3 days</SelectItem>
-                        <SelectItem value="7">1 week</SelectItem>
-                        <SelectItem value="30">30 days</SelectItem>
-                      </SelectPopup>
-                    </Select>
-                  </Field>
-                </div>
-                <Field>
-                  <FieldLabel>Decision note</FieldLabel>
-                  <Textarea
-                    disabled={updatingFindingId !== null}
-                    onChange={(event) => setManageNote(event.currentTarget.value)}
-                    placeholder="Record context for the next person who reviews this finding."
-                    rows={4}
-                    value={manageNote}
-                  />
-                </Field>
-                <p className="text-xs text-muted-foreground">
-                  Source: {manageRecord.finding.provenance.source}. First seen{" "}
-                  {formatRelativeTimeLabel(manageRecord.finding.firstSeenAt) ||
-                    "at an unknown time"}
-                  ; seen {manageRecord.finding.occurrenceCount}{" "}
-                  {manageRecord.finding.occurrenceCount === 1 ? "time" : "times"}.
-                </p>
-              </>
-            ) : null}
+                  <p className="text-xs text-muted-foreground">
+                    Source: {manageRecord.finding.provenance.source}. First seen{" "}
+                    {formatRelativeTimeLabel(manageRecord.finding.firstSeenAt) ||
+                      "at an unknown time"}
+                    ; seen {manageRecord.finding.occurrenceCount}{" "}
+                    {manageRecord.finding.occurrenceCount === 1 ? "time" : "times"}.
+                  </p>
+                </>
+              ) : null}
+            </div>
           </DialogPanel>
           <DialogFooter className="flex-wrap">
             <DialogClose render={<Button disabled={updatingFindingId !== null} variant="ghost" />}>

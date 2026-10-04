@@ -223,11 +223,11 @@ import {
   type BrowserNotificationStatus,
 } from "../../agentNotifications/browserNotifications";
 import {
-  getPwaPushConfig,
   registerPwaPushSubscription,
   removePwaPushSubscription,
   testPwaPushSubscription,
 } from "../../agentNotifications/pwaPushRelay";
+import { usePwaNotificationSetup } from "../../agentNotifications/usePwaNotificationSetup";
 import { DictationMicrophonePicker } from "./DictationMicrophonePicker";
 import { DictationKeybindRecorder } from "./DictationKeybindRecorder";
 import { DictationSetupAgentButton } from "./DictationSetupAgentButton";
@@ -1263,8 +1263,11 @@ function PwaNotificationSettings() {
   const [status, setStatus] = useState<BrowserNotificationStatus>(() =>
     getBrowserNotificationStatus(),
   );
-  const [vapidPublicKey, setVapidPublicKey] = useState<string | null>(null);
-  const [isConfigLoading, setIsConfigLoading] = useState(true);
+  const {
+    vapidPublicKey,
+    isConfigLoading,
+    retry: retryNotificationSetup,
+  } = usePwaNotificationSetup();
   const [isSaving, setIsSaving] = useState(false);
   const subscriptionIdRef = useRef<string | null>(
     typeof window === "undefined"
@@ -1284,23 +1287,6 @@ function PwaNotificationSettings() {
       document.removeEventListener("visibilitychange", refreshStatus);
     };
   }, [refreshStatus]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const applicationServerKey = await getPwaPushConfig();
-        if (!cancelled) setVapidPublicKey(applicationServerKey);
-      } catch {
-        // The relay may not be configured for a local-only installation yet.
-      } finally {
-        if (!cancelled) setIsConfigLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const updatePreferences = useCallback(
     (patch: Partial<typeof notificationPreferences>) => {
@@ -1327,13 +1313,14 @@ function PwaNotificationSettings() {
 
   const enableNotifications = useCallback(async () => {
     if (!vapidPublicKey) {
+      if (!isConfigLoading) retryNotificationSetup();
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: "Remote notifications are unavailable",
           description: isConfigLoading
             ? "The relay configuration is still loading. Try again in a moment."
-            : "This PWA could not reach its Web Push service. Check this device's T3 Code connection and try again.",
+            : "Retrying this device's notification setup. Tap Enable notifications again once setup finishes.",
         }),
       );
       return;
@@ -1351,7 +1338,7 @@ function PwaNotificationSettings() {
           result.state === "not-installed"
             ? "Install T3 Code on your Home Screen before enabling push notifications."
             : result.state === "worker-failed"
-              ? "The PWA service worker could not start. Reload the installed app and try again."
+              ? "Preparing this device for notifications. Tap Enable notifications again in a moment."
               : result.state === "permission-granted"
                 ? "Permission is granted. Tap Enable notifications once more to subscribe this installation."
                 : "Allow notifications for T3 Code, then try again.",
@@ -1378,6 +1365,7 @@ function PwaNotificationSettings() {
     }
   }, [
     isConfigLoading,
+    retryNotificationSetup,
     notificationPreferences,
     persistRemoteSubscription,
     updateClientSettings,

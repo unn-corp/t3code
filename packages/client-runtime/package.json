@@ -366,6 +366,10 @@
     "./device/duo-control": {
       "types": "./src/device/duoControl.ts",
       "default": "./src/device/duoControl.ts"
+    },
+    "./state/openwhispr-http": {
+      "types": "./src/state/openwhisprHttp.ts",
+      "default": "./src/state/openwhisprHttp.ts"
     }
   },
   "scripts": {

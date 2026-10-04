@@ -4,16 +4,19 @@ import { convertRecordedAudioToWav, transcribeWithOpenWhispr } from "~/lib/openw
 import { toastManager } from "../ui/toast";
 import { ComposerControl } from "./ComposerControl";
 import type { VoiceInputAudioSource } from "./VoiceInputWaveform";
+import { OPENWHISPR_TIMEOUT_MS, type EnvironmentId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 export type VoiceInputPhase = "idle" | "recording" | "transcribing" | "success" | "no-audio";
 
 type VoiceInputState =
   | { readonly status: "idle" }
+  | { readonly status: "starting" }
   | { readonly status: "recording" }
   | { readonly status: "transcribing" };
 
 interface OpenWhisprVoiceInputProps {
+  environmentId: EnvironmentId | null;
   phase: VoiceInputPhase;
   disabled: boolean;
   onTranscript: (transcript: string) => void;
@@ -23,6 +26,10 @@ interface OpenWhisprVoiceInputProps {
   dictationMicrophoneDeviceId: ClientSettings["dictationMicrophoneDeviceId"];
   dictationStartKeybinds: ClientSettings["dictationStartKeybinds"];
   dictationEndKeybinds: ClientSettings["dictationEndKeybinds"];
+}
+
+function closeAudioContext(context: AudioContext): void {
+  if (context.state !== "closed") void context.close().catch(() => {});
 }
 
 function playDictationTone(kind: "start" | "end"): void {
@@ -58,6 +65,7 @@ function mediaRecordingIsAvailable(): boolean {
 }
 
 export function OpenWhisprVoiceInput({
+  environmentId,
   phase,
   disabled,
   onTranscript,
@@ -69,14 +77,17 @@ export function OpenWhisprVoiceInput({
   dictationEndKeybinds,
 }: OpenWhisprVoiceInputProps) {
   const [state, setState] = useState<VoiceInputState>({ status: "idle" });
+  const recordingStartedRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingAudioContextRef = useRef<AudioContext | null>(null);
   const recordingAudioInputRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const recordingAudioAnalyserRef = useRef<AnalyserNode | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
   const mountedRef = useRef(true);
+  const operationRef = useRef(0);
+  const busyRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const simulatedRecordingRef = useRef(false);
+  const transcriptionTimerRef = useRef<number | null>(null);
   const phaseResetTimerRef = useRef<number | null>(null);
   const available = mediaRecordingIsAvailable();
   const releaseRecordingAudioSource = useCallback(() => {
@@ -87,22 +98,67 @@ export function OpenWhisprVoiceInput({
     recordingAudioAnalyserRef.current?.disconnect();
     recordingAudioAnalyserRef.current = null;
     onRecordingAudioSourceChange(null);
-    if (audioContext) void audioContext.close();
+    if (audioContext) closeAudioContext(audioContext);
   }, [onRecordingAudioSourceChange]);
+
+  const clearPhaseTimer = useCallback(() => {
+    if (phaseResetTimerRef.current !== null) {
+      window.clearTimeout(phaseResetTimerRef.current);
+      phaseResetTimerRef.current = null;
+    }
+  }, []);
+
+  const cancel = useCallback(() => {
+    operationRef.current += 1;
+    busyRef.current = false;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    clearPhaseTimer();
+    if (transcriptionTimerRef.current !== null) {
+      window.clearTimeout(transcriptionTimerRef.current);
+      transcriptionTimerRef.current = null;
+    }
+    simulatedRecordingRef.current = false;
+    if (recordingStartedRef.current) {
+      recordingStartedRef.current = false;
+      fireDictationKeybinds(dictationEndKeybinds);
+      if (mountedRef.current) playDictationTone("end");
+    }
+    const recorder = recorderRef.current;
+    recorderRef.current = null;
+    for (const track of recorder?.stream.getTracks() ?? []) track.stop();
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+    releaseRecordingAudioSource();
+    if (mountedRef.current) {
+      setState({ status: "idle" });
+      onPhaseChange("idle");
+    }
+  }, [clearPhaseTimer, dictationEndKeybinds, onPhaseChange, releaseRecordingAudioSource]);
 
   useEffect(() => {
     mountedRef.current = true;
+    onPhaseChange("idle");
     return () => {
       mountedRef.current = false;
-      if (phaseResetTimerRef.current !== null) {
-        window.clearTimeout(phaseResetTimerRef.current);
-      }
-      recorderRef.current?.stop();
-      simulatedRecordingRef.current = false;
-      abortControllerRef.current?.abort();
-      releaseRecordingAudioSource();
+      cancel();
     };
-  }, [releaseRecordingAudioSource]);
+  }, [cancel, onPhaseChange]);
+
+  const finish = useCallback(
+    (result: "success" | "no-audio") => {
+      busyRef.current = false;
+      setState({ status: "idle" });
+      onPhaseChange(result);
+      phaseResetTimerRef.current = window.setTimeout(
+        () => {
+          phaseResetTimerRef.current = null;
+          if (mountedRef.current) onPhaseChange("idle");
+        },
+        result === "success" ? 1200 : 2200,
+      );
+    },
+    [onPhaseChange],
+  );
 
   const stopRecording = useCallback(() => {
     if (simulatedRecordingRef.current) {
@@ -112,26 +168,21 @@ export function OpenWhisprVoiceInput({
       onPhaseChange("transcribing");
       phaseResetTimerRef.current = window.setTimeout(() => {
         phaseResetTimerRef.current = null;
-        if (!mountedRef.current) return;
-        setState({ status: "idle" });
-        onPhaseChange("success");
-        phaseResetTimerRef.current = window.setTimeout(() => {
-          phaseResetTimerRef.current = null;
-          if (mountedRef.current) onPhaseChange("idle");
-        }, 1200);
+        if (mountedRef.current) finish("success");
       }, 900);
       return;
     }
     const recorder = recorderRef.current;
-    if (!recorder || recorder.state === "inactive") return;
-    recorder.stop();
-  }, [onPhaseChange]);
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  }, [finish, onPhaseChange]);
 
   const startRecording = useCallback(async () => {
-    if (phaseResetTimerRef.current !== null) {
-      window.clearTimeout(phaseResetTimerRef.current);
-      phaseResetTimerRef.current = null;
-    }
+    // A ref closes the same-render double-tap window before React updates the button.
+    if (busyRef.current || !mountedRef.current) return;
+    busyRef.current = true;
+    const operation = ++operationRef.current;
+    const current = () => mountedRef.current && operationRef.current === operation;
+    clearPhaseTimer();
     if (simulateInputLevel) {
       simulatedRecordingRef.current = true;
       setState({ status: "recording" });
@@ -141,6 +192,7 @@ export function OpenWhisprVoiceInput({
       return;
     }
     if (!available) {
+      busyRef.current = false;
       toastManager.add({
         type: "error",
         title: "Microphone recording is unavailable",
@@ -148,17 +200,29 @@ export function OpenWhisprVoiceInput({
       });
       return;
     }
-
+    setState({ status: "starting" });
+    onPhaseChange("transcribing");
     let requestedStream: MediaStream | null = null;
     let requestedAudioContext: AudioContext | null = null;
     try {
       requestedAudioContext = new AudioContext();
+      recordingAudioContextRef.current = requestedAudioContext;
       await requestedAudioContext.resume();
+      if (!current()) {
+        closeAudioContext(requestedAudioContext);
+        return;
+      }
       const microphone = await requestDictationMicrophone(
         navigator.mediaDevices,
         dictationMicrophoneDeviceId,
       );
-      const stream = microphone.stream;
+      requestedStream = microphone.stream;
+      if (!current()) {
+        for (const track of requestedStream.getTracks()) track.stop();
+        closeAudioContext(requestedAudioContext);
+        return;
+      }
+      const stream = requestedStream;
       if (microphone.usedSystemDefaultFallback) {
         toastManager.add({
           type: "warning",
@@ -166,69 +230,58 @@ export function OpenWhisprVoiceInput({
           description: "T3 is using the system default microphone for this recording.",
         });
       }
-      requestedStream = stream;
       const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg"].find((candidate) =>
         MediaRecorder.isTypeSupported(candidate),
       );
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      chunksRef.current = [];
+      const chunks: Blob[] = [];
       recorderRef.current = recorder;
       recorder.addEventListener("dataavailable", (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
+        if (current() && event.data.size > 0) chunks.push(event.data);
       });
       recorder.addEventListener("error", () => {
-        for (const track of stream.getTracks()) track.stop();
-        recorderRef.current = null;
-        releaseRecordingAudioSource();
-        playDictationTone("end");
-        fireDictationKeybinds(dictationEndKeybinds);
-        if (mountedRef.current) {
-          setState({ status: "idle" });
-          onPhaseChange("idle");
-          toastManager.add({
-            type: "error",
-            title: "Could not record microphone audio",
-          });
-        }
+        if (!current()) return;
+        cancel();
+        toastManager.add({ type: "error", title: "Could not record microphone audio" });
       });
       recorder.addEventListener("stop", () => {
         for (const track of stream.getTracks()) track.stop();
+        if (!current()) return;
         recorderRef.current = null;
+        recordingStartedRef.current = false;
         releaseRecordingAudioSource();
-        const audio = new Blob(chunksRef.current, {
-          type: recorder.mimeType || "audio/webm",
-        });
         playDictationTone("end");
         fireDictationKeybinds(dictationEndKeybinds);
-        if (!mountedRef.current) return;
         setState({ status: "transcribing" });
         onPhaseChange("transcribing");
-        const abortController = new AbortController();
-        abortControllerRef.current = abortController;
-        void convertRecordedAudioToWav(audio)
-          .then((wav) => transcribeWithOpenWhispr(wav, abortController.signal))
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+        // The deadline also covers audio decoding; a late result must not change the draft.
+        const timeout = window.setTimeout(() => {
+          if (!current() || abortControllerRef.current !== controller) return;
+          cancel();
+          toastManager.add({
+            type: "error",
+            title: "OpenWhispr transcription timed out",
+            description: "Try a shorter recording.",
+          });
+        }, OPENWHISPR_TIMEOUT_MS + 5_000);
+        transcriptionTimerRef.current = timeout;
+        void convertRecordedAudioToWav(
+          new Blob(chunks, { type: recorder.mimeType || "audio/webm" }),
+        )
+          .then((wav) => {
+            controller.signal.throwIfAborted();
+            return transcribeWithOpenWhispr(environmentId, wav, controller.signal);
+          })
           .then((transcript) => {
-            if (!mountedRef.current) return;
-            if (transcript.length > 0) {
-              onTranscript(transcript);
-              onPhaseChange("success");
-              phaseResetTimerRef.current = window.setTimeout(() => {
-                phaseResetTimerRef.current = null;
-                if (mountedRef.current) onPhaseChange("idle");
-              }, 1200);
-            } else {
-              onPhaseChange("no-audio");
-              phaseResetTimerRef.current = window.setTimeout(() => {
-                phaseResetTimerRef.current = null;
-                if (mountedRef.current) onPhaseChange("idle");
-              }, 2200);
-            }
-            setState({ status: "idle" });
+            if (!current() || controller.signal.aborted) return;
+            if (transcript.length > 0) onTranscript(transcript);
+            finish(transcript.length > 0 ? "success" : "no-audio");
           })
           .catch((error: unknown) => {
-            if (!mountedRef.current || abortController.signal.aborted) return;
-            setState({ status: "idle" });
-            onPhaseChange("idle");
+            if (!current() || controller.signal.aborted) return;
+            cancel();
             toastManager.add({
               type: "error",
               title: "OpenWhispr transcription failed",
@@ -236,9 +289,9 @@ export function OpenWhisprVoiceInput({
             });
           })
           .finally(() => {
-            if (abortControllerRef.current === abortController) {
-              abortControllerRef.current = null;
-            }
+            window.clearTimeout(timeout);
+            if (transcriptionTimerRef.current === timeout) transcriptionTimerRef.current = null;
+            if (abortControllerRef.current === controller) abortControllerRef.current = null;
           });
       });
       const audioInput = requestedAudioContext.createMediaStreamSource(stream);
@@ -250,6 +303,7 @@ export function OpenWhisprVoiceInput({
       recordingAudioInputRef.current = audioInput;
       recordingAudioAnalyserRef.current = analyser;
       recorder.start();
+      recordingStartedRef.current = true;
       setState({ status: "recording" });
       onRecordingAudioSourceChange({ analyser });
       onPhaseChange("recording");
@@ -257,32 +311,28 @@ export function OpenWhisprVoiceInput({
       fireDictationKeybinds(dictationStartKeybinds);
     } catch (error: unknown) {
       for (const track of requestedStream?.getTracks() ?? []) track.stop();
-      recorderRef.current = null;
-      if (recordingAudioContextRef.current === requestedAudioContext) {
-        releaseRecordingAudioSource();
-      } else if (requestedAudioContext) {
-        void requestedAudioContext.close();
-      }
-      if (error instanceof DOMException && error.name === "NotAllowedError") {
-        toastManager.add({
-          type: "error",
-          title: "Microphone permission was denied",
-          description:
-            "Allow microphone access in your browser or desktop settings, then try again.",
-        });
-      } else {
-        toastManager.add({
-          type: "error",
-          title: "Could not start microphone recording",
-          description: error instanceof Error ? error.message : "Try again.",
-        });
-      }
+      if (recordingAudioContextRef.current === requestedAudioContext) releaseRecordingAudioSource();
+      else if (requestedAudioContext) closeAudioContext(requestedAudioContext);
+      if (!current()) return;
+      cancel();
+      toastManager.add({
+        type: "error",
+        title:
+          error instanceof DOMException && error.name === "NotAllowedError"
+            ? "Microphone permission was denied"
+            : "Could not start microphone recording",
+        description: error instanceof Error ? error.message : "Try again.",
+      });
     }
   }, [
     available,
+    cancel,
+    clearPhaseTimer,
     dictationEndKeybinds,
     dictationMicrophoneDeviceId,
     dictationStartKeybinds,
+    environmentId,
+    finish,
     onPhaseChange,
     onRecordingAudioSourceChange,
     onTranscript,
@@ -292,11 +342,13 @@ export function OpenWhisprVoiceInput({
 
   const isRecording = state.status === "recording";
   const isTranscribing = state.status === "transcribing";
-  const label =
-    phase === "recording"
+  const isStarting = state.status === "starting";
+  const label = isStarting
+    ? "Cancel microphone startup"
+    : phase === "recording"
       ? "Stop voice input"
       : phase === "transcribing"
-        ? "Transcribing with OpenWhispr"
+        ? "Cancel OpenWhispr transcription"
         : phase === "success"
           ? "Transcription complete"
           : phase === "no-audio"
@@ -309,13 +361,16 @@ export function OpenWhisprVoiceInput({
     <ComposerControl
       type="button"
       size="sm"
-      className="chat-voice-control size-14 overflow-visible rounded-full"
+      className="size-14 overflow-visible rounded-full"
       disabled={
-        disabled || isTranscribing || phase === "success" || (!available && !simulateInputLevel)
+        !isRecording &&
+        !isTranscribing &&
+        !isStarting &&
+        (disabled || phase === "success" || (!available && !simulateInputLevel))
       }
       aria-label={label}
       title={label}
-      onClick={isRecording ? stopRecording : startRecording}
+      onClick={isRecording ? stopRecording : isTranscribing || isStarting ? cancel : startRecording}
       data-openwhispr-voice-input="true"
     >
       <svg className="chat-voice-mic-icon" viewBox="0 0 24 24" aria-hidden="true">

@@ -55,11 +55,14 @@ export function registerPwaServiceWorker(): Promise<PwaServiceWorkerState> {
       activeRegistration = registration;
       return { type: "ready", registration } as const;
     })
-    .catch((cause: unknown) => ({
-      type: "failed" as const,
-      error:
-        cause instanceof Error ? cause : new Error("Could not register the PWA service worker."),
-    }));
+    .catch((cause: unknown) => {
+      registrationPromise = null;
+      return {
+        type: "failed" as const,
+        error:
+          cause instanceof Error ? cause : new Error("Could not register the PWA service worker."),
+      };
+    });
   return registrationPromise;
 }
 
@@ -92,7 +95,7 @@ export async function clearPwaCachesAndReload(): Promise<void> {
     // Same: a failure here must not stop the reload, which is what actually
     // re-fetches the shell.
   }
-  // Replace rather than reload: a reload can be served from the back/forward
-  // cache, which is the thing being escaped.
-  window.location.replace(window.location.origin);
+  // Reload the document, including when its URL has a fragment. Replacing an
+  // identical fragment URL can remain a same-document navigation instead.
+  window.location.reload();
 }

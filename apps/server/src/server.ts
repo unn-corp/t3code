@@ -1,3 +1,5 @@
+import * as OpenWhispr from "./voice/OpenWhispr.ts";
+import { voiceHttpApiLayer } from "./voice/http.ts";
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
 import * as AutomationSnapshotQuery from "./agentDashboard/AutomationSnapshotQuery.ts";
 import * as AutomationOrchestration from "./agentDashboard/AutomationOrchestration.ts";
@@ -660,6 +662,7 @@ const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(connectHttpApiLayer),
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
+      Layer.provide(voiceHttpApiLayer.pipe(Layer.provide(OpenWhispr.layer))),
       Layer.provide(projectHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),

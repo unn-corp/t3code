@@ -45,3 +45,6 @@ _arcwright-output/
 
 # pnpm content-addressable store; never belongs in the repo.
 .pnpm-store/
+
+# Generated executable bundles
+apps/*/dist-exe/

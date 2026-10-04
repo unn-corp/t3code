@@ -86,7 +86,10 @@ export function subscribeBrowserPush(input: { readonly applicationServerKey: str
     }));
   }
   const registration = getActivePwaServiceWorkerRegistration();
-  if (registration === null) return Promise.resolve({ state: "worker-failed", subscription: null });
+  if (registration === null) {
+    void registerPwaServiceWorker();
+    return Promise.resolve({ state: "worker-failed", subscription: null });
+  }
   // Do not await before subscribe: iOS requires this call to occur while this
   // direct Switch interaction still has transient user activation.
   return registration.pushManager

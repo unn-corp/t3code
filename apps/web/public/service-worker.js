@@ -51,9 +51,14 @@ self.addEventListener("notificationclick", (event) => {
     return;
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((openClients) => {
-      const existing = openClients.find(
+      const sameOriginClients = openClients.filter(
         (client) => new URL(client.url).origin === self.location.origin,
       );
+      const matching = sameOriginClients.find(
+        (client) => new URL(client.url).pathname === deepLink,
+      );
+      if (matching) return matching.focus();
+      const existing = sameOriginClients[0];
       if (existing) return existing.focus().then(() => existing.navigate(deepLink));
       return clients.openWindow(deepLink);
     }),
