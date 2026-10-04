@@ -23,7 +23,9 @@ function resolveMin(value: Breakpoint | number): string {
 
 function resolveMax(value: Breakpoint | number): string {
   const px = typeof value === "number" ? value : BREAKPOINTS[value];
-  return `(max-width: ${px - 1}px)`;
+  // Match CSS's exclusive breakpoint even when display scaling produces a
+  // fractional viewport width between the last whole pixel and the boundary.
+  return `(width < ${px}px)`;
 }
 
 function parseQuery(query: BreakpointQuery | MediaQueryInput | (string & {})): string {
