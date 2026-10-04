@@ -34,7 +34,7 @@ const SIDEBAR_WIDTH = "16rem";
  * The cap only binds on narrow screens; anything under about 23rem still gets
  * effectively the whole width.
  */
-const SIDEBAR_WIDTH_MOBILE = "min(calc(100vw - var(--spacing(3))), 22rem)";
+const SIDEBAR_WIDTH_MOBILE = "min(calc(100vw - 0.75rem), 22rem)";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
 
@@ -372,7 +372,7 @@ function SidebarRail({
   onPointerUp,
   ...props
 }: React.ComponentProps<"button">) {
-  const { open, toggleSidebar } = useSidebar();
+  const { isMobile, open, toggleSidebar } = useSidebar();
   const sidebarInstance = React.use(SidebarInstanceContext);
   const railRef = React.useRef<HTMLButtonElement | null>(null);
   const suppressClickRef = React.useRef(false);
@@ -489,6 +489,10 @@ function SidebarRail({
     wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
     resolvedResizable.onResize?.(clampedWidth);
   }, [resolvedResizable]);
+
+  // Mobile navigation is a sheet with its own toggle and fixed width.
+  // The desktop rail must not appear on wider phones (sm but below md).
+  if (isMobile) return null;
 
   return (
     <Tooltip>
