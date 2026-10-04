@@ -1,3 +1,4 @@
+import { useExportThread } from "../hooks/useExportThread";
 import { ChevronDownIcon } from "lucide-react";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { EyeIcon, MessageCircleQuestionIcon, ShieldQuestionIcon } from "lucide-react";
@@ -2436,6 +2437,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 });
 
 export default function Sidebar() {
+  const exportThread = useExportThread();
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threadOrder = useUiStateStore((store) => store.threadOrder);
@@ -4729,6 +4731,7 @@ export default function Sidebar() {
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
               supports: {
+                export: serverConfigs.get(thread.environmentId)?.threadExport === true,
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
                 snooze: supportsSnooze,
@@ -4820,6 +4823,10 @@ export default function Sidebar() {
             }
             return;
           }
+          case "export-markdown":
+          case "export-json":
+            await exportThread(threadRef, clicked.value === "export-json" ? "json" : "markdown");
+            return;
           case "rename":
             startThreadRename(threadRef, thread.title);
             return;
@@ -4926,6 +4933,7 @@ export default function Sidebar() {
       })();
     },
     [
+      exportThread,
       archiveThread,
       attemptPin,
       attemptSettle,

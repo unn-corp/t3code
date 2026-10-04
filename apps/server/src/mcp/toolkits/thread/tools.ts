@@ -1,3 +1,5 @@
+import { RunLimits, ThreadExportResult } from "@t3tools/contracts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import {
   ScheduledTaskId,
   ScheduledTask,
@@ -258,7 +260,33 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const ThreadExportTool = Tool.make("t3_thread_export", {
+  ...commandTool,
+  description:
+    "Export a full conversation in this project as Markdown or JSON, including attachment references. Excludes hidden reasoning and provider metadata.",
+  parameters: Schema.Struct({
+    threadId: Schema.optional(ThreadId),
+    format: Schema.Literals(["markdown", "json"]),
+  }),
+  success: ThreadExportResult,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+const ThreadLimitsTool = Tool.make("t3_thread_limits", {
+  ...commandTool,
+  description:
+    "Read or change optional continuous-work limits for a thread in this project. Omit limits to read; null inherits environment defaults; both fields null disables limits for this thread. Time is minutes, output tokens are reported main-agent usage and may overshoot between reports.",
+  parameters: Schema.Struct({
+    threadId: Schema.optional(ThreadId),
+    limits: Schema.optional(Schema.NullOr(RunLimits)),
+  }),
+  success: Schema.Struct({ limits: RunLimits, inherited: Schema.Boolean }),
+  dependencies: [...commandTool.dependencies, ServerSettings.ServerSettingsService],
+}).annotate(Tool.Destructive, false);
+
 export const ThreadToolkit = Toolkit.make(
+  ThreadExportTool,
+  ThreadLimitsTool,
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadForkTool,

@@ -1,3 +1,5 @@
+import * as ThreadExport from "../../../orchestration-v2/ThreadExportService.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import {
   type CommandId,
   type RuntimeRequestId,
@@ -76,6 +78,31 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (
   return { ...context, request, item };
 });
 export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
+  t3_thread_export: (input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* readThread(input.threadId);
+      const exporter = yield* ThreadExport.ThreadExportService.pipe(
+        Effect.provide(ThreadExport.layer),
+      );
+      return yield* exporter
+        .exportThread({ threadId: projection.thread.id, format: input.format })
+        .pipe(Effect.mapError(unavailable));
+    }),
+  t3_thread_limits: (input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* input.limits === undefined
+        ? readThread(input.threadId)
+        : readWritableThread(input.threadId);
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const value = yield* (
+        input.limits === undefined
+          ? settings.getSettings
+          : settings.updateSettings({ threadRunLimits: { [projection.thread.id]: input.limits } })
+      ).pipe(Effect.mapError(unavailable));
+      const override = value.threadRunLimits[projection.thread.id];
+      return { limits: override ?? value.runLimits, inherited: override == null };
+    }),
+
   run_scheduled_task_now: (input) =>
     Effect.gen(function* () {
       const { caller } = yield* readMutationCaller();

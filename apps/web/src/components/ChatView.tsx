@@ -100,6 +100,7 @@ import {
   formatModelSelectionEffort,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  deriveThreadStopState,
   deriveLatestThreadRun,
   deriveThreadRuntime,
   presentPendingBackgroundWork,
@@ -3041,7 +3042,9 @@ export default function ChatView(props: ChatViewProps) {
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         icon: <WifiOffIcon />,
         title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
-        description: environmentReconnecting ? "Trying again" : "Reconnect to continue",
+        description: environmentReconnecting
+          ? "Reconnecting. Showing the last known run status."
+          : "Showing the last known run status. Reconnect to confirm whether work is still running.",
         actions: (
           <>
             <Button
@@ -4483,12 +4486,21 @@ export default function ChatView(props: ChatViewProps) {
     activeThread !== undefined,
     activeRuntime,
   );
+  const confirmedStopState = useMemo(
+    () => deriveThreadStopState(serverProjection),
+    [serverProjection],
+  );
+  const [interruptRequestKey, setInterruptRequestKey] = useState<string | null>(null);
+  const isStoppingThread = confirmedStopState !== null || interruptRequestKey === routeThreadKey;
   const onInterrupt = useCallback(async () => {
     if (!activeThread) return;
+    const requestKey = routeThreadKey;
+    setInterruptRequestKey(requestKey);
     const result = await interruptThreadTurn({
       environmentId,
       input: { threadId: activeThread.id },
     });
+    setInterruptRequestKey((current) => (current === requestKey ? null : current));
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       setThreadError(
@@ -4496,7 +4508,7 @@ export default function ChatView(props: ChatViewProps) {
         error instanceof Error ? error.message : "Failed to interrupt the current turn.",
       );
     }
-  }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
+  }, [activeThread, environmentId, interruptThreadTurn, routeThreadKey, setThreadError]);
   useEffect(() => subscribeSnapShotComposerFocus(focusComposer), [focusComposer]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -7089,7 +7101,8 @@ export default function ChatView(props: ChatViewProps) {
   const activeBackgroundTasks = !isWorking && activeThread ? pendingBackgroundTasks : [];
   const [stoppingBackgroundWorkKey, setStoppingBackgroundWorkKey] = useState<string | null>(null);
   const isStoppingBackgroundWork =
-    stoppingBackgroundWorkKey === `${environmentId}:${activeThreadId}`;
+    stoppingBackgroundWorkKey === `${environmentId}:${activeThreadId}` ||
+    confirmedStopState !== null;
   const handleStopBackgroundWork = useCallback(async () => {
     if (!activeThread) return;
     const requestKey = `${environmentId}:${activeThread.id}`;
@@ -7169,7 +7182,7 @@ export default function ChatView(props: ChatViewProps) {
         <Button
           size="xs"
           variant="ghost"
-          disabled={isStoppingBackgroundWork}
+          disabled={stoppingBackgroundWorkKey === `${environmentId}:${activeThreadId}`}
           onClick={() => void handleStopBackgroundWork()}
         >
           {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
@@ -11133,7 +11146,8 @@ export default function ChatView(props: ChatViewProps) {
                                 isLocalDraftThread && activeProject === null
                               }
                               phase={phase}
-                              canInterrupt={canInterruptRunningThread}
+                              canInterrupt={canInterruptRunningThread || isStoppingThread}
+                              isStopping={isStoppingThread}
                               isConnecting={isConnecting}
                               isSendBusy={isSendBusy || isSavingQueuedEdit || isResuming}
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}

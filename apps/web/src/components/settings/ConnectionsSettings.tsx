@@ -1541,6 +1541,8 @@ function SavedBackendListRow({
     environmentTransportLabel(environment),
     resumingServerUpdate ? "Restarting" : status.text,
     enabled && versionMismatch ? serverVersion : null,
+    environment.serverConfig?.buildIdentity?.commit?.slice(0, 12) ?? null,
+    environment.serverConfig?.buildIdentity?.dirty ? "Local changes" : null,
   ]
     .filter((value): value is string => value !== null)
     .join(" · ");
@@ -1563,7 +1565,7 @@ function SavedBackendListRow({
     versionMismatch
       ? `\nUpdate available: ${versionMismatch.serverVersion} → ${versionMismatch.clientVersion}`
       : ""
-  }`;
+  }${environment.serverConfig?.buildIdentity?.commit ? `\nCommit: ${environment.serverConfig.buildIdentity.commit}` : ""}${environment.serverConfig?.buildIdentity?.builtAt ? `\nBuilt: ${environment.serverConfig.buildIdentity.builtAt}` : ""}`;
 
   return (
     <EnvironmentRow

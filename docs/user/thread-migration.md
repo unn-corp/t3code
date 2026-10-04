@@ -43,9 +43,12 @@ handoff is also a good choice when the old conversation contains conflicting ins
 
 ## Keeping a recovery copy
 
-T3 Code does not currently have a whole-thread export command. Before a major server update, stop
-the server and copy its `userdata` directory to a safe location. The default is
-`~/.t3/userdata`; a server started with `--home-dir <path>` uses `<path>/userdata`.
+Use the thread action menu to export Markdown or JSON. Exports include all retained user, assistant,
+and system messages, with attachment references. They exclude hidden reasoning and provider metadata;
+attachment files are included in a full backup instead. Mobile shares the export through the system share sheet.
+
+Before a major server update, make a [verified data backup](./updating.md#back-up-and-restore).
+The default T3 home is `~/.t3`; an explicit home uses its own `userdata` directory.
 
 If a migrated transcript is missing from the app, keep that copy unchanged. You can inspect the
 old transcript without starting a server against it:

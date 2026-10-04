@@ -26,11 +26,81 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  deriveThreadStopState,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 import { threadRuntimeCanArchive, type ThreadRuntimeSummary } from "./models.ts";
 
 const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
+
+describe("confirmed stopping", () => {
+  const active = run("stop-target", 1, "running");
+  const request = {
+    id: TurnItemId.make("stop-request"),
+    threadId: active.threadId,
+    runId: active.id,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    type: "run_interrupt_request" as const,
+    status: "completed" as const,
+    title: "Interrupt requested",
+    message: "Stop",
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+  };
+  it("keeps stopping after command acceptance until the provider confirms termination", () => {
+    const projection = {
+      ...v2Projection,
+      runs: [active],
+      turnItems: [request],
+      providerThreads: [],
+    };
+    expect(deriveThreadStopState(projection)?.runId).toBe(active.id);
+    expect(
+      deriveThreadStopState({ ...projection, runs: [{ ...active, status: "interrupted" }] }),
+    ).toBeNull();
+  });
+  it("does not mistake an earlier interrupt result for a retried stop", () => {
+    const result = {
+      ...request,
+      id: TurnItemId.make("stop-result"),
+      type: "run_interrupt_result" as const,
+      parentItemId: request.id,
+    };
+    const retry = { ...request, updatedAt: DateTime.add(now, { seconds: 1 }) };
+    expect(
+      deriveThreadStopState({
+        ...v2Projection,
+        runs: [active],
+        turnItems: [retry, result],
+        providerThreads: [],
+      }),
+    ).not.toBeNull();
+    expect(
+      deriveThreadStopState({
+        ...v2Projection,
+        runs: [active],
+        turnItems: [request, result],
+        providerThreads: [],
+      }),
+    ).toBeNull();
+  });
+  it("does not carry a stop indicator into subsequent work", () => {
+    expect(
+      deriveThreadStopState({
+        ...v2Projection,
+        runs: [{ ...active, status: "interrupted" }, run("new-work", 2, "running")],
+        turnItems: [request],
+        providerThreads: [],
+      }),
+    ).toBeNull();
+  });
+});
 
 function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
   return {

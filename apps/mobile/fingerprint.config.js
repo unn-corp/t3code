@@ -14,5 +14,18 @@ if (!majorVersion) {
 }
 
 module.exports = {
+  // Diagnostic metadata must not change native compatibility or force a rebuild.
+  /**
+   * @param {{type: "file", filePath: string} | {type: "contents", id: string}} source
+   * @param {Buffer | string | null} chunk
+   */
+  fileHookTransform(source, chunk) {
+    if (source.type === "contents" && source.id === "expoConfig" && chunk !== null) {
+      const config = JSON.parse(chunk.toString());
+      if (config.extra) delete config.extra.buildIdentity;
+      return JSON.stringify(config);
+    }
+    return chunk;
+  },
   extraSources: [{ type: "contents", id: "appMajorVersion", contents: majorVersion }],
 };

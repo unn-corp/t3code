@@ -601,7 +601,19 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
   );
 }
 
+export const BuildIdentity = Schema.Struct({
+  version: Schema.String,
+  commit: Schema.NullOr(Schema.String),
+  dirty: Schema.Boolean,
+  builtAt: Schema.NullOr(Schema.String),
+  label: Schema.NullOr(Schema.String),
+});
+export type BuildIdentity = typeof BuildIdentity.Type;
+
 export const ServerConfig = Schema.Struct({
+  buildIdentity: Schema.optionalKey(BuildIdentity),
+  runLimits: Schema.optionalKey(Schema.Boolean),
+  threadExport: Schema.optionalKey(Schema.Boolean),
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
   cwd: TrimmedNonEmptyString,

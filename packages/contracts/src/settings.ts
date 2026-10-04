@@ -8,6 +8,7 @@ import {
   ForwardCompatibleOptional,
   OmittedWhenNull,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
@@ -1520,7 +1521,22 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const RunLimits = Schema.Struct({
+  maxDurationMinutes: Schema.NullOr(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10080 })),
+  ),
+  maxOutputTokens: Schema.NullOr(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1000000000 })),
+  ),
+});
+export type RunLimits = typeof RunLimits.Type;
+export const DEFAULT_RUN_LIMITS: RunLimits = { maxDurationMinutes: null, maxOutputTokens: null };
+
 export const ServerSettings = Schema.Struct({
+  runLimits: RunLimits.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUN_LIMITS))),
+  threadRunLimits: Schema.Record(ThreadId, Schema.NullOr(RunLimits)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
@@ -1931,6 +1947,8 @@ const OpenCodeSettingsPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  runLimits: Schema.optionalKey(RunLimits),
+  threadRunLimits: Schema.optionalKey(Schema.Record(ThreadId, Schema.NullOr(RunLimits))),
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(
       Schema.Union([

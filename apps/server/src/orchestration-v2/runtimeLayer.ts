@@ -1,4 +1,5 @@
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
+import * as RunLimitsService from "./RunLimitsService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
 import * as OrchestrationCommandReceipts from "../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -321,6 +322,13 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   scheduledTaskProvided,
   UsageLimitRecoveryWorker.workerLive.pipe(
     Layer.provide(Layer.mergeAll(projectionStoreLayer, threadManagementProvided)),
+  ),
+  RunLimitsService.workerLive.pipe(
+    Layer.provide(
+      RunLimitsService.layer.pipe(
+        Layer.provide(Layer.mergeAll(projectionStoreLayer, threadManagementProvided)),
+      ),
+    ),
   ),
   providerContinuationWorkerProvided,
   agentSessionImporterProvided,

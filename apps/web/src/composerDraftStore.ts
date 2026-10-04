@@ -1,3 +1,4 @@
+import { installDraftPersistenceLifecycle } from "./lib/draftPersistenceLifecycle";
 import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
@@ -129,11 +130,15 @@ const composerPersistStorage: PersistStorage<ComposerPersistState> = {
   removeItem: (name) => composerDebouncedStorage.removeItem(name),
 };
 
-// Flush pending composer draft writes before page unload to prevent data loss.
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-  window.addEventListener("beforeunload", () => {
-    composerDebouncedStorage.flush();
-  });
+if (
+  typeof window !== "undefined" &&
+  typeof document !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  const dispose = installDraftPersistenceLifecycle(window, document, () =>
+    composerDebouncedStorage.flush(),
+  );
+  import.meta.hot?.dispose(dispose);
 }
 
 export const PersistedComposerImageAttachment = Schema.Struct({

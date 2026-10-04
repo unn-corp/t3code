@@ -5,6 +5,7 @@ import {
   deriveProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  deriveThreadStopState,
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -1035,7 +1036,13 @@ export function useThreadComposerState() {
     [selectedEnvironmentRuntime?.serverConfig, selectedThread?.modelSelection, selectedThreadKey],
   );
 
+  const stopState = useMemo(
+    () => deriveThreadStopState(selectedThreadProjection?.projection ?? null),
+    [selectedThreadProjection],
+  );
+
   return {
+    stopState,
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,

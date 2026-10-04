@@ -830,7 +830,14 @@ function AppSettingsSection() {
   // missing variant never mislabels a production build as development.
   const variant = (Constants.expoConfig?.extra?.appVariant as string | undefined) ?? "production";
   const variantLabel = variant === "production" ? "" : capitalize(variant);
-  const versionLabel = variantLabel ? `${version} · ${variantLabel}` : version;
+  const build = Constants.expoConfig?.extra?.buildIdentity as
+    | import("@t3tools/contracts").BuildIdentity
+    | undefined;
+  const versionLabel =
+    (variantLabel ? `${version} · ${variantLabel}` : version) +
+    (build?.commit
+      ? ` · ${build.commit.slice(0, 12)}${build.dirty ? " + local changes" : ""}`
+      : " · commit unknown");
   const updateCheckAvailable = isAppUpdateCheckAvailable();
   const busy =
     updateState === "checking" || updateState === "downloading" || updateState === "restarting";

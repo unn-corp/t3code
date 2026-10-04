@@ -1,3 +1,5 @@
+import { useExportThread } from "./useExportThread";
+import { useServerConfigs } from "../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import {
@@ -69,6 +71,8 @@ export function useThreadActionMenu(input: {
   readonly onStartRename: () => void;
 }) {
   const { threadRef, projectCwd, onStartRename } = input;
+  const exportThread = useExportThread();
+  const serverConfigs = useServerConfigs();
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -133,6 +137,7 @@ export function useThreadActionMenu(input: {
         if (!thread) return;
         const now = new Date();
         const supports = {
+          export: serverConfigs.get(threadRef.environmentId)?.threadExport === true,
           settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
           autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
           snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
@@ -233,6 +238,10 @@ export function useThreadActionMenu(input: {
               setThreadAutoSettle(threadRef, action === "auto-settle:enabled"),
             );
             return;
+          case "export-markdown":
+          case "export-json":
+            await exportThread(threadRef, action === "export-json" ? "json" : "markdown");
+            return;
           case "rename":
             onStartRename();
             return;
@@ -324,6 +333,8 @@ export function useThreadActionMenu(input: {
       })();
     },
     [
+      exportThread,
+      serverConfigs,
       archiveThread,
       confirmThreadArchive,
       confirmThreadDelete,

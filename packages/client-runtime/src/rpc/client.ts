@@ -149,15 +149,14 @@ export const getInitialServerConfig = Effect.fn("EnvironmentRpc.getInitialServer
   },
 );
 
-export const request = Effect.fn("EnvironmentRpc.request")(function* <
+const requestOnSession = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
->(tag: TTag, input: EnvironmentRpcInput<TTag>) {
+>(session: RpcSession, tag: TTag, input: EnvironmentRpcInput<TTag>) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   yield* Effect.annotateCurrentSpan({
     "environment.id": supervisor.target.environmentId,
     "rpc.method": tag,
   });
-  const session = yield* currentSession();
   const observer = yield* EnvironmentRpcRequestObserver;
   const method = session.client[tag] as (
     input: EnvironmentRpcInput<TTag>,
@@ -168,6 +167,48 @@ export const request = Effect.fn("EnvironmentRpc.request")(function* <
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
+
+export const request = Effect.fn("EnvironmentRpc.requestCurrentSession")(function* <
+  TTag extends EnvironmentUnaryRpcTag,
+>(tag: TTag, input: EnvironmentRpcInput<TTag>) {
+  return yield* requestOnSession(yield* currentSession(), tag, input);
+});
+
+/** Replay only receipt-backed commands after a new connection replaces a broken socket. */
+export const requestIdempotentCommand = Effect.fn("EnvironmentRpc.requestIdempotentCommand")(
+  function* <
+    TTag extends
+      | typeof ORCHESTRATION_V2_WS_METHODS.dispatchCommand
+      | typeof ORCHESTRATION_V2_WS_METHODS.launchThread,
+  >(tag: TTag, input: EnvironmentRpcInput<TTag>) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const previous = yield* currentSession();
+    return yield* requestOnSession(previous, tag, input).pipe(
+      Effect.catch((error) => {
+        if (
+          !isRpcClientError(error) ||
+          !["SocketCloseError", "SocketReadError", "SocketWriteError", "SocketOpenError"].includes(
+            error.reason._tag,
+          )
+        )
+          return Effect.fail(error);
+        // The same command ID is committed with its receipt. A lost acknowledgement
+        // therefore cannot turn this bounded retry into a second message/run.
+        return SubscriptionRef.changes(supervisor.session).pipe(
+          Stream.filter((candidate) => Option.isSome(candidate) && candidate.value !== previous),
+          Stream.map(Option.getOrThrow),
+          Stream.runHead,
+          Effect.timeoutOption("15 seconds"),
+          Effect.flatMap((replacement) =>
+            Option.isSome(replacement) && Option.isSome(replacement.value)
+              ? requestOnSession(replacement.value.value, tag, input)
+              : Effect.fail(error),
+          ),
+        );
+      }),
+    );
+  },
+);
 
 export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
   tag: TTag,

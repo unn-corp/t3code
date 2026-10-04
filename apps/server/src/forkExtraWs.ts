@@ -1,3 +1,4 @@
+import * as ThreadExport from "./orchestration-v2/ThreadExportService.ts";
 import {
   ForkExtraWsRpcGroup,
   PreviewPickedElement,
@@ -33,7 +34,12 @@ export const makeForkExtraWsRpcLayer = (session: EnvironmentAuth.AuthenticatedSe
               }),
             );
       };
+      const exporter = yield* ThreadExport.ThreadExportService.pipe(
+        Effect.provide(ThreadExport.layer),
+      );
       return ForkExtraWsRpcGroup.of({
+        [WS_METHODS.threadExport]: (input) =>
+          authorize(WS_METHODS.threadExport, exporter.exportThread(input)),
         [WS_METHODS.codexSessionsList]: (input) =>
           authorize(WS_METHODS.codexSessionsList, listNativeSessions(input)),
         [WS_METHODS.codexSessionsResume]: (input) =>

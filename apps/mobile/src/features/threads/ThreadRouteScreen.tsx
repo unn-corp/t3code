@@ -1,3 +1,11 @@
+import {
+  createEnvironmentRpcCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { WS_METHODS } from "@t3tools/contracts";
+import { connectionAtomRuntime } from "../../connection/runtime";
+import { RunLimitsPanel } from "../settings/RunLimitsPanel";
+import { AppText as Text } from "../../components/AppText";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
@@ -25,7 +33,7 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { Alert, Platform, ScrollView, View } from "react-native";
+import { Alert, Modal, Pressable, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConnectionsReady } from "../../state/workspace";
 import { useEnvironmentShellReadiness } from "../../state/shell";
@@ -84,6 +92,11 @@ import {
 } from "./thread-inspector-content-stack";
 import { threadRouteIsHydrating } from "./thread-route-hydration";
 
+const exportThreadCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "thread-export",
+  tag: WS_METHODS.threadExport,
+});
+
 function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
     readonly hasThreadCwd: boolean;
@@ -101,6 +114,12 @@ function ThreadHeader(
   const native = useThreadHeaderOptions(props);
   const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
     const actions: ScreenHeaderAction[] = [];
+    if (props.onThreadActions)
+      actions.push({
+        accessibilityLabel: "Thread actions",
+        icon: "ellipsis",
+        onPress: props.onThreadActions,
+      });
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -138,6 +157,7 @@ function ThreadHeader(
     }
     return actions;
   }, [
+    props.onThreadActions,
     props.inspectorMode,
     panes.auxiliaryPaneVisible,
     props.onOpenFilesInspector,
@@ -334,6 +354,10 @@ function ThreadRouteContent(
     selectedThreadProject,
     selectedEnvironmentConnection,
   } = useThreadSelection();
+  const [threadToolsPanel, setThreadToolsPanel] = useState<"actions" | "limits" | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const exportThread = useAtomCommand(exportThreadCommand, { reportFailure: false });
+
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
@@ -466,6 +490,44 @@ function ThreadRouteContent(
     }, [props.renderInspector]),
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const handleThreadActions = useCallback(() => setThreadToolsPanel("actions"), []);
+  const exportConversation = useCallback(
+    async (format: "markdown" | "json") => {
+      if (!selectedThread || exporting) return;
+      setExporting(true);
+      try {
+        const result = await exportThread({
+          environmentId: selectedThread.environmentId,
+          input: { threadId: selectedThread.id, format },
+        });
+        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+        const { Directory, File, Paths } = await import("expo-file-system");
+        const { shareAsync } = await import("expo-sharing");
+        const directory = new Directory(Paths.cache, `thread-export-${Date.now()}`);
+        directory.create({ intermediates: true });
+        const file = new File(directory, result.value.filename);
+        try {
+          file.create();
+          file.write(result.value.content);
+          await shareAsync(file.uri, {
+            mimeType: result.value.mimeType,
+            dialogTitle: "Export thread",
+          });
+        } finally {
+          directory.delete();
+        }
+        setThreadToolsPanel(null);
+      } catch (cause) {
+        Alert.alert(
+          "Could not export thread",
+          cause instanceof Error ? cause.message : "Reconnect and try again.",
+        );
+      } finally {
+        setExporting(false);
+      }
+    },
+    [selectedThread, exporting, exportThread],
+  );
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -674,17 +736,17 @@ function ThreadRouteContent(
     void navigation.navigate("Connections");
   }, [navigation]);
   const handleStopThread = useCallback(() => {
-    if (!selectedThread || composer.interruptibleRunId === null) {
+    if (!selectedThread || (composer.interruptibleRunId === null && composer.stopState === null)) {
       return;
     }
     return interruptThreadTurn({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
-        runId: composer.interruptibleRunId,
+        runId: composer.interruptibleRunId ?? composer.stopState?.runId,
       },
     });
-  }, [composer.interruptibleRunId, interruptThreadTurn, selectedThread]);
+  }, [composer.interruptibleRunId, composer.stopState, interruptThreadTurn, selectedThread]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -1041,7 +1103,12 @@ function ThreadRouteContent(
           threadSyncStatus={selectedThreadDetailState.status}
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
-          canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
+          canStopThread={
+            awaitingBootstrapTurn ||
+            composer.interruptibleRunId !== null ||
+            composer.stopState !== null
+          }
+          isStoppingThread={composer.stopState !== null}
           queuedRunEdit={composer.queuedRunEdit}
           composerDraftKey={composer.composerDraftKey}
           followUpBehavior={composer.followUpBehavior}
@@ -1086,6 +1153,7 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <ThreadHeader
+        onThreadActions={handleThreadActions}
         title={selectedThread.title}
         subtitle={headerSubtitle}
         headerColor={headerColor}
@@ -1101,6 +1169,72 @@ function ThreadRouteContent(
         onReturnToThread={props.onReturnToThread}
       />
 
+      <Modal
+        visible={threadToolsPanel !== null}
+        animationType="slide"
+        onRequestClose={() => setThreadToolsPanel(null)}
+      >
+        <ScrollView
+          className="flex-1 bg-background"
+          contentContainerStyle={{
+            padding: 20,
+            paddingTop: safeAreaInsets.top + 20,
+            paddingBottom: safeAreaInsets.bottom + 20,
+          }}
+        >
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setThreadToolsPanel(null)}
+            className="p-4"
+          >
+            <Text>Close thread actions</Text>
+          </Pressable>
+          {threadToolsPanel === "limits" ? (
+            <RunLimitsPanel
+              key={`${selectedThread.environmentId}:${selectedThread.id}`}
+              environmentId={selectedThread.environmentId}
+              threadId={selectedThread.id}
+            />
+          ) : (
+            <>
+              {serverConfig?.threadExport ? (
+                <>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={exporting}
+                    onPress={() => void exportConversation("markdown")}
+                    className="p-4"
+                  >
+                    <Text>{exporting ? "Exporting…" : "Export Markdown"}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={exporting}
+                    onPress={() => void exportConversation("json")}
+                    className="p-4"
+                  >
+                    <Text>Export JSON</Text>
+                  </Pressable>
+                </>
+              ) : null}
+              {serverConfig?.runLimits ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setThreadToolsPanel("limits")}
+                  className="p-4"
+                >
+                  <Text>Run limits</Text>
+                </Pressable>
+              ) : null}
+              {!serverConfig?.runLimits && !serverConfig?.threadExport ? (
+                <Text className="p-4 text-sm text-foreground-muted">
+                  Update this server to enable exports and run limits.
+                </Text>
+              ) : null}
+            </>
+          )}
+        </ScrollView>
+      </Modal>
       {renderThreadRouteBody()}
     </>
   );

@@ -34,6 +34,38 @@ import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
 
+/** A command receipt acknowledges Stop; only projected provider state confirms it. */
+export function deriveThreadStopState(projection: OrchestrationV2ThreadProjection | null) {
+  if (projection === null) return null;
+  const request = projection.turnItems.findLast((item) => item.type === "run_interrupt_request");
+  if (!request) return null;
+  const result = projection.turnItems.findLast(
+    (item) => item.type === "run_interrupt_result" && item.parentItemId === request.id,
+  );
+  const run = projection.runs.find((candidate) => candidate.id === request.runId);
+  const remainingTasks = derivePendingBackgroundWork({
+    latestRun: projection.runs.at(-1),
+    providerThreads: projection.providerThreads,
+    turnItems: projection.turnItems,
+    activeProviderThreadId: projection.thread.activeProviderThreadId,
+    runs: projection.runs,
+  });
+  if (
+    result &&
+    DateTime.toEpochMillis(result.updatedAt) >= DateTime.toEpochMillis(request.updatedAt) &&
+    remainingTasks.length === 0
+  )
+    return null;
+  if (!run || (!ACTIVITY_RUN_STATUSES.has(run.status) && remainingTasks.length === 0)) return null;
+  if (
+    projection.runs.some(
+      (candidate) => candidate.ordinal > run.ordinal && ACTIVITY_RUN_STATUSES.has(candidate.status),
+    )
+  )
+    return null;
+  return { runId: run.id, requestedAt: DateTime.formatIso(request.updatedAt), remainingTasks };
+}
+
 function latestMatchingRun(
   projection: OrchestrationV2ThreadProjection,
   predicate: (run: OrchestrationV2ThreadProjection["runs"][number]) => boolean,

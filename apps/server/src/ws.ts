@@ -1,3 +1,4 @@
+import { BUILD_IDENTITY } from "./appVersion.ts";
 import * as OrganizationStore from "./organizations/OrganizationStore.ts";
 import * as OrganizationCorrelationRecovery from "./organizations/OrganizationCorrelationRecovery.ts";
 import * as OrganizationCorrelationCoordinator from "./organizations/OrganizationCorrelationCoordinator.ts";
@@ -554,6 +555,7 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 const ServerWsRpcGroup = WsRpcGroup;
 const CoreWsRpcGroup = WsRpcGroup.omit(
+  WS_METHODS.threadExport,
   WS_METHODS.codexSessionsList,
   WS_METHODS.codexSessionsResume,
   WS_METHODS.previewAttach,
@@ -1773,6 +1775,9 @@ const makeCoreWsRpcLayer = (
 
           return {
             environment,
+            buildIdentity: BUILD_IDENTITY,
+            runLimits: true,
+            threadExport: true,
             auth,
             cwd: config.cwd,
             keybindingsConfigPath: config.keybindingsConfigPath,

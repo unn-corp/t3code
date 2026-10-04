@@ -1,3 +1,5 @@
+import { ThreadExportDocument } from "@t3tools/contracts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -631,6 +633,7 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provide(registryLayer),
             Layer.provide(providerRegistryLayer),
             Layer.provide(scheduledTaskStubLayer),
+            Layer.provide(ServerSettings.layerTest()),
             Layer.provide(NodeServices.layer),
           );
 
@@ -696,6 +699,25 @@ describe("orchestrator MCP toolkit", () => {
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
 
+            const exported = yield* invoke("t3_thread_export", { format: "json" });
+            const exportedContent = exported.structuredContent as { content: string };
+            const document = yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(ThreadExportDocument),
+            )(exportedContent.content);
+            expect(document.thread.id).toBe(parentThreadId);
+            expect(document.messages.length).toBeGreaterThan(0);
+            const limits = yield* invoke("t3_thread_limits", {
+              limits: { maxDurationMinutes: 30, maxOutputTokens: null },
+            });
+            expect(limits.structuredContent).toEqual({
+              limits: { maxDurationMinutes: 30, maxOutputTokens: null },
+              inherited: false,
+            });
+            const inherited = yield* invoke("t3_thread_limits", { limits: null });
+            expect(inherited.structuredContent).toEqual({
+              limits: { maxDurationMinutes: null, maxOutputTokens: null },
+              inherited: true,
+            });
             const pinned = yield* invoke("t3_thread_organize", { action: "pin" });
             expect(pinned.structuredContent).toHaveProperty("sequence");
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).not.toBeNull();

@@ -160,6 +160,7 @@ export interface ThreadComposerProps {
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
+  readonly isStoppingThread?: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   /** Why sending is blocked right now (shown as the send button's label), or null. */
@@ -1052,12 +1053,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   onCancel={voiceInput.cancel}
                 />
                 {showStopAction ? (
-                  <ComposerActionButton
-                    accessibilityLabel="Stop agent"
-                    icon="stop.fill"
-                    variant="danger"
-                    onPress={props.onStopThread}
-                  />
+                  <>
+                    {props.isStoppingThread ? (
+                      <Text className="text-xs text-foreground-muted">Stopping…</Text>
+                    ) : null}
+                    <ComposerActionButton
+                      accessibilityLabel={
+                        props.isStoppingThread ? "Stopping agent; retry stop" : "Stop agent"
+                      }
+                      icon="stop.fill"
+                      variant="danger"
+                      onPress={props.onStopThread}
+                    />
+                  </>
                 ) : (
                   <SendActionButton
                     accessibilityLabel={sendBlockedReason ?? sendLabel}
@@ -1146,12 +1154,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     onCancel={voiceInput.cancel}
                   />
                   {showStopAction ? (
-                    <ComposerActionButton
-                      accessibilityLabel="Stop agent"
-                      icon="stop.fill"
-                      variant="danger"
-                      onPress={props.onStopThread}
-                    />
+                    <>
+                      {props.isStoppingThread ? (
+                        <Text className="text-xs text-foreground-muted">Stopping…</Text>
+                      ) : null}
+                      <ComposerActionButton
+                        accessibilityLabel={
+                          props.isStoppingThread ? "Stopping agent; retry stop" : "Stop agent"
+                        }
+                        icon="stop.fill"
+                        variant="danger"
+                        onPress={props.onStopThread}
+                      />
+                    </>
                   ) : voicePresentation.showsSend ? (
                     <SendActionButton
                       accessibilityLabel={sendBlockedReason ?? sendLabel}

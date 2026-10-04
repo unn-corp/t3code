@@ -1367,3 +1367,27 @@ describe("branch naming settings", () => {
     },
   );
 });
+
+describe("opt-in run limits", () => {
+  it("keeps old settings unlimited and supports inheritance or a thread opt-out", () => {
+    expect(decodeServerSettings({})).toMatchObject({
+      runLimits: { maxDurationMinutes: null, maxOutputTokens: null },
+      threadRunLimits: {},
+    });
+    const patch = {
+      runLimits: { maxDurationMinutes: 15, maxOutputTokens: 1000 },
+      threadRunLimits: {
+        inherited: null,
+        unlimited: { maxDurationMinutes: null, maxOutputTokens: null },
+        custom: { maxDurationMinutes: 5, maxOutputTokens: 100 },
+      },
+    };
+    expect(encodeServerSettings(decodeServerSettings(patch))).toMatchObject(patch);
+    expect(decodeServerSettingsPatch(patch)).toEqual(patch);
+  });
+  it.each([0, -1, 1.5, 10081])("rejects invalid minute limits: %s", (maxDurationMinutes) => {
+    expect(() =>
+      decodeServerSettingsPatch({ runLimits: { maxDurationMinutes, maxOutputTokens: null } }),
+    ).toThrow();
+  });
+});

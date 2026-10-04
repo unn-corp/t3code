@@ -1,3 +1,4 @@
+import { ThreadExportInput, ThreadExportResult, ThreadExportError } from "./threadExport.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -597,6 +598,7 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   // Codex session discovery (resuming conversations started outside the app)
+  threadExport: "thread.export",
   codexSessionsList: "codexSessions.list",
   codexSessionsResume: "codexSessions.resume",
   agentSessionsScan: "agentSessions.scan",
@@ -2537,7 +2539,14 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+const WsThreadExportRpc = Rpc.make(WS_METHODS.threadExport, {
+  payload: ThreadExportInput,
+  success: ThreadExportResult,
+  error: Schema.Union([ThreadExportError, EnvironmentAuthorizationError]),
+});
+
 export const WsRpcGroup = RpcGroup.make(
+  WsThreadExportRpc,
   WsOrganizationsListRpc,
   WsOrganizationsCreateRpc,
   WsOrganizationsGetRpc,
@@ -2871,6 +2880,7 @@ export const ForkWsRpcGroup = RpcGroup.make(
 ).middleware(RpcScopeAuthorization);
 
 export const ForkExtraWsRpcGroup = RpcGroup.make(
+  WsThreadExportRpc,
   WsCodexSessionsListRpc,
   WsCodexSessionsResumeRpc,
   WsPreviewAttachRpc,

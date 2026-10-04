@@ -1,3 +1,4 @@
+import { backupCommand } from "./cli/backup.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -58,6 +59,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
     Command.withDescription("Run the T3 Code server."),
     Command.withHandler((flags) => runServerCommand(flags)),
     Command.withSubcommands([
+      backupCommand,
       acpMcpBridgeCommand,
       acpMcpCallCommand,
       startCommand,

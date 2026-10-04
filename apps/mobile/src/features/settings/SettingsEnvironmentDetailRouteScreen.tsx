@@ -1,3 +1,4 @@
+import { RunLimitsPanel } from "./RunLimitsPanel";
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
@@ -188,9 +189,17 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             {notice ? <Text className="px-2 text-sm text-foreground-muted">{notice}</Text> : null}
             {config ? (
               <>
+                <RunLimitsPanel environmentId={environmentId} disabled={disabled} />
                 <SettingsSection title="T3 Code">
                   <View className="gap-1 p-4">
                     <Text className="text-base text-foreground">Version {version}</Text>
+                    <Text selectable className="text-xs text-foreground-muted">
+                      {config?.buildIdentity?.commit ?? "Commit unknown"}
+                      {config?.buildIdentity?.dirty ? " · Local changes" : ""}
+                      {config?.buildIdentity?.builtAt
+                        ? ` · Built ${config.buildIdentity.builtAt}`
+                        : ""}
+                    </Text>
                     {running ? (
                       <Text className="text-sm text-foreground-muted">
                         {updateState.stage === "resuming"
