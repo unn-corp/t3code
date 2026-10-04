@@ -53,6 +53,10 @@ export function contextCompactionLabel(
   >,
 ): string {
   if (item.status === "running") return "Compacting context";
+  if (item.status === "failed") return "Context compaction failed";
+  if (item.status === "interrupted" || item.status === "cancelled") {
+    return "Context compaction stopped";
+  }
   if (item.beforeTokenCount !== undefined && item.afterTokenCount !== undefined) {
     return `Context compacted ${formatTokens(item.beforeTokenCount)} → ${formatTokens(item.afterTokenCount)} tokens`;
   }

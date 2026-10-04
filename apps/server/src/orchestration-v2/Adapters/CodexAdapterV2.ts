@@ -1698,6 +1698,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const runningCommandItemsByTurn = yield* Ref.make(
           new Map<string, Map<string, TrackedRunningCommandItem>>(),
         );
+        const runningCompactionItemsByTurn = yield* Ref.make(
+          new Map<string, Map<string, Extract<OrchestrationV2TurnItem, { type: "compaction" }>>>(),
+        );
         const runningDynamicToolsByTurn = yield* Ref.make(
           new Map<string, Map<string, CodexDynamicToolItem>>(),
         );
@@ -4014,32 +4017,71 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             nativeItemId,
             nativeStartedAt,
           );
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver: CODEX_PROVIDER,
-            turnItem: {
-              id: idAllocator.derive.turnItemFromProviderItem({
-                driver: CODEX_PROVIDER,
-                nativeItemId,
-              }),
-              threadId: context.projectionThreadId,
-              runId: context.projectionRunId,
-              nodeId: context.providerNodeId,
-              providerThreadId: context.providerThread.id,
-              providerTurnId: context.providerTurnId,
-              nativeItemRef: codexNativeItemRef(nativeItemId),
-              parentItemId: null,
-              ordinal,
-              type: "compaction",
+          const turnItem: Extract<OrchestrationV2TurnItem, { type: "compaction" }> = {
+            id: idAllocator.derive.turnItemFromProviderItem({
               driver: CODEX_PROVIDER,
-              status,
-              title: status === "completed" ? "Context compacted" : "Compacting context",
-              startedAt,
-              completedAt: status === "completed" ? now : null,
-              updatedAt: now,
-            },
+              nativeItemId,
+            }),
+            threadId: context.projectionThreadId,
+            runId: context.projectionRunId,
+            nodeId: context.providerNodeId,
+            providerThreadId: context.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef: codexNativeItemRef(nativeItemId),
+            parentItemId: null,
+            ordinal,
+            type: "compaction",
+            driver: CODEX_PROVIDER,
+            status,
+            title: status === "completed" ? "Context compacted" : "Compacting context",
+            startedAt,
+            completedAt: status === "completed" ? now : null,
+            updatedAt: now,
+          };
+          yield* Ref.update(runningCompactionItemsByTurn, (current) => {
+            const updated = new Map(current);
+            const items = new Map(updated.get(context.nativeTurnId) ?? []);
+            if (status === "running") items.set(nativeItemId, turnItem);
+            else items.delete(nativeItemId);
+            if (items.size > 0) updated.set(context.nativeTurnId, items);
+            else updated.delete(context.nativeTurnId);
+            return updated;
           });
+          yield* emitProviderEvent({ type: "turn_item.updated", driver: CODEX_PROVIDER, turnItem });
         });
+
+        // Codex can end a turn without sending item/completed for its compaction.
+        // Settle these items before the root terminal closes the event stream.
+        const terminalizeRunningCompactions = (
+          nativeTurnId: string,
+          status: "interrupted" | "failed" | "cancelled",
+          completedAt: DateTime.Utc,
+        ) =>
+          Effect.gen(function* () {
+            const items = yield* Ref.modify(runningCompactionItemsByTurn, (current) => {
+              const items = current.get(nativeTurnId);
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return [items, updated] as const;
+            });
+            if (items === undefined) return;
+            for (const item of items.values()) {
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: {
+                  ...item,
+                  status,
+                  title:
+                    status === "failed"
+                      ? "Context compaction failed"
+                      : "Context compaction stopped",
+                  completedAt,
+                  updatedAt: completedAt,
+                },
+              });
+            }
+          });
 
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
@@ -5241,6 +5283,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 input.status === "interrupted" || input.status === "failed"
                   ? input.status
                   : "cancelled";
+              yield* terminalizeRunningCompactions(
+                input.nativeTurnId,
+                dynamicToolStatus,
+                input.completedAt,
+              );
               yield* terminalizeRunningDynamicTools(
                 input.context,
                 input.nativeTurnId,
