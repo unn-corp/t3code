@@ -3,7 +3,7 @@ import { createDeferredStorage, createMemoryStorage } from "./storage";
 import { installDraftPersistenceLifecycle } from "./draftPersistenceLifecycle";
 
 afterEach(() => vi.useRealTimers());
-it.each(["pagehide", "hidden"])(
+it.each(["pagehide", "hidden", "freeze"])(
   "retains the final keystroke when the PWA leaves through %s before the debounce fires",
   (event) => {
     vi.useFakeTimers();
@@ -24,7 +24,8 @@ it.each(["pagehide", "hidden"])(
     if (event === "hidden") {
       visibility.visibilityState = "hidden";
       visibility.dispatchEvent(new Event("visibilitychange"));
-    } else page.dispatchEvent(new Event("pagehide"));
+    } else if (event === "freeze") visibility.dispatchEvent(new Event("freeze"));
+    else page.dispatchEvent(new Event("pagehide"));
     expect(JSON.parse(base.getItem("draft") as string)).toEqual({
       prompt: "Keep the final keystroke",
     });

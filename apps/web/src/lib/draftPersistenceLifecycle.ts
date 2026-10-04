@@ -10,9 +10,11 @@ export function installDraftPersistenceLifecycle(
   page.addEventListener("beforeunload", flush);
   page.addEventListener("pagehide", flush);
   visibility.addEventListener("visibilitychange", onHidden);
+  visibility.addEventListener("freeze", flush);
   return () => {
     page.removeEventListener("beforeunload", flush);
     page.removeEventListener("pagehide", flush);
     visibility.removeEventListener("visibilitychange", onHidden);
+    visibility.removeEventListener("freeze", flush);
   };
 }
