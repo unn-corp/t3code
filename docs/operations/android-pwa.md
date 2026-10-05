@@ -1,42 +1,38 @@
 # Private Android PWA build
 
-`apps/android-pwa` launches the existing web app in a Trusted Web Activity. It uses the browser's
-PWA engine and the same Connections screen, pairing, environments, and responsive layout. It does
-not embed a second UI or server credentials. Interface updates come from the configured PWA host.
+`apps/android-pwa` bundles the existing web interface in an Android WebView. The app opens
+**Settings → Connections** independently of any computer, including offline. Add environments
+through the existing pairing flow. Its settings and environment credentials belong to this app;
+Chrome's PWA storage is separate. Keep the phone's Tailscale VPN connected to reach tailnet hosts.
+Tailscale connectivity does not replace T3's per-environment authorization.
 
-## Build
+## Build and install
 
-Use Linux, macOS, or WSL with JDK 17, Android SDK platform 36, and Android SDK build-tools installed.
-Set `JAVA_HOME` and `ANDROID_HOME`. The checked-in wrapper downloads Gradle 8.13 and verifies its
-checksum. Use a private signing keystore with alias `t3-pwa`; keep its password in a separate private
-file. Keep both outside the checkout and retain them for future APK updates.
+Use Linux, macOS, or WSL with the repository dependencies installed, JDK 17, Android SDK platform
+36, and Android SDK build-tools. Set `JAVA_HOME` and `ANDROID_HOME`. The checked-in wrapper verifies
+Gradle 8.13's checksum. Keep a private signing keystore and its password file outside the checkout,
+and retain both for future APK updates.
 
 ```bash
 node scripts/build-android-pwa.ts \
-  --url https://your-machine.your-tailnet.ts.net/ \
   --keystore /private/t3-pwa.jks \
   --password-file /private/t3-pwa-password \
   --version-name 1.0
+adb install -r release/android-pwa/t3-code-pwa.apk
 ```
 
-The build produces `release/android-pwa/t3-code-pwa.apk` and `assetlinks.json`, runs Android lint,
-and verifies the APK signature. `--url` accepts an HTTPS origin, including a custom port, without
-pairing tokens, credentials, or paths. `--version-code` can override the default minutes-since-epoch
-code for reproducible builds.
+The build bundles a separate web output, runs Android lint, and verifies the signed APK. It never
+bakes a primary server URL into the app. `--version-code` overrides the default minutes-since-epoch
+code; updates must increase it and retain the package and signing certificate. Web interface
+updates require a new APK. Website verification and `assetlinks.json` are no longer required.
 
-## Website verification and installation
+The app keeps the web client's installed-PWA layout and preserves the WebView when the display
+changes size or orientation. Microphone/camera access prompts for Android permissions. File
+attachments use Android's picker; blob downloads use its Save dialog (up to 32 MB). External links
+open in the browser. Release builds disable WebView debugging. Android backup and device transfer
+exclude app credentials.
 
-Serve the generated `assetlinks.json` at the PWA origin's `/.well-known/assetlinks.json` with a JSON
-content type and no authentication or redirect. This binds the website to the APK's package and
-signing certificate. For a standalone T3 runtime, copy it into `client/.well-known/assetlinks.json`
-beside the runtime executable. Preserve that file when replacing the runtime's client directory.
-The certificate fingerprint is public; the signing key and password remain private.
-
-Install the APK on the phone with Tailscale connected and an up-to-date browser supporting Trusted
-Web Activities, such as Chrome. Add machines through the existing **Settings → Connections** flow.
-Saved environments are shared with the PWA when it uses the same browser profile and origin.
-
-Before website verification succeeds, the browser can display its address toolbar. The APK still
-opens the same PWA. Machines need reachable T3 endpoints and normal device pairing; the APK does
-not grant additional machine permissions. Direct Tailscale access retains the PWA's existing
-notification behavior.
+Browser Web Push is unavailable in WebView. This build does not provide background push
+notifications; use the browser PWA when those are needed. SSH provisioning remains a desktop
+capability. Direct environments use the same server authorization as the web client. HTTPS is
+recommended; explicit HTTP endpoints are supported for private networks such as Tailscale.

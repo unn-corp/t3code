@@ -1,4 +1,4 @@
-import { isElectron } from "./env";
+import { isAndroidPwa, isElectron } from "./env";
 
 export type PwaServiceWorkerState =
   | { readonly type: "unsupported" }
@@ -43,7 +43,7 @@ function waitForActivation(
 
 /** Registers the static worker only for the hosted HTTPS application. */
 export function registerPwaServiceWorker(): Promise<PwaServiceWorkerState> {
-  if (isElectron || !window.isSecureContext || !("serviceWorker" in navigator)) {
+  if (isElectron || isAndroidPwa || !window.isSecureContext || !("serviceWorker" in navigator)) {
     return Promise.resolve({ type: "unsupported" });
   }
   if (registrationPromise !== null) return registrationPromise;

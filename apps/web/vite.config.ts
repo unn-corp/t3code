@@ -27,12 +27,15 @@ Object.assign(process.env, repoEnv);
 // exact failure single-origin mode exists to prevent, and an invisible one
 // since the page still loads.
 const isSingleOriginDev = process.env.T3CODE_SINGLE_ORIGIN_DEV === "1";
+const isAndroidPwa = process.env.VITE_ANDROID_PWA === "1";
 
 const port = Number(process.env.PORT ?? 5733);
 const explicitHost = process.env.HOST?.trim();
 const host = explicitHost || "localhost";
-const configuredWsUrl = isSingleOriginDev ? undefined : process.env.VITE_WS_URL?.trim();
-const configuredHttpUrl = isSingleOriginDev ? undefined : process.env.VITE_HTTP_URL?.trim();
+const configuredWsUrl =
+  isSingleOriginDev || isAndroidPwa ? undefined : process.env.VITE_WS_URL?.trim();
+const configuredHttpUrl =
+  isSingleOriginDev || isAndroidPwa ? undefined : process.env.VITE_HTTP_URL?.trim();
 const configuredRelayUrl = repoEnv.VITE_T3CODE_RELAY_URL?.trim() || "";
 const configuredClerkPublishableKey = repoEnv.VITE_CLERK_PUBLISHABLE_KEY?.trim() || "";
 const configuredClerkJwtTemplate = repoEnv.VITE_CLERK_JWT_TEMPLATE?.trim() || "";
@@ -40,10 +43,13 @@ const configuredClerkCliOAuthClientId = repoEnv.VITE_CLERK_CLI_OAUTH_CLIENT_ID?.
 const configuredRelayTracingUrl = repoEnv.VITE_RELAY_OTLP_TRACES_URL?.trim() || "";
 const configuredRelayTracingDataset = repoEnv.VITE_RELAY_OTLP_TRACES_DATASET?.trim() || "";
 const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim() || "";
-const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
+const configuredHostedAppChannel = isAndroidPwa
+  ? ""
+  : process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
 const configuredAppBuildLabel = process.env.APP_BUILD_LABEL?.trim() || "";
 const configuredHostedAppUrl = (() => {
+  if (isAndroidPwa) return "https://appassets.androidplatform.net";
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
     return explicitHostedAppUrl;
@@ -198,6 +204,7 @@ export default defineConfig(() => {
       ],
     },
     define: {
+      "import.meta.env.VITE_ANDROID_PWA": JSON.stringify(isAndroidPwa ? "1" : ""),
       // In dev mode, tell the web app where the WebSocket server lives
       "import.meta.env.VITE_WS_URL": JSON.stringify(configuredWsUrl ?? ""),
       // Pinned explicitly rather than left to Vite's automatic VITE_ exposure:

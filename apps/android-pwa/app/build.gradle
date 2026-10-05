@@ -1,14 +1,7 @@
-import groovy.json.JsonOutput
-
 plugins {
     id 'com.android.application'
 }
 
-def startUrl = providers.gradleProperty('pwaUrl').getOrElse('')
-def origin = new URI(startUrl)
-if (origin.scheme != 'https' || !origin.host || origin.userInfo || origin.query || origin.fragment || origin.path != '/') {
-    throw new GradleException('pwaUrl must be an HTTPS origin ending in /, without credentials or a pairing token.')
-}
 def packageName = providers.gradleProperty('pwaPackage').getOrElse('com.devotek.t3code.pwa')
 def signingStore = System.getenv('T3_PWA_KEYSTORE')
 def passwordFile = System.getenv('T3_PWA_PASSWORD_FILE')
@@ -16,6 +9,11 @@ def passwordFile = System.getenv('T3_PWA_PASSWORD_FILE')
 android {
     namespace 'com.devotek.t3code.pwa'
     compileSdk 36
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
 
     defaultConfig {
         applicationId packageName
@@ -23,12 +21,7 @@ android {
         targetSdk 36
         versionCode providers.gradleProperty('pwaVersionCode').getOrElse('1').toInteger()
         versionName providers.gradleProperty('pwaVersionName').getOrElse('1.0')
-        manifestPlaceholders = [pwaUrl: startUrl, pwaHost: origin.host]
-        resValue 'string', 'app_name', 'T3 Code PWA'
-        resValue 'string', 'asset_statements', JsonOutput.toJson([[
-            relation: ['delegate_permission/common.handle_all_urls'],
-            target: [namespace: 'web', site: startUrl.substring(0, startUrl.length() - 1)]
-        ]]).replace('"', '\\"')
+        resValue 'string', 'app_name', 'T3 Code'
     }
 
     signingConfigs {
@@ -49,6 +42,7 @@ android {
         }
     }
 
+    sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/web-assets')
     sourceSets.main.res.srcDir layout.buildDirectory.dir('generated/pwa-icon')
 }
 
@@ -60,5 +54,15 @@ def copyPwaIcon = tasks.register('copyPwaIcon', Copy) {
 tasks.named('preBuild').configure { dependsOn copyPwaIcon }
 
 dependencies {
-    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.3'
+    implementation 'androidx.webkit:webkit:1.14.0'
+    implementation 'androidx.core:core:1.17.0'
+    implementation 'androidx.activity:activity:1.11.0'
+}
+
+tasks.named('preBuild').configure {
+    doFirst {
+        if (!layout.buildDirectory.file('generated/web-assets/index.html').get().asFile.exists()) {
+            throw new GradleException('Build the bundled web client with scripts/build-android-pwa.ts first.')
+        }
+    }
 }

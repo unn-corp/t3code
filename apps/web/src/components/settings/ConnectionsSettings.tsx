@@ -3710,7 +3710,7 @@ export function ConnectionsSettings() {
 
   return (
     <SettingsPageContainer width="wide">
-      {primarySettings}
+      {desktopBridge || primaryEnvironment ? primarySettings : null}
       <SettingsSection
         {...searchableSetting("remote-environments")}
         title="Environments"

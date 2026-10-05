@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
-vi.mock("./env", () => ({ isElectron: false }));
+const shell = vi.hoisted(() => ({ isElectron: false, isAndroidPwa: false }));
+vi.mock("./env", () => shell);
 
 const registration = { active: {}, installing: null, waiting: null };
 const register = vi.fn();
@@ -8,6 +9,7 @@ const reload = vi.fn();
 
 beforeEach(() => {
   vi.resetModules();
+  shell.isAndroidPwa = false;
   register.mockReset().mockResolvedValue(registration);
   reload.mockReset();
   vi.stubGlobal("navigator", { serviceWorker: { register } });
@@ -115,4 +117,12 @@ it("preserves the notification registration and its push subscription during ref
   expect(await notificationWorker.pushManager.getSubscription()).toBe(subscription);
   expect(deleteCache).toHaveBeenCalledWith("old-shell");
   expect(reload).toHaveBeenCalledOnce();
+});
+
+it("keeps bundled Android assets independent of browser service-worker caches", async () => {
+  shell.isAndroidPwa = true;
+  const pwa = await import("./pwa");
+  expect(await pwa.registerPwaServiceWorker()).toEqual({ type: "unsupported" });
+  expect(register).not.toHaveBeenCalled();
+  expect(pwa.getActivePwaServiceWorkerRegistration()).toBeNull();
 });

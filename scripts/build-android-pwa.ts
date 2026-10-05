@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - APK build bootstrap invokes synchronous host tools before an Effect runtime exists.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -5,17 +6,12 @@ import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import * as Effect from "effect/Effect";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import {
-  ANDROID_PWA_PACKAGE,
-  androidAssetLinks,
-  normalizePwaOrigin,
-} from "./lib/android-pwa-config.ts";
+import { ANDROID_PWA_PACKAGE } from "./lib/android-pwa-config.ts";
 
 const platform = Effect.runSync(HostProcessPlatform);
 if (platform === "win32") throw new Error("Build from WSL, Linux, or macOS with JDK 17.");
 const { values } = NodeUtil.parseArgs({
   options: {
-    url: { type: "string" },
     keystore: { type: "string" },
     "password-file": { type: "string" },
     "key-alias": { type: "string", default: "t3-pwa" },
@@ -25,12 +21,9 @@ const { values } = NodeUtil.parseArgs({
   },
 });
 
-if (!values.url || !values.keystore || !values["password-file"]) {
-  throw new Error(
-    "Required: --url https://your-host/ --keystore /private/signing.jks --password-file /private/password",
-  );
+if (!values.keystore || !values["password-file"]) {
+  throw new Error("Required: --keystore /private/signing.jks --password-file /private/password");
 }
-const origin = normalizePwaOrigin(values.url);
 const repo = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const android = NodePath.join(repo, "apps/android-pwa");
 const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
@@ -39,13 +32,23 @@ const versionCode = Number(values["version-code"]);
 if (!Number.isInteger(versionCode) || versionCode < 1 || versionCode > 2_147_483_647) {
   throw new Error("version-code must be a positive Android version code.");
 }
+const webAssets = NodePath.join(android, "app/build/generated/web-assets");
+NodeChildProcess.execFileSync("vp", ["build", "--outDir", webAssets, "--emptyOutDir"], {
+  cwd: NodePath.join(repo, "apps/web"),
+  stdio: "inherit",
+  env: {
+    ...process.env,
+    VITE_ANDROID_PWA: "1",
+    APP_VERSION: values["version-name"],
+    T3CODE_WEB_SOURCEMAP: "0",
+  },
+});
 NodeChildProcess.execFileSync(
   "./gradlew",
   [
     "--no-daemon",
     ":app:assembleRelease",
     ":app:lintRelease",
-    `-PpwaUrl=${origin}`,
     `-PpwaPackage=${ANDROID_PWA_PACKAGE}`,
     `-PpwaVersionName=${values["version-name"]}`,
     `-PpwaVersionCode=${versionCode}`,
@@ -76,11 +79,4 @@ if (!fingerprint) throw new Error("APK signer did not report a SHA-256 certifica
 const output = NodePath.resolve(repo, values["output-dir"]);
 NodeFS.mkdirSync(output, { recursive: true });
 NodeFS.copyFileSync(apk, NodePath.join(output, "t3-code-pwa.apk"));
-NodeFS.writeFileSync(
-  NodePath.join(output, "assetlinks.json"),
-  `${JSON.stringify(androidAssetLinks(ANDROID_PWA_PACKAGE, fingerprint), null, 2)}\n`,
-);
-console.log(`Signed APK: ${NodePath.join(output, "t3-code-pwa.apk")}`);
-console.log(
-  `Publish assetlinks.json at ${origin}.well-known/assetlinks.json to enable fullscreen verification.`,
-);
+Effect.runSync(Effect.log(`Signed standalone APK: ${NodePath.join(output, "t3-code-pwa.apk")}`));
