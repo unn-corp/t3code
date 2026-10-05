@@ -59,7 +59,10 @@ export function deriveThreadStopState(projection: OrchestrationV2ThreadProjectio
   if (!run || (!ACTIVITY_RUN_STATUSES.has(run.status) && remainingTasks.length === 0)) return null;
   if (
     projection.runs.some(
-      (candidate) => candidate.ordinal > run.ordinal && ACTIVITY_RUN_STATUSES.has(candidate.status),
+      (candidate) =>
+        candidate.ordinal > run.ordinal &&
+        candidate.status !== "queued" &&
+        (candidate.status !== "cancelled" || candidate.startedAt !== null),
     )
   )
     return null;

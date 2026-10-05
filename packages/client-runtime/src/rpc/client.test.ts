@@ -157,7 +157,7 @@ describe("environment RPC", () => {
             attempts++;
             return Effect.fail(
               new EnvironmentAuthorizationError({
-                requiredScope: "orchestration:write",
+                requiredScope: "orchestration:operate",
                 message: "Denied",
               }),
             );

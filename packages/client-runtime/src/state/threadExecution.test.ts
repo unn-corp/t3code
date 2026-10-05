@@ -100,6 +100,36 @@ describe("confirmed stopping", () => {
       }),
     ).toBeNull();
   });
+  it("does not treat a later run's background command as work from an earlier Stop", () => {
+    const later = run("new-background-work", 2, "completed");
+    const backgroundCommand = {
+      ...request,
+      id: TurnItemId.make("later-background-command"),
+      runId: later.id,
+      type: "command_execution" as const,
+      status: "running" as const,
+      title: null,
+      input: "sleep 90",
+      output: "",
+      completedAt: null,
+    };
+    const projection = {
+      ...v2Projection,
+      runs: [{ ...active, status: "interrupted" as const }, later],
+      turnItems: [request, backgroundCommand],
+      providerThreads: [],
+    };
+    expect(deriveThreadStopState(projection)).toBeNull();
+    expect(
+      deriveThreadStopState({
+        ...projection,
+        turnItems: [
+          ...projection.turnItems,
+          { ...request, id: TurnItemId.make("new-stop-request"), runId: later.id, ordinal: 3 },
+        ],
+      })?.runId,
+    ).toBe(later.id);
+  });
 });
 
 function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {

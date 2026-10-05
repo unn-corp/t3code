@@ -4495,10 +4495,15 @@ export default function ChatView(props: ChatViewProps) {
   const onInterrupt = useCallback(async () => {
     if (!activeThread) return;
     const requestKey = routeThreadKey;
+    const runId =
+      activeRuntime?.activeRunId ?? activeActivityRun?.runId ?? confirmedStopState?.runId;
     setInterruptRequestKey(requestKey);
     const result = await interruptThreadTurn({
       environmentId,
-      input: { threadId: activeThread.id },
+      input: {
+        threadId: activeThread.id,
+        ...(runId ? { runId } : {}),
+      },
     });
     setInterruptRequestKey((current) => (current === requestKey ? null : current));
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -4508,7 +4513,16 @@ export default function ChatView(props: ChatViewProps) {
         error instanceof Error ? error.message : "Failed to interrupt the current turn.",
       );
     }
-  }, [activeThread, environmentId, interruptThreadTurn, routeThreadKey, setThreadError]);
+  }, [
+    activeThread,
+    activeRuntime,
+    activeActivityRun,
+    confirmedStopState,
+    environmentId,
+    interruptThreadTurn,
+    routeThreadKey,
+    setThreadError,
+  ]);
   useEffect(() => subscribeSnapShotComposerFocus(focusComposer), [focusComposer]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -7106,10 +7120,13 @@ export default function ChatView(props: ChatViewProps) {
   const handleStopBackgroundWork = useCallback(async () => {
     if (!activeThread) return;
     const requestKey = `${environmentId}:${activeThread.id}`;
+    const runId = serverProjection?.runs.at(-1)?.id;
     setStoppingBackgroundWorkKey(requestKey);
     const result = await interruptThreadTurn({
       environmentId,
-      input: { threadId: activeThread.id },
+      // Background work can belong to an older run, but the server accepts
+      // thread-wide background Stop against the newest run.
+      input: { threadId: activeThread.id, ...(runId ? { runId } : {}) },
     });
     // Acceptance does not confirm termination. Allow retry while the provider
     // finishes stopping the tasks or reports a failure.
@@ -7123,7 +7140,7 @@ export default function ChatView(props: ChatViewProps) {
         );
       }
     }
-  }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
+  }, [activeThread, environmentId, interruptThreadTurn, serverProjection, setThreadError]);
   const onOpenRelatedThread = useCallback(
     (threadId: ThreadId) => {
       void navigate({
