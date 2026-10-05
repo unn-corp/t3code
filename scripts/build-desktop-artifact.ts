@@ -3001,15 +3001,27 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     yield* fs.copy(path.join(input.repoRoot, "patches"), path.join(serverStageDir, "patches"));
   }
 
+  // The sidecar is another isolated public-package install, just like the app stage.
+  const sidecarNpmrcPath = path.join(serverStageDir, ".npmrc");
+  yield* fs.writeFileString(
+    sidecarNpmrcPath,
+    "registry=https://registry.npmjs.org/\nmanage-package-manager-versions=false\n",
+  );
   yield* Effect.log("[desktop-artifact] Installing server sidecar runtime externals...");
   const installCommand = yield* resolveSpawnCommand("vp", [...STAGE_INSTALL_ARGS]);
   yield* runCommand(
     ChildProcess.make(installCommand.command, installCommand.args, {
       cwd: serverStageDir,
+      env: {
+        ...process.env,
+        npm_config_registry: "https://registry.npmjs.org/",
+        npm_config_manage_package_manager_versions: "false",
+      },
       shell: installCommand.shell,
     }),
     { label: "vp install --prod (server sidecar)", verbose: input.verbose },
   );
+  yield* fs.remove(sidecarNpmrcPath, { force: true });
 
   yield* Effect.log("[desktop-artifact] Packing server.asar...");
   yield* fs.makeDirectory(path.dirname(input.asarPath), { recursive: true });
