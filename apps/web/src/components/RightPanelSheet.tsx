@@ -55,7 +55,7 @@ export function RightPanelSheet(props: {
         className={
           props.maximized
             ? "w-screen max-w-none"
-            : "min-w-80 max-[760px]:min-w-0 wco:mt-[env(titlebar-area-height)] wco:h-[calc(100%-env(titlebar-area-height))] wco:max-h-[calc(100%-env(titlebar-area-height))]"
+            : "min-w-80 max-[760px]:min-w-0 wco:mt-(--workspace-topbar-height) wco:h-[calc(100%-var(--workspace-topbar-height))] wco:max-h-[calc(100%-var(--workspace-topbar-height))]"
         }
         // Inline width beats the class so a drag survives re-render, and
         // maxWidth has to come with it or the class ceiling clamps the drag.
