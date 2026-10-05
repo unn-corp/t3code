@@ -92,3 +92,14 @@ describe("hostedPairing", () => {
     expect(isHostedStaticApp(new URL("https://nightly.app.t3.codes/"))).toBe(false);
   });
 });
+
+it("boots the bundled Android origin without registering a primary server", () => {
+  vi.stubEnv("VITE_HOSTED_APP_URL", "https://appassets.androidplatform.net");
+  vi.stubEnv("VITE_HTTP_URL", "");
+  vi.stubEnv("VITE_WS_URL", "");
+  expect(
+    isHostedStaticApp(new URL("https://appassets.androidplatform.net/settings/connections")),
+  ).toBe(true);
+  expect(isHostedStaticApp(new URL("https://laptop.example/"))).toBe(false);
+  vi.unstubAllEnvs();
+});

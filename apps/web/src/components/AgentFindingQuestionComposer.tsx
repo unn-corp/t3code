@@ -1,5 +1,6 @@
 import {
   DEFAULT_RUNTIME_MODE,
+  type EnvironmentId,
   type ModelSelection,
   type ProviderInstanceId,
   type RuntimeMode,
@@ -32,6 +33,7 @@ function appendTranscript(prompt: string, transcript: string): string {
 }
 
 export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionComposer({
+  environmentId,
   findingId,
   findingTitle,
   busy,
@@ -44,6 +46,7 @@ export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionCo
   onSubmit,
   onVoiceActivityChange,
 }: {
+  readonly environmentId: EnvironmentId | null;
   readonly findingId: string;
   readonly findingTitle: string;
   readonly busy: boolean;
@@ -150,9 +153,9 @@ export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionCo
                 voiceInputPhase === "no-audio" && "chat-voice-no-audio-active",
               )}
             >
-              <div className="chat-composer-glass-host chat-composer-voice-halo-surface relative z-10 w-full rounded-[22px]">
-                <div className="chat-composer-glass rounded-[20px] border border-black/12 transition-colors duration-200 has-focus-visible:border-foreground/40 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5">
-                  <div className="relative grid grid-cols-[minmax(0,1fr)_4.25rem] overflow-visible rounded-[18px]">
+              <div className="chat-composer-glass-host chat-composer-voice-halo-surface relative z-10 w-full rounded-3xl">
+                <div className="bg-popover rounded-3xl border border-black/12 transition-colors duration-200 has-focus-visible:border-foreground/40 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5">
+                  <div className="relative grid grid-cols-[minmax(0,1fr)_4.25rem] overflow-visible rounded-2xl">
                     {voiceInputBusy ? (
                       <VoiceInputWaveform
                         audioSource={voiceInputAudioSource}
@@ -192,6 +195,8 @@ export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionCo
                     </div>
                     <div className="relative z-10 flex h-17.5 items-center justify-center">
                       <OpenWhisprVoiceInput
+                        key={environmentId}
+                        environmentId={environmentId}
                         phase={voiceInputPhase}
                         disabled={disabled || voiceDisabled}
                         onTranscript={(transcript) =>
@@ -273,7 +278,9 @@ export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionCo
                       >
                         <SelectTrigger
                           aria-label="Access level for finding question"
-                          className="h-8 w-auto min-w-0 shrink-0 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none"
+                          size="sm"
+                          variant="ghost"
+                          className="w-auto min-w-0 shrink-0"
                         >
                           <RuntimeModeIcon className="size-3.5 text-muted-foreground" />
                           <SelectValue>{runtimeModeOption.label}</SelectValue>
@@ -284,7 +291,7 @@ export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionCo
                             const OptionIcon = option.icon;
                             return (
                               <SelectItem
-                                className="min-w-64 py-2"
+                                className="min-w-64"
                                 hideIndicator
                                 key={mode}
                                 value={mode}
@@ -308,6 +315,7 @@ export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionCo
                       <ComposerPrimaryActions
                         compact
                         pendingAction={null}
+                        canInterrupt={false}
                         isRunning={false}
                         showPlanFollowUpPrompt={false}
                         promptHasText={question.trim().length > 0}

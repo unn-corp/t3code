@@ -1,4 +1,4 @@
-import { isElectron } from "./env";
+import { isAndroidPwa, isElectron } from "./env";
 
 export type PwaServiceWorkerState =
   | { readonly type: "unsupported" }
@@ -43,7 +43,7 @@ function waitForActivation(
 
 /** Registers the static worker only for the hosted HTTPS application. */
 export function registerPwaServiceWorker(): Promise<PwaServiceWorkerState> {
-  if (isElectron || !window.isSecureContext || !("serviceWorker" in navigator)) {
+  if (isElectron || isAndroidPwa || !window.isSecureContext || !("serviceWorker" in navigator)) {
     return Promise.resolve({ type: "unsupported" });
   }
   if (registrationPromise !== null) return registrationPromise;
@@ -55,11 +55,14 @@ export function registerPwaServiceWorker(): Promise<PwaServiceWorkerState> {
       activeRegistration = registration;
       return { type: "ready", registration } as const;
     })
-    .catch((cause: unknown) => ({
-      type: "failed" as const,
-      error:
-        cause instanceof Error ? cause : new Error("Could not register the PWA service worker."),
-    }));
+    .catch((cause: unknown) => {
+      registrationPromise = null;
+      return {
+        type: "failed" as const,
+        error:
+          cause instanceof Error ? cause : new Error("Could not register the PWA service worker."),
+      };
+    });
   return registrationPromise;
 }
 
@@ -70,8 +73,9 @@ export function registerPwaServiceWorker(): Promise<PwaServiceWorkerState> {
  * stale shell keeps asking for files that no longer exist and the app pins
  * itself to an old build. The server now sends no-cache for the shell, which
  * prevents that going forward, but a client already holding a stale copy has
- * no way to notice on its own. This is that way out, and it is deliberately
- * blunt: unregister the workers, drop every cache, reload.
+ * no way to notice on its own. Remove legacy workers, drop every cache, and
+ * reload. The current notification worker does not cache files; preserve its
+ * registration because it owns this installation's push subscription.
  *
  * Pairing and settings live in localStorage and IndexedDB, which are left
  * alone, so this does not sign the device out or lose its environments.
@@ -80,7 +84,17 @@ export async function clearPwaCachesAndReload(): Promise<void> {
   if (typeof window === "undefined") return;
   try {
     const registrations = (await navigator.serviceWorker?.getRegistrations()) ?? [];
-    await Promise.all(registrations.map((registration) => registration.unregister()));
+    const notificationWorkerUrl = new URL("/service-worker.js", window.location.origin).href;
+    await Promise.all(
+      registrations
+        .filter(
+          (registration) =>
+            ![registration.active, registration.waiting, registration.installing].some(
+              (worker) => worker?.scriptURL === notificationWorkerUrl,
+            ),
+        )
+        .map((registration) => registration.unregister()),
+    );
   } catch {
     // A browser that refuses the registration list still benefits from the
     // cache drop and the reload below.
@@ -92,7 +106,7 @@ export async function clearPwaCachesAndReload(): Promise<void> {
     // Same: a failure here must not stop the reload, which is what actually
     // re-fetches the shell.
   }
-  // Replace rather than reload: a reload can be served from the back/forward
-  // cache, which is the thing being escaped.
-  window.location.replace(window.location.origin);
+  // Reload the document, including when its URL has a fragment. Replacing an
+  // identical fragment URL can remain a same-document navigation instead.
+  window.location.reload();
 }

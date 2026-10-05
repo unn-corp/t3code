@@ -22,7 +22,7 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as AgentDashboardCollectors from "./AgentDashboardCollectors.ts";
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import {

@@ -119,6 +119,7 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
+import { projectPhotoFromFile } from "./projectPhoto";
 import {
   enabledProjectAutomationKinds,
   buildProductDiscoveryConversationPrompt,
@@ -816,6 +817,7 @@ function ProjectDetail({
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
   const savingFaviconRef = useRef(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const setProjectIcon = useCallback(
     async (input: { faviconPath: string | null; projectIcon: ProjectIconOverride | null }) => {
       if (savingFaviconRef.current) return;
@@ -829,6 +831,21 @@ function ProjectDetail({
       }
     },
     [updateAllMembers],
+  );
+  const uploadProjectPhoto = useCallback(
+    async (file: File) => {
+      try {
+        const dataUrl = await projectPhotoFromFile(file);
+        await setProjectIcon({ faviconPath: null, projectIcon: { kind: "photo", dataUrl } });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Could not upload project photo",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+    },
+    [setProjectIcon],
   );
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
@@ -981,13 +998,15 @@ function ProjectDetail({
           <SettingsRow
             title="Project icon"
             description={
-              projectIcon?.kind === "lucide"
-                ? `${projectIcon.name} · ${projectIcon.color}`
-                : projectIcon?.kind === "monogram"
-                  ? `${projectIcon.text} · ${projectIcon.color}`
-                  : projectIcon?.kind === "emoji"
-                    ? projectIcon.emoji
-                    : (faviconPath ?? "Automatic")
+              projectIcon?.kind === "photo"
+                ? "Uploaded photo"
+                : projectIcon?.kind === "lucide"
+                  ? `${projectIcon.name} · ${projectIcon.color}`
+                  : projectIcon?.kind === "monogram"
+                    ? `${projectIcon.text} · ${projectIcon.color}`
+                    : projectIcon?.kind === "emoji"
+                      ? projectIcon.emoji
+                      : (faviconPath ?? "Automatic")
             }
             resetAction={
               group.memberProjects.some(
@@ -1003,6 +1022,27 @@ function ProjectDetail({
             control={
               <div className="flex items-center gap-2">
                 <ProjectFavicon project={representative} className="size-6" />
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  aria-label="Project photo file"
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0];
+                    event.currentTarget.value = "";
+                    if (file) void uploadProjectPhoto(file);
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  type="button"
+                  disabled={isSavingFavicon}
+                  onClick={() => photoInputRef.current?.click()}
+                >
+                  Upload photo
+                </Button>
                 <Button
                   size="sm"
                   variant="outline"

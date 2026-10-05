@@ -1,37 +1,51 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId } from "@t3tools/contracts";
 import { transcribeWithOpenWhispr } from "./openwhisprTranscription";
 
+const { prepared, execute, runtimeAtom } = vi.hoisted(() => ({
+  prepared: vi.fn(),
+  execute: vi.fn(),
+  runtimeAtom: vi.fn((effect) => effect),
+}));
+vi.mock("../state/session", () => ({ readPreparedConnection: prepared }));
+vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: { atom: runtimeAtom } }));
+vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  executeAtomQuery: execute,
+  squashAtomCommandFailure: () => new Error("Transcription failed"),
+}));
+const environmentId = EnvironmentId.make("selected-server");
+beforeEach(() => {
+  prepared.mockReset().mockReturnValue({ environmentId });
+  execute.mockReset().mockResolvedValue({ _tag: "Success", value: { text: "hello" } });
+  runtimeAtom.mockClear();
+});
 describe("transcribeWithOpenWhispr", () => {
-  it("returns trimmed text from the local Whisper JSON response", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(JSON.stringify({ text: "  hello from voice  " }), { status: 200 }),
-      );
-
-    await expect(transcribeWithOpenWhispr(new Blob(["audio"]))).resolves.toBe("hello from voice");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:8178/inference",
-      expect.objectContaining({ method: "POST" }),
+  it("requires the selected environment to be connected", async () => {
+    prepared.mockReturnValue(null);
+    await expect(transcribeWithOpenWhispr(environmentId, new Blob(["audio"]))).rejects.toThrow(
+      "Connect to the T3 server",
     );
-    fetchMock.mockRestore();
+    expect(execute).not.toHaveBeenCalled();
   });
-
-  it("reports a missing local service clearly", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
-
-    await expect(transcribeWithOpenWhispr(new Blob(["audio"]))).rejects.toThrow(
-      "OpenWhispr returned HTTP 503.",
-    );
-    vi.restoreAllMocks();
+  it("does not upload an already cancelled recording", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      transcribeWithOpenWhispr(environmentId, new Blob(["audio"]), controller.signal),
+    ).rejects.toThrow();
+    expect(execute).not.toHaveBeenCalled();
   });
-
-  it("turns Whisper blank-audio markers into a quiet no-op", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ text: "[BLANK_AUDIO]" }), { status: 200 }),
+  it("returns the environment transcription and passes cancellation to the runtime", async () => {
+    const controller = new AbortController();
+    await expect(
+      transcribeWithOpenWhispr(environmentId, new Blob(["audio"]), controller.signal),
+    ).resolves.toBe("hello");
+    expect(prepared).toHaveBeenCalledWith(environmentId);
+    expect(execute).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ signal: controller.signal }),
     );
-
-    await expect(transcribeWithOpenWhispr(new Blob(["audio"]))).resolves.toBe("");
-    vi.restoreAllMocks();
   });
 });

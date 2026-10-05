@@ -7,6 +7,7 @@ import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
+  resolveAgentNotificationThreadRef,
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
@@ -134,34 +135,31 @@ describe("threadRoutes", () => {
     ).toBeNull();
   });
 
-  it("keeps shell-only server threads in the loading state", () => {
+  it("renders authoritative server-thread shells when bootstrap is complete", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
-        serverThreadShellExists: true,
-        serverThreadDetailExists: false,
-        serverThreadDetailDeleted: false,
+        serverThreadExists: true,
+        serverThreadDeleted: false,
         draftThreadExists: false,
       }),
-    ).toBe("loading");
+    ).toBe("ready");
   });
 
-  it("renders server details and local drafts when they are ready", () => {
+  it("renders server threads and local drafts when they are ready", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
-        serverThreadShellExists: true,
-        serverThreadDetailExists: true,
-        serverThreadDetailDeleted: false,
+        serverThreadExists: true,
+        serverThreadDeleted: false,
         draftThreadExists: false,
       }),
     ).toBe("ready");
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
-        serverThreadShellExists: false,
-        serverThreadDetailExists: false,
-        serverThreadDetailDeleted: false,
+        serverThreadExists: false,
+        serverThreadDeleted: false,
         draftThreadExists: true,
       }),
     ).toBe("ready");
@@ -171,32 +169,57 @@ describe("threadRoutes", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: false,
-        serverThreadShellExists: false,
-        serverThreadDetailExists: false,
-        serverThreadDetailDeleted: false,
+        serverThreadExists: false,
+        serverThreadDeleted: false,
         draftThreadExists: false,
       }),
     ).toBe("loading");
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
-        serverThreadShellExists: false,
-        serverThreadDetailExists: false,
-        serverThreadDetailDeleted: false,
+        serverThreadExists: false,
+        serverThreadDeleted: false,
         draftThreadExists: false,
       }),
     ).toBe("missing");
   });
 
-  it("redirects deleted shell-only threads", () => {
+  it("redirects deleted server threads", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: true,
-        serverThreadShellExists: true,
-        serverThreadDetailExists: false,
-        serverThreadDetailDeleted: true,
+        serverThreadExists: true,
+        serverThreadDeleted: true,
         draftThreadExists: false,
       }),
     ).toBe("missing");
+  });
+});
+
+describe("desktop notification thread routes", () => {
+  it("translates the transport route to typed web route params", () => {
+    const ref = resolveAgentNotificationThreadRef("/threads/remote/thread-1");
+    expect(ref).not.toBeNull();
+    expect(buildThreadRouteParams(ref!)).toEqual({ environmentId: "remote", threadId: "thread-1" });
+  });
+  it("decodes encoded identifiers once before passing them to the router", () => {
+    const ref = resolveAgentNotificationThreadRef("/threads/remote%20host/thread%3A1");
+    expect(buildThreadRouteParams(ref!)).toEqual({
+      environmentId: "remote host",
+      threadId: "thread:1",
+    });
+  });
+  it.each([
+    "https://other.example/",
+    "/settings",
+    "/threads/a/b?token=x",
+    "/threads/a%2Fb/c",
+    "/threads/a%zz/c",
+    "/threads/a%FF/c",
+    "/threads/../thread",
+    "/threads/a/%2e%2e",
+    "/threads/a\\b/c",
+  ])("ignores unsafe destinations: %s", (link) => {
+    expect(resolveAgentNotificationThreadRef(link)).toBeNull();
   });
 });

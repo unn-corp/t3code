@@ -208,16 +208,28 @@ const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (inpu
     yield* fs.copy(path.join(input.repoRoot, "patches"), path.join(input.stageDir, "patches"));
   }
 
+  // Runtime externals are public packages; a developer's private registry may
+  // require an expired credential. Match the desktop artifact's isolated install.
+  yield* fs.writeFileString(
+    path.join(input.stageDir, ".npmrc"),
+    "registry=https://registry.npmjs.org/\nmanage-package-manager-versions=false\n",
+  );
   const install = yield* resolveSpawnCommand("vp", [...STAGE_INSTALL_ARGS]);
   yield* runCommand(
     ChildProcess.make(install.command, install.args, {
       cwd: input.stageDir,
+      env: {
+        ...process.env,
+        npm_config_registry: "https://registry.npmjs.org/",
+        npm_config_manage_package_manager_versions: "false",
+      },
       shell: install.shell,
       stdout: "inherit",
       stderr: "inherit",
     }),
     "vp install --prod (cli archive runtime externals)",
   );
+  yield* fs.remove(path.join(input.stageDir, ".npmrc"), { force: true });
 
   // pnpm's bookkeeping and the manifest only matter to pnpm; the runtime
   // resolves packages by directory. node-pty ships every platform's prebuilds

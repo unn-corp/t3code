@@ -33,6 +33,7 @@ export type ProjectFaviconProject = Pick<
 export function ProjectFavicon(input: {
   project: ProjectFaviconProject;
   className?: string | undefined;
+  showPhoto?: boolean | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
   const { project } = input;
@@ -43,6 +44,21 @@ export function ProjectFavicon(input: {
       faviconPath: project.faviconPath,
     }),
   );
+  if (project.projectIcon?.kind === "photo") {
+    return input.showPhoto === false ? (
+      <ProjectFaviconFallback
+        className={input.className}
+        icon={input.fallbackIcon ?? FolderCodeIcon}
+        projectName={project.title}
+      />
+    ) : (
+      <img
+        src={project.projectIcon.dataUrl}
+        alt=""
+        className={cn("size-3.5 shrink-0 rounded-[25%] object-cover", input.className)}
+      />
+    );
+  }
   if (project.projectIcon?.kind === "monogram") {
     return (
       <ProjectMonogram
@@ -82,7 +98,7 @@ export function ProjectFavicon(input: {
   }
   const FallbackIcon = input.fallbackIcon ?? FolderCodeIcon;
 
-  if (!src || isProjectFaviconFallbackUrl(src)) {
+  if (input.showPhoto === false || !src || isProjectFaviconFallbackUrl(src)) {
     return (
       <ProjectFaviconFallback
         className={input.className}

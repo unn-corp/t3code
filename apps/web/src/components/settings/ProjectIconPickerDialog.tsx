@@ -32,6 +32,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 const DEFAULT_ICON: IconName = "folder-code";
 const isMonogramText = Schema.is(ProjectMonogramText);
+type PickerMode = "lucide" | "emoji" | "monogram";
 
 function iconLabel(name: string): string {
   return name
@@ -54,12 +55,16 @@ export function ProjectIconPickerDialog({
   readonly onSelect: (icon: ProjectIconOverride) => void;
 }) {
   const automatic = deriveProjectIdentity(projectName);
-  const [mode, setMode] = useState<ProjectIconOverride["kind"]>(current?.kind ?? "lucide");
+  const [mode, setMode] = useState<PickerMode>(
+    current?.kind === "photo" ? "lucide" : (current?.kind ?? "lucide"),
+  );
   const [iconName, setIconName] = useState<IconName>(
     current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON,
   );
   const [color, setColor] = useState<ProjectIconColor>(
-    current && current.kind !== "emoji" ? current.color : automatic.color,
+    current && (current.kind === "lucide" || current.kind === "monogram")
+      ? current.color
+      : automatic.color,
   );
   const [letters, setLetters] = useState(
     current?.kind === "monogram" ? current.text : automatic.monogram,
@@ -71,9 +76,13 @@ export function ProjectIconPickerDialog({
 
   useEffect(() => {
     if (open && !previousOpenRef.current) {
-      setMode(current?.kind ?? "lucide");
+      setMode(current?.kind === "photo" ? "lucide" : (current?.kind ?? "lucide"));
       setIconName(current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON);
-      setColor(current && current.kind !== "emoji" ? current.color : automatic.color);
+      setColor(
+        current && (current.kind === "lucide" || current.kind === "monogram")
+          ? current.color
+          : automatic.color,
+      );
       setLetters(current?.kind === "monogram" ? current.text : automatic.monogram);
       setEmoji(current?.kind === "emoji" ? current.emoji : "💻");
       setQuery("");

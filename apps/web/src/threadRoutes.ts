@@ -1,5 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { AgentNotificationDeepLink } from "@t3tools/contracts";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { Schema } from "effect";
 import type { DraftId } from "./composerDraftStore";
 
 export type ThreadRouteTarget =
@@ -22,21 +24,20 @@ export type ThreadRouteRenderState = "loading" | "ready" | "missing";
 
 export function resolveThreadRouteRenderState(input: {
   bootstrapComplete: boolean;
-  serverThreadShellExists: boolean;
-  serverThreadDetailExists: boolean;
-  serverThreadDetailDeleted: boolean;
+  serverThreadExists: boolean;
+  serverThreadDeleted: boolean;
   draftThreadExists: boolean;
 }): ThreadRouteRenderState {
   if (!input.bootstrapComplete) {
     return "loading";
   }
-  if (input.serverThreadDetailExists || input.draftThreadExists) {
+  if (input.draftThreadExists) {
     return "ready";
   }
-  if (input.serverThreadDetailDeleted) {
+  if (input.serverThreadDeleted) {
     return "missing";
   }
-  return input.serverThreadShellExists ? "loading" : "missing";
+  return input.serverThreadExists ? "ready" : "missing";
 }
 
 export function buildThreadRouteParams(ref: ScopedThreadRef): {
@@ -94,6 +95,20 @@ export function resolveThreadRouteRef(
   }
 
   return scopeThreadRef(params.environmentId as EnvironmentId, params.threadId as ThreadId);
+}
+
+const isAgentNotificationDeepLink = Schema.is(AgentNotificationDeepLink);
+
+/** Translate the notification transport URL into the web router's thread params. */
+export function resolveAgentNotificationThreadRef(deepLink: string): ScopedThreadRef | null {
+  if (!isAgentNotificationDeepLink(deepLink) || deepLink.includes("\\")) return null;
+  try {
+    const [, , environmentId, threadId] = deepLink.split("/").map(decodeURIComponent);
+    if ([environmentId, threadId].some((part) => part === "." || part === "..")) return null;
+    return resolveThreadRouteRef({ environmentId, threadId });
+  } catch {
+    return null;
+  }
 }
 
 export function resolveThreadRouteTarget(

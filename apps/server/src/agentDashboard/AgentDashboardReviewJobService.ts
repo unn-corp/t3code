@@ -30,7 +30,7 @@ import {
   type AgentDashboardReviewRunnerError,
   REVIEW_KIND,
 } from "./AgentDashboardReviewRunner.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 

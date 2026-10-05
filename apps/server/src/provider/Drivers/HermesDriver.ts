@@ -12,7 +12,10 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeHermesTextGeneration } from "../../textGeneration/HermesTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeHermesAdapter } from "../Layers/HermesAdapter.ts";
+import {
+  HermesAdapterV2Driver,
+  type HermesAdapterV2DriverEnv,
+} from "../../orchestration-v2/Adapters/HermesAdapterV2.ts";
 import {
   buildInitialHermesProviderSnapshot,
   checkHermesProviderStatus,
@@ -43,6 +46,7 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type HermesDriverEnv =
+  | HermesAdapterV2DriverEnv
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -99,11 +103,24 @@ export const HermesDriver: ProviderDriver<HermesSettings, HermesDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies HermesSettings;
-      const adapter = yield* makeHermesAdapter(effectiveConfig, {
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      const adapter = yield* HermesAdapterV2Driver.create({
         instanceId,
-      });
+        displayName,
+        accentColor,
+        environment,
+        enabled,
+        config,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: cause.detail,
+              cause,
+            }),
+        ),
+      );
       const textGeneration = yield* makeHermesTextGeneration(effectiveConfig, processEnv);
 
       const checkProvider = checkHermesProviderStatus(effectiveConfig, processEnv).pipe(
@@ -149,7 +166,7 @@ export const HermesDriver: ProviderDriver<HermesSettings, HermesDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
-        adapter,
+        orchestrationAdapter: adapter,
         textGeneration,
       } satisfies ProviderInstance;
     }),

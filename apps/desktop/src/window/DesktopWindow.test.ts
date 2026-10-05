@@ -105,7 +105,7 @@ function makeFakeBrowserWindow() {
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn((_url: string) => Promise.resolve()),
     maximize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
@@ -314,6 +314,7 @@ function makeTestLayer(input: {
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: () => Effect.void,
+          prepareWebview: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           reapplyZoom: () =>
@@ -1441,6 +1442,12 @@ describe("DesktopWindow", () => {
 
           yield* desktopWindow.showConnectingSplash;
           assert.equal(yield* Ref.get(scenario.createCalls), 1);
+          const splashUrl = splash.loadURL.mock.calls[0]?.[0];
+          assert.isDefined(splashUrl);
+          const html = decodeURIComponent(String(splashUrl).split(",").slice(1).join(","));
+          assert.include(html, "Starting T3 Code");
+          assert.include(html, "First-time upgrades can take several minutes");
+          assert.notInclude(html, "Connecting to WSL");
 
           // Taskbar/dock activation during cold boot must bring the splash back
           // rather than no-op and leave it hidden until the backend finishes.

@@ -6,12 +6,15 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback } from "react";
 
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
+import { isHostedStaticApp } from "../../hostedPairing";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { fetchSessionState } from "./auth";
 
 const primarySessionStateAtom = Atom.make(
   Effect.suspend(() =>
-    isLocalEnvironmentDisabled() ? Effect.succeed(null) : Effect.promise(fetchSessionState),
+    isHostedStaticApp() || isLocalEnvironmentDisabled()
+      ? Effect.succeed(null)
+      : Effect.promise(fetchSessionState),
   ),
 ).pipe(
   Atom.swr({ staleTime: 5_000, revalidateOnMount: true }),

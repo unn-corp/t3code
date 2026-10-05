@@ -2,7 +2,7 @@ import {
   CommandId,
   MessageId,
   type DiscordBridgeSettings,
-  type OrchestrationEvent,
+  type OrchestrationV2DomainEvent,
   type OrchestrationThread,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -18,9 +18,9 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { DiscordBridgeLinkRepository } from "../../persistence/DiscordBridgeLinks.ts";
-import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
+import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
+import { ProjectionSnapshotQuery } from "../../agentDashboard/AutomationSnapshotQuery.ts";
+import { OrchestrationEngineService } from "../../agentDashboard/AutomationOrchestration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { forkParked } from "../../serverActivation.ts";
 import {
@@ -59,50 +59,38 @@ type BridgeWork =
       readonly action: "archived" | "unarchived" | "deleted";
     };
 
-const eventToWork = (event: OrchestrationEvent, mirrorActivity: boolean): BridgeWork | null => {
+export const eventToWork = (
+  event: OrchestrationV2DomainEvent,
+  mirrorActivity: boolean,
+): BridgeWork | null => {
+  const threadId = event.threadId;
   switch (event.type) {
     case "thread.created":
-      return { kind: "thread-created", threadId: event.payload.threadId };
-    case "thread.message-sent":
-      return {
-        kind: "message",
-        threadId: event.payload.threadId,
-        messageId: event.payload.messageId,
-      };
-    case "thread.meta-updated":
-    case "thread.runtime-mode-set":
-    case "thread.session-set":
-      return { kind: "header", threadId: event.payload.threadId };
+      return { kind: "thread-created", threadId };
+    case "message.updated":
+      return { kind: "message", threadId, messageId: event.payload.id };
     case "thread.archived":
-      return { kind: "lifecycle", threadId: event.payload.threadId, action: "archived" };
+      return { kind: "lifecycle", threadId, action: "archived" };
     case "thread.unarchived":
-      return { kind: "lifecycle", threadId: event.payload.threadId, action: "unarchived" };
+      return { kind: "lifecycle", threadId, action: "unarchived" };
     case "thread.deleted":
-      return { kind: "lifecycle", threadId: event.payload.threadId, action: "deleted" };
-    case "thread.activity-appended":
+      return { kind: "lifecycle", threadId, action: "deleted" };
+    case "runtime-request.updated":
       return mirrorActivity
         ? {
             kind: "activity",
-            threadId: event.payload.threadId,
-            text: describeActivity(event.payload),
+            threadId,
+            text: `⏸ ${event.payload.kind.replaceAll("_", " ")} requested`,
           }
         : null;
-    case "thread.turn-diff-completed":
-      return mirrorActivity
-        ? { kind: "activity", threadId: event.payload.threadId, text: "✅ turn diff completed" }
-        : null;
-    case "thread.proposed-plan-upserted":
-      return mirrorActivity
-        ? { kind: "activity", threadId: event.payload.threadId, text: "📋 plan proposed" }
-        : null;
-    case "thread.approval-response-requested":
-      return mirrorActivity
-        ? { kind: "activity", threadId: event.payload.threadId, text: "⏸ approval requested" }
-        : null;
-    case "thread.user-input-response-requested":
-      return mirrorActivity
-        ? { kind: "activity", threadId: event.payload.threadId, text: "⏸ input requested" }
-        : null;
+    case "plan.updated":
+      return mirrorActivity ? { kind: "activity", threadId, text: "📋 plan updated" } : null;
+    case "thread.metadata-updated":
+    case "thread.runtime-mode-updated":
+    case "thread.provider-switched":
+    case "run.updated":
+    case "provider-session.updated":
+      return { kind: "header", threadId };
     default:
       return null;
   }
@@ -127,7 +115,7 @@ const statusOf = (thread: OrchestrationThread): HeaderStatus => {
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const links = yield* DiscordBridgeLinkRepository;
-  const messages = yield* ProjectionThreadMessageRepository;
+  const threads = yield* ThreadManagementService;
   const snapshots = yield* ProjectionSnapshotQuery;
   const serverSettings = yield* ServerSettingsService;
   const rest = yield* DiscordRestClient;
@@ -277,13 +265,11 @@ const make = Effect.gen(function* () {
       // Read the authoritative text from the projection. Event payloads carry
       // only a delta fragment while streaming, and an empty string on the
       // completion event, so they must not be used as the message body.
-      const projected = yield* messages
-        .getByMessageId({ messageId })
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isNone(projected)) {
-        return;
-      }
-      const record = projected.value;
+      const detail = yield* threadDetail(threadId);
+      if (Option.isNone(detail)) return;
+      const message = detail.value.messages.find((entry) => entry.id === messageId);
+      if (message === undefined) return;
+      const record = { ...message, isStreaming: message.streaming };
       const now = yield* Clock.currentTimeMillis;
       const flushes = yield* Ref.get(lastFlushAt);
       const previous = flushes.get(messageId);
@@ -594,7 +580,7 @@ const make = Effect.gen(function* () {
     });
 
     yield* forkParked(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+      Stream.runForEach(threads.streamDomainEvents, (event) => {
         const work = eventToWork(event, config.mirrorActivity);
         if (work === null) {
           return Effect.void;

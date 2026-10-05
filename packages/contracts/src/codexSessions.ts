@@ -67,3 +67,8 @@ export const CodexSessionsResumeResult = Schema.Struct({
   /** Older turns beyond the import cap. */
   omittedTurnCount: Schema.optionalKey(Schema.Number),
 });
+
+export class NativeSessionResumeError extends Schema.TaggedError<NativeSessionResumeError>()(
+  "NativeSessionResumeError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}

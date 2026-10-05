@@ -502,7 +502,19 @@ const ProjectMonogramIcon = Schema.Struct({
   text: ProjectMonogramText,
   color: ProjectIconColor,
 });
-const ProjectIcon = Schema.Union([ProjectLucideIcon, ProjectEmojiIcon, ProjectMonogramIcon]);
+const ProjectPhotoIcon = Schema.Struct({
+  kind: Schema.Literal("photo"),
+  dataUrl: Schema.String.check(
+    Schema.isMaxLength(65536),
+    Schema.isPattern(/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/),
+  ),
+});
+const ProjectIcon = Schema.Union([
+  ProjectLucideIcon,
+  ProjectEmojiIcon,
+  ProjectMonogramIcon,
+  ProjectPhotoIcon,
+]);
 const ProjectLucideIconWire = Schema.Struct({
   ...ProjectLucideIcon.fields,
   monogramText: Schema.optional(ProjectMonogramText),
@@ -515,6 +527,7 @@ export const ProjectIconOverride = Schema.Union([
   ProjectLucideIconWire,
   ProjectEmojiIcon,
   ProjectMonogramIcon,
+  ProjectPhotoIcon,
 ]).pipe(
   Schema.decodeTo(
     ProjectIcon,

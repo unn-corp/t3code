@@ -28,6 +28,18 @@ describe("brand-assets", () => {
         sourceRelativePath: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
         targetRelativePath: "dist/client/apple-touch-icon.png",
       },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.productionWebPwa192Png,
+        targetRelativePath: "dist/client/pwa-192x192.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.productionWebPwa512Png,
+        targetRelativePath: "dist/client/pwa-512x512.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.productionWebPwaMaskablePng,
+        targetRelativePath: "dist/client/pwa-maskable-512x512.png",
+      },
     ]);
   });
 
@@ -55,6 +67,18 @@ describe("brand-assets", () => {
       {
         sourceRelativePath: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
         targetRelativePath: "apps/web/public/apple-touch-icon.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.developmentWebPwa192Png,
+        targetRelativePath: "apps/web/public/pwa-192x192.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.developmentWebPwa512Png,
+        targetRelativePath: "apps/web/public/pwa-512x512.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.developmentWebPwaMaskablePng,
+        targetRelativePath: "apps/web/public/pwa-maskable-512x512.png",
       },
     ]);
   });

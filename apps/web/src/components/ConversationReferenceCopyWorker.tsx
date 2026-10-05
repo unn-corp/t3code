@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import type { AssetResource, ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -115,7 +116,15 @@ export function ConversationReferenceCopyWorker(props: {
             title: request.title,
             environmentLabel: request.environmentLabel,
             copiedAt: new Date().toISOString(),
-            messages: sourceThread.messages,
+            messages: sourceThread.messages.map(
+              ({ scheduledTaskId, senderThreadId, ...message }) => ({
+                ...message,
+                createdAt: DateTime.formatIso(message.createdAt),
+                updatedAt: DateTime.formatIso(message.updatedAt),
+                ...(scheduledTaskId === undefined ? {} : { scheduledTaskId }),
+                ...(senderThreadId === undefined ? {} : { senderThreadId }),
+              }),
+            ),
             images: images.filter((image): image is NonNullable<typeof image> => image !== null),
           }),
         ),

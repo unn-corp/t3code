@@ -16,8 +16,9 @@
     "start:marketing": "vp run --filter @t3tools/marketing preview",
     "start:mock-update-server": "node scripts/mock-update-server.ts",
     "screenshots:mobile": "node scripts/mobile-showcase.ts",
-    "icons:export": "node scripts/export-brand-icons.ts",
-    "icons:check": "node scripts/export-brand-icons.ts --check",
+    "icons:export": "node scripts/export-brand-icons.ts && node scripts/export-android-icons.ts && node scripts/export-pwa-icons.ts",
+    "icons:check": "node scripts/export-brand-icons.ts --check && node scripts/export-pwa-icons.ts --check",
+    "icons:export:pwa": "node scripts/export-pwa-icons.ts",
     "licenses:sync": "node scripts/sync-third-party-license-notices.ts",
     "icons:export:android": "node scripts/export-android-icons.ts",
     "build": "vp run --filter './apps/*' build",
@@ -32,6 +33,7 @@
     "knip:production": "knip --production --preprocessor ./scripts/knip-schemas.ts",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "vp run -r test",
+    "test:perf:v2-wire": "vp test run apps/server/src/orchestration-v2/WireProjection.test.ts apps/server/src/orchestration-v2/threadHistoryPaging.test.ts apps/server/src/orchestration-v2/ThreadStream.test.ts apps/server/src/orchestration-v2/ThreadTransportPerformance.test.ts apps/server/src/orchestration-v2/ShellStream.test.ts apps/server/src/orchestration-v2/CommandPolicy.test.ts apps/server/src/orchestration-v2/runtimeLayer.test.ts apps/server/src/ws.test.ts packages/contracts/src/environmentHttp.test.ts packages/contracts/src/orchestrationV2.test.ts packages/client-runtime/src/operations/commands.test.ts packages/client-runtime/src/operations/commands.performance.test.ts packages/client-runtime/src/state/boundedThreadSnapshotHttp.test.ts packages/client-runtime/src/state/threadHistoryController.test.ts packages/client-runtime/src/state/threadHistoryMerge.test.ts packages/client-runtime/src/state/threadDetail.test.ts packages/client-runtime/src/state/threads-sync.test.ts packages/client-runtime/src/state/shellReducer.test.ts",
     "test:resource-monitor": "cargo test --locked --manifest-path native/resource-monitor/Cargo.toml",
     "test:desktop-smoke": "vp run --filter @t3tools/desktop smoke-test",
     "fmt": "vp fmt",
@@ -47,7 +49,8 @@
     "dist:desktop:win:x64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "release:smoke": "node scripts/release-smoke.ts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus",
-    "sync:repos": "node scripts/sync-reference-repos.ts"
+    "sync:repos": "node scripts/sync-reference-repos.ts",
+    "test:pwa": "vp test run apps/web/src/pwa.test.ts apps/web/src/hooks/useMediaQuery.test.tsx apps/web/src/connection/browserWakeups.test.ts apps/web/src/composerDraftStore.test.ts apps/web/src/lib/draftPersistenceLifecycle.test.ts apps/web/src/components/composerFooterLayout.test.ts apps/web/src/components/chat/useComposerFocusState.test.tsx apps/web/src/components/chat/restingComposerControlsMeasurement.test.ts apps/web/src/components/ui/sidebar.test.tsx apps/web/src/components/Sidebar.drag.test.ts apps/web/src/lib/dictationMicrophone.test.ts apps/web/src/agentNotifications/browserNotifications.test.ts apps/web/src/agentNotifications/pwaPushRelay.test.ts apps/web/src/agentNotifications/usePwaPushSubscriptionSync.test.tsx apps/web/src/agentNotifications/usePwaNotificationSetup.test.tsx apps/web/src/components/ThreadNotificationCoordinator.test.tsx packages/client-runtime/src/rpc/client.test.ts"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",

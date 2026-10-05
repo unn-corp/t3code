@@ -1,10 +1,11 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef, GitHubAccountId } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback } from "react";
 
+import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { readLocalApi } from "~/localApi";
 import { previewEnvironment } from "~/state/preview";
@@ -33,6 +34,7 @@ const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
 export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
   url: string,
   options?: {
+    readonly githubAccountId?: GitHubAccountId | null | undefined;
     readonly event?: { readonly metaKey: boolean; readonly ctrlKey: boolean };
     /** Thread to open beside when it is not the hook's own, e.g. a sidebar row's. */
     readonly threadRef?: ScopedThreadRef | undefined;
@@ -61,7 +63,7 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
       }
       const api = readLocalApi();
       if (!api) throw new Error("Link opening is unavailable.");
-      await api.shell.openExternal(url);
+      await openExternalWithGitHubAccount(api.shell, url, options.githubAccountId);
     },
     [openPreview, threadRef],
   );

@@ -18,9 +18,7 @@ export const denyArchitectAcpTools = Effect.fn("denyArchitectAcpTools")(function
   yield* runtime.handleRequestPermission(() =>
     Effect.succeed({ outcome: { outcome: "cancelled" as const } }),
   );
-  yield* runtime.handleElicitation(() =>
-    Effect.succeed({ action: { action: "decline" as const } }),
-  );
+  yield* runtime.handleElicitation(() => Effect.succeed({ action: "decline" as const }));
   yield* runtime.handleReadTextFile(denyClientTool);
   yield* runtime.handleWriteTextFile(denyClientTool);
   yield* runtime.handleCreateTerminal(denyClientTool);

@@ -1,3 +1,10 @@
+import { PwaAppUpdateSettings } from "./PwaAppUpdateSettings";
+import {
+  PwaNotificationSettings,
+  AgentNotificationSoundRow,
+  AGENT_NOTIFICATION_SOUND_ROWS,
+} from "./AgentNotificationSettings";
+import { RunLimitsSettings } from "./RunLimitsSettings";
 import { useAtomValue } from "@effect/atom-react";
 import {
   ArchiveIcon,
@@ -5,7 +12,6 @@ import {
   CheckIcon,
   ChevronRightIcon,
   LoaderIcon,
-  PlayIcon,
   SettingsIcon,
 } from "lucide-react";
 import { Spinner } from "~/components/ui/spinner";
@@ -18,8 +24,6 @@ import {
   type AgentNotificationEvent,
   type AgentNotificationKind,
   type AgentNotificationSoundId,
-  type AgentNotificationSounds,
-  AGENT_NOTIFICATION_SOUND_IDS,
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
   type ModelSelection,
@@ -29,6 +33,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -76,13 +81,20 @@ import {
   MIN_TERMINAL_FONT_SIZE,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
+  SidebarProjectSortOrder,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
-import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
+import {
+  APP_BUILD_IDENTITY,
+  APP_VERSION,
+  HOSTED_APP_CHANNEL,
+  HOSTED_APP_CHANNEL_LABEL,
+} from "../../branding";
+import { IS_NIGHTLY_BUILD, NightlyMobileBetaRow } from "../NightlyMobileBeta";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -97,7 +109,6 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
-import { clearPwaCachesAndReload } from "../../pwa";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useCustomThemes } from "../../hooks/useCustomThemes";
 import {
@@ -126,6 +137,7 @@ import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
+  selectsPlanAgent,
 } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -135,7 +147,6 @@ import {
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import { primaryServerProvidersAtom, EMPTY_SERVER_PROVIDERS } from "../../state/server";
-import { usePrimaryEnvironment } from "../../state/environments";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
@@ -206,24 +217,9 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
 import {
-  agentNotificationSoundLabel,
   playAgentNotificationSound,
   playAgentNotificationSoundId,
 } from "../../agentNotifications/sound";
-import {
-  getBrowserNotificationStatus,
-  getExistingBrowserPushSubscription,
-  showBrowserNotificationPreview,
-  subscribeBrowserPush,
-  unsubscribeBrowserPush,
-  type BrowserNotificationStatus,
-} from "../../agentNotifications/browserNotifications";
-import {
-  getPwaPushConfig,
-  registerPwaPushSubscription,
-  removePwaPushSubscription,
-  testPwaPushSubscription,
-} from "../../agentNotifications/pwaPushRelay";
 import { DictationMicrophonePicker } from "./DictationMicrophonePicker";
 import { DictationKeybindRecorder } from "./DictationKeybindRecorder";
 import { DictationSetupAgentButton } from "./DictationSetupAgentButton";
@@ -237,15 +233,20 @@ const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, s
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: "Wait for the full response",
   paragraph: "Show finished paragraphs",
-  token: "Token by token (legacy)",
 };
 
 const RESPONSE_STREAMING_MODE_DESCRIPTIONS: Record<ResponseStreamingMode, string> = {
   turn: "Text appears once the agent finishes its turn.",
   paragraph: "Each paragraph or code block appears as soon as it is complete.",
-  token:
-    "Every token repaints the answer as it arrives. Slower and harder to read. Thinking traces still arrive a paragraph at a time.",
 };
+
+const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string> = {
+  updated_at: "Last user message",
+  created_at: "Created at",
+  manual: "Manual",
+};
+const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
   "12-hour": "12-hour",
@@ -325,7 +326,21 @@ function AboutVersionTitle() {
   return (
     <span className="inline-flex items-baseline gap-2">
       <span>Version</span>
-      <code className="text-2xs font-medium text-muted-foreground">{APP_VERSION}</code>
+      <Tooltip>
+        <TooltipTrigger
+          render={<code tabIndex={0} className="text-2xs font-medium text-muted-foreground" />}
+        >
+          {APP_VERSION}
+          {APP_BUILD_IDENTITY.commit
+            ? ` · ${APP_BUILD_IDENTITY.commit.slice(0, 12)}${APP_BUILD_IDENTITY.dirty ? " + local changes" : ""}`
+            : " · commit unknown"}
+        </TooltipTrigger>
+        <TooltipPopup>
+          {APP_BUILD_IDENTITY.commit ?? "Commit unknown"}
+          {APP_BUILD_IDENTITY.builtAt ? ` · Built ${APP_BUILD_IDENTITY.builtAt}` : ""}
+          {APP_BUILD_IDENTITY.label ? ` · ${APP_BUILD_IDENTITY.label}` : ""}
+        </TooltipPopup>
+      </Tooltip>
     </span>
   );
 }
@@ -338,6 +353,9 @@ function AboutVersionSection() {
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
   const selectedHostedAppChannel = hasDesktopBridge ? null : HOSTED_APP_CHANNEL;
+  // Show the beta app links as soon as someone picks Nightly, before the update installs.
+  const showNightlyMobileBeta =
+    IS_NIGHTLY_BUILD || (hasDesktopBridge && selectedUpdateChannel === "nightly");
 
   const handleUpdateChannelChange = useCallback(
     (channel: DesktopUpdateChannel) => {
@@ -558,6 +576,7 @@ function AboutVersionSection() {
           }
         />
       ) : null}
+      {showNightlyMobileBeta ? <NightlyMobileBetaRow /> : null}
     </>
   );
 }
@@ -611,6 +630,13 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
         : []),
+      ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
+        ? ["Project order"]
+        : []),
+      ...(settings.sidebarWorkingShelfEnabled !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
+        ? ["Working section"]
+        : []),
       ...(settings.sidebarAutoSettleAfterDays !==
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
@@ -618,7 +644,17 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
         ? ["Auto-settle merged threads"]
         : []),
+      ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
+        ? ["Auto-resume limited threads"]
+        : []),
+      ...(settings.snoozeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads
+        ? ["Snooze limited threads"]
+        : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.persistComposerContextStrip !==
+      DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
+        ? ["Composer context"]
+        : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
@@ -742,13 +778,20 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.dictationStartKeybinds,
       settings.dictationEndKeybinds,
       settings.enableLegacyTokenStreaming,
+      settings.panelAnimationDurationMs,
+      settings.responseStreamingMode,
+      settings.persistComposerContextStrip,
       settings.enableProviderUpdateChecks,
       settings.continuousImprovement,
       settings.pullRequestRollup,
       settings.repositoryReview,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
+      settings.autoResumeLimitedThreads,
+      settings.snoozeLimitedThreads,
       settings.sidebarProjectGroupingMode,
+      settings.sidebarProjectSortOrder,
+      settings.sidebarWorkingShelfEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
@@ -827,6 +870,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
+      diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
@@ -841,6 +886,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+      sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       dictationMicrophoneDeviceId: DEFAULT_UNIFIED_SETTINGS.dictationMicrophoneDeviceId,
@@ -848,6 +895,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       dictationEndKeybinds: DEFAULT_UNIFIED_SETTINGS.dictationEndKeybinds,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
+      autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
+      snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
+      responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continuousImprovement: DEFAULT_UNIFIED_SETTINGS.continuousImprovement,
       pullRequestRollup: DEFAULT_UNIFIED_SETTINGS.pullRequestRollup,
@@ -1176,431 +1226,6 @@ function BackgroundActivityAdvancedDialog({
   );
 }
 
-function PwaAppUpdateSettings() {
-  const [clearing, setClearing] = useState(false);
-  if (typeof window === "undefined" || isElectron) return null;
-  return (
-    <SettingsSection title="App updates">
-      <SettingsRow
-        title="Reload the app from the server"
-        description="Discards this device's cached app files and fetches the current build. Pairing, environments and settings are untouched."
-        control={
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={clearing}
-            onClick={() => {
-              setClearing(true);
-              void clearPwaCachesAndReload();
-            }}
-          >
-            {clearing ? "Reloading…" : "Reload from server"}
-          </Button>
-        }
-      />
-    </SettingsSection>
-  );
-}
-
-const AGENT_NOTIFICATION_SOUND_ROWS: readonly {
-  readonly kind: AgentNotificationKind;
-  readonly title: string;
-}[] = [
-  { kind: "agent_completed", title: "Agent finished sound" },
-  { kind: "plan_ready", title: "Plan ready sound" },
-  { kind: "input_required", title: "Needs input sound" },
-  { kind: "agent_failed", title: "Agent failed sound" },
-];
-
-function PwaNotificationSettings() {
-  const primaryEnvironment = usePrimaryEnvironment();
-  const notificationPreferences = useClientSettings((value) => value.agentNotifications);
-  const updateClientSettings = useUpdateClientSettings();
-  const [status, setStatus] = useState<BrowserNotificationStatus>(() =>
-    getBrowserNotificationStatus(),
-  );
-  const [vapidPublicKey, setVapidPublicKey] = useState<string | null>(null);
-  const [isConfigLoading, setIsConfigLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const subscriptionIdRef = useRef<string | null>(
-    typeof window === "undefined"
-      ? null
-      : window.localStorage.getItem("t3code.webPushSubscriptionId"),
-  );
-
-  const refreshStatus = useCallback(() => {
-    setStatus(getBrowserNotificationStatus());
-  }, []);
-
-  useEffect(() => {
-    window.addEventListener("focus", refreshStatus);
-    document.addEventListener("visibilitychange", refreshStatus);
-    return () => {
-      window.removeEventListener("focus", refreshStatus);
-      document.removeEventListener("visibilitychange", refreshStatus);
-    };
-  }, [refreshStatus]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const applicationServerKey = await getPwaPushConfig();
-        if (!cancelled) setVapidPublicKey(applicationServerKey);
-      } catch {
-        // The relay may not be configured for a local-only installation yet.
-      } finally {
-        if (!cancelled) setIsConfigLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const updatePreferences = useCallback(
-    (patch: Partial<typeof notificationPreferences>) => {
-      updateClientSettings({
-        agentNotifications: { ...notificationPreferences, ...patch },
-      });
-    },
-    [notificationPreferences, updateClientSettings],
-  );
-
-  const persistRemoteSubscription = useCallback(
-    async (subscription: PushSubscription, preferences: typeof notificationPreferences) => {
-      if (!primaryEnvironment) throw new Error("Connect this PWA to a T3 Code server first.");
-      const subscriptionId = await registerPwaPushSubscription({
-        environmentId: primaryEnvironment.environmentId,
-        subscription,
-        preferences,
-      });
-      subscriptionIdRef.current = subscriptionId;
-      window.localStorage.setItem("t3code.webPushSubscriptionId", subscriptionId);
-    },
-    [primaryEnvironment],
-  );
-
-  const enableNotifications = useCallback(async () => {
-    if (!vapidPublicKey) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Remote notifications are unavailable",
-          description: isConfigLoading
-            ? "The relay configuration is still loading. Try again in a moment."
-            : "This PWA could not reach its Web Push service. Check this device's T3 Code connection and try again.",
-        }),
-      );
-      return;
-    }
-    setIsSaving(true);
-    try {
-      // This is intentionally the first awaited browser operation in the click handler:
-      // iOS only permits PushManager.subscribe while the direct user gesture is still valid.
-      const result = await subscribeBrowserPush({ applicationServerKey: vapidPublicKey });
-      if (result.state !== "subscribed" || result.subscription === null) {
-        setStatus(
-          result.state === "permission-blocked" ? "permission-blocked" : "permission-needed",
-        );
-        throw new Error(
-          result.state === "not-installed"
-            ? "Install T3 Code on your Home Screen before enabling push notifications."
-            : result.state === "worker-failed"
-              ? "The PWA service worker could not start. Reload the installed app and try again."
-              : result.state === "permission-granted"
-                ? "Permission is granted. Tap Enable notifications once more to subscribe this installation."
-                : "Allow notifications for T3 Code, then try again.",
-        );
-      }
-      const preferences = { ...notificationPreferences, enabled: true };
-      await persistRemoteSubscription(result.subscription, preferences);
-      updateClientSettings({ agentNotifications: preferences });
-      setStatus("ready");
-      toastManager.add(
-        stackedThreadToast({ type: "success", title: "Remote notifications enabled" }),
-      );
-    } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not enable notifications",
-          description:
-            error instanceof Error ? error.message : "Try again after reloading the PWA.",
-        }),
-      );
-    } finally {
-      setIsSaving(false);
-    }
-  }, [
-    isConfigLoading,
-    notificationPreferences,
-    persistRemoteSubscription,
-    updateClientSettings,
-    vapidPublicKey,
-  ]);
-
-  useEffect(() => {
-    if (!notificationPreferences.enabled || subscriptionIdRef.current === null) return;
-    void getExistingBrowserPushSubscription()
-      .then((subscription) => {
-        if (subscription) return persistRemoteSubscription(subscription, notificationPreferences);
-      })
-      .catch(() => {
-        // A later enable interaction will repair a browser subscription that disappeared.
-      });
-  }, [notificationPreferences, persistRemoteSubscription]);
-
-  const disableNotifications = useCallback(() => {
-    void unsubscribeBrowserPush();
-    const subscriptionId = subscriptionIdRef.current;
-    subscriptionIdRef.current = null;
-    window.localStorage.removeItem("t3code.webPushSubscriptionId");
-    updatePreferences({ enabled: false });
-    if (subscriptionId) {
-      void removePwaPushSubscription(subscriptionId).catch(() => {
-        // Local unsubscription already prevents delivery for this installation.
-      });
-    }
-  }, [updatePreferences]);
-
-  const remoteTest = useCallback(() => {
-    const subscriptionId = subscriptionIdRef.current;
-    if (!subscriptionId) return;
-    void (async () => {
-      try {
-        await testPwaPushSubscription(subscriptionId);
-        toastManager.add(stackedThreadToast({ type: "success", title: "Remote test queued" }));
-      } catch (error) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not queue remote test",
-            description:
-              error instanceof Error ? error.message : "Try enabling notifications again.",
-          }),
-        );
-      }
-    })();
-  }, []);
-
-  const previewNotification = useCallback(() => {
-    void showBrowserNotificationPreview()
-      .then((nextStatus) => {
-        setStatus(nextStatus);
-        if (nextStatus === "ready") {
-          toastManager.add(
-            stackedThreadToast({
-              type: "success",
-              title: "Preview notification sent",
-              description: "Check this device's notification center if no banner appears.",
-            }),
-          );
-          return;
-        }
-        throw new Error("Browser notifications are not ready.");
-      })
-      .catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not send preview notification",
-            description:
-              error instanceof Error ? error.message : "Try enabling notifications again.",
-          }),
-        );
-      });
-  }, []);
-
-  const statusDescription: Record<BrowserNotificationStatus, string> = {
-    unsupported: "Notifications are not supported by this browser or device.",
-    "permission-needed": "Allow notifications to enable alerts on this browser or PWA.",
-    "permission-blocked": "Notifications are blocked by your browser or system settings.",
-    ready: notificationPreferences.enabled
-      ? "Notifications are on for this browser or PWA."
-      : "Notifications are available on this browser or PWA.",
-  };
-  const canManagePreferences = status === "ready" && notificationPreferences.enabled;
-
-  return (
-    <SettingsSection {...searchableSetting("notifications")}>
-      <SettingsRow
-        title="Notifications on this device"
-        description={statusDescription[status]}
-        control={
-          <Switch
-            checked={notificationPreferences.enabled}
-            disabled={status === "unsupported" || isSaving}
-            onCheckedChange={(checked) => {
-              if (checked) {
-                void enableNotifications();
-              } else {
-                disableNotifications();
-              }
-            }}
-            aria-label="Enable notifications on this device"
-          />
-        }
-      />
-
-      {canManagePreferences ? (
-        <>
-          <SettingsRow
-            title="Preview notification"
-            description="Sends a local browser notification on this installation."
-            control={
-              <Button size="xs" variant="outline" onClick={previewNotification}>
-                Send preview
-              </Button>
-            }
-          />
-          <SettingsRow
-            title="Remote test"
-            description="Queues a remote notification for this anonymous PWA installation."
-            control={
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={subscriptionIdRef.current === null || isSaving}
-                onClick={remoteTest}
-              >
-                Send remote test
-              </Button>
-            }
-          />
-          <SettingsRow
-            title="Agent finished"
-            description="Notify when agent work completes."
-            control={
-              <Switch
-                checked={notificationPreferences.notifyOnCompletion}
-                onCheckedChange={(checked) =>
-                  updatePreferences({ notifyOnCompletion: Boolean(checked) })
-                }
-                aria-label="Notify when an agent finishes"
-              />
-            }
-          />
-          <SettingsRow
-            title="Plan ready"
-            description="Notify when an agent proposes a plan for review."
-            control={
-              <Switch
-                checked={notificationPreferences.notifyOnPlanReady}
-                onCheckedChange={(checked) =>
-                  updatePreferences({ notifyOnPlanReady: Boolean(checked) })
-                }
-                aria-label="Notify when a plan is ready"
-              />
-            }
-          />
-          <SettingsRow
-            title="Input needed"
-            description="Notify when an agent needs approval or a response."
-            control={
-              <Switch
-                checked={notificationPreferences.notifyOnInput}
-                onCheckedChange={(checked) =>
-                  updatePreferences({ notifyOnInput: Boolean(checked) })
-                }
-                aria-label="Notify when agent input is needed"
-              />
-            }
-          />
-          <SettingsRow
-            title="Agent failed"
-            description="Notify when an agent run ends with an error."
-            control={
-              <Switch
-                checked={notificationPreferences.notifyOnFailure}
-                onCheckedChange={(checked) =>
-                  updatePreferences({ notifyOnFailure: Boolean(checked) })
-                }
-                aria-label="Notify when an agent fails"
-              />
-            }
-          />
-          <SettingsRow
-            title="Show project and thread names"
-            description="Turn this off to hide work names in notifications and on your lock screen."
-            control={
-              <Switch
-                checked={notificationPreferences.showProjectAndThreadNames}
-                onCheckedChange={(checked) =>
-                  updatePreferences({ showProjectAndThreadNames: Boolean(checked) })
-                }
-                aria-label="Show project and thread names in notifications"
-              />
-            }
-          />
-          <SettingsRow
-            title="Disable notifications"
-            description="Turns off notifications for this browser or PWA installation."
-            control={
-              <Button size="xs" variant="outline" onClick={disableNotifications}>
-                Disable
-              </Button>
-            }
-          />
-        </>
-      ) : null}
-      <p className="px-4 pb-2 text-xs text-muted-foreground">
-        These settings apply only to this browser or PWA installation, not to your desktop app or
-        other devices.
-      </p>
-    </SettingsSection>
-  );
-}
-
-function AgentNotificationSoundRow({
-  kind,
-  title,
-  sounds,
-  onChange,
-}: {
-  readonly kind: AgentNotificationKind;
-  readonly title: string;
-  readonly sounds: AgentNotificationSounds;
-  readonly onChange: (kind: AgentNotificationKind, soundId: AgentNotificationSoundId) => void;
-}) {
-  const selected = sounds[kind];
-  return (
-    <SettingsRow
-      title={title}
-      description="Pick the sound this notification plays, or turn it off with None."
-      control={
-        <div className="flex w-full items-center gap-2 sm:w-56">
-          <Select
-            value={selected}
-            onValueChange={(value) => onChange(kind, value as AgentNotificationSoundId)}
-          >
-            <SelectTrigger className="w-full" aria-label={title}>
-              <SelectValue>{agentNotificationSoundLabel(selected)}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {AGENT_NOTIFICATION_SOUND_IDS.map((soundId) => (
-                <SelectItem hideIndicator key={soundId} value={soundId}>
-                  {agentNotificationSoundLabel(soundId)}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-          <Button
-            size="xs"
-            variant="outline"
-            className="shrink-0"
-            disabled={selected === "none"}
-            onClick={() => playAgentNotificationSoundId(selected)}
-            aria-label={`Preview ${title}`}
-          >
-            <PlayIcon className="size-3.5" />
-          </Button>
-        </div>
-      }
-    />
-  );
-}
-
 export function AppearanceSettingsPanel() {
   const {
     appearanceMode,
@@ -1800,6 +1425,7 @@ export function AppearanceSettingsPanel() {
             }
           />
         ) : null}
+
         <SettingsRow
           {...searchableSetting("diff-color-scheme")}
           description="Choose colors for additions and deletions, including change counts."
@@ -1846,6 +1472,35 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+
+        <SettingsRow
+          {...searchableSetting("composer-context")}
+          description="Keep branch and worktree controls below the composer after a thread starts."
+          resetAction={
+            settings.persistComposerContextStrip !==
+            DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip ? (
+              <SettingResetButton
+                label="composer context"
+                onClick={() =>
+                  updateSettings({
+                    persistComposerContextStrip:
+                      DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.persistComposerContextStrip}
+              onCheckedChange={(checked) =>
+                updateSettings({ persistComposerContextStrip: Boolean(checked) })
+              }
+              aria-label="Keep composer context visible in active threads"
+            />
+          }
+        />
+
         <SettingsRow
           {...searchableSetting("chat-width")}
           description="Set how wide messages and the composer can grow on large screens."
@@ -4046,6 +3701,7 @@ export function GeneralSettingsPanel() {
     },
     [notificationPreferences, updateClientSettings],
   );
+  const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -4217,6 +3873,106 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          {...searchableSetting("project-order")}
+          description="Order of projects in the sidebar project picker and command palette."
+          resetAction={
+            settings.sidebarProjectSortOrder !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder ? (
+              <SettingResetButton
+                label="project order"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarProjectSortOrder}
+              onValueChange={(value) => {
+                if (isSidebarProjectSortOrder(value)) {
+                  updateSettings({ sidebarProjectSortOrder: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Project order">
+                <SelectValue>
+                  {SIDEBAR_PROJECT_SORT_ORDER_LABELS[settings.sidebarProjectSortOrder]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SidebarProjectSortOrder.literals.map((sortOrder) => (
+                  <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
+                    {SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("auto-resume-limited-threads")}
+          description="Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation."
+          settingKeys={["autoResumeLimitedThreads"]}
+          control={
+            <ScopedSwitch
+              settingKeys={["autoResumeLimitedThreads"]}
+              checked={settings.autoResumeLimitedThreads}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoResumeLimitedThreads: Boolean(checked) })
+              }
+              aria-label="Auto-resume limited threads"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("snooze-limited-threads")}
+          description="Snooze usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake."
+          settingKeys={["snoozeLimitedThreads"]}
+          control={
+            <ScopedSwitch
+              settingKeys={["snoozeLimitedThreads"]}
+              checked={settings.snoozeLimitedThreads}
+              onCheckedChange={(checked) =>
+                updateSettings({ snoozeLimitedThreads: Boolean(checked) })
+              }
+              aria-label="Snooze limited threads"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("working-shelf")}
+          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+          resetAction={
+            settings.sidebarWorkingShelfEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
+              <SettingResetButton
+                label="working section"
+                onClick={() =>
+                  updateSettings({
+                    sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarWorkingShelfEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
+              }
+              aria-label="Working section (beta)"
+            />
+          }
+        />
 
         {supportsAutoSettlement ? (
           <>
@@ -4343,6 +4099,54 @@ export function GeneralSettingsPanel() {
           }
         />
         <SettingsRow
+          serverScoped
+          settingKeys={["responseStreamingMode"]}
+          {...searchableSetting("response-streaming")}
+          description={
+            mixedResponseStreamingMode
+              ? "The selected targets use different streaming modes."
+              : RESPONSE_STREAMING_MODE_DESCRIPTIONS[settings.responseStreamingMode]
+          }
+          resetAction={
+            settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode ? (
+              <SettingResetButton
+                label="response streaming"
+                onClick={() =>
+                  updateSettings({
+                    responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={mixedResponseStreamingMode ? null : settings.responseStreamingMode}
+              onValueChange={(value) => {
+                if (value === "turn" || value === "paragraph") {
+                  updateSettings({ responseStreamingMode: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Response streaming">
+                <SelectValue>
+                  {(value: ResponseStreamingMode | null) =>
+                    value === null ? "Mixed" : RESPONSE_STREAMING_MODE_LABELS[value]
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="turn">
+                  {RESPONSE_STREAMING_MODE_LABELS.turn}
+                </SelectItem>
+                <SelectItem hideIndicator value="paragraph">
+                  {RESPONSE_STREAMING_MODE_LABELS.paragraph}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
           {...searchableSetting("hide-whitespace-changes")}
           description="Set whether the diff panel ignores whitespace-only edits by default."
           resetAction={
@@ -4404,7 +4208,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("proactive-panels")}
-          description="Open linked pull requests first. Otherwise, open the working tree diff for changes to at least 3 files or 50 lines."
+          description="Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines."
           resetAction={
             settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
               <SettingResetButton
@@ -4631,7 +4435,7 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("continue-threads-after-server-update")}
           serverScoped
           settingKeys={["continueThreadsAfterServerUpdate"]}
-          description="Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments. Update older servers first."
+          description="Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments."
           status={
             !supportsRestartContinuation
               ? "All selected connected environments must support restart continuation."
@@ -5029,7 +4833,9 @@ export function GeneralSettingsPanel() {
                     onPromptChange={() => {}}
                     modelOptions={textGenModelOptions}
                     allowPromptInjectedEffort={false}
-                    planModeEnabled={settings.planModeEnabled}
+                    planModeEnabled={
+                      settings.planModeEnabled || selectsPlanAgent(textGenModelOptions)
+                    }
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                     onModelOptionsChange={(nextOptions) => {
                       updateSettings({
@@ -5237,6 +5043,7 @@ export function GeneralSettingsPanel() {
         <>
           <PwaNotificationSettings />
           <PwaAppUpdateSettings />
+          <RunLimitsSettings />
         </>
       )}
 
@@ -5244,10 +5051,13 @@ export function GeneralSettingsPanel() {
         {isElectron || HOSTED_APP_CHANNEL ? (
           <AboutVersionSection />
         ) : (
-          <SettingsRow
-            title={<AboutVersionTitle />}
-            description="Current version of the application."
-          />
+          <>
+            <SettingsRow
+              title={<AboutVersionTitle />}
+              description="Current version of the application."
+            />
+            {IS_NIGHTLY_BUILD ? <NightlyMobileBetaRow /> : null}
+          </>
         )}
       </SettingsSection>
       <SettingsSection title="Diagnostics">
@@ -5319,10 +5129,7 @@ export function ArchivedThreadsPanel() {
       ),
     );
     const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-      snapshot.threads.map((thread) => ({
-        ...thread,
-        environmentId,
-      })),
+      snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
     );
 
     const archivedProjects = Array.from(projectsByEnvironmentAndId.values());

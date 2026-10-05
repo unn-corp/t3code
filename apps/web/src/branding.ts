@@ -26,3 +26,12 @@ export const APP_DISPLAY_NAME =
   formatAppDisplayName({ baseName: APP_BASE_NAME, stageLabel: APP_STAGE_LABEL });
 export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
 export const APP_BUILD_LABEL = import.meta.env.APP_BUILD_LABEL?.trim() || null;
+
+export const APP_BUILD_IDENTITY: import("@t3tools/contracts").BuildIdentity = import.meta.env
+  .APP_BUILD_IDENTITY ?? {
+  version: APP_VERSION,
+  commit: null,
+  dirty: false,
+  builtAt: null,
+  label: APP_BUILD_LABEL,
+};

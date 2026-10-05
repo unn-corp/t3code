@@ -751,7 +751,10 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
     }
   }
 
-  for (const override of DEVELOPMENT_PUBLIC_ICON_OVERRIDES) {
+  // The PWA renditions are generated from these outputs by export-pwa-icons.ts.
+  for (const override of DEVELOPMENT_PUBLIC_ICON_OVERRIDES.filter(
+    (value) => !value.targetRelativePath.includes("/pwa-"),
+  )) {
     const sourceContents = generated.get(override.sourceRelativePath);
     if (sourceContents === undefined) {
       return yield* Effect.die(

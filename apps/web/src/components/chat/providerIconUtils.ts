@@ -1,6 +1,5 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { ClaudeAI, CursorIcon, GrokIcon, HermesIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
-import { PROVIDER_OPTIONS } from "../../session-logic";
 
 export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,

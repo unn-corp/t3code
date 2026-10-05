@@ -1,3 +1,4 @@
+import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 import {
   formatProviderSkillDisplayName,
   resolveProviderSkillSourceKind,
@@ -6,6 +7,8 @@ import {
 import {
   type ProjectEntry,
   type ProviderDriverKind,
+  type PullRequestContextMetadata,
+  type ScopedThreadRef,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -13,6 +16,7 @@ import {
   BlocksIcon,
   FolderIcon,
   HistoryIcon,
+  MessagesSquareIcon,
   PackageIcon,
   SettingsIcon,
   UserRoundIcon,
@@ -73,6 +77,20 @@ export type ComposerCommandItem =
       skill: ServerProviderSkill;
       label: string;
       description: string;
+    }
+  | {
+      id: string;
+      type: "pull-request";
+      pullRequest: PullRequestContextMetadata;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "thread";
+      thread: ScopedThreadRef;
+      label: string;
+      description: string;
     };
 
 type ComposerCommandGroup = {
@@ -119,6 +137,7 @@ export function groupCommandItems(
 }
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
+  listId: string;
   items: ComposerCommandItem[];
   resolvedTheme: "light" | "dark";
   isLoading: boolean;
@@ -164,19 +183,20 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         data-composer-command-drawer="true"
       >
         {props.items.length > 0 ? (
-          <CommandList className="max-h-72 min-h-0 scroll-pb-6">
+          <CommandList
+            id={props.listId}
+            aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
+            className="max-h-72 min-h-0 scroll-pb-6"
+          >
             {groups.map((group, groupIndex) => (
               <div key={group.id}>
                 {groupIndex > 0 ? <CommandSeparator className="my-0.5" /> : null}
                 <CommandGroup>
-                  {group.label ? (
-                    <CommandGroupLabel className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-label">
-                      {group.label}
-                    </CommandGroupLabel>
-                  ) : null}
+                  {group.label ? <CommandGroupLabel>{group.label}</CommandGroupLabel> : null}
                   {group.items.map((item) => (
                     <ComposerCommandMenuItem
                       key={item.id}
+                      optionId={composerSuggestionOptionId(props.listId, item.id)}
                       item={item}
                       triggerKind={props.triggerKind}
                       resolvedTheme={props.resolvedTheme}
@@ -193,9 +213,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           <div className="px-5 pt-3.5 pb-7">
             {props.triggerKind === "skill" ? (
               <CommandGroup>
-                <CommandGroupLabel className="px-0 pt-0 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-secondary-label">
-                  Skills
-                </CommandGroupLabel>
+                <CommandGroupLabel>Skills</CommandGroupLabel>
                 <p className="text-secondary-label text-xs">
                   {props.isLoading
                     ? "Searching workspace skills..."
@@ -221,6 +239,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
 });
 
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
+  optionId: string;
   item: ComposerCommandItem;
   triggerKind: ComposerTriggerKind | null;
   resolvedTheme: "light" | "dark";
@@ -228,6 +247,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const pullRequestPresentation =
+    props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest) : null;
   const skillSourceKind =
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
   const isSlashSkill =
@@ -235,6 +256,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 
   return (
     <CommandItem
+      render={<div id={props.optionId} />}
+      aria-selected={props.isActive}
       value={props.item.id}
       data-composer-item-id={props.item.id}
       active={props.isActive}
@@ -257,6 +280,16 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       ) : null}
       {props.item.type === "codex-session" ? (
         <HistoryIcon className="size-4 shrink-0 text-muted-foreground/80" />
+      ) : null}
+      {props.item.type === "thread" ? (
+        <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
+      ) : null}
+      {pullRequestPresentation ? (
+        <pullRequestPresentation.Icon
+          role="img"
+          aria-label={pullRequestPresentation.label}
+          className={cn("size-4 shrink-0", pullRequestPresentation.toneClassName)}
+        />
       ) : null}
       {/*
         Every other item type has a short, fixed label (`/model`, a basename) and a
@@ -296,6 +329,18 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     </CommandItem>
   );
 });
+
+export function composerSuggestionOptionId(listId: string, itemId: string): string {
+  // JSON escapes lone UTF-16 surrogates before URI encoding without losing identity.
+  return `${listId}-${encodeURIComponent(JSON.stringify(itemId))}`;
+}
+
+const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
+  path: "Files and folders",
+  "pull-request": "Pull requests",
+  "slash-command": "Commands",
+  skill: "Skills",
+};
 
 const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
   app: BlocksIcon,

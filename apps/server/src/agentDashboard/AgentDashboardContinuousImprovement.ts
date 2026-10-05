@@ -33,7 +33,7 @@ import {
   type AgentDashboardImplementationNudgeReason,
   type AgentDashboardImplementationRunResult,
 } from "./AgentDashboardImplementationRunner.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ServerSettings from "../serverSettings.ts";

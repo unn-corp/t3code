@@ -3,6 +3,7 @@
 import type { DesktopBridge } from "@t3tools/contracts";
 
 interface ImportMetaEnv {
+  readonly VITE_ANDROID_PWA: string;
   readonly VITE_HTTP_URL: string;
   readonly VITE_WS_URL: string;
   readonly VITE_HOSTED_APP_URL: string;
@@ -15,6 +16,7 @@ interface ImportMetaEnv {
   readonly VITE_RELAY_OTLP_TRACES_DATASET: string;
   readonly VITE_RELAY_OTLP_TRACES_TOKEN: string;
   readonly APP_VERSION: string;
+  readonly APP_BUILD_IDENTITY: import("@t3tools/contracts").BuildIdentity;
   readonly APP_BUILD_LABEL: string;
 }
 

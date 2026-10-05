@@ -24,7 +24,7 @@ import type {
   VcsStatusLocalResult,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import type { ProjectionActivitySummary } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { ProjectionActivitySummary } from "../agentDashboard/AutomationSnapshotQuery.ts";
 
 type DashboardVcsStatus = VcsStatusResult | VcsStatusLocalResult;
 

@@ -4,8 +4,10 @@ export interface GlanceRailThreadSignal {
   readonly archivedAt: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
-  readonly latestTurn: { readonly state: string } | null;
-  readonly session: { readonly status: string } | null;
+  readonly latestTurn?: { readonly state: string } | null;
+  readonly latestRun?: { readonly status: string } | null;
+  readonly runtime?: { readonly status: string } | null;
+  readonly session?: { readonly status: string } | null;
 }
 
 export interface GlanceRailStats {
@@ -56,6 +58,7 @@ export function summarizeGlanceRail(
     if (
       thread.hasPendingApprovals ||
       thread.hasPendingUserInput ||
+      thread.latestRun?.status === "failed" ||
       thread.latestTurn?.state === "error" ||
       thread.session?.status === "error"
     ) {
@@ -64,6 +67,9 @@ export function summarizeGlanceRail(
     }
 
     if (
+      ["preparing", "queued", "starting", "running", "waiting"].includes(
+        thread.runtime?.status ?? thread.latestRun?.status ?? "",
+      ) ||
       thread.latestTurn?.state === "running" ||
       thread.session?.status === "starting" ||
       thread.session?.status === "running"

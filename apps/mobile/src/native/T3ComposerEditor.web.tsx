@@ -1,7 +1,6 @@
-import { useEffect, useImperativeHandle, useRef } from "react";
-import { TextInput, View, type TextInput as RNTextInput, type View as RNView } from "react-native";
+import { useEffect, useImperativeHandle, useRef, type ComponentRef } from "react";
+import { TextInput, View } from "react-native";
 
-import { useThemeColor } from "../lib/useThemeColor";
 import { useFontFamily } from "../lib/useFontFamily";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import type { ComposerEditorProps } from "./T3ComposerEditor.types";
@@ -43,11 +42,9 @@ export function ComposerEditor({
   singleLineCentered: _singleLineCentered,
   ...props
 }: ComposerEditorProps) {
-  const inputRef = useRef<RNTextInput>(null);
-  const wrapperRef = useRef<RNView>(null);
+  const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const wrapperRef = useRef<ComponentRef<typeof View>>(null);
   const bodyText = useScaledTextRole("body");
-  const foregroundColor = useThemeColor("--color-foreground");
-  const placeholderColor = useThemeColor("--color-placeholder");
   const fontFamily = useFontFamily("regular");
 
   useEffect(() => {
@@ -87,12 +84,12 @@ export function ComposerEditor({
         selection={selection}
         onSelectionChange={(event) => props.onSelectionChange?.(event.nativeEvent.selection)}
         multiline={props.multiline ?? true}
-        placeholderTextColor={placeholderColor}
+        className="text-foreground"
+        placeholderTextColorClassName="accent-placeholder"
         style={[
           {
             flex: 1,
             minHeight: 0,
-            color: foregroundColor,
             fontFamily,
             ...bodyText,
             paddingVertical: contentInsetVertical,

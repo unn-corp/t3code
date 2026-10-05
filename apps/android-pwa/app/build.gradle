@@ -1,0 +1,68 @@
+plugins {
+    id 'com.android.application'
+}
+
+def packageName = providers.gradleProperty('pwaPackage').getOrElse('com.devotek.t3code.pwa')
+def signingStore = System.getenv('T3_PWA_KEYSTORE')
+def passwordFile = System.getenv('T3_PWA_PASSWORD_FILE')
+
+android {
+    namespace 'com.devotek.t3code.pwa'
+    compileSdk 36
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        applicationId packageName
+        minSdk 24
+        targetSdk 36
+        versionCode providers.gradleProperty('pwaVersionCode').getOrElse('1').toInteger()
+        versionName providers.gradleProperty('pwaVersionName').getOrElse('1.0')
+        resValue 'string', 'app_name', 'T3 Code'
+    }
+
+    signingConfigs {
+        if (signingStore && passwordFile) {
+            privatePwa {
+                storeFile file(signingStore)
+                storePassword file(passwordFile).text.trim()
+                keyAlias System.getenv('T3_PWA_KEY_ALIAS') ?: 't3-pwa'
+                keyPassword storePassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (signingStore && passwordFile) signingConfig signingConfigs.privatePwa
+            minifyEnabled false
+        }
+    }
+
+    sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/web-assets')
+    sourceSets.main.res.srcDir layout.buildDirectory.dir('generated/pwa-icon')
+}
+
+def copyPwaIcon = tasks.register('copyPwaIcon', Copy) {
+    from '../../web/public/pwa-512x512.png'
+    into layout.buildDirectory.dir('generated/pwa-icon/drawable-nodpi')
+    rename { 'pwa_icon.png' }
+}
+tasks.named('preBuild').configure { dependsOn copyPwaIcon }
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.14.0'
+    implementation 'androidx.core:core:1.17.0'
+    implementation 'androidx.activity:activity:1.11.0'
+}
+
+tasks.named('preBuild').configure {
+    doFirst {
+        if (!layout.buildDirectory.file('generated/web-assets/index.html').get().asFile.exists()) {
+            throw new GradleException('Build the bundled web client with scripts/build-android-pwa.ts first.')
+        }
+    }
+}

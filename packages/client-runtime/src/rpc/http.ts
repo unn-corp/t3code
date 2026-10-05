@@ -1,4 +1,5 @@
 import {
+  OpenWhisprTranscriptionError,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
   type EnvironmentAuthInvalidError,
@@ -18,6 +19,7 @@ import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/http";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
+const isOpenWhisprTranscriptionError = Schema.is(OpenWhisprTranscriptionError);
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
 export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
@@ -67,6 +69,7 @@ export class RemoteEnvironmentAuthTimeoutError extends Data.TaggedError(
 }
 
 export type RemoteEnvironmentRequestError =
+  | OpenWhisprTranscriptionError
   | EnvironmentRequestInvalidError
   | EnvironmentAuthInvalidError
   | EnvironmentScopeRequiredError
@@ -126,7 +129,7 @@ const failRemoteRequest = (
   if (cause instanceof RemoteEnvironmentAuthTimeoutError) {
     return Effect.fail(cause);
   }
-  if (isEnvironmentHttpCommonError(cause)) {
+  if (isEnvironmentHttpCommonError(cause) || isOpenWhisprTranscriptionError(cause)) {
     return Effect.fail(cause);
   }
   if (Schema.isSchemaError(cause)) {

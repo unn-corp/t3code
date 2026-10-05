@@ -34,10 +34,6 @@ export function getLocalFileManagerName(platform: string): string {
   return "Files";
 }
 
-export function randomHex(byteLength: number): string {
-  return Encoding.encodeHex(globalThis.crypto.getRandomValues(new Uint8Array(byteLength)));
-}
-
 export function randomUUID(): string {
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
   bytes[6] = (bytes[6]! & 0x0f) | 0x40;
@@ -53,3 +49,7 @@ export const newThreadId = (): ThreadId => ThreadId.make(randomUUID());
 export const newDraftId = (): DraftId => DraftId.make(randomUUID());
 
 export const newMessageId = (): MessageId => MessageId.make(randomUUID());
+
+export function randomHex(): string {
+  return randomUUID().replaceAll("-", "");
+}
