@@ -200,18 +200,27 @@ describe("server archive recovery", () => {
   });
 });
 
-const appImage = (dir: string, withUpdateConfig: boolean) => {
+const appImage = (dir: string, withUpdateConfig: boolean, verbose = false) => {
   NodeFS.mkdirSync(dir, { recursive: true });
   const file = NodePath.join(dir, "T3-Code-1.0.1-x86_64.AppImage");
   NodeFS.writeFileSync(
     file,
-    `#!/bin/sh\nmkdir -p squashfs-root/resources\ncat > squashfs-root/AppRun <<'SH'\n#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = 1 ] && [ "$1" = --version ] && [ "$#" = 1 ] || exit 2\necho v39.0.0\nSH\nchmod +x squashfs-root/AppRun\n${withUpdateConfig ? "echo provider: github > squashfs-root/resources/app-update.yml\n" : ""}`,
+    `#!/bin/sh\nmkdir -p squashfs-root/resources\ncat > squashfs-root/AppRun <<'SH'\n#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = 1 ] && [ "$1" = --version ] && [ "$#" = 1 ] || exit 2\necho v39.0.0\nSH\nchmod +x squashfs-root/AppRun\n${withUpdateConfig ? "echo provider: github > squashfs-root/resources/app-update.yml\n" : ""}${verbose ? "printf '%2097152s' ''\n" : ""}`,
     { mode: 0o755 },
   );
   return file;
 };
 
 describe("Linux AppImage", () => {
+  it("accepts a successful extraction whose file listing exceeds the child output buffer", () => {
+    checkLinuxPackages(
+      {
+        ...locatePayloadAssets(root),
+        appImage: appImage(NodePath.join(root, "verbose"), true, true),
+      },
+      scratch("verbose-check"),
+    );
+  });
   it("accepts an image that unpacks with its updater config and rejects one without", () => {
     const good = {
       ...locatePayloadAssets(root),

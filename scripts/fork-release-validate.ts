@@ -304,8 +304,13 @@ export const checkLinuxPackages = (assets: PayloadAssets, scratch: string): void
   NodeFS.chmodSync(appImage, 0o755);
   const extractDir = NodePath.join(scratch, "appimage");
   NodeFS.mkdirSync(extractDir, { recursive: true });
-  const extract = run(appImage, ["--appimage-extract"], { cwd: extractDir });
-  if (extract.status !== 0) throw new Error(`The AppImage did not unpack: ${extract.stderr}`);
+  // AppImage prints every extracted file; a valid payload can exceed spawnSync's stdout limit.
+  const extract = run(appImage, ["--appimage-extract"], {
+    cwd: extractDir,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  if (extract.status !== 0)
+    throw new Error(`The AppImage did not unpack: ${extract.error?.message ?? extract.stderr}`);
   const updateConfig = NodePath.join(extractDir, "squashfs-root/resources/app-update.yml");
   if (!NodeFS.existsSync(updateConfig)) throw new Error("The AppImage carries no app-update.yml.");
   const launcher = NodePath.join(extractDir, "squashfs-root/AppRun");
