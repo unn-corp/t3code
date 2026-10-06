@@ -1,145 +1,167 @@
-# Updating T3 Code
+# Updating this fork
 
-The app you use and the server running your agents can be on different machines.
-When a server is behind your web or desktop app, an update notice appears in the
-conversation and **Settings → Connections**. Update the machine named in that
-notice.
+Our Android APK, desktop installers, and managed server archives come from
+[unn-corp/t3code releases](https://github.com/unn-corp/t3code/releases). They are
+separate from upstream T3 distribution and its Expo/store mobile application.
+The fork release pipeline must first be commissioned with a verified updater
+baseline; a scheduled workflow being present does not mean a new release is available.
 
-## Before you update
+## Choose the device
 
-Server updates restart the connection and can interrupt active agents and
-terminal commands. Saved threads, settings, and project files remain.
+**Settings → General → App updates → This device** controls the client you are
+using. It remains local even when Settings is scoped to another environment.
+Choose Stable or Nightly, enable automatic installation, check/download, inspect
+waiting reasons, install a verified build, or pin the current build. Existing
+fork devices are bootstrapped onto Nightly; fresh stable installers use Stable. For a
+bootstrap blocker, choose **Review installations**, verify every known fork desktop,
+service, standalone, and development installation for this OS user uses the baseline
+and is registered, then confirm the review. Unknown activity and missing capabilities
+continue to block installation.
+**Settings → General → About** shows the client identity and links to App updates.
+Android displays its source version separately from its installation sequence.
 
-**Settings → General → Continue threads after restarts** is off by default.
-Enable it to resume supported active threads after an update, crash, or machine
-restart. Changes are saved to connected environments that support this setting;
-update older servers first. If a supported environment was offline or has a
-different value, use **Apply to all** in Settings after it connects.
-T3 Code must start again on that machine;
-the setting does not enable automatic startup. Terminal commands may still be
-interrupted, and threads without saved provider resume state need a new message.
-If you previously enabled continuation for updates, enable this setting once
-to allow recovery without a connected client.
+Desktop sidebar update controls and **Check for Updates** in the application
+menu open this same status surface. Downloads are not ready to install until
+verification completes. Release history links to this fork.
 
-Updates from the previous orchestration system preserve conversation transcripts but cannot carry
-every kind of runtime history forward. Read [Threads from older T3 Code versions](./thread-migration.md)
-before continuing an important older thread.
+**Settings → Connections → Environments → Updates for [host]** controls that
+named host. Its channel, automatic installation policy, version, blockers, and
+recovery options are independent of the client. Desktop replacement can affect
+both Windows and WSL homes; review the affected homes rather than assuming one
+connection means one database. Standalone and development runtimes participate
+in activity checks but do not replace their own binaries automatically.
 
-## When versions don't match
+Conversation update notices identify the host. A protocol mismatch requires
+updating the side named by the notice. Available releases, waiting, installation,
+verification, and failure are different states. Stop remains an agent action;
+an updater never stops work to obtain an installation window.
 
-A client and server must speak the same orchestration protocol. If they do not, the connection is
-refused rather than running half-upgraded:
+**Update all** groups explicit coordinator identities. One device's replacement
+targets are requested separately and serialized while independent devices can progress.
+Connections to the same replacement target share a request. Offline or
+blocked devices report their own result. Keep the client open to see status;
+closing it does not authorize a bypass of the host's admission checks.
 
-- An app newer than the server is blocked before connecting, with a notice telling you to update
-  T3 Code on the machine named in the notice.
-- A server newer than your app refuses the connection with an update message.
+## Why installation waits
 
-Update the side the notice names, then reconnect.
+All registered fork runtimes belonging to that local OS user must be stopped,
+including desktop, background services, standalone, development, and explicitly
+connected WSL runtimes. Work includes child/delegated agents, compaction,
+approval waits, provider background tasks, tools, commands, and cancellation
+still awaiting termination. A quiet conversation or completed parent is not
+proof that work stopped. Unknown participants block installation.
+An additional desktop instance using a different data home blocks desktop replacement;
+close that instance after its work stops. Managed services remain activity participants,
+but desktop replacement does not restore their databases.
 
-## Update a connected server
+The coordinator requires five idle minutes, acquires its interprocess admission
+lock, fences new work, and checks every participant again. Desktop automatic
+installation also waits for input inactivity and unfinished uploads, then shows
+a cancellable 15-second countdown. Drafts and queued messages remain saved.
+A fresh release eligibility check and enough space for recovery are required.
 
-The offered action depends on how the server runs:
+Android runs no coding-agent server. APK replacement waits until the phone has
+been backgrounded for two minutes and its browser automation, uploads, and
+native operations finish. Remote host agents can continue. Android may require
+**Allow from this source** permission and a system installation confirmation;
+waiting for either is shown explicitly. Denying permission does not clear connections.
 
-| Action                     | What to do                                                                                                                                                                                      |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
-| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
-| **Copy update command**    | Run the command on the named host to update the detected global npm install, then restart the server with your usual options.                                                                   |
-| **Copy relaunch command**  | Stop the command-line server on its host and relaunch with the copied command, keeping your usual subcommand and options. This does not update an installed `t3` command.                       |
+Older launchers and missing safety capabilities show bootstrap guidance.
+Other OS users, unrelated applications, and unregistered old installations are
+outside the coordinator's enforceable boundary. Register known fork runtimes
+before enabling automatic installation. External ADB, package managers, and
+manually executed installers cannot universally be intercepted: stop all fork
+work and verify process termination before using those paths.
 
-On the host, run:
+Failures remain blocked until you explicitly retry or choose a superseding
+build. Network checks back off. A withdrawn release does not cause an automatic
+downgrade; normal installation rechecks whether the exact build remains eligible.
 
-```sh
-t3 update <client-version>
-```
+## Recover a previous build
 
-Replace `<client-version>` with the version shown in the notice. The command
-asks before restarting the background service; if you decline, run
-`t3 service restart` when you are ready. For a server you started by hand,
-stop it and start it again afterwards with your usual options such as `--host`
-or `--tailscale-serve`.
+Open **App updates → Recovery → Review [version]**, or the named host's update
+controls in Connections. The confirmation names the device, current/target
+builds, affected homes, compatibility, restore cutoffs, storage, and pairing
+consequences. Opening the confirmation and submitting it both retrieve fresh
+recovery state. A changed snapshot invalidates the confirmation.
 
-If you run the server with `npx` rather than an installed `t3`, there is
-nothing to update on the host: stop the server and relaunch it as
-`npx t3@<client-version>` with the same subcommand and options.
+Recovery currently requires explicit acknowledgement of older data restoration.
+Being able to read a restore point does not prove the previous binary can read today's
+database, so binary-only reversion is not offered without that compatibility proof. The
+coordinator verifies a rescue copy of current data and required assets before
+restoring; all selected homes are restored before the older runtime starts.
+Changes after each displayed cutoff will not appear in restored data. Older
+session state can require re-pairing. Recovery files contain private conversation
+state and credentials; exporting them is an explicit user action.
 
-## If an update fails
+After destructive restoration, **Review restored automation** links to
+**Settings → Scheduled tasks**. Restored schedules, queues, and replayable work
+remain held until reviewed. Return to that host’s update controls and choose
+**Confirm automation review** only after reviewing its schedules and queued work.
+This releases the automation hold and eligible work may start. **Resume updates** clears the recovered build's pin;
+it does not resume agent work. The previous build stays pinned until that action.
 
-Keep the client open until it reconnects or reports a failure. A failed service
-update can roll back to the previous version. If the update still fails:
+Two previous verified builds and their restore points are retained. Recovery
+requires additional space per filesystem and a safety margin of the greater of
+10% of required additional bytes or 1 GiB. Insufficient space blocks recovery;
+the last usable recovery point is never deleted to make room.
 
-1. Retry the offered action once.
-2. Check that you updated the server's machine, not only the device you are using.
-3. For a command-line server, stop it and relaunch the exact version shown in the notice.
+The OS-accessible desktop/server recovery helper lives outside the replaced
+application directory. Follow the exact paths and commands in the
+[fork release runbook](../operations/fork-releases.md). Android recovery is
+available natively before WebView loading, through its recovery shortcut or
+notification. A recovery APK uses the same package/key and a higher installation
+sequence while identifying its older source separately. Never uninstall or
+clear app storage to recover: doing so can remove saved connection links.
+If the APK cannot launch, use the runbook's external signed recovery download.
+Cached verified artifacts can support manual offline recovery; normal offline
+installation waits for a fresh eligibility check.
 
-## Update providers
+## Browser PWA and upstream mobile
 
-**Settings → Providers** shows provider updates for the selected environment.
-**Update all** updates every outdated provider on every connected environment
-at once. Hover it to see which providers it will update. Providers that only
-offer a manual update command are not included.
+A browser PWA uses **App updates → Reload the app from the server** to refresh
+cached web files. Pairing, environments, and settings are retained. This does
+not replace native Android code; the control is hidden in the fork APK.
 
-## Mobile updates
+The separate upstream React Native/Expo application keeps store/Expo client
+delivery. Its environment maintenance uses shared server compatibility checks;
+it does not acquire this fork's native APK updater. See the
+[Android fork guide](./android-fork.md) for our APK and Tailscale connections.
 
-To update an environment from your phone, open **Settings → Environments** and
-select it. **Check for updates** finds the latest release on that environment's
-current release channel. Keep the app open while the environment updates and
-reconnects. Hosts that cannot update remotely show instructions for updating on
-the machine instead.
+## Crash recovery and providers
 
-The same page lets you refresh provider status and update supported providers.
-These controls require a connected environment and permission to operate it.
-Provider update checks and restart continuation preferences are in
-**Settings → Maintenance**. If provider update checks are disabled, enable them
-there before refreshing to find newer versions.
+**Continue threads after restarts** applies to supported crash/machine-restart
+recovery, not an update safety bypass. Fork updates wait for stopped work.
+Starting the application again is still required; terminal processes and
+provider sessions have their own restart limits.
 
-Install App Store or Google Play releases as usual. The mobile app can also
-download updates in the background and apply them when you next leave the app.
-It saves drafts and queued messages before restarting. If you keep the app open
-for a long time, it may ask to install immediately; choosing **Later** leaves the
-update queued for the next suitable moment.
+Provider CLI updates in **Settings → Providers** are separate from fork app
+releases. Their controls target the selected environment and require its operate
+permission. Read the provider's own restart guidance.
 
-## Back up and restore
+## Manual backups
 
-Stop the server, then create a backup on that machine with an explicit T3 home and a new output directory:
+Stop the server and use an explicit home and a new private output directory:
 
 ```sh
 t3 backup create --home-dir "$HOME/.t3" --output /path/to/new-backup
-```
-
-The backup includes conversation state, settings, keybindings, themes, attachments, browser artifacts,
-and credentials stored in T3 home. Keep it private. Provider CLI credentials stored elsewhere, logs,
-caches, project working files, and Git worktrees are not included; back up those separately.
-The command verifies the database and records file checksums.
-It never opens the source database for writing.
-
-Restore into a new directory:
-
-```sh
 t3 backup restore --input /path/to/new-backup --home-dir /path/to/restored-t3
-t3 serve --base-dir /path/to/restored-t3
 ```
 
-Restore verifies the manifest, checksums, and database before publishing the restored data. It refuses
-an existing destination. Use the same or a newer fork build to open it; database migrations can prevent
-older builds from reading it. Settings and scheduled work are retained, so review schedules before
-starting a restored server on another machine. Project paths still refer to their original locations.
+The backup includes conversation state, settings, themes, attachments, browser
+artifacts, and credentials in that T3 home. Project files/worktrees and provider
+credentials outside it need separate backups. Restore refuses an existing
+destination. Do not open an older runtime against newer data without a proven
+compatibility decision; review restored schedules before allowing work.
+Automatic updater snapshots and transaction recovery follow the stronger
+multi-home boundaries in [server update architecture](../internals/server-updates.md).
 
-## Identify a fork build
+If Android reports recovered safety state, restart the phone and finish any pending
+Android installer before reviewing update settings. A readable backup can predate
+a pending operation, so the app keeps installation blocked until that check passes.
+Android Settings screens and unfinished phone page navigations also hold installation.
+Enable notifications and the **App updates** notification channel before installing so Android’s confirmation can reach
+you while the app is in the background. Native recovery links to this permission.
 
-Settings shows the client version and commit. Connections shows each server's commit; mobile shows it
-in the environment's settings. A build made with local edits is marked accordingly. Builds without
-commit metadata show it as unknown. A matching version number alone does not mean two forks have the
-same changes.
-
-## Limit continuous work
-
-Open **Settings → General → Run limits** and choose environment defaults or a thread. On mobile,
-use environment settings for defaults or **Thread actions → Run limits** for a thread. Limits start
-unlimited. A thread can set its own values, remove its limits, or return to environment defaults.
-
-A time limit covers a run and its automatic continuations. Output-token limits use reported main-agent
-usage, including reasoning; they are checked when usage is available and can overshoot between reports.
-Providers without normalized usage reports support the time limit. Reaching a limit requests Stop and
-holds queued messages. Stop remains visible as **Stopping…** until termination is confirmed; it can be retried.
-Agents can read or change thread limits with `t3_thread_limits`.
+In **Settings → General → App updates**, use **Open App updates notification settings**
+to enable that channel. Native recovery offers the same route when the bundled interface cannot load.

@@ -30,6 +30,9 @@ import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLa
 import { NightlyMobileBetaNotice } from "../components/NightlyMobileBeta";
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
+import { AndroidNotificationCoordinator } from "../android/AndroidNotificationCoordinator";
+import { ClientUpdateInteractionCoordinator } from "../state/updateInteraction";
+import { AndroidBrowserHosts } from "../android/AndroidBrowserHosts";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
@@ -64,7 +67,6 @@ import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { persistWorkspaceRoute } from "../workspaceRoutePersistence";
-import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { shellEnvironment } from "../state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -114,12 +116,21 @@ export const Route = createRootRoute({
       authGateState,
     };
   },
-  component: RootRouteView,
+  component: RootRouteWithUpdateInteraction,
   errorComponent: RootRouteErrorView,
   head: () => ({
     meta: [{ name: "title", content: APP_DISPLAY_NAME }],
   }),
 });
+
+function RootRouteWithUpdateInteraction() {
+  return (
+    <>
+      <ClientUpdateInteractionCoordinator />
+      <RootRouteView />
+    </>
+  );
+}
 
 function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -224,6 +235,8 @@ function RootRouteView() {
           <SshPasswordPromptDialog />
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />
+          {isAndroidPwa ? <AndroidNotificationCoordinator /> : null}
+          {isAndroidPwa ? <AndroidBrowserHosts /> : null}
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />

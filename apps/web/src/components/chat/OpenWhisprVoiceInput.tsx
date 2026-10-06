@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { beginClientUpdateUpload } from "../../state/updateInteraction";
 import { requestDictationMicrophone } from "~/lib/dictationMicrophone";
 import { convertRecordedAudioToWav, transcribeWithOpenWhispr } from "~/lib/openwhisprTranscription";
 import { toastManager } from "../ui/toast";
@@ -85,6 +86,11 @@ export function OpenWhisprVoiceInput({
   const mountedRef = useRef(true);
   const operationRef = useRef(0);
   const busyRef = useRef(false);
+  const updateHoldRef = useRef<{
+    release(): void;
+    starting: boolean;
+    transcribing: boolean;
+  } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const simulatedRecordingRef = useRef(false);
   const transcriptionTimerRef = useRef<number | null>(null);
@@ -129,6 +135,12 @@ export function OpenWhisprVoiceInput({
     for (const track of recorder?.stream.getTracks() ?? []) track.stop();
     if (recorder && recorder.state !== "inactive") recorder.stop();
     releaseRecordingAudioSource();
+    const hold = updateHoldRef.current;
+    // Permission acquisition and cancelled decoding/uploads retain admission until their promise settles.
+    if (hold && !hold.starting && !hold.transcribing) {
+      hold.release();
+      updateHoldRef.current = null;
+    }
     if (mountedRef.current) {
       setState({ status: "idle" });
       onPhaseChange("idle");
@@ -204,7 +216,15 @@ export function OpenWhisprVoiceInput({
     onPhaseChange("transcribing");
     let requestedStream: MediaStream | null = null;
     let requestedAudioContext: AudioContext | null = null;
+    const hold = { release: () => {}, starting: true, transcribing: false };
     try {
+      // Dictation is an upload pipeline too: protect acquisition, recording, decoding and transfer.
+      hold.release = await beginClientUpdateUpload();
+      if (!current()) {
+        hold.release();
+        return;
+      }
+      updateHoldRef.current = hold;
       requestedAudioContext = new AudioContext();
       recordingAudioContextRef.current = requestedAudioContext;
       await requestedAudioContext.resume();
@@ -254,6 +274,7 @@ export function OpenWhisprVoiceInput({
         fireDictationKeybinds(dictationEndKeybinds);
         setState({ status: "transcribing" });
         onPhaseChange("transcribing");
+        hold.transcribing = true;
         const controller = new AbortController();
         abortControllerRef.current = controller;
         // The deadline also covers audio decoding; a late result must not change the draft.
@@ -289,6 +310,9 @@ export function OpenWhisprVoiceInput({
             });
           })
           .finally(() => {
+            hold.transcribing = false;
+            hold.release();
+            if (updateHoldRef.current === hold) updateHoldRef.current = null;
             window.clearTimeout(timeout);
             if (transcriptionTimerRef.current === timeout) transcriptionTimerRef.current = null;
             if (abortControllerRef.current === controller) abortControllerRef.current = null;
@@ -323,6 +347,12 @@ export function OpenWhisprVoiceInput({
             : "Could not start microphone recording",
         description: error instanceof Error ? error.message : "Try again.",
       });
+    } finally {
+      hold.starting = false;
+      if (!current()) {
+        hold.release();
+        if (updateHoldRef.current === hold) updateHoldRef.current = null;
+      }
     }
   }, [
     available,

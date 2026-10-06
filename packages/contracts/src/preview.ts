@@ -188,6 +188,8 @@ export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
 
 export const PreviewOpenInput = Schema.Struct({
   threadId: ThreadId,
+  /** Publish an HTTP localhost URL temporarily for a browser on another device. */
+  shareLocalhost: Schema.optional(Schema.Boolean),
   /** Omit to create an empty (Idle) tab the user can type into. */
   url: Schema.optional(Url),
   /**
@@ -203,6 +205,7 @@ export const PreviewOpenInput = Schema.Struct({
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
 export const PreviewNavigateInput = Schema.Struct({
+  shareLocalhost: Schema.optional(Schema.Boolean),
   threadId: ThreadId,
   tabId: PreviewTabId,
   url: Url,
@@ -492,5 +495,21 @@ export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrl
   }
 }
 
-export const PreviewError = Schema.Union([PreviewSessionLookupError, PreviewInvalidUrlError]);
+export class PreviewShareError extends Schema.TaggedError<PreviewShareError>()(
+  "PreviewShareError",
+  {
+    reason: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message() {
+    return this.reason;
+  }
+}
+
+export const PreviewError = Schema.Union([
+  PreviewSessionLookupError,
+  PreviewInvalidUrlError,
+  PreviewShareError,
+]);
 export type PreviewError = typeof PreviewError.Type;

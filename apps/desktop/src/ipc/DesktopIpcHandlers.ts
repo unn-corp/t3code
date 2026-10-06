@@ -71,6 +71,14 @@ import {
   setSnapShotAnimationDestination,
   setSnapShotShortcutSuppressed,
 } from "./methods/snapShot.ts";
+import {
+  cancelMaintenanceCountdown,
+  getMaintenanceStatus,
+  reportMaintenanceInteraction,
+  requestMaintenanceRecovery,
+  runMaintenanceAction,
+  updateMaintenancePolicy,
+} from "./methods/maintenance.ts";
 import * as PreviewIpc from "./methods/preview.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
@@ -149,6 +157,12 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(downloadUpdate);
   yield* ipc.handle(installUpdate);
   yield* ipc.handle(checkForUpdate);
+  yield* ipc.handle(getMaintenanceStatus);
+  yield* ipc.handle(updateMaintenancePolicy);
+  yield* ipc.handle(runMaintenanceAction);
+  yield* ipc.handle(cancelMaintenanceCountdown);
+  yield* ipc.handle(reportMaintenanceInteraction);
+  yield* ipc.handle(requestMaintenanceRecovery);
   for (const previewMethod of PreviewIpc.methods) {
     yield* ipc.handle(previewMethod);
   }

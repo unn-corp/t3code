@@ -1,3 +1,5 @@
+import { ComposerHostMaintenanceStatus } from "../chat/ComposerHostMaintenanceStatus";
+import { HostUpdateSettings } from "./HostUpdateSettings";
 import {
   ChevronRightIcon,
   ChevronsLeftRightEllipsisIcon,
@@ -1495,6 +1497,7 @@ function SavedBackendListRow({
   onAddRoute,
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
@@ -1566,11 +1569,6 @@ function SavedBackendListRow({
 
   // Only a connected, enabled machine can take a remote update; a switched-off
   // one keeps the version note so the icon is not a surprise later.
-  const showUpdateAction =
-    enabled &&
-    isConnected &&
-    versionMismatch !== null &&
-    (serverUpdateState.status === "idle" || serverUpdateState.status === "failed");
 
   const statusTooltip = `${
     unsupported
@@ -1635,21 +1633,55 @@ function SavedBackendListRow({
         </span>
       }
       below={
-        serverUpdateState.status !== "idle" ? (
-          <div className="mt-1 max-w-md">
-            <ServerUpdateProgress state={serverUpdateState} />
-          </div>
-        ) : null
+        <>
+          {isConnected ? (
+            <ComposerHostMaintenanceStatus
+              environmentId={environmentId}
+              label={environment.label}
+              supported={
+                environment.serverConfig?.environment.capabilities.forkMaintenance?.admission ===
+                true
+              }
+            />
+          ) : null}
+          {serverUpdateState.status !== "idle" ? (
+            <div className="mt-1 max-w-md">
+              <ServerUpdateProgress state={serverUpdateState} />
+            </div>
+          ) : null}
+        </>
       }
       detail={
-        routesOpen ? (
-          <EnvironmentRoutesList
-            environment={environment}
-            onAddRoute={() => onAddRoute(environment)}
-          />
-        ) : null
+        <>
+          {updatesOpen ? (
+            <HostUpdateSettings
+              environmentId={environmentId}
+              label={environment.label}
+              supported={
+                isConnected &&
+                environment.serverConfig?.environment.capabilities.forkMaintenance?.admission ===
+                  true
+              }
+            />
+          ) : null}
+          {routesOpen ? (
+            <EnvironmentRoutesList
+              environment={environment}
+              onAddRoute={() => onAddRoute(environment)}
+            />
+          ) : null}
+        </>
       }
     >
+      <Button
+        size="xs"
+        variant="ghost-muted"
+        aria-label={`Updates for ${environment.label}`}
+        aria-expanded={updatesOpen}
+        onClick={() => setUpdatesOpen((open) => !open)}
+      >
+        Updates
+      </Button>
       {unsupported &&
       environment.entry.serverUpdateRequired === true &&
       serverUpdateState.status !== "running" ? (
@@ -1661,19 +1693,7 @@ function SavedBackendListRow({
           label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
         />
       ) : null}
-      {showUpdateAction ? (
-        <ServerUpdateAction
-          environmentId={environmentId}
-          serverLabel={`${environment.label} server`}
-          selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
-          installation={environment.serverConfig?.environment.capabilities.serverInstallation}
-          desktopAppUpdate={supportsDesktopAppUpdate(environment.serverConfig)}
-          threadContinuation={supportsServerUpdateThreadContinuation(environment.serverConfig)}
-          targetVersion={versionMismatch.clientVersion}
-          label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
-          appearance="icon"
-        />
-      ) : null}
+
       <Tooltip>
         <TooltipTrigger
           render={
@@ -1972,6 +1992,7 @@ export function ConnectionsSettings() {
             environmentId: environment.environmentId,
             serverLabel: environment.label,
             selfUpdate,
+            forkMaintenance: environment.serverConfig?.environment.capabilities.forkMaintenance,
             installation: environment.serverConfig?.environment.capabilities.serverInstallation,
             desktopAppUpdate,
             threadContinuation: supportsServerUpdateThreadContinuation(environment.serverConfig),
@@ -3494,6 +3515,9 @@ export function ConnectionsSettings() {
                       serverLabel={
                         primaryEnvironment ? `${primaryEnvironment.label} server` : "server"
                       }
+                      forkMaintenance={
+                        primaryServerConfig?.environment.capabilities.forkMaintenance
+                      }
                       selfUpdate={resolveServerSelfUpdateCapability(primaryServerConfig)}
                       installation={
                         primaryServerConfig?.environment.capabilities.serverInstallation
@@ -3841,6 +3865,17 @@ export function ConnectionsSettings() {
   return (
     <SettingsPageContainer width="wide">
       {desktopBridge || primaryEnvironment ? primarySettings : null}
+      {primaryEnvironmentId && primaryServerConfig ? (
+        <SettingsSection title={`Updates for ${primaryEnvironment?.label ?? "This machine"}`}>
+          <HostUpdateSettings
+            environmentId={primaryEnvironmentId}
+            label={primaryEnvironment?.label ?? "This machine"}
+            supported={
+              primaryServerConfig.environment.capabilities.forkMaintenance?.admission === true
+            }
+          />
+        </SettingsSection>
+      ) : null}
       <SettingsSection
         {...searchableSetting("remote-environments")}
         title="Environments"

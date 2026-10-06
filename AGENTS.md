@@ -28,7 +28,25 @@ T3 Code has 3 key app surfaces: **web**, **desktop**, and **mobile**.
 
 **Desktop** is the main surface most users install first. It's a full Electron app that bundles the server runner as well. The desktop app can also be used as the host server, allowing remote connections from app.t3.codes or the mobile app.
 
-**Mobile** is a React Native app for both iOS and Android, available on the App Store and Google Play. The mobile app allows for connecting to any T3 Code server to control work remotely.
+**Upstream mobile** is a React Native app for iOS and Android in `apps/mobile`. Its Expo build and cloud notification paths belong to that client.
+
+**Fork Android** is this fork's standalone APK in `apps/android-pwa`, package `com.devotek.t3code.pwa`. It bundles `apps/web` with native notifications and a phone browser, and primarily uses directly paired Tailscale environments through Settings → Connections. It does not use the upstream store app. Read [the Android runbook](docs/operations/android-pwa.md) for building, editing, installation, and backend boundaries.
+
+## Fork maintenance invariants
+
+- Maintain [fork feature ownership](docs/operations/fork-maintenance.md) and the affected user,
+  operations, and architecture guides in the same change as behavior, UI routes, build requirements,
+  or compatibility. Describe implemented behavior; label uncommissioned delivery explicitly.
+- In-product installation and recovery must use the device's maintenance coordinator. Registered
+  standalone/development runtimes block installation but are never automatic binary-update targets.
+  Unknown activity or missing safety capability blocks installation; never stop agents for an update.
+- Separate activity participants from affected data homes. Snapshot every affected Windows/WSL home
+  before trial, keep external writes and launches fenced, and commit all health receipts durably
+  before admission. Never restore an older database silently after writes have been admitted.
+- Preserve signing/package identity, pairing, drafts, queued work, rescue copies, pinned builds,
+  and recovery-referenced WSL runtimes. Restored automation requires separate explicit review.
+- Use isolated fixture data and `T3CODE_MAINTENANCE_NAMESPACE` for integration tests. Use Luna for
+  delegated test conversations. Never enable automatic publishing before update/recovery validation.
 
 ## A note from Theo
 
@@ -67,7 +85,7 @@ We need to be on the same page with terminology. When communicating, use this la
 The most common defect in this repo is a change that works on the path you tested and is missing everywhere else. Before calling frontend work done, walk this list and say which entries applied:
 
 - **Entry points.** A behavior reachable from the chat view is usually also reachable from Settings, the command palette, and a keybinding. Fixing one is not fixing the feature.
-- **Clients.** Web, desktop (wraps web, adds Electron shell/IPC), and mobile (React Native, separate navigation). Shared logic lives in `packages/client-runtime`
+- **Clients.** Web, desktop (wraps web, adds Electron shell/IPC), upstream mobile (React Native, separate navigation), and this fork's Android APK (bundles web, adds native bridges). Android-specific web code lives in `apps/web/src/android`; shared connection logic lives in `packages/client-runtime`. Changes in `apps/mobile` do not change the fork APK.
 - **Providers.** Codex, Claude, Cursor, Grok, Hermes, OpenCode, and Antigravity each have an adapter. Provider-shaped features need a decision per adapter, even if the decision is "not supported here".
 - **Agents.** A capability a user can trigger is usually one an agent should reach through MCP tools, and scheduled tasks run the same paths. That only works when it is a service method, not handler code.
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, mobile, and desktop all follow.
@@ -141,7 +159,7 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 ## Where code lives
 
 - `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read [Effect services](docs/internals/effect-services.md) before adding server code, and `.repos/effect-smol/LLMS.md` for the Effect library itself.
-- `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
+- `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is upstream React Native, `apps/android-pwa` is this fork's standalone Android app, `apps/marketing` is the site.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
 - `packages/client-runtime` - client code shared by web and mobile.

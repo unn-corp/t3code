@@ -1,0 +1,215 @@
+/* oxlint-disable t3code/no-global-process-runtime -- node-only filesystem coordinator: the host platform is the point */
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off
+import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import type { ForkReleaseManifest } from "@t3tools/contracts";
+import {
+  installRecoveryHelper,
+  readRecoveryCommand,
+  recoveryInvocation,
+  recoveryReady,
+} from "./forkRecoveryCache.ts";
+
+const roots: string[] = [];
+afterEach(async () => {
+  await Promise.all(
+    roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
+  );
+});
+const digest = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+const sha = (seed: string) => seed.repeat(64).slice(0, 64);
+
+/** A real Node runtime (this one) stands in for the runner-copied binary, so the self-test truly runs. */
+let nodeBytes: Uint8Array | undefined;
+const realNode = async () => (nodeBytes ??= await NodeFSP.readFile(process.execPath));
+const helperScript = (line = "recovery-helper-protocol=1") =>
+  new TextEncoder().encode(`console.log(${JSON.stringify(line)});\n`);
+
+function manifest(version: string, helper: Uint8Array, node: Uint8Array): ForkReleaseManifest {
+  const base = {
+    format: 1 as const,
+    repository: "unn-corp/t3code" as const,
+    version,
+    commit: "a".repeat(40),
+    channel: "stable" as const,
+    releasedAt: "2026-10-05T00:00:00Z",
+    android: { normal: null as never, recovery: null as never },
+    checks: { build: true, install: true, update: true, recovery: true },
+  };
+  return {
+    ...base,
+    assets: [
+      {
+        name: "t3-recovery-helper-linux-x64.mjs",
+        sha256: digest(helper),
+        bytes: helper.length,
+        kind: "recovery-helper",
+        platform: "linux-x64",
+      },
+      {
+        name: "t3-recovery-node-linux-x64",
+        sha256: digest(node),
+        bytes: node.length,
+        kind: "recovery-helper",
+        platform: "linux-x64",
+      },
+      {
+        name: "t3-recovery-helper-windows-x64.mjs",
+        sha256: sha("9"),
+        bytes: 1,
+        kind: "recovery-helper",
+        platform: "windows-x64",
+      },
+    ],
+  } as unknown as ForkReleaseManifest;
+}
+const cacheDir = async () => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-recovery-cache-"));
+  roots.push(root);
+  return NodePath.join(root, "recovery");
+};
+const serve = (helper: Uint8Array, node: Uint8Array) => async (name: string) =>
+  name.endsWith(".mjs") ? helper : node;
+
+describe.skipIf(process.platform !== "linux")("recovery helper cache", () => {
+  it("stores the verified helper and its own Node runtime owner-only, outside the app, and proves them with an empty PATH", async () => {
+    const dir = await cacheDir();
+    const node = await realNode();
+    const helper = helperScript();
+    const command = await installRecoveryHelper({
+      cacheDir: dir,
+      manifest: manifest("1.0.1", helper, node),
+      platform: "linux-x64",
+      fetchAsset: serve(helper, node),
+    });
+    expect(NodePath.isAbsolute(command.nodePath) && NodePath.isAbsolute(command.helperPath)).toBe(
+      true,
+    );
+    expect((await NodeFSP.stat(command.nodePath)).mode & 0o777).toBe(0o700);
+    expect((await NodeFSP.stat(command.helperPath)).mode & 0o777).toBe(0o600);
+    expect((await NodeFSP.stat(dir)).mode & 0o077).toBe(0);
+    expect(await recoveryReady(dir)).toBe(true);
+    expect(recoveryInvocation(command, ["recover", "--home", "/h"])).toEqual({
+      command: command.nodePath,
+      args: [command.helperPath, "recover", "--home", "/h"],
+    });
+  });
+
+  it("refuses an asset whose digest differs from the release record and keeps the previous recovery command", async () => {
+    const dir = await cacheDir();
+    const node = await realNode();
+    const good = await installRecoveryHelper({
+      cacheDir: dir,
+      manifest: manifest("1.0.1", helperScript(), node),
+      platform: "linux-x64",
+      fetchAsset: serve(helperScript(), node),
+    });
+    const tampered = new TextEncoder().encode("console.log('evil')");
+    await expect(
+      installRecoveryHelper({
+        cacheDir: dir,
+        manifest: manifest("1.0.2", helperScript(), node),
+        platform: "linux-x64",
+        fetchAsset: serve(tampered, node),
+      }),
+    ).rejects.toThrow("does not match the digest");
+    expect((await readRecoveryCommand(dir)).version).toBe(good.version);
+    expect((await NodeFSP.readdir(dir)).filter((name) => name.startsWith(".staging"))).toEqual([]);
+  });
+
+  it("refuses a helper whose self-test does not report the protocol, so a wrong runtime or helper never becomes current", async () => {
+    const dir = await cacheDir();
+    const node = await realNode();
+    const wrong = helperScript("recovery-helper-protocol=2");
+    await expect(
+      installRecoveryHelper({
+        cacheDir: dir,
+        manifest: manifest("1.0.1", wrong, node),
+        platform: "linux-x64",
+        fetchAsset: serve(wrong, node),
+      }),
+    ).rejects.toThrow("did not report the helper protocol");
+    expect(await recoveryReady(dir)).toBe(false);
+  });
+
+  it("detects a tampered cached file and a lost executable bit", async () => {
+    const dir = await cacheDir();
+    const node = await realNode();
+    const helper = helperScript();
+    const command = await installRecoveryHelper({
+      cacheDir: dir,
+      manifest: manifest("1.0.1", helper, node),
+      platform: "linux-x64",
+      fetchAsset: serve(helper, node),
+    });
+    await NodeFSP.chmod(command.nodePath, 0o600);
+    await expect(readRecoveryCommand(dir)).rejects.toThrow("not executable");
+    await NodeFSP.chmod(command.nodePath, 0o700);
+    await NodeFSP.chmod(command.helperPath, 0o600);
+    await NodeFSP.appendFile(command.helperPath, "\n// changed");
+    await expect(readRecoveryCommand(dir)).rejects.toThrow("recorded digests");
+    expect(await recoveryReady(dir)).toBe(false);
+  });
+
+  it("is idempotent for an identical release and retains two versions", async () => {
+    const dir = await cacheDir();
+    const node = await realNode();
+    let downloads = 0;
+    const counting = (helper: Uint8Array) => async (name: string) => {
+      downloads += 1;
+      return name.endsWith(".mjs") ? helper : node;
+    };
+    const a = helperScript();
+    await installRecoveryHelper({
+      cacheDir: dir,
+      manifest: manifest("1.0.1", a, node),
+      platform: "linux-x64",
+      fetchAsset: counting(a),
+    });
+    const first = downloads;
+    await installRecoveryHelper({
+      cacheDir: dir,
+      manifest: manifest("1.0.1", a, node),
+      platform: "linux-x64",
+      fetchAsset: counting(a),
+    });
+    expect(downloads).toBe(first);
+    for (const version of ["1.0.2", "1.0.3"]) {
+      const helper = new TextEncoder().encode(
+        `console.log("recovery-helper-protocol=1"); // ${version}\n`,
+      );
+      await installRecoveryHelper({
+        cacheDir: dir,
+        manifest: manifest(version, helper, node),
+        platform: "linux-x64",
+        fetchAsset: counting(helper),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    expect((await NodeFSP.readdir(dir)).filter((name) => !name.endsWith(".json")).sort()).toEqual([
+      "1.0.2",
+      "1.0.3",
+    ]);
+  });
+
+  it("will not install from a release with a missing or duplicated recovery asset", async () => {
+    const dir = await cacheDir();
+    const node = await realNode();
+    const helper = helperScript();
+    const incomplete = manifest("1.0.1", helper, node);
+    (incomplete as { assets: unknown }).assets = incomplete.assets.filter(
+      (asset) => !asset.name.includes("node"),
+    );
+    await expect(
+      installRecoveryHelper({
+        cacheDir: dir,
+        manifest: incomplete,
+        platform: "linux-x64",
+        fetchAsset: serve(helper, node),
+      }),
+    ).rejects.toThrow("no unambiguous recovery helper");
+  });
+});

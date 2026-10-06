@@ -63,6 +63,34 @@ const extractingRunner = (fs: FileSystem.FileSystem, path: Path.Path, commands: 
   });
 
 it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
+  it.effect(
+    "refuses a checksum file that disagrees with the release manifest digest before downloading the archive",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-manifest-" });
+        const requests: string[] = [];
+        const failure = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: releaseHttpClient(yield* validChecksums, requests),
+          releaseBaseUrl: "https://releases.example/download",
+          expectedArchiveSha256: "0".repeat(64),
+          runner: extractingRunner(fs, path, []),
+          validate: () => Effect.void,
+        }).pipe(Effect.flip);
+        assert.include(failure.message, "digest recorded in the release manifest");
+        assert.deepEqual(requests, [
+          `https://releases.example/download/fork-v${version}/SHA256SUMS`,
+        ]);
+      }),
+  );
+
   it.effect("installs the verified release archive as the runtime executable", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -89,8 +117,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.equal(paths.entryPath, path.join(paths.versionDir, "t3"));
       assert.deepEqual(pinnedRuntimeCommand(paths), { command: paths.entryPath, args: [] });
       assert.deepEqual(requests, [
-        `https://releases.example/download/v${version}/SHA256SUMS`,
-        `https://releases.example/download/v${version}/${archiveName}`,
+        `https://releases.example/download/fork-v${version}/SHA256SUMS`,
+        `https://releases.example/download/fork-v${version}/${archiveName}`,
       ]);
       assert.deepEqual(commands, ["tar"]);
       assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);

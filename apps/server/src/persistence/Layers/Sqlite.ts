@@ -8,6 +8,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../Migrations.ts";
 import { initializeV2Database } from "../initializeV2Database.ts";
 import * as ServerConfig from "../../config.ts";
+import { acquireMaintenanceHost } from "../../maintenance/MaintenanceHost.ts";
 
 // Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -52,7 +53,11 @@ export const SqlitePersistenceMemory = Layer.provideMerge(
 
 export const layerConfig = Layer.unwrap(
   Effect.gen(function* () {
-    const { dbPath } = yield* ServerConfig.ServerConfig;
+    const config = yield* ServerConfig.ServerConfig;
+    const { dbPath } = config;
+    // The start gate runs before the database is created, opened or migrated: a runtime
+    // started during a device transaction must not touch a home that is being snapshotted.
+    yield* acquireMaintenanceHost(config).pipe(Effect.orDie);
     yield* initializeV2Database(dbPath);
     return makeSqlitePersistenceLive(dbPath);
   }),

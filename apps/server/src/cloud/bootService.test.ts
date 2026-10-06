@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 import { HttpClient } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import { DeviceRestartBlocked } from "../maintenance/coordinatedRestart.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
@@ -154,11 +155,15 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     linger: string;
     enabled: boolean;
     active: boolean;
+    guard: "ok" | "blocked";
+    recordGuard: boolean;
   } = {
     failCommand: undefined,
     linger: "yes",
     enabled: true,
     active: true,
+    guard: "ok",
+    recordGuard: false,
   };
   const runner = ProcessRunner.ProcessRunner.of({
     run: Effect.fn("test.run_boot_service_command")(function* (
@@ -221,6 +226,17 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         logsDir: path.join(serviceBaseDir, "userdata", "logs"),
         cliVersion,
         host: { execPath: "/usr/bin/t3" },
+        // The device coordinator is exercised in coordinatedRestart.test.ts; here it is a recording fake.
+        deviceGuard: async () => {
+          if (control.recordGuard) commands.push("guard:acquire");
+          if (control.guard === "blocked")
+            throw new DeviceRestartBlocked(["An agent is running in T3 Code."]);
+          return {
+            release: async () => {
+              if (control.recordGuard) commands.push("guard:release");
+            },
+          };
+        },
       });
     }).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -585,6 +601,96 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         "systemctl --user restart t3code.service",
       ]);
     }),
+  );
+
+  it.effect(
+    "restart takes the device guard before stopping and reopens admission only once the service is stopped",
+    () =>
+      Effect.gen(function* () {
+        const { service, commands, control } = yield* makeHarness();
+        yield* service.install();
+        commands.length = 0;
+        control.recordGuard = true;
+        expect(yield* service.restart).toBe(true);
+        const ordered = commands.filter(
+          (command) =>
+            command.startsWith("guard:") ||
+            command.startsWith("systemctl --user stop") ||
+            command.startsWith("systemctl --user restart") ||
+            command.startsWith("systemctl --user daemon-reload"),
+        );
+        expect(ordered).toEqual([
+          "guard:acquire",
+          "systemctl --user stop t3code.service",
+          "guard:release",
+          "systemctl --user daemon-reload",
+          "systemctl --user restart t3code.service",
+        ]);
+      }),
+  );
+
+  it.effect("restart stops nothing and reports why when the device is not idle", () =>
+    Effect.gen(function* () {
+      const { service, commands, control } = yield* makeHarness();
+      yield* service.install();
+      commands.length = 0;
+      control.guard = "blocked";
+      const error = yield* service.restart.pipe(Effect.flip);
+      expect(error._tag).toBe("BootServiceRestartBlockedError");
+      expect(error.message).toContain("An agent is running in T3 Code.");
+      expect(error.message).toContain("It keeps running");
+      expect(
+        commands.filter(
+          (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
+        ),
+      ).toEqual([]);
+    }),
+  );
+
+  it.effect(
+    "releases the guard even when the stop itself fails, so a failed restart never leaves the device fenced",
+    () =>
+      Effect.gen(function* () {
+        const { service, commands, control } = yield* makeHarness();
+        yield* service.install();
+        commands.length = 0;
+        control.recordGuard = true;
+        control.failCommand = "systemctl --user stop t3code.service";
+        const error = yield* service.restart.pipe(Effect.flip);
+        expect(error._tag).toBe("BootServiceCommandError");
+        expect(commands.filter((command) => command.startsWith("guard:"))).toEqual([
+          "guard:acquire",
+          "guard:release",
+        ]);
+      }),
+  );
+
+  it.effect(
+    "a started install and an uninstall take the same guard, and a blocked one changes nothing on disk",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, statePath, commands, control } = yield* makeHarness();
+        const plan = yield* service.install();
+        const stateBefore = yield* fs.readFileString(statePath);
+        const unitBefore = yield* fs.readFileString(plan.unitPath);
+        commands.length = 0;
+        control.guard = "blocked";
+        expect((yield* service.install().pipe(Effect.flip))._tag).toBe(
+          "BootServiceRestartBlockedError",
+        );
+        expect((yield* service.uninstall.pipe(Effect.flip))._tag).toBe(
+          "BootServiceRestartBlockedError",
+        );
+        expect(
+          commands.filter(
+            (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
+          ),
+        ).toEqual([]);
+        expect(yield* fs.readFileString(statePath)).toBe(stateBefore);
+        expect(yield* fs.readFileString(plan.unitPath)).toBe(unitBefore);
+        control.guard = "ok";
+        expect(yield* service.uninstall).toBe(true);
+      }),
   );
 
   it.effect("restart leaves a service that serves another T3 home alone", () =>

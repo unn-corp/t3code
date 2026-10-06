@@ -24,7 +24,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Schedule from "effect/Schedule";
-import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
+import {
+  FetchHttpClient,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -114,6 +120,7 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as PortPublisher from "./preview/PortPublisher.ts";
 import * as PreviewStreamCoordinator from "./preview/StreamCoordinator.ts";
 import * as PreviewHeadlessBrowserHost from "./preview/HeadlessBrowserHost.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -218,6 +225,11 @@ import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementSer
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
+import * as MaintenanceCoordinator from "./maintenance/MaintenanceCoordinator.ts";
+import * as MaintenanceService from "./maintenance/MaintenanceService.ts";
+import { withWork } from "./maintenance/WorkAdmission.ts";
+import { operatorRouteLayer } from "./maintenance/MaintenanceOperatorHttp.ts";
+import { OPERATOR_ROUTE_PREFIX } from "./maintenance/operatorAuth.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -289,10 +301,14 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
 
 const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
 
+const ProcessDiagnosticsLayerLive = ProcessDiagnostics.layer.pipe(
+  Layer.provide(ResourceTelemetryLayerLive),
+);
+
 const ResourceDiagnosticsLayerLive = Layer.mergeAll(
   HostResources.layer,
   ResourceTelemetryLayerLive,
-  ProcessDiagnostics.layer.pipe(Layer.provide(ResourceTelemetryLayerLive)),
+  ProcessDiagnosticsLayerLive,
   ProcessResourceMonitor.layer.pipe(Layer.provide(ResourceTelemetryLayerLive)),
 );
 
@@ -417,7 +433,11 @@ const TerminalLayerLive = TerminalManager.layer.pipe(
 );
 
 const PreviewLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(PreviewManager.layer),
+  Layer.provideMerge(
+    PreviewManager.layer.pipe(
+      Layer.provide(PortPublisher.layer.pipe(Layer.provide(ProcessRunner.layer))),
+    ),
+  ),
   Layer.provideMerge(PortScannerLayerLive),
 );
 
@@ -592,6 +612,17 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
 );
 
 const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
+  // Every external-write path takes its admission from this one coordinator, and its activity
+  // sources are required: a missing source would read as an idle device.
+  Layer.provideMerge(
+    MaintenanceCoordinator.layer.pipe(
+      Layer.provide(ProjectionStoreV2.layer),
+      Layer.provide(PersistenceLayerLive),
+      Layer.provide(TerminalLayerLive),
+      Layer.provide(ProjectCloneTrackerLayerLive),
+      Layer.provide(ProcessDiagnosticsLayerLive),
+    ),
+  ),
   Layer.provideMerge(PtyAdapterLive),
   // Search, prepare, status inspection, and turn launch share one registry
   // cache so every client and provider instance sees the same prepared agents.
@@ -657,6 +688,32 @@ const commandReadinessLayer = HttpRouter.middleware(
   { global: true },
 );
 
+/**
+ * Every HTTP write (uploads, pairing, dashboard feeds, intake webhooks) holds a device work lease
+ * for its whole duration, so an update never fences under an in-flight upload. Reads pass.
+ */
+const maintenanceAdmissionLayer = HttpRouter.middleware(
+  (httpEffect) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS")
+        return yield* httpEffect;
+      // The operator door is how a transaction is observed and recovered; it must not queue behind its own fence.
+      if (request.url.startsWith(OPERATOR_ROUTE_PREFIX)) return yield* httpEffect;
+      return yield* withWork(httpEffect).pipe(
+        Effect.catchTag("MaintenanceWorkHeld", (held) =>
+          Effect.succeed(
+            HttpServerResponse.text(held.message, {
+              status: 503,
+              headers: { "retry-after": "30" },
+            }),
+          ),
+        ),
+      );
+    }),
+  { global: true },
+);
+
 const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -674,6 +731,7 @@ const makeRoutesLayer = Layer.mergeAll(
     assetRouteLayer,
     agentDashboardFeedRouteLayer,
     attachmentUploadRouteLayer,
+    operatorRouteLayer,
     deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
@@ -696,7 +754,15 @@ const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PullRequestServiceLive),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(DesktopAppUpdateLayerLive))),
+  // The one controller behind every update entry point. It needs the launcher, so it sits in the routes layer.
+  Layer.provide(
+    MaintenanceService.layer.pipe(
+      Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(DesktopAppUpdateLayerLive))),
+      Layer.provide(DesktopTelemetryReceiverLayerLive),
+    ),
+  ),
   Layer.provide(commandReadinessLayer),
+  Layer.provide(maintenanceAdmissionLayer),
   Layer.provide(browserApiCorsLayer),
   Layer.provide(httpCompressionLayer),
 );

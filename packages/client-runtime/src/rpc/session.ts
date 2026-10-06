@@ -1,9 +1,5 @@
-import {
-  type ServerConfig,
-  type ServerConfigStreamEvent,
-  WsSubscribeServerConfigRpc,
-  WS_METHODS,
-} from "@t3tools/contracts";
+import { WsSubscribeServerConfigRpc, type ForkMaintenanceError } from "@t3tools/contracts";
+import { type ServerConfig, type ServerConfigStreamEvent, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -77,6 +73,7 @@ type InitialConfigError = Effect.Error<
 type ProbeError = Effect.Error<ReturnType<WsRpcProtocolClient[typeof WS_METHODS.serverProbe]>>;
 type ServerConfigSubscriptionError =
   | Rpc.ErrorExit<typeof WsSubscribeServerConfigRpc>
+  | ForkMaintenanceError
   | RpcClientError.RpcClientError;
 type ServerConfigSubscription = Stream.Stream<
   ServerConfigStreamEvent,
@@ -136,6 +133,7 @@ function mapSessionRpcError(
       });
     case "KeybindingsConfigParseError":
     case "ServerSettingsError":
+    case "ForkMaintenanceError":
       return new ConnectionTransientErrorClass({
         reason: "remote-unavailable",
         detail: error.message,

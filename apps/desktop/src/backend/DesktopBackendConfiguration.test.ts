@@ -12,6 +12,10 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import {
+  DesktopMaintenanceBridge,
+  MaintenanceStartBlocked,
+} from "../maintenance/DesktopMaintenanceBridge.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
@@ -259,6 +263,62 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(second.bootstrap.desktopBootstrapToken, first.bootstrap.desktopBootstrapToken);
       }),
     ),
+  );
+
+  it.effect(
+    "resolvePrimary hands the backend an update transaction's one-use capability, and nothing otherwise",
+    () =>
+      withHarness(
+        Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const ordinary = yield* configuration.resolvePrimary;
+          assert.isUndefined(ordinary.env.T3CODE_MAINTENANCE_TRIAL);
+
+          const targets: unknown[] = [];
+          const trial = yield* configuration.resolvePrimary.pipe(
+            Effect.provideService(DesktopMaintenanceBridge, {
+              trialEnv: (target) =>
+                Effect.sync(() => {
+                  targets.push(target);
+                  return { T3CODE_MAINTENANCE_TRIAL: '{"transactionId":"u1"}' };
+                }),
+              provide: () => Effect.void,
+              recordWslRuntime: () => Effect.void,
+              retainedWslRuntimes: Effect.succeed([]),
+            }),
+          );
+          assert.equal(trial.env.T3CODE_MAINTENANCE_TRIAL, '{"transactionId":"u1"}');
+          // The Windows backend is asked for its own capability, and keeps its other environment.
+          assert.deepEqual(targets, [{ kind: "windows" }]);
+          assert.equal(trial.env.ELECTRON_RUN_AS_NODE, "1");
+        }),
+      ),
+  );
+
+  it.effect(
+    "resolvePrimary refuses to produce a start configuration while a device transaction cannot give the backend its capability",
+    () =>
+      withHarness(
+        Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const failure = yield* configuration.resolvePrimary.pipe(
+            Effect.provideService(DesktopMaintenanceBridge, {
+              trialEnv: () =>
+                Effect.fail(
+                  new MaintenanceStartBlocked({
+                    reason: "The device coordinator could not be read.",
+                  }),
+                ),
+              provide: () => Effect.void,
+              recordWslRuntime: () => Effect.void,
+              retainedWslRuntimes: Effect.succeed([]),
+            }),
+            Effect.flip,
+          );
+          // No configuration means no process: the backend manager logs it and retries instead of spawning.
+          assert.include(failure.message, "The device coordinator could not be read.");
+        }),
+      ),
   );
 
   it.effect("resolvePrimary starts from server.asar without materializing the WSL tree", () =>

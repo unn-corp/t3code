@@ -1,5 +1,9 @@
 # Mobile development lifecycle
 
+This page covers the upstream Expo/React Native client in `apps/mobile`. For this fork's
+bundled-WebView Android app in `apps/android-pwa`, use the
+[Android build and development runbook](../operations/android-pwa.md).
+
 The [connection runtime's HMR boundary](../../apps/mobile/src/lib/hot-swappable-atom-runtime.ts)
 keeps a stable atom runtime and replaces its Effect layer through a writable atom.
 It accepts the update only after installing the new layer. Otherwise importers

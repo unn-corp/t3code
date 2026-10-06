@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import { withWork } from "../maintenance/WorkAdmission.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -1261,7 +1262,7 @@ export const layer: Layer.Layer<
 
     return ProviderTurnStartServiceV2.of({
       start: (input) =>
-        start(input).pipe(
+        withWork(start(input)).pipe(
           Effect.mapError((cause) =>
             isProviderTurnStartError(cause)
               ? cause

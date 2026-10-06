@@ -21,9 +21,13 @@ export function canMaintainEnvironment(session: AuthSessionState | null, connect
 }
 
 export function supportsEnvironmentUpdate(
-  capabilities: Pick<ExecutionEnvironmentCapabilities, "serverSelfUpdate" | "desktopAppUpdate">,
+  capabilities: Pick<
+    ExecutionEnvironmentCapabilities,
+    "serverSelfUpdate" | "desktopAppUpdate" | "forkMaintenance"
+  >,
 ) {
   return (
+    capabilities.forkMaintenance?.admission === true &&
     capabilities.serverSelfUpdate !== undefined &&
     (capabilities.serverSelfUpdate !== "desktop-managed" || capabilities.desktopAppUpdate === true)
   );
@@ -48,6 +52,8 @@ const Releases = Schema.Array(
   Schema.Struct({
     tag_name: Schema.String,
     draft: Schema.optionalKey(Schema.Boolean),
+    body: Schema.optionalKey(Schema.String),
+    assets: Schema.optionalKey(Schema.Array(Schema.Struct({ name: Schema.String }))),
   }),
 );
 const decodeReleases = Schema.decodeUnknownSync(Releases);

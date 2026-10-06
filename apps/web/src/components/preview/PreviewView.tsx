@@ -1,6 +1,8 @@
 "use client";
 
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { isAndroidPwa } from "~/env";
+import { AndroidPreviewView } from "~/android/AndroidPreviewView";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -99,7 +101,11 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
  * Single-tab preview surface: chrome row on top, one webview below, empty
  * state when no session exists for the thread.
  */
-export function PreviewView({
+export function PreviewView(props: Props) {
+  return isAndroidPwa ? <AndroidPreviewView {...props} /> : <DesktopPreviewView {...props} />;
+}
+
+function DesktopPreviewView({
   threadRef,
   tabId: requestedTabId,
   configuredUrls,

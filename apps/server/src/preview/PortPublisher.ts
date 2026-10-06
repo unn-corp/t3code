@@ -1,163 +1,372 @@
-/**
- * Publishes a local dev-server port on the tailnet, so a phone can open it in
- * its own browser.
- *
- * Streaming a page to a device that already has a browser is the expensive way
- * round: it re-encodes every frame, sends it base64 over the app's socket, and
- * hands back a scaled-down picture with synthetic input. The cheap way is to
- * make the page reachable and get out of the way. A dev server binds loopback,
- * so it is not reachable from a phone; Tailscale Serve is the bridge, and the
- * machinery for it already exists for pairing.
- *
- * Publishing is deliberately explicit and revocable. A mapping stays up until
- * something takes it down, so this tracks what it opened, exposes that list,
- * and closes everything when the server stops rather than leaving ports on the
- * tailnet after the process that opened them is gone.
- */
+/** Temporary browser shares own their proxy, idle deadline, and Tailscale mapping. */
 import {
   buildTailscaleHttpsBaseUrl,
   disableTailscaleServe,
   ensureTailscaleServe,
   readTailscaleStatus,
-  DEFAULT_TAILSCALE_SERVE_PORT,
 } from "@t3tools/tailscale";
+import { isLoopbackHost } from "@t3tools/shared/preview";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import { ChildProcessSpawner } from "effect/unstable/process";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { openTemporaryShareProxy, type TemporaryShareProxy } from "./TemporaryShareProxy.ts";
 
-export interface PublishedPort {
-  /** Loopback port on this machine, as the dev server bound it. */
-  readonly localPort: number;
-  /** Tailnet HTTPS port the mapping listens on. */
-  readonly servePort: number;
-  /** What to hand a browser. */
-  readonly url: string;
-}
-
-/**
- * Serve ports are allocated from here upward. 443 is the tailnet's default and
- * is already taken by the environment itself, and pairing uses 8443, so
- * publishing starts clear of both rather than silently stealing one.
- */
 export const FIRST_PUBLISH_SERVE_PORT = 8450;
 export const LAST_PUBLISH_SERVE_PORT = 8499;
+const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
+const Port = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
+const OwnedMapping = Schema.Struct({
+  servePort: Schema.Int.check(
+    Schema.isBetween({ minimum: FIRST_PUBLISH_SERVE_PORT, maximum: LAST_PUBLISH_SERVE_PORT }),
+  ),
+  proxyPort: Port,
+});
+const Journal = Schema.Array(OwnedMapping);
+const decodeJournal = Schema.decodeEffect(Schema.fromJsonString(Journal));
+const ServeStatus = Schema.Struct({
+  TCP: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  Web: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        Handlers: Schema.Record(
+          Schema.String,
+          Schema.Struct({ Proxy: Schema.optional(Schema.String) }),
+        ),
+      }),
+    ),
+  ),
+});
 
-const RESERVED_SERVE_PORTS = new Set([DEFAULT_TAILSCALE_SERVE_PORT, 8443]);
+const decodeServeStatus = Schema.decodeEffect(Schema.fromJsonString(ServeStatus));
 
-export class PortPublishUnavailableError extends Data.TaggedError("PortPublishUnavailableError")<{
-  readonly reason: string;
-}> {}
-
-/**
- * Lowest free serve port. Linear because the range is fifty wide and a person
- * is unlikely to publish more than a handful of dev servers at once.
- */
-export const nextServePort = (taken: ReadonlySet<number>): number | null => {
-  for (let port = FIRST_PUBLISH_SERVE_PORT; port <= LAST_PUBLISH_SERVE_PORT; port += 1) {
-    if (!taken.has(port) && !RESERVED_SERVE_PORTS.has(port)) return port;
+export class PortPublishUnavailableError extends Schema.TaggedError<PortPublishUnavailableError>()(
+  "PortPublishUnavailableError",
+  {
+    reason: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message() {
+    return this.reason;
   }
+}
+
+export const nextServePort = (taken: ReadonlySet<number>): number | null => {
+  for (let port = FIRST_PUBLISH_SERVE_PORT; port <= LAST_PUBLISH_SERVE_PORT; port += 1)
+    if (!taken.has(port)) return port;
   return null;
 };
+
+interface PublishedPort {
+  readonly localPort: number;
+  readonly servePort: number;
+  readonly url: string;
+  readonly proxy: TemporaryShareProxy;
+  readonly owners: Set<string>;
+  lastVisit: number;
+  closing: boolean;
+}
 
 export class PortPublisher extends Context.Service<
   PortPublisher,
   {
     readonly publish: (
-      localPort: number,
-    ) => Effect.Effect<
-      PublishedPort,
-      PortPublishUnavailableError,
-      ChildProcessSpawner.ChildProcessSpawner
+      owner: string,
+      url: string,
+    ) => Effect.Effect<string, PortPublishUnavailableError>;
+    readonly release: (owner: string) => Effect.Effect<void>;
+    readonly list: Effect.Effect<
+      ReadonlyArray<{
+        readonly localPort: number;
+        readonly servePort: number;
+        readonly url: string;
+      }>
     >;
-    readonly revoke: (
-      localPort: number,
-    ) => Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner>;
-    readonly list: Effect.Effect<ReadonlyArray<PublishedPort>>;
   }
 >()("t3/preview/PortPublisher") {}
 
-export const make = Effect.gen(function* () {
-  const published = yield* SynchronizedRef.make<ReadonlyMap<number, PublishedPort>>(new Map());
-  const scope = yield* Effect.scope;
+const make = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = yield* ServerConfig.ServerConfig;
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const platform = yield* HostProcessPlatform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
-  const revoke = Effect.fn("PortPublisher.revoke")(function* (localPort: number) {
-    const existing = yield* SynchronizedRef.modify(published, (current) => {
-      const entry = current.get(localPort);
-      if (!entry) return [undefined, current] as const;
-      const next = new Map(current);
-      next.delete(localPort);
-      return [entry, next as ReadonlyMap<number, PublishedPort>] as const;
+  const clock = yield* Clock.Clock;
+  const scope = yield* Effect.scope;
+  const journalPath = path.join(config.stateDir, "temporary-browser-shares.json");
+  const published = yield* SynchronizedRef.make(new Map<number, PublishedPort>());
+  const outstanding = new Map<number, typeof OwnedMapping.Type>();
+  const unavailable = (reason: string, cause?: unknown) =>
+    new PortPublishUnavailableError({ reason, cause });
+  const readStatus = Effect.gen(function* () {
+    const result = yield* runner.run({
+      command: platform === "win32" ? "tailscale.exe" : "tailscale",
+      args: ["serve", "status", "--json"],
+      timeout: "10 seconds",
     });
-    if (!existing) return;
-    yield* disableTailscaleServe({ servePort: existing.servePort }).pipe(Effect.ignore);
+    if (result.code !== 0 || result.timedOut)
+      return yield* unavailable("Could not inspect existing Tailscale shares.");
+    return yield* decodeServeStatus(result.stdout);
   });
-
-  // Nothing this process opened outlives it: a mapping left behind would keep
-  // a dev server on the tailnet with nothing running to explain why.
-  yield* Scope.addFinalizer(
-    scope,
-    Effect.gen(function* () {
-      const current = yield* SynchronizedRef.get(published);
-      yield* Effect.forEach(current.values(), (entry) =>
-        disableTailscaleServe({ servePort: entry.servePort }).pipe(Effect.ignore),
-      );
-    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
-  );
-
-  const publish = Effect.fn("PortPublisher.publish")(function* (localPort: number) {
-    const current = yield* SynchronizedRef.get(published);
-    const already = current.get(localPort);
-    // Publishing twice is a no-op rather than a second mapping, so a viewer
-    // reopening the same dev server keeps one stable URL.
-    if (already) return already;
-
-    const status = yield* readTailscaleStatus.pipe(Effect.orElseSucceed(() => null));
-    const magicDnsName = status?.magicDnsName ?? null;
-    if (!magicDnsName) {
-      return yield* Effect.fail(
-        new PortPublishUnavailableError({
-          reason:
-            "This machine is not on a tailnet with MagicDNS, so there is no address a phone could open.",
-        }),
-      );
-    }
-
-    const servePort = nextServePort(new Set(Array.from(current.values(), (e) => e.servePort)));
-    if (servePort === null) {
-      return yield* Effect.fail(
-        new PortPublishUnavailableError({ reason: "Every publishable port is already in use." }),
-      );
-    }
-
-    yield* ensureTailscaleServe({ localPort, servePort }).pipe(
-      Effect.mapError(
-        () =>
-          new PortPublishUnavailableError({
-            reason:
-              "Tailscale refused to publish the port. Check that Tailscale is running and HTTPS is enabled for this tailnet.",
-          }),
+  const persist = (entries: Iterable<typeof OwnedMapping.Type> = outstanding.values()) =>
+    writeFileStringAtomically({
+      filePath: journalPath,
+      contents: JSON.stringify([...entries]),
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+  const matches = (status: typeof ServeStatus.Type, entry: typeof OwnedMapping.Type) =>
+    Object.entries(status.Web ?? {}).some(
+      ([host, web]) =>
+        host.endsWith(`:${entry.servePort}`) &&
+        web.Handlers["/"]?.Proxy === `http://127.0.0.1:${entry.proxyPort}`,
+    );
+  const off = (entry: typeof OwnedMapping.Type) =>
+    disableTailscaleServe({ servePort: entry.servePort }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.catchIf(
+        (error) =>
+          error._tag === "TailscaleCommandExitError" &&
+          error.stderrDiagnostic === "no-existing-handler",
+        () => Effect.void,
       ),
     );
-
-    const entry: PublishedPort = {
-      localPort,
-      servePort,
-      url: buildTailscaleHttpsBaseUrl({ magicDnsName, servePort }),
-    };
-    yield* SynchronizedRef.update(published, (map) => new Map(map).set(localPort, entry));
-    return entry;
+  // Persist before publication. A restart removes only exact targets recorded here,
+  // never every port in a range or the environment's permanent connection route.
+  let journalValid = true;
+  if (yield* fs.exists(journalPath)) {
+    const result = yield* fs
+      .readFileString(journalPath)
+      .pipe(Effect.flatMap(decodeJournal), Effect.result);
+    if (result._tag === "Success") {
+      for (const entry of result.success) outstanding.set(entry.servePort, entry);
+    } else {
+      journalValid = false;
+      yield* Effect.logWarning(
+        "Temporary browser sharing disabled: ownership journal could not be read",
+      );
+    }
+  }
+  const recoverOrphans = Effect.fn("PortPublisher.recoverOrphans")(function* (
+    current: ReadonlyMap<number, PublishedPort>,
+  ) {
+    const live = new Set([...current.values()].map((entry) => entry.servePort));
+    const entries = [...outstanding.values()].filter((entry) => !live.has(entry.servePort));
+    if (!entries.length) return;
+    yield* Effect.gen(function* () {
+      const status = yield* readStatus;
+      for (const entry of entries) {
+        if (matches(status, entry)) yield* off(entry);
+        yield* persist(
+          [...outstanding.values()].filter((mapping) => mapping.servePort !== entry.servePort),
+        );
+        outstanding.delete(entry.servePort);
+      }
+    }).pipe(
+      Effect.catch(() => Effect.logWarning("Stale temporary browser share cleanup will retry")),
+    );
   });
+  yield* recoverOrphans(new Map());
 
+  const remove = Effect.fn("PortPublisher.remove")(function* (entry: PublishedPort) {
+    // Disable the proxy immediately, even if the daemon temporarily refuses cleanup.
+    entry.closing = true;
+    entry.proxy.close();
+    const recorded = outstanding.get(entry.servePort)!;
+    const removed = yield* Effect.gen(function* () {
+      const status = yield* readStatus;
+      if (matches(status, recorded)) yield* off(recorded);
+      yield* persist(
+        [...outstanding.values()].filter((mapping) => mapping.servePort !== entry.servePort),
+      );
+      outstanding.delete(entry.servePort);
+      return true;
+    }).pipe(
+      Effect.catch(() =>
+        Effect.logWarning("Temporary browser share cleanup will retry", {
+          servePort: entry.servePort,
+        }).pipe(Effect.as(false)),
+      ),
+    );
+    return removed;
+  });
+  const cleanup = () =>
+    SynchronizedRef.updateEffect(published, (current) =>
+      Effect.gen(function* () {
+        yield* recoverOrphans(current);
+        const next = new Map(current);
+        for (const entry of current.values()) {
+          if (
+            entry.closing ||
+            entry.owners.size === 0 ||
+            clock.currentTimeMillisUnsafe() - entry.lastVisit >= IDLE_TIMEOUT_MS
+          ) {
+            if (yield* remove(entry)) next.delete(entry.localPort);
+          }
+        }
+        return next;
+      }),
+    ).pipe(Effect.uninterruptible);
+  yield* Scope.addFinalizer(
+    scope,
+    SynchronizedRef.updateEffect(published, (current) =>
+      Effect.gen(function* () {
+        for (const entry of current.values()) yield* remove(entry);
+        yield* recoverOrphans(current);
+        return new Map();
+      }),
+    ),
+  );
+  yield* Effect.gen(function* () {
+    while (true) {
+      yield* Effect.sleep("1 minute");
+      yield* cleanup();
+    }
+  }).pipe(Effect.forkScoped);
+
+  const publish = Effect.fn("PortPublisher.publish")(function* (owner: string, rawUrl: string) {
+    if (!journalValid)
+      return yield* unavailable(
+        "Temporary sharing is disabled until its ownership journal is repaired.",
+      );
+    const url = yield* Effect.try({
+      try: () => new URL(rawUrl),
+      catch: (cause) => unavailable("Invalid temporary share URL.", cause),
+    });
+    if (url.protocol !== "http:" || !isLoopbackHost(url.hostname) || url.username || url.password)
+      return yield* unavailable(
+        "Temporary sharing supports HTTP localhost URLs without credentials.",
+      );
+    const localPort = Number(url.port || 80);
+    return yield* SynchronizedRef.modifyEffect(
+      published,
+      (
+        current,
+      ): Effect.Effect<
+        readonly [
+          { readonly value: string } | { readonly error: unknown },
+          Map<number, PublishedPort>,
+        ],
+        PortPublishUnavailableError
+      > =>
+        Effect.gen(function* () {
+          const next = new Map(current);
+          let entry = next.get(localPort);
+          if (entry?.closing)
+            return yield* unavailable("This share is still being removed. Retry shortly.");
+          if (!entry) {
+            const status = yield* readStatus.pipe(
+              Effect.mapError((cause) =>
+                unavailable("Could not inspect existing Tailscale shares.", cause),
+              ),
+            );
+            const tailnet = yield* readTailscaleStatus.pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.mapError((cause) => unavailable("Could not reach Tailscale.", cause)),
+            );
+            if (!tailnet.magicDnsName)
+              return yield* unavailable("Tailscale sharing requires MagicDNS.");
+            const taken = new Set([
+              ...Object.keys(status.TCP ?? {}).map(Number),
+              ...outstanding.keys(),
+            ]);
+            const servePort = nextServePort(taken);
+            if (servePort === null)
+              return yield* unavailable("Every temporary sharing port is occupied.");
+            const activity = { time: clock.currentTimeMillisUnsafe() };
+            const proxy = yield* openTemporaryShareProxy({
+              localPort,
+              onVisit: () => {
+                activity.time = clock.currentTimeMillisUnsafe();
+              },
+            }).pipe(
+              Effect.mapError((cause) =>
+                unavailable("Could not start the temporary browser proxy.", cause),
+              ),
+            );
+            outstanding.set(servePort, { servePort, proxyPort: proxy.port });
+            const result = yield* Effect.gen(function* () {
+              yield* persist();
+              yield* ensureTailscaleServe({ localPort: proxy.port, servePort }).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              );
+            }).pipe(Effect.result);
+            entry = {
+              localPort,
+              servePort,
+              proxy,
+              url: buildTailscaleHttpsBaseUrl({ magicDnsName: tailnet.magicDnsName, servePort }),
+              owners: new Set(),
+              get lastVisit() {
+                return activity.time;
+              },
+              set lastVisit(time) {
+                activity.time = time;
+              },
+              closing: false,
+            };
+            if (result._tag === "Failure") {
+              // The daemon may have applied a mapping before a command timed out.
+              const removed = yield* remove(entry);
+              if (!removed) next.set(localPort, entry);
+              return [{ error: result.failure }, next] as const;
+            }
+            next.set(localPort, entry);
+          }
+          entry.owners.add(owner);
+          const sharedUrl = new URL(entry.url);
+          sharedUrl.pathname = url.pathname;
+          sharedUrl.search = url.search;
+          sharedUrl.hash = url.hash;
+          return [{ value: sharedUrl.toString() }, next] as const;
+        }),
+    ).pipe(
+      Effect.flatMap((result) =>
+        "value" in result
+          ? Effect.succeed(result.value)
+          : Effect.fail(
+              unavailable("Tailscale could not publish the temporary URL.", result.error),
+            ),
+      ),
+      Effect.tap(() => cleanup()),
+      Effect.uninterruptible,
+    );
+  });
+  const release = Effect.fn("PortPublisher.release")(function* (owner: string) {
+    yield* SynchronizedRef.update(published, (current) => {
+      for (const entry of current.values()) entry.owners.delete(owner);
+      return current;
+    });
+    yield* cleanup();
+  });
   return PortPublisher.of({
     publish,
-    revoke,
-    list: SynchronizedRef.get(published).pipe(
-      Effect.map((map) => Array.from(map.values()) as ReadonlyArray<PublishedPort>),
+    release,
+    list: SynchronizedRef.modify(
+      published,
+      (entries) =>
+        [
+          [...entries.values()].map(({ localPort, servePort, url }) => ({
+            localPort,
+            servePort,
+            url,
+          })),
+          entries,
+        ] as const,
     ),
   });
 });

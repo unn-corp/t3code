@@ -1,4 +1,8 @@
-# Android notifications
+# Upstream Android notifications
+
+This runbook is for the upstream Expo/React Native app in `apps/mobile`. This fork's Android app
+in `apps/android-pwa` uses a native foreground service and directly paired environments instead
+of FCM. Use the [fork Android runbook](./android-pwa.md#backend-and-native-boundaries).
 
 The Android app receives Firebase Cloud Messaging (FCM) data messages. The relay sends them directly through FCM HTTP v1; an Expo Push account is not required.
 

@@ -52,6 +52,7 @@ import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/http
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import { DesktopMaintenanceBridge } from "../maintenance/DesktopMaintenanceBridge.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
@@ -948,9 +949,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               config.value.runningDistro !== undefined &&
               config.value.wslRuntimeId !== undefined
             ) {
+              // A runtime a verified recovery or a pinned build needs is kept, not just the newest previous one.
+              const maintenance = yield* DesktopMaintenanceBridge;
+              yield* maintenance.recordWslRuntime(config.value.wslRuntimeId);
               yield* wslEnvironment.pruneRuntimes(
                 config.value.runningDistro,
                 config.value.wslRuntimeId,
+                yield* maintenance.retainedWslRuntimes,
               );
             }
           }),

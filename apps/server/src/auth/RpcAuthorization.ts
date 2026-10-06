@@ -1,6 +1,7 @@
 import {
   type DeviceListInput,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -15,6 +16,8 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { ForkMaintenanceError, type ForkMaintenanceActionInput } from "@t3tools/contracts";
+import { withWork } from "../maintenance/WorkAdmission.ts";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
@@ -135,6 +138,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverUpdateServer]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateServerWithProgress]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverCommitDesktopUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverGetMaintenanceStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverUpdateMaintenancePolicy]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverRunMaintenanceAction]: AuthOrchestrationOperateScope,
+  // Restoring older data is destructive device administration, not ordinary operation.
+  [WS_METHODS.serverRecoverMaintenance]: AuthAccessWriteScope,
   [WS_METHODS.serverUpsertKeybinding]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverRemoveKeybinding]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
@@ -308,13 +316,51 @@ export const rpcAuthorizationError = (requiredScope: AuthEnvironmentScope) =>
     requiredScope,
   });
 
-/** Authorizes every RPC on one connection against that connection's session scopes. */
+/** Actions that lift a safety hold are administration (`access:write`); check, install and cancel are ordinary operation. */
+export const maintenanceActionNeedsAdministration = (input: ForkMaintenanceActionInput): boolean =>
+  input.action === "confirm-bootstrap" || input.action === "acknowledge-automation-review";
+
+const READ_SCOPES: ReadonlySet<AuthEnvironmentScope> = new Set([
+  AuthOrchestrationReadScope,
+  AuthAccessReadScope,
+  AuthRelayReadScope,
+]);
+
+/**
+ * Methods that must keep working while a transaction holds the fence, because they are how the
+ * transaction is observed, advanced, or recovered. Everything else with a non-read scope writes
+ * outside the coordinator's view (settings, files, terminals, uploads, git, schedules) and is held.
+ */
+const MAINTENANCE_EXEMPT_METHODS: ReadonlySet<string> = new Set([
+  WS_METHODS.serverGetMaintenanceStatus,
+  WS_METHODS.serverUpdateMaintenancePolicy,
+  WS_METHODS.serverRunMaintenanceAction,
+  WS_METHODS.serverRecoverMaintenance,
+  WS_METHODS.serverUpdateServer,
+  WS_METHODS.serverUpdateServerWithProgress,
+  WS_METHODS.serverCommitDesktopUpdate,
+]);
+
+/** Whether a method writes outside the orchestrator and so needs device admission. Derived from the scope table, so new methods are covered by default. */
+export const rpcMethodNeedsWorkAdmission = (method: string): boolean =>
+  !READ_SCOPES.has(requiredScopeForRpcMethod(method)) && !MAINTENANCE_EXEMPT_METHODS.has(method);
+
+/**
+ * Authorizes every RPC on one connection against that connection's session scopes, then holds a
+ * device work lease for the duration of any method that writes. Streams hold it only until the
+ * stream is established, so a long subscription never keeps an update waiting.
+ */
 export const rpcScopeAuthorizationLayer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
     const requiredScope = requiredScopeForRpcMethod(rpc._tag);
-    return scopes.includes(requiredScope)
-      ? effect
-      : Effect.fail(rpcAuthorizationError(requiredScope));
+    if (!scopes.includes(requiredScope)) return Effect.fail(rpcAuthorizationError(requiredScope));
+    return rpcMethodNeedsWorkAdmission(rpc._tag)
+      ? withWork(effect).pipe(
+          Effect.catchTag("MaintenanceWorkHeld", (held) =>
+            Effect.fail(new ForkMaintenanceError({ reason: held.message })),
+          ),
+        )
+      : effect;
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */

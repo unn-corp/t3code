@@ -18,6 +18,12 @@ import * as Schema from "effect/Schema";
 
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
+import {
+  DeviceRestartBlocked,
+  quiesceDeviceForRestart,
+  type AcquireDeviceGuard,
+  type DeviceGuard,
+} from "../maintenance/coordinatedRestart.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -465,7 +471,7 @@ export function formatBootServiceProblem(problem: BootServiceProblem): string {
     case "service-stopped":
       return "The service is not running. Check the service log and `systemctl --user status t3code.service`, then run `t3 service install`.";
     case "restart-pending":
-      return "A newer version is installed but the service is still running the previous one. Run `t3 service restart` to switch.";
+      return "A newer version is installed but the service is still running the previous one. `t3 service restart` switches it once the device is idle; it refuses while any agent is active.";
   }
 }
 
@@ -499,7 +505,21 @@ export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootSer
   }
 }
 
+export class BootServiceRestartBlockedError extends Schema.TaggedError<BootServiceRestartBlockedError>()(
+  "BootServiceRestartBlockedError",
+  { blockers: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return [
+      "The T3 Code service was not stopped: the device is not idle.",
+      ...this.blockers.map((blocker) => `  - ${blocker}`),
+      "It keeps running. Try again once agents have been idle for five minutes, or update from App updates.",
+    ].join("\n");
+  }
+}
+
 export type BootServiceError =
+  | BootServiceRestartBlockedError
   | BootServiceUnsupportedError
   | BootServiceCommandError
   | BootServiceInstallError
@@ -557,7 +577,38 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
+  /** Quiesces the device before the service is stopped. Defaults to the real device coordinator. */
+  readonly deviceGuard?: AcquireDeviceGuard;
 }) {
+  /**
+   * Every path that stops the running service (restart, a started install, uninstall) takes the device
+   * guard first and releases it only once the service is stopped, so no agent can start between the
+   * idle check and the stop, and no unguarded restart exists to fall back to.
+   */
+  const acquireGuard = Effect.tryPromise({
+    try: () => (input.deviceGuard ?? quiesceDeviceForRestart)(),
+    catch: (cause) =>
+      cause instanceof DeviceRestartBlocked
+        ? new BootServiceRestartBlockedError({ blockers: cause.blockers })
+        : new BootServiceInstallError({ cause }),
+  });
+  const releaseGuard = (guard: DeviceGuard) =>
+    Effect.tryPromise({
+      try: () => guard.release(),
+      catch: (cause) => new BootServiceInstallError({ cause }),
+    });
+  /** Stops the unit with the guard held; the guard reopens admission once nothing is running. */
+  const guardedStop = (
+    manager: { readonly stop: ReadonlyArray<BootServiceStep> },
+    runSteps: (steps: ReadonlyArray<BootServiceStep>) => Effect.Effect<void, BootServiceError>,
+  ) =>
+    Effect.gen(function* () {
+      const guard = yield* acquireGuard;
+      yield* runSteps(manager.stop).pipe(
+        Effect.tapError(() => releaseGuard(guard).pipe(Effect.ignore)),
+      );
+      yield* releaseGuard(guard);
+    });
   const hostExecPath = yield* HostProcessExecutablePath;
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
@@ -825,7 +876,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // normally serialises against the launcher is skipped on purpose.
     const start = options?.start !== false;
     if (installed && start) {
-      yield* runSteps(manager.stop);
+      yield* guardedStop(manager, runSteps);
     }
 
     yield* Effect.gen(function* () {
@@ -912,7 +963,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     ) {
       return false;
     }
-    yield* runSteps(manager.stop);
+    yield* guardedStop(manager, runSteps);
     yield* runSteps(manager.activate).pipe(
       // Same recovery as a failed repair: a service that was running should
       // not be left stopped because daemon-reload or enable failed.
@@ -935,7 +986,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))))
     )
       return false;
-    yield* runSteps(manager.deactivate);
+    // Removing the service stops what runs in it, so it takes the same guard as a restart.
+    const guard = yield* acquireGuard;
+    yield* runSteps(manager.deactivate).pipe(
+      Effect.tapError(() => releaseGuard(guard).pipe(Effect.ignore)),
+    );
+    yield* releaseGuard(guard);
     yield* fs
       .remove(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -998,4 +1054,5 @@ export const layer = (input: {
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
+  readonly deviceGuard?: AcquireDeviceGuard;
 }) => Layer.effect(BootService, make(input));

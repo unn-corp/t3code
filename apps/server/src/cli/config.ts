@@ -471,6 +471,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      maintenance: { namespace: process.env.T3CODE_MAINTENANCE_NAMESPACE },
     };
 
     return config;

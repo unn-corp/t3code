@@ -788,6 +788,39 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
   });
 });
 
+describe("buildWslRuntimePruneScript retention", () => {
+  it("keeps the runtimes a verified recovery or a pinned build names, however old", () => {
+    const result = runShell(
+      [
+        "set -eu",
+        "work=$(mktemp -d)",
+        'home="$work/home"',
+        'runtime_parent="$home/.t3/wsl-runtime"',
+        'mkdir -p "$runtime_parent"',
+        'make_ready() { mkdir -p "$runtime_parent/$1"; printf ready > "$runtime_parent/$1/.t3code-wsl-runtime-ready"; }',
+        "make_ready sha256-current",
+        "make_ready sha256-previous",
+        "make_ready sha256-recovery",
+        "make_ready sha256-unneeded",
+        'touch -d "1 minute ago" "$runtime_parent/sha256-previous"',
+        'touch -d "5 minutes ago" "$runtime_parent/sha256-recovery"',
+        'touch -d "6 minutes ago" "$runtime_parent/sha256-unneeded"',
+        `HOME="$home"`,
+        "export HOME",
+        // A name that is not a runtime cache is ignored rather than trusted.
+        buildWslRuntimePruneScript("sha256-current", ["sha256-recovery", "../escape"]),
+        'test -d "$runtime_parent/sha256-current"',
+        'test -d "$runtime_parent/sha256-previous"',
+        'test -d "$runtime_parent/sha256-recovery"',
+        'test ! -e "$runtime_parent/sha256-unneeded"',
+        'rm -rf "$work"',
+      ].join("\n"),
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  });
+});
+
 describe("parseToolchainReport", () => {
   it("returns no missing tools and no node version on empty output", () => {
     expect(parseToolchainReport("")).toEqual({ missingTools: [], nodeVersion: null });

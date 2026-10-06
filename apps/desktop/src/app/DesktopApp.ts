@@ -28,6 +28,7 @@ import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
+import * as DesktopForkMaintenance from "../maintenance/DesktopForkMaintenance.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
@@ -164,6 +165,7 @@ const bootstrap = Effect.gen(function* () {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
   const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
   yield* logBootstrapInfo("bootstrap start");
 
   const settings = yield* desktopSettings.get;
@@ -181,6 +183,30 @@ const bootstrap = Effect.gen(function* () {
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
 
   yield* snapShot.initialize;
+
+  // Device maintenance opens before any backend does: an interrupted transaction that must restore data is
+  // finished here, while no database is open, and a trial runtime learns it is one.
+  const maintenance = yield* DesktopForkMaintenance.DesktopForkMaintenance;
+  const maintenancePlan = yield* maintenance.prepareStartup;
+  if (maintenancePlan.kind === "blocked") {
+    // A transaction holds the device and this launch could not finish it. No backend starts, so no database opens and
+    // nothing can write over data a restore is about to replace; the window still opens, because the renderer is served
+    // from the bundled client and its update settings explain what to do.
+    yield* logBootstrapWarning("bootstrap holding backends for an unfinished device update", {
+      reason: maintenancePlan.reason,
+    });
+    yield* electronDialog
+      .showMessageBox({
+        type: "warning",
+        title: "T3 Code is holding your data",
+        message: "A device update did not finish, so T3 Code did not open your data.",
+        detail: maintenancePlan.reason,
+        buttons: ["OK"],
+      })
+      .pipe(Effect.ignore);
+    if (!(yield* Ref.get(state.quitting))) yield* desktopWindow.revealOrCreateMain;
+    return;
+  }
 
   if (!settings.localEnvironmentEnabled) {
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
@@ -240,6 +266,9 @@ const bootstrap = Effect.gen(function* () {
     yield* desktopWindow.showConnectingSplash;
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
+    // This process is the trial runtime of a device update: its backends hold the transaction's capability,
+    // and the controller commits once every home reports healthy.
+    if (maintenancePlan.kind === "trial") yield* maintenance.resumeInBackground;
     yield* appActivation.start.pipe(
       Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
       Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
@@ -264,6 +293,7 @@ const startup = Effect.gen(function* () {
   const preReadyElectronOptions = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const updates = yield* DesktopUpdates.DesktopUpdates;
+  const maintenance = yield* DesktopForkMaintenance.DesktopForkMaintenance;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
 
   yield* shellEnvironment.installIntoProcess;
@@ -320,6 +350,7 @@ const startup = Effect.gen(function* () {
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
   yield* updates.configure;
+  yield* maintenance.configure;
   yield* DesktopRemoteUpdates.listen;
   yield* linuxUrlHandler.register;
   yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));

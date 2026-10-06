@@ -125,6 +125,8 @@ interface PinnedRuntimeInstallInput {
   readonly arch: string;
   readonly httpClient: HttpClient.HttpClient;
   readonly releaseBaseUrl?: string | undefined;
+  /** Digest recorded in the fork release manifest. A SHA256SUMS entry that disagrees is a mismatched release, not a download error. */
+  readonly expectedArchiveSha256?: string | undefined;
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
 }
 
@@ -210,6 +212,11 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   if (expected === undefined) {
     return yield* new PinnedRuntimeInstallError({
       step: `finding ${fileName} in the t3 release checksums`,
+    });
+  }
+  if (input.expectedArchiveSha256 !== undefined && input.expectedArchiveSha256 !== expected) {
+    return yield* new PinnedRuntimeInstallError({
+      step: "matching the release checksum file to the digest recorded in the release manifest",
     });
   }
   const archive = yield* fetchReleaseAsset(

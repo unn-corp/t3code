@@ -1,0 +1,1040 @@
+name: Fork release
+
+# Fork-owned nightly and stable releases of unn-corp/t3code. This is deliberately separate from
+# release.yml, which publishes upstream's npm, web, relay, AUR, and announcement targets and is
+# guarded off in this fork. Nothing here publishes anywhere but this repository's GitHub releases.
+#
+# Gate: scheduled runs do nothing, and manual runs never publish, until the repository variable
+# FORK_RELEASES_ENABLED is "true". Enable it only after the baseline proof in
+# docs/operations/fork-releases.md (Baseline, then Commissioning) has passed.
+#
+# Pipeline: plan (pin commit, version, tag, predecessor) -> reserve Android codes -> build desktop,
+# server archives, APKs, recovery helper -> assemble and verify -> validate install/update/recovery
+# on every target -> compose fork-release.json from the receipts -> draft, verify, publish.
+
+on:
+  schedule:
+    # Nightly, every day. Avoids minute zero, when scheduled jobs are busiest.
+    - cron: "23 7 * * *"
+    # Stable, Sundays one hour later: promotes a nightly that completed its checks 24+ hours ago.
+    - cron: "23 8 * * 0"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        default: nightly
+        type: choice
+        options:
+          - nightly
+          - stable
+      commit:
+        description: "Nightly only: full 40-character commit on main to release. Defaults to the tip of main."
+        required: false
+        type: string
+      publish:
+        description: "Create and publish the release. Off by default: a rehearsal builds and validates everything but publishes nothing."
+        required: false
+        default: false
+        type: boolean
+
+# One release at a time. Queued runs wait and keep their own pinned commit; a running publisher is
+# never cancelled. Withdrawals use their own group so they never wait behind a build.
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: read
+
+jobs:
+  # Fixes every identity the run needs. Later jobs read these outputs and never re-select.
+  plan:
+    name: Plan release
+    if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main' && (github.event_name != 'schedule' || vars.FORK_RELEASES_ENABLED == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+      reason: ${{ steps.plan.outputs.reason }}
+      channel: ${{ steps.plan.outputs.channel }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      commit: ${{ steps.plan.outputs.commit }}
+      predecessor_tag: ${{ steps.plan.outputs.predecessor_tag }}
+      predecessor_version: ${{ steps.plan.outputs.predecessor_version }}
+      predecessor_commit: ${{ steps.plan.outputs.predecessor_commit }}
+      predecessor_baseline: ${{ steps.plan.outputs.predecessor_baseline }}
+      publish: ${{ steps.intent.outputs.publish }}
+    steps:
+      # Orchestration always runs from the commit that defines this workflow, never from the
+      # (possibly older) commit being released.
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install release tooling dependencies
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Resolve channel and intent
+        id: intent
+        env:
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_COMMIT: ${{ inputs.commit }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          ENABLED: ${{ vars.FORK_RELEASES_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == "schedule" ]]; then
+            if [[ "$SCHEDULE" == "23 8 * * 0" ]]; then channel=stable; else channel=nightly; fi
+            publish=true
+          else
+            channel="$INPUT_CHANNEL"
+            publish="${INPUT_PUBLISH:-false}"
+          fi
+          # Publication is gated on the commissioning variable, whatever the trigger asked for.
+          [[ "$ENABLED" == "true" ]] || publish=false
+          if [[ "$channel" == "stable" && -n "$INPUT_COMMIT" ]]; then
+            echo "A stable release promotes a nightly; it takes no commit input." >&2
+            exit 1
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      # A manual commit must already be on main, so a rehearsal or release never builds a branch.
+      - name: Verify the requested commit is on main
+        if: inputs.commit != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be a full 40-character SHA" >&2; exit 1; }
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$COMMIT" --jq .status)"
+          [[ "$status" == "behind" || "$status" == "identical" ]] || { echo "$COMMIT is not on main ($status)" >&2; exit 1; }
+
+      - name: Plan
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ steps.intent.outputs.channel }}
+          INPUT_COMMIT: ${{ inputs.commit }}
+        run: node scripts/fork-release.ts plan --channel "$CHANNEL" --commit "${INPUT_COMMIT:-$GITHUB_SHA}" --out fork-release-plan.json
+
+      - name: Summarize plan
+        env:
+          SKIP: ${{ steps.plan.outputs.skip }}
+          REASON: ${{ steps.plan.outputs.reason }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          COMMIT: ${{ steps.plan.outputs.commit }}
+          PUBLISH: ${{ steps.intent.outputs.publish }}
+        run: |
+          {
+            echo "### Fork release plan"
+            if [[ "$SKIP" == "true" ]]; then echo "Skipped: $REASON"; else
+              echo "- version: \`$VERSION\`"
+              echo "- commit: \`$COMMIT\`"
+              echo "- publishes: $PUBLISH (a rehearsal builds and validates but publishes nothing)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan
+        if: steps.plan.outputs.skip == 'false'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fork-release-plan
+          path: fork-release-plan.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # Android installation codes are a serial counter across both channels. The reservation tag is
+  # the atomic step, so concurrent runs can never share a code. A rehearsal reads the counter and
+  # claims nothing.
+  reserve_android_codes:
+    name: Reserve Android codes
+    needs: [plan]
+    if: needs.plan.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      normal_code: ${{ steps.reserve.outputs.normal_code }}
+      recovery_code: ${{ steps.reserve.outputs.recovery_code }}
+    steps:
+      # Orchestration always runs from the commit that defines this workflow, never from the
+      # (possibly older) commit being released.
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install release tooling dependencies
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Download plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: fork-release-plan
+
+      - name: Reserve codes
+        id: reserve
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DRY: ${{ needs.plan.outputs.publish != 'true' && '--dry-run' || '' }}
+        # $DRY is intentionally unquoted: it is empty or a single flag.
+        run: node scripts/fork-release.ts reserve-codes --plan fork-release-plan.json --out android-codes.json $DRY
+
+  # The JS bundle is built once from the pinned commit. There is no T3 Connect account
+  # provisioning in this fork, so no relay, Clerk, or tracing configuration is baked in.
+  build_bundle:
+    name: Build JS bundle
+    needs: [plan]
+    if: needs.plan.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout pinned source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          path: source
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Confirm source is the pinned commit
+        working-directory: source
+        env:
+          EXPECTED: ${{ needs.plan.outputs.commit }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED" ]] || { echo "source is not at $EXPECTED" >&2; exit 1; }
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: source/package.json
+          cache: false
+          run-install: false
+
+      - name: Install bundle dependencies
+        working-directory: source
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Align package versions to release version
+        working-directory: source
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: node scripts/update-release-package-versions.ts "$VERSION"
+
+      - uses: ./source/.github/actions/setup-apt-mirrors
+
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
+      - name: Build JS bundle
+        working-directory: source
+        run: vp run build:desktop
+
+      - name: Upload JS bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: js-bundle
+          path: |
+            source/apps/server/dist
+            source/apps/desktop/dist-electron
+          if-no-files-found: error
+          retention-days: 1
+
+  # GitHub-hosted runners only. Each target builds from the pinned commit; Windows embeds the
+  # Linux server archive as its WSL runtime and records that archive's digest.
+  desktop_linux_x64:
+    name: Desktop Linux x64
+    needs: [plan, build_bundle]
+    if: needs.plan.outputs.skip == 'false'
+    uses: ./.github/workflows/release-desktop.yml
+    permissions:
+      actions: read
+      contents: read
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      ref: ${{ needs.plan.outputs.commit }}
+      release_channel: ${{ needs.plan.outputs.channel }}
+      relay_client_tracing: false
+      label: Linux x64
+      runner: ubuntu-24.04
+      platform: linux
+      target: AppImage
+      arch: x64
+      rust_target: x86_64-unknown-linux-gnu
+      resource_key: linux-x64
+      cli_archive: true
+
+  desktop_win_x64:
+    name: Desktop Windows x64
+    needs: [plan, build_bundle]
+    if: needs.plan.outputs.skip == 'false'
+    uses: ./.github/workflows/release-desktop.yml
+    permissions:
+      actions: read
+      contents: read
+    # Windows signing is optional: without these the installer ships unsigned.
+    secrets:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+      AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+      AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      ref: ${{ needs.plan.outputs.commit }}
+      release_channel: ${{ needs.plan.outputs.channel }}
+      relay_client_tracing: false
+      label: Windows x64
+      runner: windows-2025
+      platform: win
+      target: nsis
+      arch: x64
+      rust_target: x86_64-pc-windows-msvc
+      resource_key: win32-x64
+      cli_archive: true
+
+  # Signing is mandatory for Android. The key lives only in this job, in a private temp file that
+  # is removed at the end. The normal APK compiles the pinned commit; the recovery APK recompiles
+  # the predecessor with the normal code plus one, under the same package and key.
+  android:
+    name: Android APKs
+    needs: [plan, reserve_android_codes]
+    if: needs.plan.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      COMMIT: ${{ needs.plan.outputs.commit }}
+      PREDECESSOR_VERSION: ${{ needs.plan.outputs.predecessor_version }}
+      PREDECESSOR_COMMIT: ${{ needs.plan.outputs.predecessor_commit }}
+      NORMAL_CODE: ${{ needs.reserve_android_codes.outputs.normal_code }}
+      RECOVERY_CODE: ${{ needs.reserve_android_codes.outputs.recovery_code }}
+      SIGNER_SHA256: ${{ vars.FORK_ANDROID_SIGNER_SHA256 }}
+      KEY_ALIAS: ${{ vars.FORK_ANDROID_KEY_ALIAS || 't3-pwa' }}
+    steps:
+      # Orchestration always runs from the commit that defines this workflow, never from the
+      # (possibly older) commit being released.
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: tooling/package.json
+          cache: false
+          run-install: false
+
+      - name: Install release tooling dependencies
+        working-directory: tooling
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Checkout pinned source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          path: source
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Confirm source is the pinned commit
+        working-directory: source
+        env:
+          EXPECTED: ${{ needs.plan.outputs.commit }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED" ]] || { echo "source is not at $EXPECTED" >&2; exit 1; }
+
+      - name: Checkout predecessor source (recovery APK)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.plan.outputs.predecessor_commit }}
+          path: predecessor
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Confirm predecessor is the pinned commit
+        working-directory: predecessor
+        env:
+          EXPECTED: ${{ needs.plan.outputs.predecessor_commit }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED" ]] || { echo "predecessor is not at $EXPECTED" >&2; exit 1; }
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK packages
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install web dependencies
+        run: |
+          set -euo pipefail
+          (cd source && vp install --filter=@t3tools/web... --filter=@t3tools/scripts...)
+          (cd predecessor && vp install --filter=@t3tools/web...)
+
+      - name: Install signing material
+        env:
+          KEYSTORE_BASE64: ${{ secrets.FORK_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.FORK_ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "$KEYSTORE_BASE64" && -n "$KEYSTORE_PASSWORD" ]] || { echo "Android signing secrets are required." >&2; exit 1; }
+          [[ "$SIGNER_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "FORK_ANDROID_SIGNER_SHA256 must pin the release certificate." >&2; exit 1; }
+          umask 077
+          mkdir -p "$RUNNER_TEMP/android-signing"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-signing/release.jks"
+          printf '%s' "$KEYSTORE_PASSWORD" > "$RUNNER_TEMP/android-signing/password"
+
+      - name: Build normal APK
+        working-directory: source
+        run: |
+          set -euo pipefail
+          node scripts/build-android-pwa.ts \
+            --kind normal \
+            --keystore "$RUNNER_TEMP/android-signing/release.jks" \
+            --password-file "$RUNNER_TEMP/android-signing/password" \
+            --key-alias "$KEY_ALIAS" \
+            --expect-signer "$SIGNER_SHA256" \
+            --version-name "$VERSION" \
+            --version-code "$NORMAL_CODE" \
+            --source-commit "$COMMIT" \
+            --asset-name "t3-code-android-$VERSION.apk" \
+            --output-dir "$RUNNER_TEMP/android/normal"
+
+      - name: Build isolated updater instrumentation
+        working-directory: source/apps/android-pwa
+        env:
+          T3_PWA_KEYSTORE: ${{ runner.temp }}/android-signing/release.jks
+          T3_PWA_PASSWORD_FILE: ${{ runner.temp }}/android-signing/password
+          T3_PWA_KEY_ALIAS: ${{ env.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          ./gradlew :app:assembleReleaseAndroidTest \
+            -PpwaVersionName="$VERSION" -PpwaSourceVersion="$VERSION" \
+            -PpwaVersionCode="$NORMAL_CODE" -PpwaSourceCommit="$COMMIT" \
+            -PpwaTestRunner=com.devotek.t3code.pwa.UpdaterSmokeInstrumentation
+          mkdir -p "$RUNNER_TEMP/android/instrumentation"
+          cp app/build/outputs/apk/androidTest/release/app-release-androidTest.apk "$RUNNER_TEMP/android/instrumentation/updater-instrumentation.apk"
+
+      - name: Upload isolated updater instrumentation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-updater-instrumentation
+          path: ${{ runner.temp }}/android/instrumentation/updater-instrumentation.apk
+          if-no-files-found: error
+
+      - name: Verify normal APK
+        working-directory: tooling
+        run: |
+          set -euo pipefail
+          node scripts/fork-release.ts android-verify \
+            --role normal \
+            --apk "$RUNNER_TEMP/android/normal/t3-code-android-$VERSION.apk" \
+            --metadata "$RUNNER_TEMP/android/normal/metadata.json" \
+            --release-version "$VERSION" --source-version "$VERSION" \
+            --code "$NORMAL_CODE" --commit "$COMMIT" \
+            --pinned-signer "$SIGNER_SHA256" \
+            --out android-normal
+
+      - name: Build recovery APK from the predecessor
+        working-directory: source
+        run: |
+          set -euo pipefail
+          node scripts/build-android-pwa.ts \
+            --kind recovery \
+            --source-dir "$GITHUB_WORKSPACE/predecessor" \
+            --keystore "$RUNNER_TEMP/android-signing/release.jks" \
+            --password-file "$RUNNER_TEMP/android-signing/password" \
+            --key-alias "$KEY_ALIAS" \
+            --expect-signer "$SIGNER_SHA256" \
+            --version-name "$PREDECESSOR_VERSION" \
+            --normal-version-code "$NORMAL_CODE" \
+            --source-commit "$PREDECESSOR_COMMIT" \
+            --asset-name "t3-code-android-recovery-$VERSION.apk" \
+            --output-dir "$RUNNER_TEMP/android/recovery"
+
+      - name: Verify recovery APK
+        working-directory: tooling
+        run: |
+          set -euo pipefail
+          node scripts/fork-release.ts android-verify \
+            --role recovery \
+            --apk "$RUNNER_TEMP/android/recovery/t3-code-android-recovery-$VERSION.apk" \
+            --metadata "$RUNNER_TEMP/android/recovery/metadata.json" \
+            --release-version "$VERSION" --source-version "$PREDECESSOR_VERSION" \
+            --code "$RECOVERY_CODE" --commit "$PREDECESSOR_COMMIT" \
+            --pinned-signer "$SIGNER_SHA256" \
+            --out android-recovery
+
+      - name: Remove signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/android-signing"
+
+      - name: Upload normal APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-normal
+          path: tooling/android-normal/*
+          if-no-files-found: error
+
+      - name: Upload recovery APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-recovery
+          path: tooling/android-recovery/*
+          if-no-files-found: error
+
+  # Helper assets live outside the replaced application directory on a device, so they ship as
+  # their own release assets, one per platform. The helper belongs to the candidate's source, so
+  # its commissioned build command runs in that checkout.
+  recovery_helper:
+    name: Recovery helper ${{ matrix.platform }}
+    needs: [plan]
+    if: needs.plan.outputs.skip == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+          - platform: windows-x64
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      # Orchestration always runs from the commit that defines this workflow, never from the
+      # (possibly older) commit being released.
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: tooling/package.json
+          cache: false
+          run-install: false
+
+      - name: Install release tooling dependencies
+        working-directory: tooling
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Checkout pinned source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          path: source
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Confirm source is the pinned commit
+        working-directory: source
+        env:
+          EXPECTED: ${{ needs.plan.outputs.commit }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED" ]] || { echo "source is not at $EXPECTED" >&2; exit 1; }
+
+      - name: Install source dependencies
+        working-directory: source
+        run: vp install
+
+      - name: Build recovery helper
+        working-directory: tooling
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          WORKDIR: ${{ github.workspace }}/source
+        run: node scripts/fork-release.ts build-helper --platform "$PLATFORM" --workdir "$WORKDIR" --out "../recovery-helper-$PLATFORM"
+
+      - name: Upload recovery helper
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: recovery-helper-${{ matrix.platform }}
+          path: recovery-helper-${{ matrix.platform }}/*
+          if-no-files-found: error
+
+  # Verifies every artifact against the plan and flattens them into the release payload. The
+  # predecessor that update and recovery tests start from is downloaded and verified here too.
+  assemble:
+    name: Assemble candidate
+    needs: [plan, desktop_linux_x64, desktop_win_x64, android, recovery_helper]
+    if: needs.plan.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      predecessor_digest: ${{ steps.predecessor.outputs.predecessor_digest }}
+    steps:
+      # Orchestration always runs from the commit that defines this workflow, never from the
+      # (possibly older) commit being released.
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install release tooling dependencies
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Download plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: fork-release-plan
+
+      - name: Download Windows desktop
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with: { name: desktop-win-x64, path: inputs/desktop-win-x64 }
+      - name: Download Linux desktop
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with: { name: desktop-linux-x64, path: inputs/desktop-linux-x64 }
+      - name: Download Windows server archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with: { name: cli-win-x64, path: inputs/cli-win-x64 }
+      - name: Download Linux server archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with: { name: cli-linux-x64, path: inputs/cli-linux-x64 }
+      - name: Download embedded WSL receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with: { name: wsl-embedded-x64, path: inputs/wsl-embedded-x64 }
+      - name: Download normal APK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with: { name: android-normal, path: inputs/android-normal }
+      - name: Download recovery APK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with: { name: android-recovery, path: inputs/android-recovery }
+      - name: Download recovery helpers
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: recovery-helper-*
+          path: inputs
+
+      - name: Download and verify the predecessor
+        id: predecessor
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.predecessor_tag }}
+        run: node scripts/fork-release.ts fetch-predecessor --tag "$TAG" --out predecessor
+
+      - name: Assemble and verify
+        run: node scripts/fork-release.ts assemble --plan fork-release-plan.json --input inputs --out candidate
+
+      - name: Upload candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fork-release-candidate
+          path: |
+            candidate
+            candidate.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload predecessor
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fork-release-predecessor
+          path: predecessor
+          if-no-files-found: error
+          retention-days: 7
+
+  # Install, update, and recovery run on every target against the exact candidate bytes and the
+  # exact predecessor. Each writes a receipt; the manifest's checks are computed from them.
+  validate:
+    name: Validate ${{ matrix.target }}
+    needs: [plan, assemble]
+    if: needs.plan.outputs.skip == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: windows-x64
+            runner: windows-2025
+          - target: android
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    env:
+      PREDECESSOR_DIGEST: ${{ needs.assemble.outputs.predecessor_digest }}
+    steps:
+      # Orchestration always runs from the commit that defines this workflow, never from the
+      # (possibly older) commit being released.
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install release tooling dependencies
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Download candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: fork-release-candidate
+
+      - name: Download predecessor
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: fork-release-predecessor
+          path: predecessor
+
+      - name: Run validations
+        if: matrix.target != 'android'
+        shell: bash
+        run: bash .github/scripts/fork-release-receipts.sh "${{ matrix.target }}" candidate predecessor "$PREDECESSOR_DIGEST" receipts
+
+      - name: Download updater instrumentation
+        if: matrix.target == 'android'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: android-updater-instrumentation
+          path: android-instrumentation
+
+      - name: Enable KVM
+        if: matrix.target == 'android'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The emulator runs a single script line, so everything goes through one command.
+      - name: Run validations on an emulator
+        if: matrix.target == 'android'
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: FORK_VALIDATION_ANDROID_SERIAL=emulator-5554 FORK_VALIDATION_ANDROID_TEST_APK="$PWD/android-instrumentation/updater-instrumentation.apk" bash .github/scripts/fork-release-receipts.sh android candidate predecessor "${{ env.PREDECESSOR_DIGEST }}" receipts
+
+      - name: Upload receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: receipts-${{ matrix.target }}
+          path: receipts/*.json
+          if-no-files-found: error
+
+  # The safety suites a release cannot do without, run from a clean checkout of the exact commit
+  # the artifacts were built from. They are defined in code (scripts/fork-release-suites.ts):
+  # the device maintenance coordinator and recovery helper, the desktop updater, and the native
+  # Android updater. Each receipt is bound to that commit and to the artifact payload, so a green
+  # run elsewhere, on other source, or with a smaller file list cannot count.
+  suites:
+    name: Suite ${{ matrix.suite }} on ${{ matrix.target }}
+    needs: [plan, assemble]
+    if: needs.plan.outputs.skip == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { suite: coordinator, target: linux-x64, runner: ubuntu-24.04 }
+          - { suite: coordinator, target: windows-x64, runner: windows-2025 }
+          - { suite: host-runtime, target: linux-x64, runner: ubuntu-24.04 }
+          - { suite: host-runtime, target: windows-x64, runner: windows-2025 }
+          - { suite: desktop-updater, target: linux-x64, runner: ubuntu-24.04 }
+          - { suite: desktop-updater, target: windows-x64, runner: windows-2025 }
+          - { suite: native-android, target: android, runner: ubuntu-24.04 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: tooling/package.json
+          cache: false
+          run-install: false
+
+      - name: Install release tooling dependencies
+        working-directory: tooling
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Checkout pinned source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          path: source
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Confirm source is the pinned commit
+        working-directory: source
+        shell: bash
+        env:
+          EXPECTED: ${{ needs.plan.outputs.commit }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED" ]] || { echo "source is not at $EXPECTED" >&2; exit 1; }
+
+      - name: Install source dependencies
+        working-directory: source
+        run: vp install
+
+      - name: Setup JDK 17
+        if: matrix.suite == 'native-android'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Download candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: fork-release-candidate
+          path: tooling
+
+      - name: Run suite
+        working-directory: tooling
+        shell: bash
+        env:
+          SUITE: ${{ matrix.suite }}
+          TARGET: ${{ matrix.target }}
+        run: node scripts/fork-release.ts suite --suite "$SUITE" --target "$TARGET" --candidate candidate --source ../source --out receipts
+
+      - name: Upload suite receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: suite-receipts-${{ matrix.suite }}-${{ matrix.target }}
+          path: tooling/receipts/*.json
+          if-no-files-found: error
+
+  # Reads the receipts and writes fork-release.json. A check is true only where package receipts
+  # on every target AND the safety suites it depends on both cover exactly this candidate. Fails if any check is false.
+  manifest:
+    name: Compose manifest
+    needs: [plan, assemble, validate, suites]
+    if: needs.plan.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # Orchestration always runs from the commit that defines this workflow, never from the
+      # (possibly older) commit being released.
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install release tooling dependencies
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Download candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: fork-release-candidate
+
+      - name: Download receipts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: "*receipts-*"
+          path: receipts
+
+      - name: Compose fork-release.json
+        env:
+          PREDECESSOR_DIGEST: ${{ needs.assemble.outputs.predecessor_digest }}
+        run: node scripts/fork-release.ts manifest --candidate candidate --receipts receipts --predecessor-digest "$PREDECESSOR_DIGEST"
+
+      - name: Upload final candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fork-release-final
+          path: |
+            candidate
+            candidate.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # The only job that writes releases. It drafts the complete payload, downloads every asset back
+  # to verify it against the manifest, rechecks that nothing changed, and only then publishes.
+  # Payloads and tags are never overwritten.
+  publish:
+    name: Publish release
+    needs: [plan, manifest]
+    if: needs.plan.outputs.skip == 'false' && needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      # Orchestration always runs from the commit that defines this workflow, never from the
+      # (possibly older) commit being released.
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install release tooling dependencies
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Download plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: fork-release-plan
+
+      - name: Download final candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: fork-release-final
+
+      - name: Create draft release
+        id: draft
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >
+          node scripts/fork-release.ts draft
+          --plan fork-release-plan.json
+          --candidate candidate
+          --summary "Build, install, update, and recovery checks passed on linux-x64, windows-x64, and android."
+
+      - name: Verify the draft and publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+        run: node scripts/fork-release.ts publish --plan fork-release-plan.json --release-id "$RELEASE_ID" --scratch verify-draft

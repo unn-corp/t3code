@@ -1,3 +1,4 @@
+import { ComposerHostMaintenanceStatus } from "./chat/ComposerHostMaintenanceStatus";
 import { elementContextToPreviewAnnotation } from "../lib/elementContext";
 import { type WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { isMacPlatform } from "../lib/utils";
@@ -3128,6 +3129,7 @@ export default function ChatView(props: ChatViewProps) {
             <ServerUpdateAction
               environmentId={serverUpdateEnvironmentId}
               serverLabel={versionMismatchServerLabel}
+              forkMaintenance={serverConfig?.environment.capabilities.forkMaintenance}
               selfUpdate={versionMismatchSelfUpdate}
               installation={versionMismatchInstallation}
               desktopAppUpdate={versionMismatchDesktopAppUpdate}
@@ -11308,6 +11310,16 @@ export default function ChatView(props: ChatViewProps) {
                         </div>
                       </ComposerSurface.Host>
                       <div className="min-h-0">
+                        {serverUpdateEnvironmentId ? (
+                          <ComposerHostMaintenanceStatus
+                            environmentId={serverUpdateEnvironmentId}
+                            label={versionMismatchServerLabel}
+                            supported={
+                              serverConfig?.environment.capabilities.forkMaintenance?.admission ===
+                              true
+                            }
+                          />
+                        ) : null}
                         <div
                           data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
                           className="relative z-0"

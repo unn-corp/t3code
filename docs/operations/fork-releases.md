@@ -1,0 +1,347 @@
+# Fork releases
+
+How `unn-corp/t3code` builds, validates, publishes, withdraws, and recovers its own nightly and
+stable releases. Upstream's [release process](./release.md) publishes npm, web, relay, AUR, and
+announcement targets and is guarded off in this fork. The fork pipeline publishes only GitHub
+releases in this repository. Device behavior (what an installation does with a release) is in the
+[maintenance guide](./fork-maintenance.md) and the user [updating guide](../user/updating.md).
+
+**Status.** The workflow, scripts, and tests are implemented. Nothing publishes until the
+repository variable `FORK_RELEASES_ENABLED` is `true`, and that must wait for the
+[baseline](#baseline) and the [commissioning checklist](#commissioning) below. Required coordinator, updater, retained-runtime, and recovery-helper checks must all pass;
+missing or failed safety evidence blocks every release.
+
+## What a release is
+
+| Item           | Rule                                                                                                                                                      |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tag            | `fork-v<version>`. Never `v*`: upstream's release workflow triggers on `v*`.                                                                              |
+| Stable version | Independent of upstream. First `1.0.0`, then the next patch. A version is consumed by a draft or withdrawn release too and is never reused.               |
+| Nightly        | `<next stable>-nightly.<YYYYMMDD>.<run>`, for example `1.0.1-nightly.20261006.42`. Semver orders it below the stable it leads to.                         |
+| Schedule       | Nightly daily at 07:23 UTC. Stable Sundays at 08:23 UTC.                                                                                                  |
+| Stable source  | The newest nightly whose four checks were all true at least 24 hours ago and that is newer than the nightly the previous stable came from. Not telemetry. |
+| Stable build   | Rebuilds the nightly's exact commit under the stable version; it does not rename the nightly's binaries.                                                  |
+| Commit pin     | Nightly builds `github.sha`, fixed by GitHub when the run is triggered. A queued run keeps its own commit. Stable takes the commit from its source.       |
+
+### Assets
+
+Every release carries exactly these, all listed with `sha256` and `bytes` in `fork-release.json`
+(the exact schema in `packages/contracts/src/forkRelease.ts`, which this pipeline never changes):
+
+- Windows x64 NSIS installer (`T3-Code-<v>-x64.exe`), its blockmap, and the channel feed
+  (`latest.yml` or `nightly.yml`).
+- Linux x64 AppImage (`T3-Code-<v>-x86_64.AppImage`) and Debian package (`T3-Code-<v>-amd64.deb`).
+  Both are `desktop` assets for `linux-x64`. Devices tell them apart by exact suffix
+  (`forkDesktopAssetFor` in `packages/shared`), so a Debian install is never offered an AppImage.
+  The AppImage blockmap and `<channel>-linux.yml` feed ship with them.
+- Server archives for Linux x64 (`t3-<v>-linux-x64.tar.gz`) and Windows x64
+  (`t3-<v>-win32-x64.zip`). The Windows installer embeds the Linux archive as its WSL runtime; the
+  build records the digest of the file it embeds and assembly requires it to equal the shipped
+  Linux archive exactly.
+- Android: the normal APK and a recovery APK (see [Android](#android)).
+- Recovery helper, one per platform (see [Recovery helper](#recovery-helper)).
+- `SHA256SUMS` over the two server archives (the format the shell installers verify) and
+  `fork-release.json`.
+
+Windows signing is optional (Azure Trusted Signing secrets); Android signing is mandatory.
+
+### Trust boundary
+
+There is no separate signed index. A device trusts the GitHub HTTPS release origin, the platform
+signatures on installers and APKs, and the digests recorded in `fork-release.json`. A digest
+detects corruption and substitution after the manifest was written; it does not authenticate
+who wrote the manifest. Do not describe hashes as authentication.
+
+### Eligibility
+
+A release is a candidate only if it is published (not a draft), not withdrawn, has a decodable
+manifest whose tag matches its version, has every manifest asset at its recorded size, has all four
+checks true, is not a duplicate of an earlier release of the same version or the same commit and
+channel, and its recovery APK is a distinct source with a higher installation code and the same
+signer. Devices never downgrade: stable devices take only stable releases, nightly devices follow
+nightlies but take a stable that outranks them. The rules live in
+`scripts/fork-release-policy.ts` and are tested there.
+
+## Pipeline
+
+`.github/workflows/fork-release.yml`, one run at a time (`concurrency: fork-release`, queued runs
+kept, a publisher never cancelled):
+
+1. **plan** pins the commit, version, tag, and predecessor, uploads the plan, and skips cleanly when
+   there is nothing to release. It fails closed when there is no eligible predecessor and no
+   [baseline](#baseline).
+2. **reserve_android_codes** allocates the Android code pair (rehearsals read it and claim nothing).
+3. **build_bundle**, **desktop_linux_x64**, **desktop_win_x64** (the reusable
+   `release-desktop.yml`, GitHub-hosted runners, no relay, Clerk, or tracing configuration),
+   **android**, and **recovery_helper** build from the pinned commit.
+4. **assemble** verifies every artifact, feed reference, the embedded WSL archive, and both APKs,
+   flattens the payload, and writes `SHA256SUMS`. It also downloads and verifies the predecessor.
+5. **validate** runs install, update, and recovery on `linux-x64`, `windows-x64`, and `android`.
+   **suites** runs the safety suites (below). Both write receipts.
+6. **manifest** computes the four checks from the receipts and writes `fork-release.json`. It fails
+   if any check is false.
+7. **publish** is the only job that writes releases (with code reservation). It creates a complete
+   draft, downloads every asset back and compares it with the manifest, rechecks that the tag,
+   commit, and source nightly are still eligible, and only then publishes.
+
+Orchestration scripts always run from the commit that defines the workflow. Builds, the recovery
+helper, and the safety suites run from the pinned commit, and each confirms its checkout is exactly
+that commit.
+
+### What each check means
+
+`build` is true when assembly passed. `install`, `update`, and `recovery` are each true only when
+both kinds of evidence exist for exactly this candidate. A missing, failing, substituted, or stale
+receipt of either kind makes the check false, and a false check blocks publication.
+
+**Package validation** (`scripts/fork-release-validate.ts`, receipts bind to the payload digest and
+the predecessor's digest):
+
+| Target        | Install                                                                                                                                                                                         | Update                                                                                                              | Recovery                                                                                                                    |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `linux-x64`   | Server archive reports its version and serves; AppImage unpacks with updater config and its runtime version probe starts; `.deb` installs with updater config and the `deb` package-type marker | Predecessor then candidate `.deb` through dpkg, and the server archive replaced in place over a preserved data home | Candidate then predecessor `.deb`; predecessor binary and the pre-update data snapshot restored, later writes dropped       |
+| `windows-x64` | Server archive serves; NSIS installer installs silently at the right version                                                                                                                    | Predecessor then candidate installer, then the same archive replacement                                             | Candidate then predecessor installer, then the same restore                                                                 |
+| `android`     | Normal APK installs on an emulator and launches                                                                                                                                                 | Predecessor then candidate with `adb install -r`, same first-install time                                           | Android refuses the predecessor's lower code; the recovery APK replaces the candidate in place at the predecessor's version |
+
+**Safety suites** (`scripts/fork-release-suites.ts`, run from a clean checkout of the pinned
+commit, receipts bound to that commit and to the payload digest):
+
+| Suite             | Targets                | Covers                                                                                                                                                                                      | Required by               |
+| ----------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `coordinator`     | linux-x64, windows-x64 | Work admission and idle windows, the coordination store and fencing, multi-home snapshots, the update/recovery transaction and its commit boundary, the controller, and the recovery helper | install, update, recovery |
+| `host-runtime`    | linux-x64, windows-x64 | Actual server registration, database startup fencing, work/restart admission, operator permissions, and launcher health boundaries                                                          | install, update, recovery |
+| `desktop-updater` | linux-x64, windows-x64 | The desktop update state machine, channels, remote update flow, and adapters                                                                                                                | update, recovery          |
+| `native-android`  | android                | APK verification, install guard and transaction, release manifest and client, eligibility, reconciliation, recovery cache, update store                                                     | update, recovery          |
+
+The commands, the exact required test files and JUnit classes, and the check mapping are code, not
+configuration. A receipt records a digest of its suite specification and a receipt for any other
+specification does not count; every required file must have run at least one test and all must have
+passed (none skipped). Removing or renaming a required test fails publication until the list is
+changed in a reviewed commit.
+
+**What this does not prove.** The package rows are external operations (dpkg, the NSIS installer,
+`adb`, archive replacement). They show the shipped bytes install, upgrade in place, and roll back.
+They are never the whole proof: no check can be true on them alone. The in-product path (stopped
+agents, admission, snapshot, trial, health receipt, commit or restore) is covered by the coordinator
+and updater suites, which exercise the transaction and controller logic against fixture homes and
+runtimes. Android also has a real-emulator interaction gate for its WebView health, native recovery,
+Settings holds, and local-work admission. It does not yet prove PackageInstaller confirmation or
+process-death/reboot recovery. Drive the live update and recovery on
+real hardware during [commissioning](#commissioning), and keep adding coordinator integration tests
+to the `coordinator` suite's required list as they land.
+
+## Android
+
+- **Identity.** Package `com.devotek.t3code.pwa`, one signing key. `FORK_ANDROID_SIGNER_SHA256` pins
+  the release certificate; every APK is verified against it with `apksigner` and `aapt2`, and must
+  not be debuggable.
+- **Installation codes.** A single serial counter across both channels. The normal APK takes the
+  next free code and its recovery APK the one above, so a device on the normal build can always
+  install the recovery build. The next code is above the highest of: the installed baseline
+  `29853678`, every published or draft normal and recovery code, and every reservation. Reserving is
+  creating the git tag `fork-android-code-<normal>`; GitHub rejects a duplicate ref, so concurrent
+  runs cannot share a code. **Never delete reservation tags**; a failed build burns its codes, which
+  is fine. Codes are checked against the 2,147,483,647 maximum.
+- **Recovery APK.** The predecessor's source (the newest eligible release of a different commit, or
+  the baseline) rebuilt with `--kind recovery`. The predecessor must itself contain the updater, or
+  the helper refuses to build it.
+- **Build helper contract** (`scripts/build-android-pwa.ts`, owned by the Android developer). Each
+  APK is built into its own `--output-dir` and the helper writes `metadata.json` beside it:
+  `format 1`, `packageName`, `versionName`, `versionCode`, `sourceCommit`, `signerSha256`,
+  `updaterProtocol`, `apkSha256`, `kind`, `assetName`, `bytes`. The workflow passes `--kind`,
+  `--version-name`, `--version-code`/`--normal-version-code`, `--source-commit`, `--source-dir` (the
+  predecessor checkout), `--expect-signer`, and `--asset-name`. The metadata is a claim: assembly
+  re-reads package, codes, signer, and digest from the APK itself and only takes `updaterProtocol`
+  from the sidecar.
+- **Signing material** exists only inside the `android` job, in a private temp file removed in an
+  `always()` step.
+
+## Recovery helper
+
+The release builder bundles `packages/shared/src/forkRecoveryHelper.ts` as
+`t3-recovery-helper-linux-x64.mjs` and `t3-recovery-helper-windows-x64.mjs`. Each platform also
+ships its matching Node runtime: `t3-recovery-node-linux-x64` or
+`t3-recovery-node-windows-x64.exe`. These four assets carry recorded digests and sizes in the
+manifest. The installer retains its platform's pair in owner-only recovery storage outside the
+application directory and records the absolute runtime/helper paths in its recovery command.
+Recovery does not require a system Node install or a working Electron installation.
+
+The builder copies the Node 24-or-newer x64 runtime from the matching platform runner, bundles
+all helper dependencies, and runs `--self-test` with that copied runtime from a neutral directory.
+The helper must snapshot, modify, and restore isolated fixture data with the real coordinator
+implementation, verify the result, and print `recovery-helper-protocol=1`. Missing implementation,
+wrong platform, missing runtime, failed restoration, or a substituted protocol blocks publication.
+Platform system libraries remain OS prerequisites; commissioning must execute the retained pair
+on supported Windows, Linux, and Steam Deck installations with the main app unavailable.
+
+### Recover a desktop without opening its main UI
+
+Use the retained pair named in `<desktop data base>/maintenance/recovery/current.json`.
+Its `nodePath` and `helperPath` are absolute paths outside the application. The desktop's
+held-startup message also prints the command and retained install-plan path. Verify the pair
+against the recorded release digests before running it; never download a replacement helper
+from an unrelated origin. The first baseline may have no prior installer to restore.
+
+Start with `status` and `options`. Supply the exact coordinator directory from the retained
+install plan and, for Windows/WSL, the desktop's `maintenance/wsl-members.json`. Copy the
+transaction ID, every home ID, and every restore timestamp from `options`; do not guess a cutoff.
+These commands are templates: replace the recorded paths and identifiers before running them.
+In PowerShell, put `&` before the quoted executable path.
+
+```sh
+"/recorded/nodePath" "/recorded/helperPath" status --coordinator "/recorded/coordinatorDirectory"
+"/recorded/nodePath" "/recorded/helperPath" options --coordinator "/recorded/coordinatorDirectory" --members "/recorded/maintenance/wsl-members.json"
+"/recorded/nodePath" "/recorded/helperPath" recover --coordinator "/recorded/coordinatorDirectory" --members "/recorded/maintenance/wsl-members.json" --transaction "RECORDED_TRANSACTION" --confirm "HOME_ID=RESTORE_CUTOFF" --confirm "WSL_HOME_ID=WSL_RESTORE_CUTOFF" --desktop-plan "/recorded/maintenance/handoff/RECORDED_TRANSACTION-install.json.consumed"
+```
+
+Use one `--confirm` per affected home; omit the WSL entry and `--members` when no WSL member
+is recorded. The explicit confirmations authorize older data restoration. The helper rechecks
+all activity, ownership, plan authorization, installers, cached runtime, and capacity before
+mutation. It preserves a verified rescue copy of current data, restores every affected home
+while admission remains held, and only then launches the previous binary's installer and runtime.
+Exit zero means the handoff was launched; health verification and durable commit must still finish
+before work is admitted. Restored automation stays held for its separate review and the build is pinned.
+
+Both `.json` and `.json.consumed` retained install plans are accepted, but each newly authorized
+handoff mode is usable once within its transaction. A copied plan cannot replace the application
+after that transaction finishes. If launching the handoff fails after restoration, keep the fence
+and use the exact `handoff --plan` command printed by the helper; do not restart unrelated runtimes,
+delete the journal, or retry with an arbitrary installer. Missing or mismatched payloads fail closed.
+
+Two prior verified builds have retained installers and restore points. Older journals can remain
+for diagnosis or data-only recovery; their presence does not promise a usable prior binary. An
+additional desktop instance with another home must close after its agents stop. Standalone,
+development, and managed-service participants still block on activity, but their homes are excluded
+from a desktop restore unless the transaction actually replaces their runtime.
+
+## Baseline
+
+The first updater-equipped build is installed by hand, so the first release has nothing to update
+from or recover to unless it is recorded. The baseline is published as a release tagged
+`fork-baseline` (never `fork-v*`, so no device or installer selects it) carrying
+`fork-baseline.json`, a Windows installer, a Linux AppImage and `.deb`, the Linux server archive, and
+the baseline APK under canonical names. It is used as the predecessor only until a pipeline release is
+eligible.
+
+1. Build the baseline from an updater-equipped commit and keep the same signing key as the phone's
+   installed app. Never uninstall to bring a phone onto it.
+2. Pack and prove it (needs the Android SDK build tools):
+
+   ```bash
+   node scripts/fork-release.ts baseline-pack --version <version> --commit <full-sha> \
+     --windows-installer <exe> --linux-appimage <AppImage> --linux-deb <deb> \
+     --linux-server <tar.gz> --apk <apk> --pinned-signer <sha256> --out baseline
+   ```
+
+   This copies the files under canonical names, writes `fork-baseline.json` with real digests, then
+   verifies every byte and that the APK reports the recorded package, installation code, and signer. It
+   writes `baseline.proof.json`; a non-empty `problems` list means do not publish.
+
+3. Publish it as a prerelease named `fork-baseline` with the `baseline/` files as assets.
+4. Re-verify any time with `node scripts/fork-release.ts baseline-verify --input baseline`.
+
+The proof shows the baseline files are what they claim. It does not show the baseline installs; the
+first rehearsal's update and recovery validations do, because they install the baseline and update from
+it.
+
+## Commissioning
+
+Do these in order. Each is outside the repository.
+
+1. **Variables and secrets** (repository settings):
+
+   | Name                                                             | Kind     | Used by                        |
+   | ---------------------------------------------------------------- | -------- | ------------------------------ |
+   | `FORK_ANDROID_KEYSTORE_BASE64`, `FORK_ANDROID_KEYSTORE_PASSWORD` | secret   | `android` job only             |
+   | `FORK_ANDROID_SIGNER_SHA256`                                     | variable | pinned release certificate     |
+   | `FORK_ANDROID_KEY_ALIAS`                                         | variable | optional, defaults to `t3-pwa` |
+   | `AZURE_*` Trusted Signing set                                    | secret   | optional Windows signing       |
+   | `FORK_RELEASES_ENABLED`                                          | variable | leave unset until step 6       |
+
+2. Turn on **immutable releases** in repository settings so published assets and tags cannot be
+   replaced even by a mistake.
+3. Publish the [baseline](#baseline).
+4. Verify the recovery helper and its retained Node pair pass their self-test on both platforms.
+5. **Rehearse.** Run the workflow manually from `main` with channel `nightly` and publish off. It
+   builds and validates everything, writes `fork-release.json`, and publishes nothing; it also does not
+   claim any Android code. Download the `fork-release-final` artifact and read the receipts. Repeat for
+   `stable` once an eligible nightly exists.
+6. **Hardware pass.** Install the rehearsal candidate on a real desktop and the phone through the
+   in-product controls, with agents running, once for update and once for recovery. This is the proof
+   no automated check here provides.
+7. Set `FORK_RELEASES_ENABLED` to `true`. Scheduled runs then publish, and a manual run publishes only
+   with the `publish` input. Withdraw any bad release (below) and keep the variable unset to stop
+   automatic publication.
+
+## Operating
+
+**Manual run.** Actions, Fork release, Run workflow, from `main`. `commit` (nightly only) must be on
+`main`. `publish` defaults to off.
+
+**Withdraw or restore.** Actions, Fork release withdrawal, with the version and a reason. Withdrawing
+rewrites only the release notes (a marker line) so devices and installers stop offering it; the tag,
+assets, and manifest are untouched, and installations that already took it are not rolled back. A
+publish in progress rechecks eligibility immediately before publishing, so a withdrawal made during the
+build takes effect. Restore removes the marker only after every asset re-verifies against the manifest.
+Releases are never deleted or overwritten.
+
+**Diagnosing a failed run.**
+
+| Failure                                            | Likely cause                                                                               |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| plan: no eligible updater-equipped release         | No baseline published yet                                                                  |
+| android: signing or signer pin                     | Secrets missing, wrong key, or `FORK_ANDROID_SIGNER_SHA256` not the release certificate    |
+| recovery APK build: predecessor cannot be recovery | Predecessor lacks the native updater; publish a newer baseline                             |
+| assemble: asset or feed problem                    | Missing or extra file, feed digest or size mismatch, embedded WSL archive differs          |
+| recovery_helper: self-test or runtime failure      | Check the retained helper/Node pair, platform, digests, permissions, and restore self-test |
+| validate / suites: red or missing receipt          | Read the receipt JSON in the `receipts-*` and `suite-receipts-*` artifacts                 |
+| manifest: required checks not all true             | A receipt is missing, for other bytes or source, or for a different specification          |
+| publish: no longer publishable                     | The tag or commit was taken, or the source nightly was withdrawn during the build          |
+
+Artifacts are kept 7 days (candidate, receipts) and 1 day (JS bundle). Releases and reservation tags
+are kept indefinitely. Devices keep two previous verified builds and their restore points.
+
+## External and manual paths
+
+- **Shell installers** (`scripts/install.sh`, `scripts/install.ps1`) discover `fork-v*` tags and
+  validate `fork-release.json`, the checks, freshness, and `SHA256SUMS` before installing. They cannot
+  see whether agents are active; use the in-product controls on a machine with running work. The Linux
+  installer needs **Python 3** to validate the JSON metadata correctly.
+- **Desktop update discovery.** electron-updater's GitHub provider assumes `v`-prefixed tags and
+  cannot see `fork-v*`. Devices select releases from `fork-release.json` and download the exact asset
+  it names; the `latest.yml` and `nightly.yml` feeds are published for completeness and verified at
+  assembly, but are not what the fork's controller reads.
+- **Cannot launch the app or APK.** Use the recovery helper for the host and the recovery shortcut for
+  Android as described in the [updating guide](../user/updating.md). Reinstall manually from a
+  verified release with the same signing identity; never uninstall the APK or clear its storage.
+- **Pairing, drafts, queued work, and the signing identity** are preserved by every path above; a
+  restore of an older database after writes were admitted is never silent.
+
+## Verifying changes to this pipeline
+
+Scoped checks only; the workflow itself is verified by a rehearsal.
+
+```bash
+cd scripts
+vp test run --config ../vite.config.ts --dir . fork-release   # policy, assets, GitHub flow, suites, helper, validation, workflows
+npx tsc --noEmit -p tsconfig.json
+vp lint fork-release*.ts && vp fmt fork-release*.ts ../.github/workflows/fork-release*.yml
+```
+
+Run workflow lint before every publishing rehearsal. Focused workflow checks have passed locally; the GitHub runner rehearsal is still required.
+
+Workflow lint uses actionlint 1.7.12. Its parser predates `concurrency.queue`; only that specific
+diagnostic is excluded after checking [GitHub’s current concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+`queue: max` retains up to 100 waiting runs; excess runs are rejected by GitHub.
+
+### Android interaction gate and fixture isolation
+
+The Android install receipt also requires all eleven `UpdaterSmokeInstrumentation` scenarios
+from the signed test APK built from the pinned candidate source. The test APK is a separate CI
+artifact and is excluded from normal and recovery feeds. The validator requires
+`FORK_VALIDATION_ANDROID_SERIAL=emulator-5554` (or another explicitly selected emulator) and
+`FORK_VALIDATION_ANDROID_TEST_APK` naming that artifact; it rejects physical-device serials.
+Each install/update/recovery check starts a fresh emulator package fixture, then verifies in-place
+replacement within that check. This prevents the candidate installed by the preceding check from
+making the next predecessor install an Android downgrade. Fixture resets apply only to the named
+throwaway emulator. They are never part of a user update or recovery procedure.

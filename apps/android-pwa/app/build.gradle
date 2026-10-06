@@ -3,6 +3,19 @@ plugins {
 }
 
 def packageName = providers.gradleProperty('pwaPackage').getOrElse('com.devotek.t3code.pwa')
+def versionNameValue = providers.gradleProperty('pwaVersionName').getOrElse('1.0')
+// Source identity travels separately from the installation code: the code only orders installs.
+def sourceVersion = providers.gradleProperty('pwaSourceVersion').getOrElse(versionNameValue)
+def sourceCommit = providers.gradleProperty('pwaSourceCommit').getOrElse('unknown')
+def recoveryBuild = providers.gradleProperty('pwaRecovery').getOrElse('false')
+if (!(sourceVersion ==~ /^[A-Za-z0-9][A-Za-z0-9._+-]*$/)) throw new GradleException('pwaSourceVersion must be a plain version string.')
+if (!(sourceCommit ==~ /^([a-f0-9]{40}|unknown)$/)) throw new GradleException('pwaSourceCommit must be a full 40-character commit or unknown.')
+if (!(recoveryBuild in ['true', 'false'])) throw new GradleException('pwaRecovery must be true or false.')
+// Read the release asset name from the shared contract so Java and publishing cannot drift.
+def manifestContract = file('../../../packages/contracts/src/forkRelease.ts').text
+def manifestAssetMatch = manifestContract =~ /export const FORK_RELEASE_MANIFEST_ASSET = "([A-Za-z0-9._-]+)";/
+if (!manifestAssetMatch.find()) throw new GradleException('The shared fork manifest asset is missing.')
+def manifestAssetName = manifestAssetMatch.group(1)
 def signingStore = System.getenv('T3_PWA_KEYSTORE')
 def passwordFile = System.getenv('T3_PWA_PASSWORD_FILE')
 
@@ -20,8 +33,17 @@ android {
         minSdk 24
         targetSdk 36
         versionCode providers.gradleProperty('pwaVersionCode').getOrElse('1').toInteger()
-        versionName providers.gradleProperty('pwaVersionName').getOrElse('1.0')
+        versionName versionNameValue
         resValue 'string', 'app_name', 'T3 Code'
+        resValue 'string', 'recovery_shortcut_short', 'Recovery'
+        resValue 'string', 'recovery_shortcut_long', 'T3 Code recovery and updates'
+        buildConfigField 'String', 'FORK_RELEASE_MANIFEST_ASSET', '"' + manifestAssetName + '"'
+        buildConfigField 'String', 'SOURCE_COMMIT', "\"${sourceCommit}\""
+        buildConfigField 'String', 'SOURCE_VERSION', "\"${sourceVersion}\""
+        buildConfigField 'boolean', 'RECOVERY_BUILD', recoveryBuild
+        buildConfigField 'int', 'UPDATER_PROTOCOL', '1'
+        manifestPlaceholders = [pwaTargetPackage: packageName, sourceCommit: sourceCommit, sourceVersion: sourceVersion, recoveryBuild: recoveryBuild, updaterProtocol: '1']
+        testInstrumentationRunner providers.gradleProperty('pwaTestRunner').getOrElse('com.devotek.t3code.pwa.BrowserSmokeInstrumentation')
     }
 
     signingConfigs {
@@ -44,6 +66,8 @@ android {
 
     sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/web-assets')
     sourceSets.main.res.srcDir layout.buildDirectory.dir('generated/pwa-icon')
+    sourceSets.main.res.srcDir layout.buildDirectory.dir('generated/pwa-shortcuts')
+    testBuildType 'release'
 }
 
 def copyPwaIcon = tasks.register('copyPwaIcon', Copy) {
@@ -53,10 +77,36 @@ def copyPwaIcon = tasks.register('copyPwaIcon', Copy) {
 }
 tasks.named('preBuild').configure { dependsOn copyPwaIcon }
 
+// The launcher shortcut targets the recovery screen in whatever package id this build uses.
+def generateShortcuts = tasks.register('generateShortcuts') {
+    def output = layout.buildDirectory.file('generated/pwa-shortcuts/xml/shortcuts.xml')
+    inputs.property('applicationId', packageName)
+    outputs.file(output)
+    doLast {
+        def file = output.get().asFile
+        file.parentFile.mkdirs()
+        file.text = '''<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="t3-recovery" android:enabled="true"
+        android:shortcutShortLabel="@string/recovery_shortcut_short"
+        android:shortcutLongLabel="@string/recovery_shortcut_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="''' + packageName + '''"
+            android:targetClass="com.devotek.t3code.pwa.RecoveryActivity" />
+    </shortcut>
+</shortcuts>
+'''
+    }
+}
+tasks.named('preBuild').configure { dependsOn generateShortcuts }
+
 dependencies {
     implementation 'androidx.webkit:webkit:1.14.0'
     implementation 'androidx.core:core:1.17.0'
     implementation 'androidx.activity:activity:1.11.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'androidx.work:work-runtime:2.10.2'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20250517'
 }
 
 tasks.named('preBuild').configure {

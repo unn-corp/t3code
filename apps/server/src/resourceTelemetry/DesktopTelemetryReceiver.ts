@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 
 import * as NodeStream from "@effect/platform-node/NodeStream";
@@ -7,7 +8,11 @@ import {
   type DesktopHostTelemetryMessage as DesktopHostTelemetryMessageValue,
   type DesktopHostTelemetrySnapshot,
   DesktopTelemetryControlMessage,
+  ForkMaintenanceError,
+  type DesktopMaintenanceOperation,
+  type DesktopMaintenanceReport,
   type DesktopUpdateStatusReport,
+  type ForkUpdateStatus,
   type ResourceTelemetrySourceStatus,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -35,6 +40,7 @@ const STALE_GRACE_MS = 30_000;
 const DEFAULT_HOST_POWER_ACTIVE_INTERVAL_MS = 30_000;
 const DEFAULT_HOST_POWER_IDLE_INTERVAL_MS = 120_000;
 const STALE_CHECK_INTERVAL = Duration.seconds(30);
+const MAINTENANCE_REQUEST_TIMEOUT = Duration.minutes(2);
 
 export class DesktopTelemetryDescriptorUnavailable extends Schema.TaggedError<DesktopTelemetryDescriptorUnavailable>()(
   "DesktopTelemetryDescriptorUnavailable",
@@ -184,6 +190,13 @@ export class DesktopTelemetryReceiver extends Context.Service<
     readonly cancelDesktopUpdate: (
       requestId: string,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
+    /**
+     * Asks the desktop controller (the one controller for a desktop-managed device) to run a
+     * maintenance operation and returns its answer. Fails closed when no desktop is attached.
+     */
+    readonly maintenance: (
+      operation: DesktopMaintenanceOperation,
+    ) => Effect.Effect<ForkUpdateStatus, ForkMaintenanceError>;
     /** Latest desktop update state report plus subsequent reports. The
         desktop replays its latest report when the backend attaches, so this
         is populated shortly after startup on desktop-managed servers. */
@@ -349,6 +362,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   const healthChanges = yield* PubSub.sliding<DesktopTelemetryReceiverHealth>(4);
   const latestUpdateReport = yield* Ref.make(Option.none<DesktopUpdateStatusReport>());
   const updateReportChanges = yield* PubSub.sliding<DesktopUpdateStatusReport>(16);
+  const maintenanceReports = yield* PubSub.unbounded<DesktopMaintenanceReport>();
   const controlMutex = yield* Semaphore.make(1);
   const snapshotMutex = yield* Semaphore.make(1);
   const health = yield* Ref.make<DesktopTelemetryReceiverHealth>({
@@ -528,6 +542,13 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           );
         }
 
+        if (message.type === "desktopMaintenance") {
+          return recordContact.pipe(
+            Effect.andThen(PubSub.publish(maintenanceReports, message)),
+            Effect.asVoid,
+          );
+        }
+
         // Not a resource sample: do not touch `latest` or sample health.
         if (message.type === "desktopUpdateStatus") {
           return recordContact.pipe(
@@ -656,6 +677,56 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
       sendControlMessage({ version: 1, type: "commitDesktopUpdate", requestId }),
     cancelDesktopUpdate: (requestId) =>
       sendControlMessage({ version: 1, type: "cancelDesktopUpdate", requestId }),
+    maintenance: (operation) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          if (config.desktopTelemetryControlFd === undefined) {
+            return yield* new ForkMaintenanceError({
+              reason:
+                "This server was not started by the desktop app, so no desktop controller is attached.",
+            });
+          }
+          const requestId = NodeCrypto.randomUUID();
+          // Subscribe before sending so a fast answer cannot be missed.
+          const subscription = yield* PubSub.subscribe(maintenanceReports);
+          yield* sendControlMessage({
+            version: 1,
+            type: "maintenanceRequest",
+            requestId,
+            operation,
+          }).pipe(
+            Effect.mapError(
+              () => new ForkMaintenanceError({ reason: "The desktop app could not be reached." }),
+            ),
+          );
+          const report = yield* Stream.fromSubscription(subscription).pipe(
+            Stream.filter((candidate) => candidate.requestId === requestId),
+            Stream.runHead,
+            Effect.timeout(MAINTENANCE_REQUEST_TIMEOUT),
+            Effect.catchTag("TimeoutError", () =>
+              Effect.fail(
+                new ForkMaintenanceError({ reason: "The desktop app did not answer in time." }),
+              ),
+            ),
+          );
+          if (Option.isNone(report))
+            return yield* new ForkMaintenanceError({
+              reason: "The desktop app stopped answering.",
+            });
+          if (report.value.error !== undefined)
+            return yield* new ForkMaintenanceError({
+              reason: report.value.error.reason,
+              ...(report.value.error.blockers === undefined
+                ? {}
+                : { blockers: report.value.error.blockers }),
+            });
+          if (report.value.status === undefined)
+            return yield* new ForkMaintenanceError({
+              reason: "The desktop app answered without a status.",
+            });
+          return report.value.status;
+        }),
+      ),
     desktopUpdates: Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(updateReportChanges);
       const initial = yield* Ref.get(latestUpdateReport);
@@ -707,6 +778,8 @@ export const layerTest = (
       requestDesktopUpdate: () => Effect.void,
       commitDesktopUpdate: () => Effect.void,
       cancelDesktopUpdate: () => Effect.void,
+      maintenance: () =>
+        Effect.fail(new ForkMaintenanceError({ reason: "No desktop controller is attached." })),
       desktopUpdates:
         overrides.desktopUpdates ??
         Effect.succeed({

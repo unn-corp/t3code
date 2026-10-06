@@ -4,12 +4,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, OPENWHISPR_TIMEOUT_MS } from "@t3tools/contracts";
 import { OpenWhisprVoiceInput, type VoiceInputPhase } from "./OpenWhisprVoiceInput";
 
-const { microphone, convert, transcribe, toast } = vi.hoisted(() => ({
-  microphone: vi.fn(),
-  convert: vi.fn(),
-  transcribe: vi.fn(),
-  toast: vi.fn(),
-}));
+const { microphone, convert, transcribe, toast, updateHold, releaseUpdateHold } = vi.hoisted(
+  () => ({
+    microphone: vi.fn(),
+    convert: vi.fn(),
+    transcribe: vi.fn(),
+    toast: vi.fn(),
+    updateHold: vi.fn(),
+    releaseUpdateHold: vi.fn(),
+  }),
+);
+vi.mock("../../state/updateInteraction", () => ({ beginClientUpdateUpload: updateHold }));
 vi.mock("~/lib/dictationMicrophone", () => ({ requestDictationMicrophone: microphone }));
 vi.mock("~/lib/openwhisprTranscription", () => ({
   convertRecordedAudioToWav: convert,
@@ -101,6 +106,16 @@ beforeEach(async () => {
   Audio.instances = [];
   stopTrack = vi.fn();
   stream = { getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream;
+  updateHold.mockReset().mockImplementation(() => {
+    let released = false;
+    return () => {
+      if (!released) {
+        released = true;
+        releaseUpdateHold();
+      }
+    };
+  });
+  releaseUpdateHold.mockReset();
   microphone.mockReset().mockResolvedValue({ stream, usedSystemDefaultFallback: false });
   convert.mockReset().mockResolvedValue(new Blob(["wav"]));
   transcribe.mockReset().mockResolvedValue("hello");
@@ -247,4 +262,34 @@ it("pairs recording start and end keybinds when leaving the composer", async () 
     "Ctrl+Shift+B",
   ]);
   Reflect.deleteProperty(window, "desktopBridge");
+});
+
+it("retains update admission until a cancelled transcription actually terminates", async () => {
+  const pending = deferred<string>();
+  transcribe.mockReturnValue(pending.promise);
+  await click();
+  await click();
+  expect(updateHold).toHaveBeenCalledOnce();
+  expect(releaseUpdateHold).not.toHaveBeenCalled();
+  await click();
+  expect(releaseUpdateHold).not.toHaveBeenCalled();
+  await act(async () => pending.resolve("discarded"));
+  expect(releaseUpdateHold).toHaveBeenCalledOnce();
+  expect(onTranscript).not.toHaveBeenCalled();
+});
+it("retains admission for a late microphone grant after startup cancellation", async () => {
+  const pending = deferred<{ stream: MediaStream; usedSystemDefaultFallback: boolean }>();
+  microphone.mockReturnValue(pending.promise);
+  await click();
+  await click();
+  expect(releaseUpdateHold).not.toHaveBeenCalled();
+  await act(async () => pending.resolve({ stream, usedSystemDefaultFallback: false }));
+  expect(stopTrack).toHaveBeenCalledOnce();
+  expect(releaseUpdateHold).toHaveBeenCalledOnce();
+});
+it("refuses microphone acquisition when native update admission rejects the hold", async () => {
+  updateHold.mockRejectedValue(new Error("Installation in progress"));
+  await click();
+  expect(microphone).not.toHaveBeenCalled();
+  expect(Recorder.instances).toHaveLength(0);
 });

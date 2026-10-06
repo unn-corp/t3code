@@ -10,7 +10,9 @@ import {
   decodeServiceLauncherContext,
   decodeServiceLauncherParentMessage,
   SERVICE_LAUNCHER_CONTEXT_ENV,
+  SERVICE_LAUNCHER_MAINTENANCE_TRIAL,
   type ServiceLauncherChildMessage,
+  type ServiceMaintenanceTrial,
   type ServiceLauncherParentMessage,
 } from "./serviceProtocol.ts";
 
@@ -100,9 +102,12 @@ export class ServiceLauncherClient extends Context.Service<
   ServiceLauncherClient,
   {
     readonly managed: boolean;
+    /** True when this launcher can hand a one-use maintenance capability to the trial child. Older launchers cannot. */
+    readonly supportsMaintenanceTrial: boolean;
     readonly requestUpdate: (input: {
       readonly targetVersion: string;
       readonly dbPath: string;
+      readonly trial?: ServiceMaintenanceTrial;
     }) => Effect.Effect<string, ServiceLauncherClientError | ServiceLauncherRejectedError>;
     readonly prepareTrial: Effect.Effect<
       ServerSelfUpdateOutcome | undefined,
@@ -137,8 +142,12 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
 
 export const resolveServiceLauncherMode = Effect.fn("cloud.service_launcher_client.resolve_mode")(
   function* () {
-    const { managed } = yield* resolveStartup();
-    return { managed };
+    const { managed, context } = yield* resolveStartup();
+    return {
+      managed,
+      supportsMaintenanceTrial:
+        context?.capabilities?.includes(SERVICE_LAUNCHER_MAINTENANCE_TRIAL) === true,
+    };
   },
 );
 
@@ -199,7 +208,11 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
       }),
     );
 
-  const requestUpdate = (input: { readonly targetVersion: string; readonly dbPath: string }) =>
+  const requestUpdate = (input: {
+    readonly targetVersion: string;
+    readonly dbPath: string;
+    readonly trial?: ServiceMaintenanceTrial;
+  }) =>
     exchange(
       { type: "request-update", ...input },
       (reply) => reply.type === "update-accepted" || reply.type === "update-rejected",
@@ -245,6 +258,8 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
 
   return ServiceLauncherClient.of({
     managed,
+    supportsMaintenanceTrial:
+      context?.capabilities?.includes(SERVICE_LAUNCHER_MAINTENANCE_TRIAL) === true,
     requestUpdate,
     prepareTrial,
   });

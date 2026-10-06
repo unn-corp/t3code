@@ -31,11 +31,22 @@ export interface ServiceState {
   readonly update?: ServiceUpdateRecord;
 }
 
+/** Capabilities a launcher advertises to its child. Absent on launchers that predate them. */
+export const SERVICE_LAUNCHER_MAINTENANCE_TRIAL = "maintenance-trial" as const;
+
+/** One-use launch capability a trial child presents to the device coordinator. */
+export interface ServiceMaintenanceTrial {
+  readonly transactionId: string;
+  readonly home: string;
+  readonly nonce: string;
+}
+
 /** Context is copied from launcher-owned state when a child is spawned. */
 export interface ServiceLauncherContext {
   readonly protocol: typeof SERVICE_LAUNCHER_PROTOCOL;
   readonly childVersion: string;
   readonly update?: ServiceUpdateRecord;
+  readonly capabilities?: ReadonlyArray<string>;
 }
 
 export type ServiceLauncherChildMessage =
@@ -43,6 +54,8 @@ export type ServiceLauncherChildMessage =
       readonly type: "request-update";
       readonly targetVersion: string;
       readonly dbPath: string;
+      /** Present when the update runs inside a device maintenance transaction. */
+      readonly trial?: ServiceMaintenanceTrial;
     }
   | {
       readonly type: "prepared";
@@ -229,11 +242,27 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
   if (parsed.childVersion !== selectedVersion) {
     return undefined;
   }
+  const capabilities = Array.isArray(parsed.capabilities)
+    ? parsed.capabilities.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
   return {
     protocol: SERVICE_LAUNCHER_PROTOCOL,
     childVersion: parsed.childVersion,
     ...(update === undefined ? {} : { update }),
+    ...(capabilities === undefined ? {} : { capabilities }),
   };
+}
+
+function decodeMaintenanceTrial(value: unknown): ServiceMaintenanceTrial | undefined {
+  if (!isRecord(value)) return undefined;
+  const { transactionId, home, nonce } = value;
+  return typeof transactionId === "string" &&
+    typeof home === "string" &&
+    typeof nonce === "string" &&
+    transactionId !== "" &&
+    nonce !== ""
+    ? { transactionId, home, nonce }
+    : undefined;
 }
 
 export function decodeServiceLauncherChildMessage(
@@ -245,7 +274,15 @@ export function decodeServiceLauncherChildMessage(
     typeof value.targetVersion === "string" &&
     typeof value.dbPath === "string"
   ) {
-    return { type: value.type, targetVersion: value.targetVersion, dbPath: value.dbPath };
+    const trial = value.trial === undefined ? undefined : decodeMaintenanceTrial(value.trial);
+    // A malformed capability must not silently become an update without one.
+    if (value.trial !== undefined && trial === undefined) return undefined;
+    return {
+      type: value.type,
+      targetVersion: value.targetVersion,
+      dbPath: value.dbPath,
+      ...(trial === undefined ? {} : { trial }),
+    };
   }
   return value.type === "prepared" && typeof value.updateId === "string"
     ? { type: value.type, updateId: value.updateId }

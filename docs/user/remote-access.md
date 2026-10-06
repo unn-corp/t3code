@@ -3,6 +3,13 @@
 Connect a phone, browser, or another desktop app to T3 Code running on a different
 machine. That machine must stay running and reachable while you work.
 
+## This fork's Android app
+
+The fork's APK uses **Settings → Connections**, like the web client. Pair each host using a
+Tailscale-reachable URL; keep the phone and hosts connected to your tailnet. See the
+[fork Android guide](./android-fork.md) for setup and native background alerts.
+The **Settings → Environments** paths below describe the upstream mobile app.
+
 ## T3 Connect
 
 T3 Connect makes an environment available to your other devices without setting

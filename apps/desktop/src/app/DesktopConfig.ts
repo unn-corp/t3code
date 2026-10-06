@@ -57,10 +57,6 @@ export const DesktopConfig = Config.all({
   ),
   appImagePath: trimmedString("APPIMAGE"),
   disableAutoUpdate: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
-  mockUpdates: optionalBoolean("T3CODE_DESKTOP_MOCK_UPDATES"),
-  mockUpdateServerPort: Config.Port("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(
-    Config.withDefault(3000),
-  ),
 });
 
 export const layerTest = (env: Readonly<Record<string, string | undefined>>) =>

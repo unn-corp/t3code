@@ -2,6 +2,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- In-app updates replace this app through PackageInstaller. The user grants this per app in Android settings. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <application
@@ -15,6 +21,24 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:usesCleartextTraffic="true">
+        <!-- Identity of this APK as built, so a downloaded update is checked against its own contents. -->
+        <meta-data android:name="t3.updater.sourceCommit" android:value="t3:${sourceCommit}" />
+        <meta-data android:name="t3.updater.sourceVersion" android:value="t3:${sourceVersion}" />
+        <meta-data android:name="t3.updater.recovery" android:value="t3:${recoveryBuild}" />
+        <meta-data android:name="t3.updater.protocol" android:value="t3:${updaterProtocol}" />
+        <receiver android:name=".InstallResultReceiver" android:exported="false" />
+        <receiver android:name=".PackageReplacedReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <activity android:name=".RecoveryActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="false"
+            android:label="@string/recovery_shortcut_long" />
+        <service android:name=".AgentNotificationService" android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
         <activity android:name=".MainActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|keyboard|keyboardHidden|screenLayout|uiMode"
             android:windowSoftInputMode="adjustResize"
@@ -23,6 +47,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
     </application>
 </manifest>

@@ -5,7 +5,7 @@
  * platform key, so a rename here is a release-breaking change.
  */
 
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+const CLI_RELEASE_REPOSITORY = "unn-corp/t3code";
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 /** Overrides the download origin for mirrors and air-gapped installs. */
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
@@ -61,7 +61,7 @@ export function cliReleaseDownloadBaseUrl(
   version: string,
   baseUrl: string | undefined = CLI_RELEASE_DEFAULT_BASE_URL,
 ): string {
-  return `${(baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL).replace(/\/+$/, "")}/v${version}`;
+  return `${(baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL).replace(/\/+$/, "")}/fork-v${version}`;
 }
 
 /**
@@ -103,7 +103,7 @@ export function cliReleaseIndexPageUrl(page: number): string {
 
 /**
  * Picks the newest version on a channel from the release index. Tags are
- * `v<version>`; the channel is decided by the same rule the runtime uses, so
+ * `fork-v<version>`; the channel is decided by the same rule the runtime uses, so
  * a preview tag never satisfies a nightly lookup and vice versa. Drafts are
  * skipped because their assets are not downloadable.
  */
@@ -111,12 +111,19 @@ export function newestCliReleaseVersion(
   releases: ReadonlyArray<{
     readonly tag_name: string;
     readonly draft?: boolean | undefined;
+    readonly body?: string | undefined;
+    readonly assets?: ReadonlyArray<{ readonly name: string }> | undefined;
   }>,
   channel: CliReleaseChannel,
 ): string | undefined {
   for (const release of releases) {
-    if (release.draft) continue;
-    const version = /^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(release.tag_name)?.[1];
+    if (release.draft || /^<!-- t3-fork-release:withdrawn\b/m.test(release.body ?? "")) continue;
+    if (
+      !release.assets?.some((asset) => asset.name === "fork-release.json") ||
+      !release.assets.some((asset) => asset.name === CLI_RELEASE_CHECKSUMS_FILE)
+    )
+      continue;
+    const version = /^fork-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(release.tag_name)?.[1];
     if (version === undefined) continue;
     if (cliReleaseChannelOf(version) === channel) return version;
   }

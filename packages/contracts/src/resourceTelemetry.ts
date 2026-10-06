@@ -3,6 +3,13 @@ import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
 import { DesktopUpdateStateSchema } from "./ipc.ts";
+import {
+  ForkActivityBlocker,
+  ForkMaintenanceActionInput,
+  ForkRecoveryRequest,
+  ForkUpdatePolicyPatch,
+  ForkUpdateStatus,
+} from "./maintenance.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
@@ -306,10 +313,35 @@ export const DesktopUpdateStatusReport = Schema.Struct({
 });
 export type DesktopUpdateStatusReport = typeof DesktopUpdateStatusReport.Type;
 
+/** What a server asks its desktop owner to do on the device's behalf. The desktop is the one controller. */
+export const DesktopMaintenanceOperation = Schema.Union([
+  Schema.Struct({ op: Schema.Literal("status") }),
+  Schema.Struct({ op: Schema.Literal("policy"), patch: ForkUpdatePolicyPatch }),
+  Schema.Struct({ op: Schema.Literal("action"), input: ForkMaintenanceActionInput }),
+  Schema.Struct({ op: Schema.Literal("recover"), request: ForkRecoveryRequest }),
+]);
+export type DesktopMaintenanceOperation = typeof DesktopMaintenanceOperation.Type;
+
+/** Desktop main -> server: result of one maintenance operation, correlated by request id. */
+export const DesktopMaintenanceReport = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("desktopMaintenance"),
+  requestId: TrimmedNonEmptyString,
+  status: Schema.optionalKey(ForkUpdateStatus),
+  error: Schema.optionalKey(
+    Schema.Struct({
+      reason: Schema.String,
+      blockers: Schema.optionalKey(Schema.Array(ForkActivityBlocker)),
+    }),
+  ),
+});
+export type DesktopMaintenanceReport = typeof DesktopMaintenanceReport.Type;
+
 export const DesktopHostTelemetryMessage = Schema.Union([
   DesktopHostTelemetryHello,
   DesktopHostTelemetrySnapshot,
   DesktopUpdateStatusReport,
+  DesktopMaintenanceReport,
 ]);
 export type DesktopHostTelemetryMessage = typeof DesktopHostTelemetryMessage.Type;
 
@@ -355,12 +387,21 @@ export const DesktopTelemetryCancelDesktopUpdate = Schema.Struct({
 });
 export type DesktopTelemetryCancelDesktopUpdate = typeof DesktopTelemetryCancelDesktopUpdate.Type;
 
+export const DesktopTelemetryMaintenanceRequest = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("maintenanceRequest"),
+  requestId: TrimmedNonEmptyString,
+  operation: DesktopMaintenanceOperation,
+});
+export type DesktopTelemetryMaintenanceRequest = typeof DesktopTelemetryMaintenanceRequest.Type;
+
 export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetrySetDiagnosticsDemand,
   DesktopTelemetrySetHostPowerIntervals,
   DesktopTelemetryRequestDesktopUpdate,
   DesktopTelemetryCommitDesktopUpdate,
   DesktopTelemetryCancelDesktopUpdate,
+  DesktopTelemetryMaintenanceRequest,
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 

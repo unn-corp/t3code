@@ -425,6 +425,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
+    id: "app-updates",
+    title: "App updates — This device",
+    to: "/settings/general",
+    targetId: "app-updates",
+    searchTerms: [
+      "nightly stable channel version check download install waiting rollback recovery pin resume",
+    ],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/automation",

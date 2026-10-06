@@ -21,6 +21,13 @@ import type {
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import type {
+  ForkMaintenanceActionInput,
+  ForkMaintenanceInteraction,
+  ForkRecoveryRequest,
+  ForkUpdatePolicyPatch,
+  ForkUpdateStatus,
+} from "./maintenance.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
 import { GitHubAccountId } from "./sourceControl.ts";
@@ -1265,6 +1272,17 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  /**
+   * Fork maintenance for this device. Optional: absent means the shell cannot
+   * coordinate installation, and clients must not offer in-product installs.
+   */
+  getMaintenanceStatus?: () => Promise<ForkUpdateStatus>;
+  updateMaintenancePolicy?: (patch: ForkUpdatePolicyPatch) => Promise<ForkUpdateStatus>;
+  runMaintenanceAction?: (input: ForkMaintenanceActionInput) => Promise<ForkUpdateStatus>;
+  cancelMaintenanceCountdown?: () => Promise<ForkUpdateStatus>;
+  reportMaintenanceInteraction?: (input: ForkMaintenanceInteraction) => Promise<void>;
+  requestMaintenanceRecovery?: (request: ForkRecoveryRequest) => Promise<ForkUpdateStatus>;
+  onMaintenanceStatus?: (listener: (status: ForkUpdateStatus) => void) => () => void;
   /** Present when the desktop shell accepts `t3 app` activation requests. */
   appActivation?: {
     setReady: (ready: boolean) => Promise<void>;

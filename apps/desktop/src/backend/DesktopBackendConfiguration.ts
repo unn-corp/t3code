@@ -17,6 +17,7 @@ import serverPackageJson from "../../../server/package.json" with { type: "json"
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
+import { DesktopMaintenanceBridge } from "../maintenance/DesktopMaintenanceBridge.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
@@ -163,6 +164,40 @@ const mergeWslEnv = (
   const parts = [existing, ...additions].filter((part) => part.length > 0);
   return parts.length > 0 ? parts.join(":") : undefined;
 };
+
+// An update transaction waiting for this backend's health receipt hands it a one-use capability through its
+// environment; the server strips it on read. WSL needs it forwarded across the wsl.exe boundary.
+const withMaintenanceTrial = Effect.fn("desktop.backendConfiguration.withMaintenanceTrial")(
+  function* (config: DesktopBackendManager.DesktopBackendStartConfig) {
+    if (Option.isSome(config.preflightFailure)) return config;
+    const isWsl = config.executablePath === "wsl.exe";
+    if (isWsl && config.runningDistro === undefined) return config;
+    const bridge = yield* DesktopMaintenanceBridge;
+    // A refusal fails the configuration, so no process is spawned: a backend never starts under a held transaction.
+    const trialEnv = yield* bridge
+      .trialEnv(isWsl ? { kind: "wsl", distro: config.runningDistro! } : { kind: "windows" })
+      .pipe(
+        Effect.mapError((blocked) =>
+          PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "DesktopMaintenance",
+            method: "trialEnv",
+            description: blocked.reason,
+          }),
+        ),
+      );
+    const names = Object.keys(trialEnv);
+    if (names.length === 0) return config;
+    return {
+      ...config,
+      env: {
+        ...config.env,
+        ...trialEnv,
+        ...(isWsl ? { WSLENV: mergeWslEnv(config.env.WSLENV, names) } : {}),
+      },
+    } satisfies DesktopBackendManager.DesktopBackendStartConfig;
+  },
+);
 
 const logBackendObservabilitySettingsReadFailure = (
   settingsPath: string,
@@ -922,14 +957,14 @@ export const make = Effect.gen(function* () {
     resolvePrimary: Effect.gen(function* () {
       const { useWsl, wslRequested } = yield* describePrimary;
       if (useWsl) {
-        return yield* buildWslPrimaryConfig;
+        return yield* withMaintenanceTrial(yield* buildWslPrimaryConfig);
       }
       if (wslRequested) {
         yield* Effect.logWarning(
           "WSL-only backend requested but WSL is unavailable; starting the Windows primary instead.",
         );
       }
-      return yield* buildWindowsPrimaryConfig;
+      return yield* withMaintenanceTrial(yield* buildWindowsPrimaryConfig);
     }).pipe(Effect.withSpan("desktop.backendConfiguration.resolvePrimary")),
     resolvePrimaryLabel: Effect.gen(function* () {
       const { useWsl, distro } = yield* describePrimary;
@@ -941,12 +976,13 @@ export const make = Effect.gen(function* () {
     resolveWsl: (input) =>
       Effect.gen(function* () {
         const shared = yield* sharedInputs;
-        return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
+        const config = yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
+        return yield* withMaintenanceTrial(config);
       }).pipe(
         Effect.withSpan("desktop.backendConfiguration.resolveWsl", {
           attributes: { port: input.port, distro: input.distro ?? null },

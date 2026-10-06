@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { ForkMaintenanceCapability } from "./maintenance.ts";
 
 import {
   EnvironmentId,
@@ -96,8 +97,11 @@ export const ServerSelfUpdateCapability = Schema.Literals([
 export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
+  forkMaintenance: Schema.optionalKey(ForkMaintenanceCapability),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
+  /** Tab-owned localhost shares expire after an hour without page visits. */
+  previewTemporarySharing: Schema.optionalKey(Schema.Boolean),
   /** Missing on older servers, which still accept inline image attachments. */
   attachmentUploads: Schema.optionalKey(Schema.Boolean),
   /** Uploaded files may accompany question answers. */

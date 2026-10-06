@@ -118,7 +118,11 @@ export class DesktopWslEnvironment extends Context.Service<
       distro: string | null,
       archive: WslRuntimeArchive,
     ) => Effect.Effect<PrepareWslRuntimeResult>;
-    readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+    readonly pruneRuntimes: (
+      distro: string | null,
+      runtimeId: string,
+      retainedRuntimeIds?: ReadonlyArray<string>,
+    ) => Effect.Effect<void>;
     // Marks a staged runtime as unusable so the next launch reinstalls it.
     readonly invalidateRuntime: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
     // Proves a staged self-contained runtime can run (`<root>/t3 --version`)
@@ -418,8 +422,16 @@ export const buildWslRuntimeInstallScript = (
 // any live install while still bounding how long an orphan survives.
 const ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES = 120;
 
-export const buildWslRuntimePruneScript = (runtimeId: string): string => {
+export const buildWslRuntimePruneScript = (
+  runtimeId: string,
+  // Runtimes a verified recovery or a pinned build still needs: reversing an update restarts the previous build,
+  // which must find its own runtime tree instead of re-staging one. Never pruned, whatever their age.
+  retainedRuntimeIds: ReadonlyArray<string> = [],
+): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
+  const retained = retainedRuntimeIds
+    .map(sanitizeWslRuntimeId)
+    .filter((id) => id.startsWith("sha256-"));
   return [
     "set -eu",
     'runtime_parent="$HOME/.t3/wsl-runtime"',
@@ -436,6 +448,7 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     "runtime_in_use() {",
     '  grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null',
     "}",
+    `retained_runtimes=" ${retained.join(" ")} "`,
     'previous_runtime=""',
     'for candidate in "$runtime_parent"/sha256-*; do',
     '  [ -d "$candidate" ] || continue',
@@ -451,8 +464,9 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     '  [ -d "$candidate" ] || continue',
     '  [ "$candidate" != "$current_runtime" ] || continue',
     '  [ "$candidate" != "$previous_runtime" ] || continue',
-    '  ! runtime_in_use "$candidate" || continue',
     "  candidate_name=${candidate##*/}",
+    '  case "$retained_runtimes" in *" $candidate_name "*) continue ;; esac',
+    '  ! runtime_in_use "$candidate" || continue',
     '  candidate_lock="$runtime_parent/.${candidate_name}.install.lock"',
     '  exec 9> "$candidate_lock"',
     // A held lock means another launch is installing or repairing this cache.
@@ -941,10 +955,11 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
 const pruneWslRuntimesImpl = Effect.fn("desktop.wsl.pruneRuntimesImpl")(function* (
   distro: string | null,
   runtimeId: string,
+  retainedRuntimeIds: ReadonlyArray<string> = [],
 ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
   const result = yield* runWslShell(
     distro,
-    buildWslRuntimePruneScript(runtimeId),
+    buildWslRuntimePruneScript(runtimeId, retainedRuntimeIds),
     RUNTIME_PRUNE_TIMEOUT,
     { resolveNode: false },
   );
@@ -1174,7 +1189,11 @@ export interface DesktopWslEnvironmentTestStub {
     distro: string | null,
     archive: WslRuntimeArchive,
   ) => PrepareWslRuntimeResult;
-  readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+  readonly pruneRuntimes?: (
+    distro: string | null,
+    runtimeId: string,
+    retainedRuntimeIds?: ReadonlyArray<string>,
+  ) => Effect.Effect<void>;
   readonly invalidateRuntime?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
   // Defaults to success with a plain PATH: a staged runtime that was prepared
   // is assumed to run unless the test says otherwise.
@@ -1208,7 +1227,8 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
             reason: "prepareRuntime stub not configured",
           },
         ),
-      pruneRuntimes: (distro, runtimeId) => stub.pruneRuntimes?.(distro, runtimeId) ?? Effect.void,
+      pruneRuntimes: (distro, runtimeId, retainedRuntimeIds) =>
+        stub.pruneRuntimes?.(distro, runtimeId, retainedRuntimeIds) ?? Effect.void,
       invalidateRuntime: (distro, runtimeId) =>
         stub.invalidateRuntime?.(distro, runtimeId) ?? Effect.void,
       probeRuntime: (distro, linuxAppRoot) =>
@@ -1300,8 +1320,8 @@ export const layer = Layer.effect(
         provideSpawner(prepareWslRuntimeImpl(distro, archive, windowsToWslPath)).pipe(
           Effect.withSpan("desktop.wsl.prepareRuntime"),
         ),
-      pruneRuntimes: (distro, runtimeId) =>
-        provideSpawner(pruneWslRuntimesImpl(distro, runtimeId)).pipe(
+      pruneRuntimes: (distro, runtimeId, retainedRuntimeIds) =>
+        provideSpawner(pruneWslRuntimesImpl(distro, runtimeId, retainedRuntimeIds)).pipe(
           Effect.withSpan("desktop.wsl.pruneRuntimes"),
         ),
       invalidateRuntime: (distro, runtimeId) =>

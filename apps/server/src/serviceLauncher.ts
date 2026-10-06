@@ -24,7 +24,9 @@ import {
   isExactServiceVersion,
   parseServiceState,
   SERVICE_LAUNCHER_CONTEXT_ENV,
+  SERVICE_LAUNCHER_MAINTENANCE_TRIAL,
   SERVICE_LAUNCHER_PROTOCOL,
+  type ServiceMaintenanceTrial,
   SERVICE_STATE_FILE,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
@@ -349,6 +351,9 @@ export class Launcher {
   #child: ManagedChild | null = null;
   #timer: NodeJS.Timeout | undefined;
   #transitions: Promise<void> = Promise.resolve();
+  /** Held in memory only: a launcher restart drops it, so the trial then fails closed at the coordinator. */
+  #trialCapability: { readonly updateId: string; readonly trial: ServiceMaintenanceTrial } | null =
+    null;
   #stopRequested = false;
   #stopping = false;
   #done = false;
@@ -508,11 +513,27 @@ export class Launcher {
     const context: ServiceLauncherContext = {
       protocol: SERVICE_LAUNCHER_PROTOCOL,
       childVersion: version,
+      capabilities: [SERVICE_LAUNCHER_MAINTENANCE_TRIAL],
       ...(update === undefined ? {} : { update }),
     };
     const spawnArguments = runtimeSpawnArguments(paths);
+    // Only the trial child of the update the capability was issued for receives it, and only once.
+    const trial =
+      role === "trial" &&
+      update?.status === "pending" &&
+      this.#trialCapability?.updateId === update.id
+        ? this.#trialCapability.trial
+        : undefined;
+    if (trial !== undefined) this.#trialCapability = null;
+    const environment: NodeJS.ProcessEnv = {
+      ...process.env,
+      [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context),
+    };
+    // A capability inherited from the launcher's own environment must never reach a child.
+    delete environment["T3CODE_MAINTENANCE_TRIAL"];
+    if (trial !== undefined) environment["T3CODE_MAINTENANCE_TRIAL"] = JSON.stringify(trial);
     const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
-      env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
+      env: environment,
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
     await new Promise<void>((resolve, reject) => {
@@ -605,6 +626,8 @@ export class Launcher {
     const next: ServiceState = { ...this.#state, update: pending };
     await writeServiceState(this.#statePath, next);
     this.#state = next;
+    this.#trialCapability =
+      message.trial === undefined ? null : { updateId: pending.id, trial: message.trial };
     await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
     this.#timer = setTimeout(() => this.#enqueue(() => this.#beginTrial(child)), HANDOFF_DELAY_MS);
   }

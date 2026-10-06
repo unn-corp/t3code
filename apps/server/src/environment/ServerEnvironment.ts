@@ -1,3 +1,4 @@
+import { acquireMaintenanceHost, describeCapability } from "../maintenance/MaintenanceHost.ts";
 import {
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -204,6 +205,17 @@ export const make = Effect.gen(function* () {
   // the fd and correctly do not advertise.
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
+  // Fork maintenance is advertised only by a runtime that joined the device coordinator: no registry,
+  // no capability. Recovery additionally needs a controller that can perform it (the desktop app
+  // through its control channel, or a launcher that carries the trial capability).
+  const maintenanceHost = yield* acquireMaintenanceHost(serverConfig).pipe(Effect.orDie);
+  const forkMaintenance = describeCapability(
+    maintenanceHost,
+    maintenanceHost.mode === "active" &&
+      ((maintenanceHost.kind === "desktop" &&
+        serverConfig.desktopTelemetryControlFd !== undefined) ||
+        (maintenanceHost.kind === "service" && launcher.supportsMaintenanceTrial)),
+  );
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
@@ -216,8 +228,10 @@ export const make = Effect.gen(function* () {
     serverVersion: APP_VERSION,
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     capabilities: {
+      ...(forkMaintenance === undefined ? {} : { forkMaintenance }),
       repositoryIdentity: true,
       connectionProbe: true,
+      previewTemporarySharing: true,
       attachmentUploads: true,
       questionAttachments: true,
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },

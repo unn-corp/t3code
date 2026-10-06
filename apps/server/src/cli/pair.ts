@@ -346,6 +346,7 @@ const makePairServerConfig = Effect.fn(function* (input: {
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
+    maintenance: { namespace: process.env.T3CODE_MAINTENANCE_NAMESPACE },
   });
 });
 

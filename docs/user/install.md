@@ -3,6 +3,14 @@
 T3 Code runs coding agents on your computer and lets you control them from its
 desktop, web, or mobile app. Set up the machine where the agents will work first.
 
+## This fork's Android app
+
+This fork ships a separate Android APK, `com.devotek.t3code.pwa`, which bundles the fork's web
+interface and connects primarily over Tailscale. Follow the [fork Android guide](./android-fork.md)
+for installation and pairing, and the [build runbook](../operations/android-pwa.md) to build it.
+Use the fork releases and installer commands below for our server changes. The upstream
+Expo/store mobile client is separate from this APK.
+
 ## Requirements
 
 You need an installed, authenticated provider before starting a thread. You can
@@ -11,14 +19,18 @@ launch T3 Code and configure providers afterwards.
 ## Command line
 
 ```bash
-curl -fsSL https://t3.codes/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/unn-corp/t3code/main/scripts/install.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://t3.codes/install.ps1 | iex
+irm https://raw.githubusercontent.com/unn-corp/t3code/main/scripts/install.ps1 | iex
 ```
+
+These require a commissioned fork updater baseline and an eligible published fork release.
+The Linux installer requires Python 3 to validate release metadata. Stop all fork work before
+manually replacing or restarting runtimes. See [updating and recovery](./updating.md).
 
 This puts `t3` in `~/.local/bin`. If your shell reports `command not found`
 afterwards, that directory is not on your `PATH` yet; the installer prints the
@@ -41,27 +53,18 @@ If `t3` or `t3 start` reports an already running server, connect to that server
 instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.
 
-To try T3 Code once without installing it, run `npx t3@latest` instead (needs
-Node.js for `npx`).
+`npx t3@latest` installs upstream T3 Code and does not include this fork's changes.
+Build this checkout when a fork release is not yet available.
 
-### Intel Macs
+### Other platforms
 
-There is no `t3` executable for Intel Macs (the desktop app is available). To
-run a server there, build it from source with Node.js 24 and `vp`
-([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
-
-```bash
-git clone https://github.com/pingdotgg/t3code
-cd t3code && vp i && vp run build:desktop
-node apps/server/dist/bin.mjs
-```
-
-`t3 update` and the background service do not apply to a server run this way;
-update it with `git pull` and a rebuild.
+The fork release pipeline targets Windows x64 and Linux x64. Other architectures
+and macOS are not in its automatic delivery matrix. Build from source or use
+upstream T3 Code, with its own release/update behavior.
 
 ## Desktop app
 
-Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),
+Download a release from [GitHub Releases](https://github.com/unn-corp/t3code/releases),
 or use a package manager:
 
 | Platform           | Install                            |
@@ -96,7 +99,7 @@ Pass a path, such as `t3 app ../my-project`, to open another directory. It requi
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
-## Mobile app
+## Upstream mobile app
 
 Install T3 Code from the
 [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or

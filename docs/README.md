@@ -2,6 +2,16 @@
 
 ## Using T3 Code
 
+See [Fork maintenance and feature ownership](./operations/fork-maintenance.md) when changing retained fork behavior.
+The [fork release runbook](./operations/fork-releases.md) owns nightly/stable publishing and recovery;
+[Updating this fork](./user/updating.md) owns client and host routes.
+
+This fork ships its own Android APK from `apps/android-pwa`, with the web interface and native
+phone features. Its primary connection path is direct pairing over Tailscale. The upstream
+store/Expo app in `apps/mobile` has a separate build and notification system.
+
+- [Fork Android app: installation, Tailscale, and everyday use](./user/android-fork.md)
+
 - [Install T3 Code](./user/install.md)
 - [Messages and context](./user/composer.md)
 - [Working with threads](./user/thread-sidebar.md)
@@ -22,7 +32,7 @@
 - [Background service (Linux)](./user/background-service.md)
 - Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [Hermes](./user/providers-hermes.md) · [OpenCode](./user/providers-opencode.md)
 
-Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
+Upstream Expo/React Native mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
 
 - [SnapShots](./user/snap-shot.md)
 - [Import browser sessions](./user/browser-import.md)
@@ -68,6 +78,8 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Voice input](./internals/voice-input.md)
 
 ### Runbooks
+
+- [Fork Android APK: build, install, edit, and backend connections](./operations/android-pwa.md)
 
 - [Development and local builds](./operations/development.md)
 - [T3 Connect setup](./operations/connect-setup.md)

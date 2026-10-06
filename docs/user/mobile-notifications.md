@@ -1,4 +1,8 @@
-# Mobile notifications
+# Upstream mobile notifications
+
+This page describes the upstream Expo/React Native app. This fork's standalone Android APK
+receives native background alerts through direct connections, including Tailscale, without
+Firebase or T3 Connect. See [fork Android notifications](./android-fork.md#notifications).
 
 Sign in to T3 Connect, link your environments, and enable **Device Notifications** in **Settings → Notifications** to receive alerts when an agent finishes, fails, needs approval, or asks for input. Tap a notification to open its thread. Your environment must have agent activity publishing enabled.
 

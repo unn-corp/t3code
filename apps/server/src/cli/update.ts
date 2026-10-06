@@ -1,3 +1,4 @@
+import { deviceRestartBlockers } from "../maintenance/restartGate.ts";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
@@ -57,6 +58,10 @@ const ReleaseIndex = Schema.Array(
   Schema.Struct({
     tag_name: Schema.String,
     draft: Schema.optional(Schema.Boolean),
+    // Selection needs both: a release without fork-release.json and SHA256SUMS, or one marked withdrawn
+    // in its notes, is never a target. Decoding without them would strip the metadata and select nothing.
+    body: Schema.optional(Schema.NullOr(Schema.String)),
+    assets: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
   }),
 );
 const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
@@ -93,7 +98,10 @@ const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
         () => new CliUpdateError({ reason: "The t3 release index had an unexpected shape." }),
       ),
     );
-    const version = newestCliReleaseVersion(releases, channel);
+    const version = newestCliReleaseVersion(
+      releases.map((release) => ({ ...release, body: release.body ?? undefined })),
+      channel,
+    );
     if (version !== undefined) return version;
     if (releases.length === 0) break;
   }
@@ -481,7 +489,20 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
     } else {
       yield* Console.log(
-        "  Not a terminal, so the service keeps running its current version. Rerun with --yes to restart it now, or run `t3 service restart` later.",
+        "  Not a terminal, so the service keeps running its current version. Rerun with --yes to restart it now. Either restart refuses while any agent is active.",
+      );
+    }
+  }
+
+  if (restartService) {
+    // Same gate as in-product installs: never stop agents or unknown activity for an update.
+    const blockers = yield* Effect.promise(() => deviceRestartBlockers());
+    if (blockers.length > 0) {
+      restartService = false;
+      yield* Console.log("  Not restarting the background service now:");
+      for (const blocker of blockers) yield* Console.log(`    - ${blocker}`);
+      yield* Console.log(
+        "  It keeps running its current version. Rerun when the device is idle, or use App updates.",
       );
     }
   }
@@ -589,7 +610,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     yield* Console.log(`  Background service already on ${targetVersion}`);
   } else if (serviceInstalled) {
     yield* Console.log(
-      `  Background service still running ${serviceVersion ?? "an unknown version"}. Run \`t3 service restart\` when you are ready to switch it to ${targetVersion}.`,
+      `  Background service still running ${serviceVersion ?? "an unknown version"}. Switch it to ${targetVersion} with \`t3 service restart\` once the device is idle (it refuses while any agent is active), or from App updates.`,
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(

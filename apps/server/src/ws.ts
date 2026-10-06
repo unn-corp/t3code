@@ -101,6 +101,7 @@ import {
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
+  AuthAccessWriteScope,
   EnvironmentAuthorizationError,
   type ProjectId,
   type ProviderDriverKind,
@@ -186,6 +187,8 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ProviderAuthService from "./provider/Services/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as MaintenanceService from "./maintenance/MaintenanceService.ts";
+import { maintenanceActionNeedsAdministration } from "./auth/RpcAuthorization.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -1368,6 +1371,7 @@ const makeCoreWsRpcLayer = (
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
       const providerInstallation = yield* makeProviderInstallation();
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+      const maintenance = yield* MaintenanceService.MaintenanceService;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -2629,6 +2633,32 @@ const makeCoreWsRpcLayer = (
             ),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverGetMaintenanceStatus]: () =>
+          observeRpcEffect(WS_METHODS.serverGetMaintenanceStatus, maintenance.status, {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.serverUpdateMaintenancePolicy]: (patch) =>
+          observeRpcEffect(
+            WS_METHODS.serverUpdateMaintenancePolicy,
+            maintenance.updatePolicy(patch),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverRunMaintenanceAction]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRunMaintenanceAction,
+            // Declaring that every installation is registered, or that held automation was reviewed,
+            // changes what the device will do on its own: that is administration, not ordinary operation.
+            maintenanceActionNeedsAdministration(input)
+              ? authorizeEffect(AuthAccessWriteScope, maintenance.runAction(input))
+              : maintenance.runAction(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRecoverMaintenance]: (request) =>
+          observeRpcEffect(WS_METHODS.serverRecoverMaintenance, maintenance.recover(request), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverCommitDesktopUpdate]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverCommitDesktopUpdate,
@@ -3893,6 +3923,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const maintenanceService = yield* MaintenanceService.MaintenanceService;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
@@ -3972,7 +4003,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
-              Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate),
+                  Layer.succeed(MaintenanceService.MaintenanceService, maintenanceService),
+                ),
+              ),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),

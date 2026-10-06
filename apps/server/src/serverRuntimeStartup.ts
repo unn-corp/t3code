@@ -1,3 +1,4 @@
+import { recordHealthIfPresent } from "./maintenance/MaintenanceCoordinator.ts";
 import {
   CommandId,
   DEFAULT_MODEL,
@@ -640,6 +641,8 @@ const make = (options?: StartupOptions) =>
         options?.awaitAuxiliaryParked ?? Effect.void,
       );
 
+      // Health is recorded before the launcher commits the update: a receipt can outlive a failed commit, never the reverse.
+      yield* recordHealthIfPresent;
       const updateOutcome = yield* launcher.prepareTrial;
 
       yield* Effect.logDebug("startup phase: publishing welcome event", {

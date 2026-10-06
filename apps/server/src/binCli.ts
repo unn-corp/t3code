@@ -12,6 +12,7 @@ import { acpMcpBridgeCommand, acpMcpCallCommand } from "./cli/acpMcpBridge.ts";
 import { authCommand } from "./cli/auth.ts";
 import { appCommand } from "./cli/app.ts";
 import { connectCommand } from "./cli/connect.ts";
+import { maintenanceCommand } from "./cli/maintenance.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
@@ -76,6 +77,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       projectCommand,
       serviceCommand,
       updateCommand,
+      maintenanceCommand,
       uninstallCommand,
       serviceLauncherCommand,
       claudeHistoryCommand,

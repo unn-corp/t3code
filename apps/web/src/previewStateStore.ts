@@ -19,7 +19,7 @@ import { Atom } from "effect/unstable/reactivity";
 
 import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants";
 import { appAtomRegistry } from "./rpc/atomRegistry";
-import { isInstalledPwa } from "./env";
+import { isAndroidPwa, isInstalledPwa } from "./env";
 
 export interface DesktopPreviewOverlay {
   hasWebContents: boolean;
@@ -489,7 +489,7 @@ export function removePreviewThread(ref: ScopedThreadRef): void {
  */
 export function isPreviewSupportedInRuntime(): boolean {
   if (typeof window === "undefined") return false;
-  return !isInstalledPwa();
+  return isAndroidPwa || !isInstalledPwa();
 }
 
 /** True only when this client owns the webview, which some controls require. */

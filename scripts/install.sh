@@ -17,7 +17,7 @@
 # instead of fetching the release again.
 set -eu
 
-repo="pingdotgg/t3code"
+repo="unn-corp/t3code"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
 t3_home="${T3CODE_HOME:-$HOME/.t3}"
 bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
@@ -134,6 +134,7 @@ case "$(uname -m)" in
   *) fail "unsupported architecture $(uname -m)" ;;
 esac
 command -v tar >/dev/null 2>&1 || fail "tar is required"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required to validate fork release metadata"
 if command -v sha256sum >/dev/null 2>&1; then
   checksum() { sha256sum "$1" | cut -d' ' -f1; }
 elif command -v shasum >/dev/null 2>&1; then
@@ -145,20 +146,49 @@ fi
 channel="${T3CODE_CHANNEL:-stable}"
 version="${T3CODE_VERSION:-}"
 if [ -z "$version" ]; then
-  # Tags are v<semver>; the channel is the prerelease identifier, or none for
+  # Tags are fork-v<semver>; the channel is the prerelease identifier, or none for
   # stable. Only tags of the requested train are considered, so a stable
   # install can never pick up a nightly or preview build by accident.
   case "$channel" in
-    stable) tag_pattern='v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)' ;;
-    nightly | preview) tag_pattern="v\([0-9][^\"]*-${channel}\.[0-9]*\.[0-9]*\)" ;;
+    stable) tag_pattern='fork-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)' ;;
+    nightly | preview) tag_pattern="fork-v\([0-9][^\"]*-${channel}\.[0-9]*\.[0-9]*\)" ;;
     *) fail "T3CODE_CHANNEL must be stable, nightly, or preview" ;;
   esac
   tmp_index="$(mktemp)"
   fetch "https://api.github.com/repos/${repo}/releases?per_page=100" "$tmp_index"
-  version="$(sed -n "s/.*\"tag_name\": *\"${tag_pattern}\".*/\1/p" "$tmp_index" | head -n 1)"
+  version="$(python3 - "$tmp_index" "$channel" <<'PYINDEX'
+import json, re, sys
+rows = json.load(open(sys.argv[1]))
+channel = sys.argv[2]
+pattern = r"fork-v(\d+\.\d+\.\d+)" if channel == "stable" else r"fork-v(\d+\.\d+\.\d+-" + re.escape(channel) + r"\.\d+\.\d+)"
+for row in rows:
+    assets = row.get("assets", [])
+    names = [a.get("name") for a in assets]
+    if row.get("draft", True) or not row.get("published_at") or re.search(r"^<!-- t3-fork-release:withdrawn\b", row.get("body") or "", re.M): continue
+    match = re.fullmatch(pattern, row.get("tag_name", ""))
+    if match and names.count("fork-release.json") == 1 and names.count("SHA256SUMS") == 1:
+        print(match.group(1)); break
+PYINDEX
+)"
   rm -f "$tmp_index"
   [ -n "$version" ] || fail "could not find a ${channel} release; set T3CODE_VERSION"
 fi
+python3 - "$version" <<'PYVERSION' || fail "invalid fork version"
+import re, sys
+assert re.fullmatch(r"\d+\.\d+\.\d+(?:-(?:nightly|preview)\.\d+\.\d+)?", sys.argv[1])
+PYVERSION
+# Even a cached install requires a fresh normal-release eligibility check.
+tmp_eligibility="$(mktemp)"
+fetch "https://api.github.com/repos/${repo}/releases/tags/fork-v${version}" "$tmp_eligibility"
+python3 - "$tmp_eligibility" "$version" <<'PYELIGIBLE' || fail "fork release is withdrawn, incomplete, or unavailable"
+import json, re, sys
+release = json.load(open(sys.argv[1]))
+assert release.get("tag_name") == "fork-v" + sys.argv[2] and not release.get("draft", True) and release.get("published_at")
+assert not re.search(r"^<!-- t3-fork-release:withdrawn\b", release.get("body") or "", re.M)
+names = [asset.get("name") for asset in release.get("assets", [])]
+assert names.count("fork-release.json") == 1 and names.count("SHA256SUMS") == 1
+PYELIGIBLE
+rm -f "$tmp_eligibility"
 case "$version" in
   *-preview.*)
     printf '%s\n' \
@@ -191,13 +221,40 @@ else
   printf '  %sInstalling%s T3 Code %s%s%s\n\n' "$muted" "$reset" "$bold" "$version" "$reset" >&2
   step "Downloading..."
   fetch_status=0
-  fetch "${base_url}/v${version}/SHA256SUMS" "${staging}/SHA256SUMS" || fetch_status=$?
+  fetch "${base_url}/fork-v${version}/SHA256SUMS" "${staging}/SHA256SUMS" || fetch_status=$?
   if [ "$fetch_status" -eq 44 ]; then
-    fail "t3 ${version} has no release archive for ${platform}-${arch}; releases before the self-contained CLI can only be installed with \`npm install -g t3@${version}\`"
+    fail "this fork release has no verified archive for ${platform}-${arch}; use a supported fork installer"
   elif [ "$fetch_status" -ne 0 ]; then
     fail "could not download the release checksums"
   fi
-  download "${base_url}/v${version}/${archive}" "${staging}/${archive}"
+  fetch "${base_url}/fork-v${version}/fork-release.json" "${staging}/fork-release.json"
+  fetch "https://api.github.com/repos/${repo}/releases/tags/fork-v${version}" "${staging}/release.json"
+  python3 - "$staging" "$version" "$archive" <<'PYVERIFY' || fail "fork release is incomplete, withdrawn, or ineligible"
+import json, pathlib, re, sys
+folder, version, archive = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+release = json.loads((folder / "release.json").read_text())
+manifest = json.loads((folder / "fork-release.json").read_text())
+assert release.get("tag_name") == "fork-v" + version and not release.get("draft", True) and release.get("published_at")
+assert not re.search(r"^<!-- t3-fork-release:withdrawn\b", release.get("body") or "", re.M)
+assert manifest.get("format") == 1 and manifest.get("repository") == "unn-corp/t3code" and manifest.get("version") == version
+assert all(manifest.get("checks", {}).get(key) is True for key in ("build", "install", "update", "recovery"))
+assets = manifest.get("assets", [])
+names = [item["name"] for item in assets]
+assert len(names) == len(set(names))
+actual = {item["name"]: item["size"] for item in release["assets"]}
+assert len(actual) == len(release["assets"])
+assert all(actual.get(item["name"]) == item["bytes"] and item["bytes"] > 0 for item in assets)
+selected = [item for item in assets if item["name"] == archive and item["kind"] == "server"]
+assert len(selected) == 1 and re.fullmatch(r"[a-f0-9]{64}", selected[0]["sha256"])
+checks = {}
+for line in (folder / "SHA256SUMS").read_text().splitlines():
+    match = re.fullmatch(r"([a-fA-F0-9]{64})\s+\*?(.*)", line)
+    if match:
+        assert match[2] not in checks
+        checks[match[2]] = match[1].lower()
+assert checks.get(archive) == selected[0]["sha256"]
+PYVERIFY
+  download "${base_url}/fork-v${version}/${archive}" "${staging}/${archive}"
 
   step "Verifying the download..."
   expected="$(grep " \*\{0,1\}${archive}\$" "${staging}/SHA256SUMS" | cut -d' ' -f1)"
@@ -207,7 +264,7 @@ else
 
   step "Extracting T3 Code..."
   tar -xzf "${staging}/${archive}" -C "$staging" --strip-components=1
-  rm -f "${staging}/${archive}" "${staging}/SHA256SUMS"
+  rm -f "${staging}/${archive}" "${staging}/SHA256SUMS" "${staging}/fork-release.json" "${staging}/release.json"
   "${staging}/t3" --version >/dev/null || fail "the downloaded executable does not run"
   printf '%s\n' "$version" > "${staging}/.install-complete"
 
@@ -217,6 +274,7 @@ else
 fi
 
 step "Setting up the t3 command..."
+printf '%s\n' "Manual installation does not stop or coordinate running agents. Stop all fork work before restarting any runtime." >&2
 mkdir -p "$bin_dir"
 ln -sfn "${target_dir}/t3" "${bin_dir}/t3"
 if "$interactive"; then printf '\r\033[2K' >&2; fi

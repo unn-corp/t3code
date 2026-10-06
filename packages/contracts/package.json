@@ -18,6 +18,10 @@
     "./relay": {
       "types": "./src/relay.ts",
       "import": "./src/relay.ts"
+    },
+    "./maintenance": {
+      "types": "./src/maintenance.ts",
+      "import": "./src/maintenance.ts"
     }
   },
   "scripts": {

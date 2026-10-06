@@ -55,10 +55,22 @@ describe("environment maintenance access", () => {
 
   it("requires remote desktop update support for desktop hosts", () => {
     expect(supportsEnvironmentUpdate({})).toBe(false);
-    expect(supportsEnvironmentUpdate({ serverSelfUpdate: "respawn" })).toBe(true);
+    expect(supportsEnvironmentUpdate({ serverSelfUpdate: "respawn" })).toBe(false);
+    const forkMaintenance = {
+      protocol: 1 as const,
+      coordinatorId: "fixture",
+      participantId: "fixture",
+      admission: true,
+      recovery: true,
+    };
+    expect(supportsEnvironmentUpdate({ serverSelfUpdate: "respawn", forkMaintenance })).toBe(true);
     expect(supportsEnvironmentUpdate({ serverSelfUpdate: "desktop-managed" })).toBe(false);
     expect(
-      supportsEnvironmentUpdate({ serverSelfUpdate: "desktop-managed", desktopAppUpdate: true }),
+      supportsEnvironmentUpdate({
+        serverSelfUpdate: "desktop-managed",
+        desktopAppUpdate: true,
+        forkMaintenance,
+      }),
     ).toBe(true);
   });
 
@@ -113,15 +125,19 @@ describe("environment release checks", () => {
   it("keeps stable hosts on stable releases and ignores drafts", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockImplementation(async () =>
-          Response.json([
-            { tag_name: "v2.0.0-nightly.20260923.1" },
-            { tag_name: "v1.2.0", draft: true },
-            { tag_name: "v1.1.0" },
-          ]),
-        ),
+      vi.fn().mockImplementation(async () =>
+        Response.json([
+          {
+            tag_name: "fork-v2.0.0-nightly.20260923.1",
+            assets: [{ name: "fork-release.json" }, { name: "SHA256SUMS" }],
+          },
+          { tag_name: "fork-v1.2.0", draft: true },
+          {
+            tag_name: "fork-v1.1.0",
+            assets: [{ name: "fork-release.json" }, { name: "SHA256SUMS" }],
+          },
+        ]),
+      ),
     );
     expect(await findEnvironmentUpdate("1.0.0", signal)).toBe("1.1.0");
     expect(await findEnvironmentUpdate("1.1.0", signal)).toBeNull();
@@ -132,9 +148,16 @@ describe("environment release checks", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        Response.json(Array.from({ length: 100 }, () => ({ tag_name: "v2.0.0" }))),
+        Response.json(Array.from({ length: 100 }, () => ({ tag_name: "fork-v2.0.0" }))),
       )
-      .mockResolvedValueOnce(Response.json([{ tag_name: "v1.0.0-preview.20260923.2" }]));
+      .mockResolvedValueOnce(
+        Response.json([
+          {
+            tag_name: "fork-v1.0.0-preview.20260923.2",
+            assets: [{ name: "fork-release.json" }, { name: "SHA256SUMS" }],
+          },
+        ]),
+      );
     vi.stubGlobal("fetch", fetchMock);
     expect(await findEnvironmentUpdate("1.0.0-preview.20260923.1", signal)).toBe(
       "1.0.0-preview.20260923.2",

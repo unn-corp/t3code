@@ -16,7 +16,7 @@
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$repo = "pingdotgg/t3code"
+$repo = "unn-corp/t3code"
 $baseUrl = if ($env:T3CODE_RELEASE_BASE_URL) { $env:T3CODE_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
 $t3Home = if ($env:T3CODE_HOME) { $env:T3CODE_HOME } else { Join-Path $HOME ".t3" }
 $binDir = if ($env:T3CODE_INSTALL_BIN_DIR) { $env:T3CODE_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
@@ -130,20 +130,23 @@ $arch = switch ($rawArch) {
 $channel = if ($env:T3CODE_CHANNEL) { $env:T3CODE_CHANNEL } else { "stable" }
 $version = $env:T3CODE_VERSION
 if (-not $version) {
-  # Tags are v<semver>; the channel is the prerelease identifier, or none for
+  # Tags are fork-v<semver>; the channel is the prerelease identifier, or none for
   # stable. Only tags of the requested train are considered, so a stable
   # install can never pick up a nightly or preview build by accident.
   $tagPattern = switch ($channel) {
-    "stable" { '^v\d+\.\d+\.\d+$' }
-    "nightly" { '^v\d+\.\d+\.\d+-nightly\.\d+\.\d+$' }
-    "preview" { '^v\d+\.\d+\.\d+-preview\.\d+\.\d+$' }
+    "stable" { '^fork-v\d+\.\d+\.\d+$' }
+    "nightly" { '^fork-v\d+\.\d+\.\d+-nightly\.\d+\.\d+$' }
+    "preview" { '^fork-v\d+\.\d+\.\d+-preview\.\d+\.\d+$' }
     default { Fail "T3CODE_CHANNEL must be stable, nightly, or preview" }
   }
   $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100" -Headers @{ "User-Agent" = "t3-install" }
-  $tag = ($releases | Where-Object { -not $_.draft -and $_.tag_name -match $tagPattern } | Select-Object -First 1).tag_name
+  $tag = ($releases | Where-Object { -not $_.draft -and $_.body -notmatch "(?m)^<!-- t3-fork-release:withdrawn" -and $_.tag_name -match $tagPattern -and $_.assets.name -contains "fork-release.json" -and $_.assets.name -contains "SHA256SUMS" } | Select-Object -First 1).tag_name
   if (-not $tag) { Fail "could not find a $channel release; set T3CODE_VERSION" }
-  $version = $tag.Substring(1)
+  $version = $tag.Substring(6)
 }
+if ($version -notmatch '^\d+\.\d+\.\d+(?:-(?:nightly|preview)\.\d+\.\d+)?$') { Fail "invalid fork version" }
+$release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/tags/fork-v$version" -Headers @{ "User-Agent" = "t3-install" }
+if ($release.tag_name -ne "fork-v$version" -or $release.draft -or -not $release.published_at -or $release.body -match "(?m)^<!-- t3-fork-release:withdrawn" -or $release.assets.name -notcontains "fork-release.json" -or $release.assets.name -notcontains "SHA256SUMS") { Fail "fork release is withdrawn, incomplete, or unavailable" }
 if ($version -match '-preview\.') {
   Write-Warning "t3 $version is a preview build. Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, and are never offered as updates. Set T3CODE_CHANNEL=stable (the default) for a supported build."
   if ($channel -ne "preview" -and -not $env:T3CODE_VERSION) {
@@ -168,15 +171,28 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
     [Console]::Error.WriteLine("  ${muted}Installing$reset T3 Code $bold$version$reset`n")
     Step "Downloading..."
     try {
-      Fetch "$baseUrl/v$version/SHA256SUMS" (Join-Path $staging "SHA256SUMS")
+      Fetch "$baseUrl/fork-v$version/SHA256SUMS" (Join-Path $staging "SHA256SUMS")
     } catch {
       $status = $_.Exception.Response.StatusCode.value__
       if ($status -eq 404) {
-        Fail "t3 $version has no release archive for win32-$arch; releases before the self-contained CLI can only be installed with 'npm install -g t3@$version'"
+        Fail "t3 $version has no release archive for win32-$arch; use a supported fork installer"
       }
       throw
     }
-    Fetch "$baseUrl/v$version/$archive" (Join-Path $staging $archive) -progress
+    Fetch "$baseUrl/fork-v$version/fork-release.json" (Join-Path $staging "fork-release.json")
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/tags/fork-v$version" -Headers @{ "User-Agent" = "t3-install" }
+    $manifest = Get-Content (Join-Path $staging "fork-release.json") -Raw | ConvertFrom-Json
+    if ($release.draft -or -not $release.published_at -or $release.body -match "(?m)^<!-- t3-fork-release:withdrawn" -or $manifest.format -ne 1 -or $manifest.repository -ne $repo -or $manifest.version -ne $version) { Fail "fork release is withdrawn or ineligible" }
+    foreach ($check in @("build", "install", "update", "recovery")) { if ($manifest.checks.$check -ne $true) { Fail "fork release has not passed $check checks" } }
+    $names = @($manifest.assets.name)
+    if (($names | Select-Object -Unique).Count -ne $names.Count) { Fail "duplicate fork manifest assets" }
+    foreach ($asset in $manifest.assets) {
+      $published = @($release.assets | Where-Object { $_.name -eq $asset.name })
+      if ($published.Count -ne 1 -or $published[0].size -ne $asset.bytes -or $asset.bytes -le 0) { Fail "missing or incomplete fork asset $($asset.name)" }
+    }
+    $selected = @($manifest.assets | Where-Object { $_.name -eq $archive -and $_.kind -eq "server" })
+    if ($selected.Count -ne 1 -or $selected[0].sha256 -notmatch '^[a-f0-9]{64}$') { Fail "archive is absent from fork manifest" }
+    Fetch "$baseUrl/fork-v$version/$archive" (Join-Path $staging $archive) -progress
 
     Step "Verifying the download..."
 
@@ -184,6 +200,7 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
     if (-not $expected) { Fail "$archive is not listed in SHA256SUMS" }
     $expected = ($expected -split "\s+")[0].ToLowerInvariant()
     $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $staging $archive)).Hash.ToLowerInvariant()
+    if ($expected -ne $selected[0].sha256) { Fail "manifest/checksum mismatch for $archive" }
     if ($actual -ne $expected) { Fail "checksum mismatch for $archive" }
 
     Step "Extracting T3 Code..."
@@ -209,6 +226,7 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
   }
 }
 
+Write-Warning "Manual installation does not coordinate running agents. Stop all fork work before restarting any runtime."
 Step "Setting up the t3 command..."
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $shim = Join-Path $binDir "t3.cmd"

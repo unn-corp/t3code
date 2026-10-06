@@ -20,6 +20,13 @@ if (
   if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
+  } else if (
+    command === "maintenance" &&
+    ["home", "fence", "helper"].includes(process.argv[3] ?? "")
+  ) {
+    // Machine verbs take positional vectors, so they skip the flag parser and print one JSON line.
+    const { runMaintenanceMachineVerb } = await import("./cli/maintenance.ts");
+    process.exit(await runMaintenanceMachineVerb(process.argv.slice(3)));
   } else {
     const { runCli } = await import("./binCli.ts");
     runCli();

@@ -24,6 +24,7 @@ import {
 import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
+import { ComposerHostMaintenanceStatus } from "./ComposerHostMaintenanceStatus";
 import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
 
 /** Keep every machine's update visible while auto balance has no single update target. */
@@ -64,6 +65,7 @@ export function useAutoBalanceUpdateBanner(
         environmentId: environment.environmentId,
         serverLabel: environment.label,
         selfUpdate,
+        forkMaintenance: environment.serverConfig?.environment.capabilities.forkMaintenance,
         installation: environment.serverConfig?.environment.capabilities.serverInstallation,
         desktopAppUpdate,
         threadContinuation: supportsServerUpdateThreadContinuation(environment.serverConfig),
@@ -71,7 +73,10 @@ export function useAutoBalanceUpdateBanner(
           environment.serverConfig?.settings.continueThreadsAfterServerUpdate ?? false,
         targetVersion: state.status === "idle" ? mismatch!.clientVersion : state.targetVersion,
         connected: environment.connection.phase === "connected",
-        remoteUpdate: selfUpdate !== null && (selfUpdate !== "desktop-managed" || desktopAppUpdate),
+        remoteUpdate:
+          environment.serverConfig?.environment.capabilities.forkMaintenance?.admission === true &&
+          selfUpdate !== null &&
+          (selfUpdate !== "desktop-managed" || desktopAppUpdate),
         state,
         dismissKey,
       },
@@ -108,6 +113,11 @@ export function useAutoBalanceUpdateBanner(
             {machines.map((machine) => (
               <div key={machine.environmentId} className="space-y-1">
                 <div className="font-medium">{machine.serverLabel}</div>
+                <ComposerHostMaintenanceStatus
+                  environmentId={machine.environmentId}
+                  label={machine.serverLabel}
+                  supported={machine.forkMaintenance?.admission === true && machine.connected}
+                />
                 {machine.state.status !== "idle" ? (
                   <ServerUpdateProgress state={machine.state} />
                 ) : !machine.remoteUpdate ? (

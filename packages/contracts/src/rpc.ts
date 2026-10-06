@@ -7,6 +7,13 @@ import {
   ChatGptHandoffInput,
   ChatGptHandoffState,
 } from "./providerSetup.ts";
+import {
+  ForkMaintenanceActionInput,
+  ForkMaintenanceError,
+  ForkRecoveryRequest,
+  ForkUpdatePolicyPatch,
+  ForkUpdateStatus,
+} from "./maintenance.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -688,6 +695,10 @@ export const WS_METHODS = {
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
+  serverGetMaintenanceStatus: "server.getMaintenanceStatus",
+  serverUpdateMaintenancePolicy: "server.updateMaintenancePolicy",
+  serverRunMaintenanceAction: "server.runMaintenanceAction",
+  serverRecoverMaintenance: "server.recoverMaintenance",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
@@ -1500,6 +1511,30 @@ const WsServerCommitDesktopUpdateRpc = Rpc.make(WS_METHODS.serverCommitDesktopUp
   payload: DesktopUpdateCommitInput,
   success: ServerSelfUpdateResult,
   error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGetMaintenanceStatusRpc = Rpc.make(WS_METHODS.serverGetMaintenanceStatus, {
+  payload: Schema.Struct({}),
+  success: ForkUpdateStatus,
+  error: Schema.Union([ForkMaintenanceError, EnvironmentAuthorizationError]),
+});
+
+const WsServerUpdateMaintenancePolicyRpc = Rpc.make(WS_METHODS.serverUpdateMaintenancePolicy, {
+  payload: ForkUpdatePolicyPatch,
+  success: ForkUpdateStatus,
+  error: Schema.Union([ForkMaintenanceError, EnvironmentAuthorizationError]),
+});
+
+const WsServerRunMaintenanceActionRpc = Rpc.make(WS_METHODS.serverRunMaintenanceAction, {
+  payload: ForkMaintenanceActionInput,
+  success: ForkUpdateStatus,
+  error: Schema.Union([ForkMaintenanceError, EnvironmentAuthorizationError]),
+});
+
+const WsServerRecoverMaintenanceRpc = Rpc.make(WS_METHODS.serverRecoverMaintenance, {
+  payload: ForkRecoveryRequest,
+  success: ForkUpdateStatus,
+  error: Schema.Union([ForkMaintenanceError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
@@ -2542,7 +2577,8 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
  */
 export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthorization>()(
   "t3/contracts/RpcScopeAuthorization",
-  { error: EnvironmentAuthorizationError },
+  // Held work is reported as a maintenance error: the token is fine, the device is mid-update.
+  { error: Schema.Union([EnvironmentAuthorizationError, ForkMaintenanceError]) },
 ) {}
 
 const WsThreadExportRpc = Rpc.make(WS_METHODS.threadExport, {
@@ -2649,6 +2685,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateServerRpc,
   WsServerUpdateServerWithProgressRpc,
   WsServerCommitDesktopUpdateRpc,
+  WsServerGetMaintenanceStatusRpc,
+  WsServerUpdateMaintenancePolicyRpc,
+  WsServerRunMaintenanceActionRpc,
+  WsServerRecoverMaintenanceRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,

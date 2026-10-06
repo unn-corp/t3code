@@ -101,6 +101,11 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /**
+     * Host maintenance coordination. Production entry points set it; undefined (isolated tests)
+     * means no host files are touched. `namespace` isolates integration tests from the real device.
+     */
+    readonly maintenance?: { readonly namespace: string | undefined } | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */

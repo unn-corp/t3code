@@ -1,0 +1,84 @@
+name: Fork release withdrawal
+
+# Withdraws a fork release from update eligibility, or restores it. This rewrites the release notes
+# only: the tag, every asset, and fork-release.json are never touched. Devices and installers stop
+# offering a withdrawn release; installations that already took it are not rolled back by this
+# workflow (see docs/operations/fork-releases.md, Withdrawal).
+#
+# It has its own concurrency group so a withdrawal never queues behind a long build. A build that
+# is about to publish rechecks eligibility immediately before publishing, so a withdrawal made
+# while it runs still takes effect.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "withdraw makes the release ineligible; restore makes it eligible again after its assets re-verify"
+        required: true
+        default: withdraw
+        type: choice
+        options:
+          - withdraw
+          - restore
+      version:
+        description: "Release version, for example 1.0.1 or 1.0.2-nightly.20261006.7"
+        required: true
+        type: string
+      reason:
+        description: "Why the release is withdrawn (recorded in its notes). Ignored for restore."
+        required: false
+        type: string
+
+concurrency:
+  group: fork-release-withdrawal
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  withdrawal:
+    name: ${{ inputs.action }} ${{ inputs.version }}
+    if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install release tooling dependencies
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Withdraw
+        if: inputs.action == 'withdraw'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          [[ -n "$REASON" ]] || { echo "A withdrawal needs a reason." >&2; exit 1; }
+          node scripts/fork-release.ts withdraw --version "$VERSION" --reason "$REASON"
+
+      - name: Restore
+        if: inputs.action == 'restore'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: node scripts/fork-release.ts restore --version "$VERSION" --scratch restore-verify

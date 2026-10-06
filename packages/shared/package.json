@@ -3,6 +3,62 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./forkMaintenanceWsl": {
+      "types": "./src/forkMaintenanceWsl.ts",
+      "import": "./src/forkMaintenanceWsl.ts"
+    },
+    "./forkMaintenanceFenceOperations": {
+      "types": "./src/forkMaintenanceFenceOperations.ts",
+      "import": "./src/forkMaintenanceFenceOperations.ts"
+    },
+    "./forkDesktopHandoff": {
+      "types": "./src/forkDesktopHandoff.ts",
+      "import": "./src/forkDesktopHandoff.ts"
+    },
+    "./forkRecoveryCache": {
+      "types": "./src/forkRecoveryCache.ts",
+      "import": "./src/forkRecoveryCache.ts"
+    },
+    "./forkRecoveryHelper": {
+      "types": "./src/forkRecoveryHelper.ts",
+      "import": "./src/forkRecoveryHelper.ts"
+    },
+    "./forkMaintenanceHomeOperations": {
+      "types": "./src/forkMaintenanceHomeOperations.ts",
+      "import": "./src/forkMaintenanceHomeOperations.ts"
+    },
+    "./forkMaintenanceController": {
+      "types": "./src/forkMaintenanceController.ts",
+      "import": "./src/forkMaintenanceController.ts"
+    },
+    "./forkMaintenanceFeed": {
+      "types": "./src/forkMaintenanceFeed.ts",
+      "import": "./src/forkMaintenanceFeed.ts"
+    },
+    "./forkMaintenanceAdmission": {
+      "types": "./src/forkMaintenanceAdmission.ts",
+      "import": "./src/forkMaintenanceAdmission.ts"
+    },
+    "./forkMaintenanceJournal": {
+      "types": "./src/forkMaintenanceJournal.ts",
+      "import": "./src/forkMaintenanceJournal.ts"
+    },
+    "./forkMaintenanceStore": {
+      "types": "./src/forkMaintenanceStore.ts",
+      "import": "./src/forkMaintenanceStore.ts"
+    },
+    "./forkMaintenanceTransaction": {
+      "types": "./src/forkMaintenanceTransaction.ts",
+      "import": "./src/forkMaintenanceTransaction.ts"
+    },
+    "./forkMaintenanceSnapshot": {
+      "types": "./src/forkMaintenanceSnapshot.ts",
+      "import": "./src/forkMaintenanceSnapshot.ts"
+    },
+    "./forkMaintenance": {
+      "types": "./src/forkMaintenance.ts",
+      "import": "./src/forkMaintenance.ts"
+    },
     "./orchestrationV2ThreadError": {
       "types": "./src/orchestrationV2ThreadError.ts",
       "import": "./src/orchestrationV2ThreadError.ts"

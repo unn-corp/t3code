@@ -16,6 +16,7 @@ import {
   type PreviewError,
   type PreviewFrameStreamEvent,
   PreviewInvalidUrlError,
+  PreviewShareError,
   type PreviewListInput,
   type PreviewListResult,
   type PreviewNavigateInput,
@@ -39,6 +40,9 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PortPublisher from "./PortPublisher.ts";
+import { isLoopbackHost } from "@t3tools/shared/preview";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -214,6 +218,26 @@ const buildIdleSnapshot = (input: {
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PreviewManagerMake() {
+  const publisher = yield* Effect.serviceOption(PortPublisher.PortPublisher);
+  const resolveUrl = Effect.fn("PreviewManager.resolveUrl")(function* (
+    threadId: string,
+    tabId: string,
+    input: string,
+    share?: boolean,
+  ) {
+    const url = yield* normalizeUrl(input);
+    if (!share || !isLoopbackHost(new URL(url).hostname)) return url;
+    if (Option.isNone(publisher))
+      return yield* new PreviewShareError({
+        reason: "This environment does not support temporary browser sharing.",
+        cause: null,
+      });
+    return yield* publisher.value
+      .publish(compositeKey(threadId, tabId), url)
+      .pipe(Effect.mapError((cause) => new PreviewShareError({ reason: cause.message, cause })));
+  });
+  const releaseShare = (threadId: string, tabId: string) =>
+    Option.isSome(publisher) ? publisher.value.release(compositeKey(threadId, tabId)) : Effect.void;
   const serverEpoch = NodeCrypto.randomUUID();
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
   // Unbounded PubSub is fine here — events are tiny and we don't want to
@@ -290,7 +314,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
         ? buildLoadingSnapshot({
             threadId: input.threadId,
             tabId,
-            url: yield* normalizeUrl(input.url),
+            url: yield* resolveUrl(input.threadId, tabId, input.url, input.shareLocalhost),
             title: "",
             viewport,
             profileId: input.profileId,
@@ -330,11 +354,16 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   const navigate: PreviewManager["Service"]["navigate"] = Effect.fn("PreviewManager.navigate")(
     function* (input) {
-      const url = yield* normalizeUrl(input.url);
       return yield* mutateExistingSession(
         input.threadId,
         input.tabId,
         Effect.fn("PreviewManager.navigateSession")(function* (session) {
+          const url = yield* resolveUrl(
+            input.threadId,
+            input.tabId,
+            input.url,
+            input.shareLocalhost,
+          );
           const updatedAt = yield* currentIsoTimestamp;
           const previousTitle =
             session.snapshot.navStatus._tag === "Idle" ? "" : session.snapshot.navStatus.title;
@@ -481,9 +510,16 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           return Effect.succeed([undefined, state] as const);
         }
         return Effect.as(
-          Effect.forEach(eventsToEmit, (event) => PubSub.publish(eventsPubSub, event), {
-            discard: true,
-          }),
+          Effect.forEach(
+            eventsToEmit,
+            (event) =>
+              releaseShare(event.threadId, event.tabId).pipe(
+                Effect.andThen(PubSub.publish(eventsPubSub, event)),
+              ),
+            {
+              discard: true,
+            },
+          ),
           [undefined, { sessions, revision }] as const,
         );
       });

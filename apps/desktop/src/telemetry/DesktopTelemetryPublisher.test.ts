@@ -465,4 +465,82 @@ describe("DesktopTelemetryPublisher", () => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  it.effect(
+    "relays maintenance requests to the desktop controller and answers only to backends that are attached",
+    () =>
+      Effect.gen(function* () {
+        const powerLayer = Layer.succeed(
+          ElectronPowerMonitor.ElectronPowerMonitor,
+          ElectronPowerMonitor.ElectronPowerMonitor.of({
+            isOnBatteryPower: Effect.succeed(false),
+            getSystemIdleTime: Effect.succeed(0),
+            getSystemIdleState: () => Effect.succeed("active"),
+            getCurrentThermalState: Effect.succeed("nominal"),
+            onSimpleEvent: () => Effect.void,
+            onThermalStateChange: () => Effect.void,
+            onSpeedLimitChange: () => Effect.void,
+          }),
+        );
+        const layer = DesktopTelemetryPublisher.layer.pipe(
+          Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), powerLayer)),
+        );
+
+        yield* Effect.gen(function* () {
+          const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+          const requestFiber = yield* Stream.runHead(publisher.maintenanceRequests).pipe(
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* publisher.handleControlForSource("server", {
+            version: 1,
+            type: "maintenanceRequest",
+            requestId: "m-1",
+            operation: { op: "action", input: { action: "check" } },
+          });
+          const received = Option.getOrThrow(yield* Fiber.join(requestFiber));
+          assert.equal(received.requestId, "m-1");
+          assert.deepEqual(received.operation, { op: "action", input: { action: "check" } });
+
+          // A report is an answer: the attached backend sees it, a backend attaching later does not replay it.
+          const decoder = new TextDecoder();
+          const decodeMessage = Schema.decodeUnknownEffect(
+            Schema.fromJsonString(DesktopHostTelemetryMessage),
+          );
+          const attachedFiber = yield* publisher.encoded.pipe(
+            Stream.mapEffect((bytes) => decodeMessage(decoder.decode(bytes).trim())),
+            Stream.filter((message) => message.type === "desktopMaintenance"),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          // The attached backend's subscription starts from its own fiber; answer until it has heard one.
+          for (let turn = 0; turn < 50; turn += 1) {
+            yield* publisher.publishMaintenanceReport({
+              version: 1,
+              type: "desktopMaintenance",
+              requestId: "m-1",
+              error: { reason: "Installation is blocked: an agent is running." },
+            });
+            yield* Effect.yieldNow;
+          }
+          const answer = Option.getOrThrow(yield* Fiber.join(attachedFiber));
+          if (answer.type !== "desktopMaintenance")
+            return assert.fail("Expected a maintenance report.");
+          assert.equal(answer.requestId, "m-1");
+          assert.equal(answer.error?.reason, "Installation is blocked: an agent is running.");
+
+          const lateFiber = yield* publisher.encoded.pipe(
+            Stream.mapEffect((bytes) => decodeMessage(decoder.decode(bytes).trim())),
+            Stream.filter((message) => message.type === "desktopMaintenance"),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.timeoutOption(Duration.millis(50)),
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(Duration.millis(100));
+          assert.isTrue(Option.isNone(yield* Fiber.join(lateFiber)));
+        }).pipe(Effect.provide(layer));
+      }),
+  );
 });

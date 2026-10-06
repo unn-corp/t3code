@@ -79,17 +79,23 @@ on:
         required: false
         default: true
         type: boolean
+      # Empty for builds that carry no T3 Connect account provisioning, such as the
+      # fork release workflow. The desktop build only reads them for macOS passkeys.
       clerk_publishable_key:
-        required: true
+        required: false
+        default: ""
         type: string
       clerk_jwt_template:
-        required: true
+        required: false
+        default: ""
         type: string
       clerk_cli_oauth_client_id:
-        required: true
+        required: false
+        default: ""
         type: string
       relay_url:
-        required: true
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -369,6 +375,34 @@ jobs:
         with:
           name: cli-linux-${{ inputs.arch }}
           path: wsl-runtime
+
+      # The installer embeds exactly this file. Recording its digest here, from the
+      # bytes the build is about to copy, lets a release prove the embedded WSL runtime
+      # is byte-identical to the Linux server archive it ships. The build then checks
+      # that the packaged copy matches the digest it wrote beside it.
+      - name: Record embedded WSL runtime
+        if: inputs.platform == 'win'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(wsl-runtime/t3-*-linux-${{ inputs.arch }}.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "Expected exactly one Linux CLI archive to embed, found ${#archives[@]}." >&2
+            exit 1
+          fi
+          mkdir -p wsl-embedded
+          digest="$(sha256sum "${archives[0]}" | cut -d' ' -f1)"
+          printf '{"archive":"%s","sha256":"%s"}\n' "$(basename "${archives[0]}")" "$digest" > wsl-embedded/wsl-embedded.json
+          cat wsl-embedded/wsl-embedded.json
+
+      - name: Upload embedded WSL runtime receipt
+        if: inputs.platform == 'win'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: wsl-embedded-${{ inputs.arch }}
+          path: wsl-embedded/wsl-embedded.json
+          if-no-files-found: error
 
       - name: Build desktop artifact
         shell: bash

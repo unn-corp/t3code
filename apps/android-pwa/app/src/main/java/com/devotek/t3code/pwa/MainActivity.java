@@ -40,18 +40,33 @@ import org.json.JSONObject;
 
 /** A hostless web client. Remote environments are authenticated by the existing Connections flow. */
 public final class MainActivity extends ComponentActivity {
+    static volatile boolean visible;
     private static final String ORIGIN = "https://appassets.androidplatform.net";
     private static final int FILE_PICKER = 1;
     private static final int SAVE_FILE = 2;
     private static final int MEDIA_PERMISSION = 3;
     private static final int MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024;
     private WebView webView;
+    private NativeNotifications notifications;
+    private NativeBrowser browser;
+    private NativeUpdateController updates;
+    private UpdateEngine updater;
     private ValueCallback<Uri[]> fileCallback;
     private PermissionRequest mediaRequest;
     private byte[] pendingDownload;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Recovery runs before any WebView or bridge exists, so a broken bundled shell cannot block it.
+        updater = UpdateEngine.get(this);
+        boolean bypass = getIntent().getBooleanExtra(RecoveryActivity.BYPASS, false);
+        // One-shot: a restored task must not skip recovery again after a later crash.
+        getIntent().removeExtra(RecoveryActivity.BYPASS);
+        if (updater.startup(bypass)) {
+            startActivity(RecoveryActivity.intent(this));
+            finish();
+            return;
+        }
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() { navigateBack(); }
         });
@@ -82,6 +97,10 @@ public final class MainActivity extends ComponentActivity {
         WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
             .addPathHandler("/", this::loadAsset).build();
         webView.setWebViewClient(new WebViewClient() {
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
+                if (browser != null) browser.shellNavigating();
+                if (updates != null) updates.shellNavigating();
+            }
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 if (request.isForMainFrame() && isAppOrigin(request.getUrl())
                         && !request.getUrl().getPath().startsWith("/api/")) return loadAsset("index.html");
@@ -95,35 +114,67 @@ public final class MainActivity extends ComponentActivity {
         });
         webView.setWebChromeClient(new WebChromeClient() {
             @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
-                if (fileCallback != null) fileCallback.onReceiveValue(null);
-                fileCallback = callback;
-                try { startActivityForResult(params.createIntent(), FILE_PICKER); }
-                catch (ActivityNotFoundException error) {
-                    fileCallback.onReceiveValue(null);
-                    fileCallback = null;
-                    toast("No file picker is installed.");
-                }
-                return true;
+                return chooseFile(callback, params);
             }
             @Override public void onPermissionRequest(PermissionRequest request) {
                 runOnUiThread(() -> requestMedia(request));
             }
             @Override public void onPermissionRequestCanceled(PermissionRequest request) {
-                if (mediaRequest == request) mediaRequest = null;
+                if (mediaRequest == request) finishMedia();
             }
         });
         installDownloadBridge();
+        notifications = new NativeNotifications(this);
+        notifications.install(webView);
+        browser = new NativeBrowser(this, webView, container);
+        browser.install();
+        updates = new NativeUpdateController(this, webView);
+        updates.install();
+        AppUpdateWorker.schedule(this);
+        Thread launchCheck = new Thread(() -> updater.run(UpdateEngine.Trigger.LAUNCH), "t3-launch-update-check");
+        launchCheck.setDaemon(true);
+        launchCheck.start();
         webView.setDownloadListener((url, agent, disposition, mime, length) -> {
             Uri uri = Uri.parse(url);
             if ("https".equals(uri.getScheme()) || "http".equals(uri.getScheme())) openExternal(uri);
             else toast("This download cannot be opened.");
         });
-        if (savedInstanceState == null || webView.restoreState(savedInstanceState) == null) {
-            webView.loadUrl(ORIGIN + "/settings/connections");
+        boolean restored = savedInstanceState != null && webView.restoreState(savedInstanceState) != null;
+        if (!restored || getIntent().hasExtra(NativeNotifications.ROUTE)) {
+            webView.loadUrl(ORIGIN + notificationRoute(getIntent()));
+        }
+        getIntent().removeExtra(NativeNotifications.ROUTE);
+    }
+
+    private static String notificationRoute(Intent intent) {
+        String route = intent == null ? null : intent.getStringExtra(NativeNotifications.ROUTE);
+        return route != null && (route.equals("/settings") || route.matches("/[A-Za-z0-9_%-]+/[A-Za-z0-9_%-]+"))
+            ? route : "/settings/connections";
+    }
+    boolean chooseFile(ValueCallback<Uri[]> callback, WebChromeClient.FileChooserParams params) {
+        try { PhoneOperations.shared().begin("file-chooser", "picker", PhoneOperations.UNTIL_ENDED); }
+        catch (IllegalStateException held) { callback.onReceiveValue(null); toast(held.getMessage()); return true; }
+        if (fileCallback != null) fileCallback.onReceiveValue(null);
+        fileCallback = callback;
+        try { startActivityForResult(params.createIntent(), FILE_PICKER); }
+        catch (ActivityNotFoundException error) {
+            fileCallback.onReceiveValue(null); fileCallback = null; toast("No file picker is installed.");
+            PhoneOperations.shared().end("file-chooser", "picker");
+        }
+        return true;
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (webView == null) return;
+        if (intent.hasExtra(NativeNotifications.ROUTE)) {
+            webView.loadUrl(ORIGIN + notificationRoute(intent));
+            intent.removeExtra(NativeNotifications.ROUTE);
         }
     }
 
-    private static boolean isAppOrigin(Uri uri) {
+    static boolean isAppOrigin(Uri uri) {
         return "https".equals(uri.getScheme()) && "appassets.androidplatform.net".equals(uri.getHost())
             && uri.getPort() == -1 && uri.getUserInfo() == null;
     }
@@ -157,6 +208,8 @@ public final class MainActivity extends ComponentActivity {
         catch (ActivityNotFoundException error) { toast("No app can open this link."); }
     }
 
+    private void finishMedia() { mediaRequest = null; PhoneOperations.shared().end("permission", "media"); }
+
     private void requestMedia(PermissionRequest request) {
         if (!isAppOrigin(request.getOrigin()) || mediaRequest != null) { request.deny(); return; }
         ArrayList<String> permissions = new ArrayList<>();
@@ -171,17 +224,23 @@ public final class MainActivity extends ComponentActivity {
             if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) missing.add(permission);
         }
         if (missing.isEmpty()) { request.grant(request.getResources()); mediaRequest = null; }
-        else requestPermissions(missing.toArray(new String[0]), MEDIA_PERMISSION);
+        else {
+            try { PhoneOperations.shared().begin("permission", "media", PhoneOperations.UNTIL_ENDED); }
+            catch (IllegalStateException held) { request.deny(); mediaRequest = null; toast(held.getMessage()); return; }
+            requestPermissions(missing.toArray(new String[0]), MEDIA_PERMISSION);
+        }
     }
 
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(code, permissions, results);
+        if (code == NativeNotifications.PERMISSION) { notifications.permissionResult(); return; }
+        if (code == MEDIA_PERMISSION) PhoneOperations.shared().end("permission", "media");
         if (code != MEDIA_PERMISSION || mediaRequest == null) return;
         boolean granted = results.length > 0;
         for (int result : results) granted &= result == PackageManager.PERMISSION_GRANTED;
         if (granted) mediaRequest.grant(mediaRequest.getResources());
         else mediaRequest.deny();
-        mediaRequest = null;
+        finishMedia();
     }
 
     private void installDownloadBridge() {
@@ -215,6 +274,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void saveDownload(String json) {
+        try { PhoneOperations.shared().requireOpen(); } catch (IllegalStateException held) { toast(held.getMessage()); return; }
         if (pendingDownload != null) { toast("Finish saving the current file first."); return; }
         try {
             JSONObject file = new JSONObject(json);
@@ -226,19 +286,26 @@ public final class MainActivity extends ComponentActivity {
             intent.setType(mime.contains("/") ? mime : "application/octet-stream");
             intent.putExtra(Intent.EXTRA_TITLE, name);
             pendingDownload = bytes;
+            PhoneOperations.shared().begin("save-file", "download", PhoneOperations.UNTIL_ENDED);
             startActivityForResult(intent, SAVE_FILE);
-        } catch (JSONException | IllegalArgumentException | ActivityNotFoundException error) {
+        } catch (JSONException | IllegalArgumentException | IllegalStateException | ActivityNotFoundException error) {
             pendingDownload = null;
+            PhoneOperations.shared().end("save-file", "download");
             toast("Could not save the download.");
         }
     }
 
+    void openSettings(Intent intent) { NativeSettings.open(this, intent); }
+
     @Override protected void onActivityResult(int code, int result, Intent data) {
         super.onActivityResult(code, result, data);
+        NativeSettings.returned(this, code);
         if (code == FILE_PICKER && fileCallback != null) {
             fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data));
             fileCallback = null;
         }
+        if (code == FILE_PICKER) PhoneOperations.shared().end("file-chooser", "picker");
+        if (code == SAVE_FILE) PhoneOperations.shared().end("save-file", "download");
         if (code == SAVE_FILE && pendingDownload != null) {
             byte[] bytes = pendingDownload;
             pendingDownload = null;
@@ -253,14 +320,25 @@ public final class MainActivity extends ComponentActivity {
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
-        webView.saveState(state);
+        if (webView != null) webView.saveState(state);
         super.onSaveInstanceState(state);
     }
     @Override protected void onResume() {
         super.onResume();
+        visible = true;
+        if (updater != null) updater.foreground(true);
+        if (updater != null && updater.snapshot() != null && updater.snapshot().pending != null && webView != null) {
+            startActivity(RecoveryActivity.intent(this)); finish(); return;
+        }
+        if (notifications != null) notifications.refresh();
         if (webView != null) { webView.onResume(); webView.evaluateJavascript("window.dispatchEvent(new Event('focus'))", null); }
+        if (browser != null) browser.resume();
     }
     @Override protected void onPause() {
+        visible = false;
+        if (updater != null) updater.foreground(false);
+        if (browser != null) browser.pause();
+        if (notifications != null) notifications.refresh();
         if (webView != null) {
             webView.evaluateJavascript("window.dispatchEvent(new Event('pagehide'))", null);
             webView.onPause();
@@ -268,13 +346,16 @@ public final class MainActivity extends ComponentActivity {
         super.onPause();
     }
     private void navigateBack() {
+        if (browser != null && browser.goBack()) return;
         if (webView.canGoBack()) webView.goBack();
         else finish();
     }
     @Override protected void onDestroy() {
-        if (fileCallback != null) fileCallback.onReceiveValue(null);
-        if (mediaRequest != null) mediaRequest.deny();
-        webView.destroy();
+        if (fileCallback != null) fileCallback.onReceiveValue(null); // The external picker can still be open; only its result clears the durable hold.
+        if (mediaRequest != null) { mediaRequest.deny(); finishMedia(); }
+        if (updates != null) updates.destroy();
+        if (browser != null) browser.destroy();
+        if (webView != null) webView.destroy();
         super.onDestroy();
     }
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_SHORT).show(); }

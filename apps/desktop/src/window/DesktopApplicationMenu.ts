@@ -8,7 +8,6 @@ import type * as Electron from "electron";
 
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
-import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
@@ -35,8 +34,7 @@ export class DesktopApplicationMenu extends Context.Service<
 
 type DesktopApplicationMenuRuntimeServices =
   | DesktopUpdates.DesktopUpdates
-  | DesktopWindow.DesktopWindow
-  | ElectronDialog.ElectronDialog;
+  | DesktopWindow.DesktopWindow;
 
 const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
@@ -58,51 +56,22 @@ const zoomMainWindow = Effect.fn("desktop.menu.zoomMainWindow")(function* (
   yield* desktopWindow.zoomMain(direction);
 });
 
-const checkForUpdatesFromMenu = Effect.gen(function* () {
-  const updates = yield* DesktopUpdates.DesktopUpdates;
-  const electronDialog = yield* ElectronDialog.ElectronDialog;
-  const result = yield* updates.check("menu");
-  const updateState = result.state;
-
-  if (updateState.status === "up-to-date") {
-    yield* electronDialog.showMessageBox({
-      type: "info",
-      title: "You're up to date!",
-      message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
-      buttons: ["OK"],
-    });
-  } else if (updateState.status === "error") {
-    yield* electronDialog.showMessageBox({
-      type: "warning",
-      title: "Update check failed",
-      message: "Could not check for updates.",
-      detail: updateState.message ?? "An unknown error occurred. Please try again later.",
-      buttons: ["OK"],
-    });
-  }
-}).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
-
+/**
+ * "Check for Updates" checks and then shows the canonical update surface (Settings, General, App updates), where
+ * the person sees what was found and why it can or cannot install. The menu never installs anything itself.
+ */
 const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
-  const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const disabledReason = yield* updates.disabledReason;
   if (Option.isSome(disabledReason)) {
     yield* logUpdaterInfo("manual update check requested, but updates are disabled", {
       disabledReason: disabledReason.value,
     });
-    yield* electronDialog.showMessageBox({
-      type: "info",
-      title: "Updates unavailable",
-      message: "Automatic updates are not available right now.",
-      detail: disabledReason.value,
-      buttons: ["OK"],
-    });
-    return;
   }
-
-  const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* desktopWindow.ensureMain;
-  yield* checkForUpdatesFromMenu;
+  yield* dispatchMenuAction("open-app-updates");
+  if (Option.isNone(disabledReason)) yield* updates.check("menu");
 }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
 /** @public Service construction is part of the canonical Effect module API. */

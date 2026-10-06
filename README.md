@@ -1,6 +1,15 @@
 # T3 Code
 
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+T3 Code is an "agent harness control surface" for agents running on your computers.
+
+This is the [unn-corp fork](https://github.com/unn-corp/t3code). It includes its own Android app in
+[`apps/android-pwa`](./apps/android-pwa), packaged as `com.devotek.t3code.pwa`. It bundles this fork's
+web interface and native phone features, and primarily connects to your environments over Tailscale.
+It is separate from the upstream Google Play app and the Expo/React Native app in `apps/mobile`.
+
+Start with the [fork Android guide](./docs/user/android-fork.md) for installation and pairing, or the
+[Android build and development runbook](./docs/operations/android-pwa.md) to build, edit, and understand
+its backend connections. Web and Electron clients are also available.
 
 Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, T3 Code can control them.
 
@@ -11,6 +20,13 @@ Nothing. We built T3 Code because we wanted the best possible development experi
 We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
 
 ## Installation
+
+Use [this fork's releases](https://github.com/unn-corp/t3code/releases) for Android,
+Windows x64, and Linux x64. The [update guide](./docs/user/updating.md) explains
+channels, stopped-work checks, and recovery. The [release runbook](./docs/operations/fork-releases.md)
+owns baseline commissioning and nightly/stable publishing. Build the standalone
+Android APK with the [Android runbook](./docs/operations/android-pwa.md); upstream
+Expo/store mobile distribution is separate.
 
 > [!WARNING]
 > T3 Code currently supports Codex, Claude, Cursor, Grok Build, OpenCode, and Antigravity. Install and authenticate at least one provider before use:
@@ -24,59 +40,33 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 
 ### Command line
 
+After the fork updater baseline and its first eligible release are commissioned:
+
 ```bash
-curl -fsSL https://t3.codes/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/unn-corp/t3code/main/scripts/install.sh | sh
 ```
 
-On Windows, in PowerShell:
+The Linux installer needs Python 3 to validate release metadata. On Windows,
+run in PowerShell:
 
 ```powershell
-irm https://t3.codes/install.ps1 | iex
+irm https://raw.githubusercontent.com/unn-corp/t3code/main/scripts/install.ps1 | iex
 ```
 
-Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
+These install the fork's server archives, not the upstream npm package. Stop all
+fork work before manually replacing or restarting runtimes. Run `t3 --help` for
+the supported CLI and [read the update guide](./docs/user/updating.md) before maintenance.
 
-To try it once without installing, run `npx t3@latest` instead.
+### Desktop and Android
 
-### Desktop app
+Use the Windows NSIS installer or Linux AppImage/`.deb` from
+[this fork's releases](https://github.com/unn-corp/t3code/releases). Steam Deck
+uses AppImage. Installing a `.deb` can require Linux administrator authorization.
+Use the fork APK and keep its package/signing identity when updating Android;
+never uninstall or clear storage to update saved connections.
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
-
-#### Windows (`winget`)
-
-```bash
-winget install T3Tools.T3Code
-```
-
-#### macOS (Homebrew)
-
-```bash
-brew install --cask t3-code
-```
-
-#### Debian, Ubuntu (`.deb`)
-
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
-
-```bash
-sudo apt install ./T3-Code-*.deb
-```
-
-#### Arch Linux (AUR)
-
-Stable:
-
-```bash
-yay -S t3code-bin
-```
-
-Nightly:
-
-```bash
-yay -S t3code-nightly-bin
-```
-
-The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
+Upstream winget, Homebrew, AUR, `t3.codes` installers, and `npx t3` install upstream
+T3 Code. They do not deliver this fork's updater or Android app.
 
 ## Some notes
 
@@ -88,6 +78,8 @@ We are (mostly) not accepting contributions yet. Small fixes may be considered. 
 
 Full docs live in [docs/](./docs). There's no docs site yet.
 
+- [Fork Android app: install, pair, and use](./docs/user/android-fork.md)
+- [Fork Android app: build, edit, and backend connections](./docs/operations/android-pwa.md)
 - [Install and first run](./docs/user/install.md)
 - [Permission modes](./docs/user/permission-modes.md)
 - [Keyboard shortcuts](./docs/user/keybindings.md)

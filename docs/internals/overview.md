@@ -5,6 +5,10 @@ clients control it over authenticated RPC. A remote client must never substitute
 provider credentials, or machine state for the environment's. The desktop app bundles a server,
 but its renderer follows the same boundary.
 
+This fork's standalone Android APK follows the web client's server ownership boundary and adds
+origin-restricted native bridges. See [the Android runbook](../operations/android-pwa.md#backend-and-native-boundaries)
+for its build, Tailscale connections, and native service lifecycle.
+
 ## Ownership boundaries
 
 Provider processes, terminals, Git, and project files belong to the server. Shared connection and

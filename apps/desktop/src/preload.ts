@@ -292,6 +292,28 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
     };
   },
+  getMaintenanceStatus: () => ipcRenderer.invoke(IpcChannels.MAINTENANCE_GET_STATUS_CHANNEL),
+  updateMaintenancePolicy: (patch) =>
+    ipcRenderer.invoke(IpcChannels.MAINTENANCE_UPDATE_POLICY_CHANNEL, patch),
+  runMaintenanceAction: (input) =>
+    ipcRenderer.invoke(IpcChannels.MAINTENANCE_RUN_ACTION_CHANNEL, input),
+  cancelMaintenanceCountdown: () =>
+    ipcRenderer.invoke(IpcChannels.MAINTENANCE_CANCEL_COUNTDOWN_CHANNEL),
+  reportMaintenanceInteraction: (input) =>
+    ipcRenderer.invoke(IpcChannels.MAINTENANCE_REPORT_INTERACTION_CHANNEL, input),
+  requestMaintenanceRecovery: (request) =>
+    ipcRenderer.invoke(IpcChannels.MAINTENANCE_RECOVER_CHANNEL, request),
+  onMaintenanceStatus: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, status: unknown) => {
+      if (typeof status !== "object" || status === null) return;
+      listener(status as Parameters<typeof listener>[0]);
+    };
+
+    ipcRenderer.on(IpcChannels.MAINTENANCE_STATUS_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.MAINTENANCE_STATUS_CHANNEL, wrappedListener);
+    };
+  },
   appActivation: {
     setReady: (ready) =>
       ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_READY_CHANNEL, ready),

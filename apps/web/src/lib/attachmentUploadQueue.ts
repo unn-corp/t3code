@@ -12,6 +12,7 @@ import {
   type PersistedAttachmentVerification,
 } from "@t3tools/client-runtime/state/attachments";
 import { create } from "zustand";
+import { beginClientUpdateUpload } from "../state/updateInteraction";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 
@@ -153,29 +154,43 @@ function uploadBytes(input: {
   readonly onProgress: (progress: number) => void;
 }): { readonly done: Promise<void>; readonly abort: () => void } {
   const xhr = new XMLHttpRequest();
-  const done = new Promise<void>((resolve, reject) => {
-    xhr.open("POST", input.url, true);
-    xhr.timeout = UPLOAD_TIMEOUT_MS;
-    xhr.setRequestHeader("Content-Type", input.mimeType);
-    xhr.upload.addEventListener("progress", (event) => {
-      if (event.lengthComputable && event.total > 0) {
-        input.onProgress(event.loaded / event.total);
+  let aborted = false;
+  const hold = beginClientUpdateUpload();
+  const start = (releaseUpdateHold: () => void) =>
+    new Promise<void>((resolve, reject) => {
+      if (aborted) {
+        reject(new Error("Upload cancelled"));
+        return;
       }
-    });
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
-      } else {
-        reject(new Error(`Upload rejected (${xhr.status})`));
-      }
-    });
-    xhr.addEventListener("error", () => reject(new Error("Upload failed")));
-    xhr.addEventListener("timeout", () => reject(new Error("Upload timed out")));
-    xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
-    xhr.send(input.file);
-  });
+      xhr.open("POST", input.url, true);
+      xhr.timeout = UPLOAD_TIMEOUT_MS;
+      xhr.setRequestHeader("Content-Type", input.mimeType);
+      xhr.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          input.onProgress(event.loaded / event.total);
+        }
+      });
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+        } else {
+          reject(new Error(`Upload rejected (${xhr.status})`));
+        }
+      });
+      xhr.addEventListener("error", () => reject(new Error("Upload failed")));
+      xhr.addEventListener("timeout", () => reject(new Error("Upload timed out")));
+      xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
+      xhr.send(input.file);
+    }).finally(releaseUpdateHold);
+  const done = typeof hold === "function" ? start(hold) : hold.then(start);
 
-  return { done, abort: () => xhr.abort() };
+  return {
+    done,
+    abort: () => {
+      aborted = true;
+      xhr.abort();
+    },
+  };
 }
 
 async function runUpload(job: UploadJob): Promise<void> {

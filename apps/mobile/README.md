@@ -1,4 +1,9 @@
-# T3 Code Mobile
+# T3 Code Mobile (upstream Expo app)
+
+This directory contains the upstream Expo/React Native client. This fork's standalone Android
+app lives in [`../android-pwa`](../android-pwa); use its
+[build and development runbook](../../docs/operations/android-pwa.md). Changes here do not change
+the fork's APK.
 
 > [!WARNING]
 > T3 Code Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.

@@ -105,7 +105,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
       return;
     Alert.alert(
       `Update ${environment?.environmentLabel ?? "environment"}?`,
-      `Install T3 Code ${targetVersion}. ${capabilities.serverSelfUpdate === "desktop-managed" ? "The desktop app will close and relaunch." : "The server will restart and reconnect."} Running threads may be interrupted.`,
+      `Install T3 Code ${targetVersion}. ${capabilities.serverSelfUpdate === "desktop-managed" ? "The desktop app will close and relaunch." : "The server will restart and reconnect."} Installation waits until all registered agents and background work on that device are stopped. Updates never stop agents.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -116,10 +116,6 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 environmentId,
                 input: {
                   targetVersion,
-                  ...(capabilities.serverUpdateThreadContinuation &&
-                  config?.settings.continueThreadsAfterServerUpdate
-                    ? { continueRunningThreads: true }
-                    : {}),
                 },
               });
               if (AsyncResult.isFailure(result)) throw squashAtomCommandFailure(result);

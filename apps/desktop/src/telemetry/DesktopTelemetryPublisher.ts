@@ -4,7 +4,9 @@ import {
   type DesktopTelemetryControlMessage,
   type DesktopTelemetryCancelDesktopUpdate,
   type DesktopTelemetryCommitDesktopUpdate,
+  type DesktopTelemetryMaintenanceRequest,
   type DesktopTelemetryRequestDesktopUpdate,
+  type DesktopMaintenanceReport,
   type DesktopUpdateStatusReport,
   type HostPowerSnapshot,
 } from "@t3tools/contracts";
@@ -76,6 +78,10 @@ export class DesktopTelemetryPublisher extends Context.Service<
     readonly updateRequests: Stream.Stream<DesktopTelemetryRequestDesktopUpdate>;
     readonly updateCommits: Stream.Stream<DesktopTelemetryCommitDesktopUpdate>;
     readonly updateCancellations: Stream.Stream<DesktopTelemetryCancelDesktopUpdate>;
+    /** Device-maintenance requests a server relays to this desktop, the one controller. Single consumer. */
+    readonly maintenanceRequests: Stream.Stream<DesktopTelemetryMaintenanceRequest>;
+    /** Answers one maintenance request. Delivered to every attached backend; each ignores ids it did not ask. */
+    readonly publishMaintenanceReport: (report: DesktopMaintenanceReport) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/telemetry/DesktopTelemetryPublisher") {}
 
@@ -177,6 +183,8 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const updateRequestQueue = yield* Queue.unbounded<DesktopTelemetryRequestDesktopUpdate>();
   const updateCommitQueue = yield* Queue.unbounded<DesktopTelemetryCommitDesktopUpdate>();
   const updateCancellationQueue = yield* Queue.unbounded<DesktopTelemetryCancelDesktopUpdate>();
+  const maintenanceRequestQueue = yield* Queue.unbounded<DesktopTelemetryMaintenanceRequest>();
+  const maintenanceReportChanges = yield* PubSub.unbounded<DesktopMaintenanceReport>();
 
   const offer = (event: PowerEvent): void => {
     Queue.offerUnsafe(powerEvents, event);
@@ -348,6 +356,8 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
         return Queue.offer(updateCommitQueue, message).pipe(Effect.asVoid);
       case "cancelDesktopUpdate":
         return Queue.offer(updateCancellationQueue, message).pipe(Effect.asVoid);
+      case "maintenanceRequest":
+        return Queue.offer(maintenanceRequestQueue, message).pipe(Effect.asVoid);
     }
   };
   const removeControlSource: DesktopTelemetryPublisher["Service"]["removeControlSource"] = (
@@ -392,13 +402,17 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       );
     }),
   );
+  // Reports are answers, not state: a backend that attaches later must not replay an old one.
+  const maintenanceReports = Stream.unwrap(
+    PubSub.subscribe(maintenanceReportChanges).pipe(Effect.map(Stream.fromSubscription)),
+  );
   const encoded = Stream.concat(
     Stream.make({
       version: 1,
       type: "desktopTelemetryHello",
       electronPid: process.pid,
     } as const),
-    Stream.merge(snapshots, updateReports),
+    Stream.merge(snapshots, Stream.merge(updateReports, maintenanceReports)),
   ).pipe(Stream.map((message) => textEncoder.encode(`${encodeMessage(message)}\n`)));
 
   const publishUpdateReport: DesktopTelemetryPublisher["Service"]["publishUpdateReport"] = (
@@ -419,6 +433,9 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     updateRequests: Stream.fromQueue(updateRequestQueue),
     updateCommits: Stream.fromQueue(updateCommitQueue),
     updateCancellations: Stream.fromQueue(updateCancellationQueue),
+    maintenanceRequests: Stream.fromQueue(maintenanceRequestQueue),
+    publishMaintenanceReport: (report) =>
+      PubSub.publish(maintenanceReportChanges, report).pipe(Effect.asVoid),
   });
 });
 

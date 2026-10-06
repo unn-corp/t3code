@@ -63,6 +63,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
+import { withWork } from "../maintenance/WorkAdmission.ts";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -9884,7 +9885,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
-    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+    withWork(
+      threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command)),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause,
+          }),
+      ),
+    );
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
