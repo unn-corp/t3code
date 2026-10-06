@@ -44,12 +44,13 @@ closing it does not authorize a bypass of the host's admission checks.
 
 ## Why installation waits
 
-All registered fork runtimes belonging to that local OS user must be stopped,
+All agent work in registered fork runtimes belonging to that local OS user must be stopped,
 including desktop, background services, standalone, development, and explicitly
 connected WSL runtimes. Work includes child/delegated agents, compaction,
 approval waits, provider background tasks, tools, commands, and cancellation
 still awaiting termination. A quiet conversation or completed parent is not
-proof that work stopped. Unknown participants block installation.
+proof that work stopped. Unknown participants block installation. An open terminal shell
+also blocks because commands can run without child processes; close it after its work finishes.
 An older registered runtime can also block because it lacks the current process
 activity checks. Let its work finish before upgrading it manually. Standalone and
 development servers require that manual step; confirming the installation review

@@ -16,6 +16,9 @@ final class PhoneOperations {
     interface Clock { long now(); }
     interface Commit { void run() throws java.io.IOException; }
     interface Persistence { void save(List<String> nativeOperations); }
+    static final class AdmissionChanged extends java.io.IOException {
+        AdmissionChanged() { super("Phone activity changed before installation."); }
+    }
     /** The hold lasts until the operation ends or its owner is known to have terminated. */
     static final long UNTIL_ENDED = 0;
     /** Above the 60 second ceiling every native browser command enforces itself. */
@@ -87,7 +90,7 @@ final class PhoneOperations {
     /** Session bytes are already written. Recheck under the launch fence immediately at OS commit. */
     synchronized void commitIfQuiet(java.util.function.BooleanSupplier ready, Commit commit) throws java.io.IOException {
         if (!installing || foreground || !active().isEmpty() || !ready.getAsBoolean())
-            throw new java.io.IOException("Phone activity changed before installation.");
+            throw new AdmissionChanged();
         commit.run();
     }
     synchronized void installationPending(boolean value) { installing = value; }

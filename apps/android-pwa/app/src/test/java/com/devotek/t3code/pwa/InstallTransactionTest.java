@@ -81,6 +81,43 @@ public final class InstallTransactionTest {
         assertEquals(UpdateCapacity.INSUFFICIENT_MESSAGE, state.lastError);
         assertEquals("waiting", state.lastOutcome.result);
     }
+
+    @Test public void foregroundReturningBeforeCommitBlocksOsCallAsRetryable() throws Exception {
+        PhoneOperations operations = new PhoneOperations(() -> 1L);
+        assertTrue(operations.admit(() -> true));
+        operations.foreground(true);
+        boolean[] committed = {false};
+        try {
+            operations.commitIfQuiet(() -> true, () -> committed[0] = true);
+            fail("commit must be blocked when foreground activity returns");
+        } catch (PhoneOperations.AdmissionChanged expected) { }
+        assertFalse(committed[0]);
+    }
+
+    @Test public void lateAdmissionChangeRestoresOriginalRequestAgeAndRollbackPin() throws Exception {
+        UpdateStore store = UpdateStore.open(folder.newFolder("admission-state"));
+        UpdateState.Intent request = new UpdateState.Intent();
+        request.kind = "rollback"; request.targetSha256 = "d".repeat(64); request.transactionId = "late-tx"; request.requestedAt = 7L;
+        store.mutate(state -> state.intent = request);
+        UpdateState.Pending pending = pending();
+        pending.transactionId = request.transactionId; pending.targetSha256 = request.targetSha256;
+        pending.userRequested = true; pending.startedAt = 99L; pending.requestedAt = request.requestedAt;
+        try {
+            InstallTransaction.begin(store, (apk, silent) -> { throw new PhoneOperations.AdmissionChanged(); },
+                new File("x.apk"), false, pending, pin(), 100L);
+            fail("changed admission must retain the manual request");
+        } catch (PhoneOperations.AdmissionChanged expected) { }
+        UpdateState state = store.snapshot();
+        assertNull(state.pending);
+        assertEquals("rollback", state.pin.reason);
+        assertNotNull(state.intent);
+        assertEquals("late-tx", state.intent.transactionId);
+        assertEquals(7L, state.intent.requestedAt);
+        assertEquals("waiting", state.lastOutcome.result);
+        assertEquals("Phone activity changed before installation.", state.lastError);
+        assertEquals(state.lastError, state.lastOutcome.message);
+        assertEquals("", state.failedArtifactSha256);
+    }
     @Test public void aSecondInstallCannotStartWhileOneIsPending() throws Exception {
         UpdateStore store = UpdateStore.open(folder.newFolder("state"));
         InstallTransaction.begin(store, (apk, silent) -> { }, new File("x.apk"), true, pending(), null, 1L);

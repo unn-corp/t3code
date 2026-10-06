@@ -37,12 +37,12 @@ final class InstallTransaction {
                 state.pending = null;
                 UpdateState.Outcome outcome = new UpdateState.Outcome();
                 outcome.transactionId = pending.transactionId; outcome.kind = pending.kind;
-                outcome.result = error instanceof UpdateCapacity.Insufficient ? "waiting" : "failed";
-                outcome.message = error instanceof UpdateCapacity.Insufficient
+                outcome.result = retryable(error) ? "waiting" : "failed";
+                outcome.message = retryable(error)
                     ? error.getMessage() : "Android could not start the installation.";
                 outcome.at = now;
                 state.lastOutcome = outcome;
-                if (error instanceof UpdateCapacity.Insufficient && pending.userRequested && state.intent == null) {
+                if (retryable(error) && pending.userRequested && state.intent == null) {
                     UpdateState.Intent intent = new UpdateState.Intent();
                     intent.kind = pending.kind; intent.targetSha256 = pending.targetSha256;
                     intent.transactionId = pending.transactionId; intent.requestedAt = pending.requestedAt;
@@ -52,5 +52,9 @@ final class InstallTransaction {
             });
             throw error;
         }
+    }
+
+    private static boolean retryable(Throwable error) {
+        return error instanceof UpdateCapacity.Insufficient || error instanceof PhoneOperations.AdmissionChanged;
     }
 }

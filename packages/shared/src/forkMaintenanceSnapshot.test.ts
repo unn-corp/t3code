@@ -106,6 +106,45 @@ describe("restore points", () => {
     }
   });
 
+  it("counts, snapshots, rescues and restores conversation evidence in userdata", async () => {
+    const h = await home();
+    const evidence = NodePath.join(
+      h.state,
+      "conversation-evidence",
+      "thread-hash",
+      "browser-screenshot-example-test.png",
+    );
+    await NodeFSP.mkdir(NodePath.dirname(evidence), { recursive: true });
+    const original = Buffer.alloc(64 * 1024, 0x31);
+    await NodeFSP.writeFile(evidence, original);
+    const requirement = await snapshotRequirement(h.root);
+    expect(requirement.requiredAdditionalBytes).toBeGreaterThanOrEqual(original.byteLength);
+
+    const snapshotId = await createSnapshot(h.root, "tx-evidence", { restrict: noAcl });
+    const snapshot = await verifySnapshot(h.root, snapshotId);
+    expect(snapshot.files).toContainEqual(
+      expect.objectContaining({
+        path: "conversation-evidence/thread-hash/browser-screenshot-example-test.png",
+        bytes: original.byteLength,
+      }),
+    );
+
+    await NodeFSP.writeFile(evidence, "newer bytes");
+    const rescueId = await createSnapshot(h.root, "tx-evidence", {
+      kind: "rescue",
+      restrict: noAcl,
+    });
+    const rescue = await verifySnapshot(h.root, rescueId);
+    expect(rescue.kind).toBe("rescue");
+    expect(rescue.files.map((file) => file.path)).toContain(
+      "conversation-evidence/thread-hash/browser-screenshot-example-test.png",
+    );
+
+    await restoreSnapshot(h.root, snapshotId, "tx-evidence", noAcl);
+    expect(await NodeFSP.readFile(evidence)).toEqual(original);
+    h.close();
+  });
+
   it("detects a tampered byte, a missing file and an extra file", async () => {
     const h = await home();
     const id = await createSnapshot(h.root, "tx1", { restrict: noAcl });
@@ -121,12 +160,41 @@ describe("restore points", () => {
 
   it("refuses a symbolic link in the state directory instead of following it", async () => {
     const h = await home();
-    await NodeFSP.symlink("/etc", NodePath.join(h.state, "attachments", "link"));
+    await NodeFSP.symlink(
+      h.root,
+      NodePath.join(h.state, "attachments", "link"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
     await expect(createSnapshot(h.root, "tx1", { restrict: noAcl })).rejects.toThrow(
       "symbolic links",
     );
     h.close();
     expect(await listRestorePoints(h.root)).toEqual([]);
+  });
+
+  it("refuses relocated userdata before capacity, snapshot, rescue or restore can alter it", async () => {
+    const h = await home();
+    h.close();
+    const id = await createSnapshot(h.root, "tx-relocated", { restrict: noAcl });
+    const moved = NodePath.join(h.root, "relocated-userdata");
+    await NodeFSP.rename(h.state, moved);
+    await NodeFSP.symlink(moved, h.state, process.platform === "win32" ? "junction" : "dir");
+    const originalSettings = await NodeFSP.readFile(NodePath.join(moved, "settings.json"));
+
+    await expect(snapshotRequirement(h.root)).rejects.toThrow("relocated userdata");
+    await expect(createSnapshot(h.root, "tx-relocated", { restrict: noAcl })).rejects.toThrow(
+      "relocated userdata",
+    );
+    await expect(
+      createSnapshot(h.root, "tx-relocated", { kind: "rescue", restrict: noAcl }),
+    ).rejects.toThrow("relocated userdata");
+    await expect(restoreSnapshot(h.root, id, "tx-relocated", noAcl)).rejects.toThrow(
+      "relocated userdata",
+    );
+
+    expect((await NodeFSP.lstat(h.state)).isSymbolicLink()).toBe(true);
+    expect(await NodeFSP.readFile(NodePath.join(moved, "settings.json"))).toEqual(originalSettings);
+    expect(await NodeFSP.stat(NodePath.join(moved, "statev2.sqlite"))).toBeDefined();
   });
 
   it("restores older data over newer data, keeping logs, and replays safely after a crash mid-swap", async () => {

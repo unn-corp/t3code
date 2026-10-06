@@ -199,6 +199,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { MaintenanceWorkHeld, WorkAdmission } from "./maintenance/WorkAdmission.ts";
 import * as ConversationEvidence from "./assets/ConversationEvidence.ts";
 import * as ServerConfig from "./config.ts";
 import * as GitManager from "./git/GitManager.ts";
@@ -301,6 +302,18 @@ effectIt.effect(
           "https://example.test",
           new Uint8Array([1]),
         );
+        thread = shell({ archivedAt: at(0) });
+        const fencedAdmission = {
+          acquire: Effect.fail(new MaintenanceWorkHeld({ cause: "maintenance fence" })),
+          acquirePassive: Effect.fail(new MaintenanceWorkHeld({ cause: "maintenance fence" })),
+          check: Effect.fail(new MaintenanceWorkHeld({ cause: "maintenance fence" })),
+        };
+        const fencedSweep = yield* Effect.exit(
+          cleanup.sweep().pipe(Effect.provideService(WorkAdmission, fencedAdmission)),
+        );
+        expect(fencedSweep._tag).toBe("Failure");
+        expect(yield* fs.exists(saved)).toBe(true);
+        thread = shell();
         yield* cleanup.start();
         yield* Effect.yieldNow;
         yield* cleanup.drain;
@@ -326,7 +339,7 @@ effectIt.effect(
         yield* terminalListeners[0]!({ type: "upsert", terminal });
         yield* cleanup.sweep();
         expect(yield* fs.exists(saved)).toBe(true);
-        // An idle interactive shell does not keep disposable evidence indefinitely.
+        // The shell may execute same-PID builtins without a reported child process.
         yield* terminalListeners[0]!({
           type: "upsert",
           terminal: { ...terminal, hasRunningSubprocess: false },
@@ -342,6 +355,13 @@ effectIt.effect(
         yield* Effect.yieldNow;
         yield* Deferred.await(checked);
         yield* cleanup.drain;
+        expect(yield* fs.exists(saved)).toBe(true);
+        // Closing the shell removes the unobservable command state, so retention may proceed.
+        yield* terminalListeners[0]!({
+          type: "upsert",
+          terminal: { ...terminal, status: "exited", hasRunningSubprocess: false },
+        });
+        yield* cleanup.sweep();
         expect(yield* fs.exists(saved)).toBe(false);
         const next = yield* evidence.saveScreenshot(
           thread.id,

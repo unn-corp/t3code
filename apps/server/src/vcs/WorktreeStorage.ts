@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -58,6 +59,7 @@ class WorktreeStorage extends Context.Service<
 export const make = Effect.gen(function* () {
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const platform = yield* HostProcessPlatform;
+  const clock = yield* Clock.Clock;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const cacheRoot = NodePath.join(worktreesDir, ".checkout-cache");
   const repositoryDirectory = (repository: string) =>
@@ -170,7 +172,7 @@ export const make = Effect.gen(function* () {
               bytes: Number(row[2]),
               sharedBytes: Number(row[3]),
               measurement: "exclusive" as const,
-              sampledAt: Date.now(),
+              sampledAt: clock.currentTimeMillisUnsafe(),
             };
           }
         }
@@ -178,7 +180,7 @@ export const make = Effect.gen(function* () {
           try: async (signal): Promise<WorktreeStorageUsage> => {
             const pending = [cwd];
             const seen = new Set<string>();
-            const deadline = Date.now() + 10_000;
+            const deadline = clock.currentTimeMillisUnsafe() + 10_000;
             let bytes = 0;
             let entries = 0;
             // Include ignored assets/build output. Do not follow symlinks, count
@@ -186,13 +188,21 @@ export const make = Effect.gen(function* () {
             const root = await NodeFSP.lstat(cwd);
             if (!root.isDirectory()) throw new Error("Worktree folder is unavailable.");
             while (pending.length > 0) {
-              if (signal.aborted || Date.now() > deadline || entries > 200_000) {
+              if (
+                signal.aborted ||
+                clock.currentTimeMillisUnsafe() > deadline ||
+                entries > 200_000
+              ) {
                 throw new Error("Worktree storage scan exceeded its limit.");
               }
               const directory = pending.pop()!;
               for (const entry of await NodeFSP.readdir(directory, { withFileTypes: true })) {
                 entries++;
-                if (signal.aborted || Date.now() > deadline || entries > 200_000) {
+                if (
+                  signal.aborted ||
+                  clock.currentTimeMillisUnsafe() > deadline ||
+                  entries > 200_000
+                ) {
                   throw new Error("Worktree storage scan exceeded its limit.");
                 }
                 const file = NodePath.join(directory, entry.name);
@@ -226,7 +236,7 @@ export const make = Effect.gen(function* () {
               bytes,
               measurement: platform === "win32" ? "logical" : "allocated",
               sharedBytes: null,
-              sampledAt: Date.now(),
+              sampledAt: clock.currentTimeMillisUnsafe(),
             };
           },
           catch: (cause) => new WorktreeStorageError({ operation: "measure", cause }),

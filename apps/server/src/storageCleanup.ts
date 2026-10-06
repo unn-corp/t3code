@@ -40,6 +40,7 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { withWork } from "./maintenance/WorkAdmission.ts";
 
 const decodeCleanupThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -484,9 +485,7 @@ export const make = Effect.gen(function* () {
             const terminals = liveTerminals.get(id);
             if (
               [...(terminals?.values() ?? [])].some(
-                (terminal) =>
-                  terminal.status === "starting" ||
-                  (terminal.status === "running" && terminal.hasRunningSubprocess),
+                (terminal) => terminal.status === "starting" || terminal.status === "running",
               )
             )
               return false;
@@ -520,25 +519,31 @@ export const make = Effect.gen(function* () {
   });
 
   const sweep = Effect.fn("StorageCleanup.sweep")(function* () {
-    const serverSettings = yield* settingsService.getSettings;
-    const settings = serverSettings.storageCleanup;
-    const now = yield* Clock.currentTimeMillis;
-    yield* cleanEvidence(serverSettings, now).pipe(
-      Effect.catch((error) => Effect.logWarning("conversation evidence cleanup failed", { error })),
-    );
-    yield* cleanWorktrees(serverSettings, now).pipe(
-      Effect.catch((error) => Effect.logWarning("worktree cleanup failed", { error })),
-    );
-    yield* cleanFiles(
-      config.browserArtifactsDir,
-      settings.browserArtifactsAfterDays,
-      now,
-      false,
-    ).pipe(
-      Effect.catch((error) => Effect.logWarning("browser artifact cleanup failed", { error })),
-    );
-    yield* cleanFiles(config.logsDir, settings.logsAfterDays, now, true).pipe(
-      Effect.catch((error) => Effect.logWarning("rotated log cleanup failed", { error })),
+    yield* withWork(
+      Effect.gen(function* () {
+        const serverSettings = yield* settingsService.getSettings;
+        const settings = serverSettings.storageCleanup;
+        const now = yield* Clock.currentTimeMillis;
+        yield* cleanEvidence(serverSettings, now).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("conversation evidence cleanup failed", { error }),
+          ),
+        );
+        yield* cleanWorktrees(serverSettings, now).pipe(
+          Effect.catch((error) => Effect.logWarning("worktree cleanup failed", { error })),
+        );
+        yield* cleanFiles(
+          config.browserArtifactsDir,
+          settings.browserArtifactsAfterDays,
+          now,
+          false,
+        ).pipe(
+          Effect.catch((error) => Effect.logWarning("browser artifact cleanup failed", { error })),
+        );
+        yield* cleanFiles(config.logsDir, settings.logsAfterDays, now, true).pipe(
+          Effect.catch((error) => Effect.logWarning("rotated log cleanup failed", { error })),
+        );
+      }),
     );
   });
   const worker = yield* makeDrainableWorker(() =>

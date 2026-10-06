@@ -82,7 +82,8 @@ background service, development servers). Constraints that are easy to get wrong
   the exact browser trace-ingestion POST: it holds a passive lease while the bounded upload runs, so
   fencing cannot overlap it, without treating diagnostic export as agent activity or restarting the
   idle window. Other uploads and pairing remain active writes. Orchestrator dispatch and provider turn
-  start hold leases too. Maintenance methods are exempt so a fenced device can be observed and recovered.
+  start hold leases too. Each storage-cleanup sweep takes an active lease at execution time, so
+  evidence and worktree removal cannot overlap snapshots or restoration. Maintenance methods are exempt so a fenced device can be observed and recovered.
 
 The capability (`forkMaintenance` on the environment descriptor) is advertised only by a runtime that
 joined the coordinator. Absence means in-product installation is unavailable, never a legacy install.
@@ -101,6 +102,10 @@ restore-verified`. `aborted` is a pre-trial boundary: nothing live changed.
   runtime artifacts (an explicit exclusion list, not an allowlist, so new state is preserved by default),
   copied with SQLite's online backup, hashed, private (POSIX modes; an ACL on Windows, and failing to
   apply it fails the snapshot), and verified before it is reported. Symbolic links are refused.
+  Conversation evidence under `userdata` is included in capacity accounting and restore/rescue copies.
+  Automatic update and recovery fail closed when the `userdata` root is a symlink or junction, because
+  restore swaps that literal directory; move it back to a normal directory with the runtime stopped
+  before retrying.
 - Capacity is aggregated per physical filesystem and includes rescue copies and staged artifacts, with one
   margin per filesystem. It is checked before the fence and again while quiescent.
 - Commit requires a health receipt for every home, written by the trial runtime itself after migrations,

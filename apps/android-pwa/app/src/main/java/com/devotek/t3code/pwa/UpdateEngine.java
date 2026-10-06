@@ -718,7 +718,8 @@ final class UpdateEngine {
             });
         } catch (IOException | RuntimeException error) {
             operations.installationPending(false);
-            if (error instanceof UpdateCapacity.Insufficient) throw new RetryLater(error.getMessage());
+            if (error instanceof UpdateCapacity.Insufficient || error instanceof PhoneOperations.AdmissionChanged)
+                throw new RetryLater(error.getMessage());
             throw new UpdateException("Android could not start the installation.");
         }
     }

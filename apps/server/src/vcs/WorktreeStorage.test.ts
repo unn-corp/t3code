@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - verifies native required-reflink copies on real fixture files.
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -25,6 +26,7 @@ const decodeManifest = Schema.decodeSync(
 );
 
 const configLayer = ServerConfig.layerTest(process.cwd(), { prefix: "t3-worktree-storage-test-" });
+const configWithServicesLayer = configLayer.pipe(Layer.provideMerge(NodeServices.layer));
 const testLayer = GitVcsDriver.layer.pipe(
   Layer.provide(ServerSettings.layerTest({ spaceEfficientWorktrees: true })),
   Layer.provideMerge(configLayer),
@@ -68,8 +70,7 @@ describe("copy-on-write worktree storage", () => {
           expect(yield* storage.usage(root)).toEqual(usage);
           expect(yield* storage.usage(path.join(root, "missing"))).toBeNull();
         }).pipe(
-          Effect.provide(configLayer),
-          Effect.provide(NodeServices.layer),
+          Effect.provide(configWithServicesLayer),
           Effect.provideService(HostProcessPlatform, "darwin"),
         ),
       ),
@@ -92,8 +93,7 @@ describe("copy-on-write worktree storage", () => {
         });
         expect(yield* storage.usage(path.join(root, "asset"))).toBeNull();
       }).pipe(
-        Effect.provide(configLayer),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(configWithServicesLayer),
         Effect.provideService(HostProcessPlatform, "win32"),
       ),
     ),
@@ -131,7 +131,7 @@ describe("copy-on-write worktree storage", () => {
         if (usage?.measurement !== "exclusive") return;
         expect(usage.bytes).toBe(0);
         expect(usage.sharedBytes).toBeGreaterThanOrEqual(65536);
-      }).pipe(Effect.provide(configLayer), Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(configWithServicesLayer)),
     ),
   );
 
@@ -144,7 +144,7 @@ describe("copy-on-write worktree storage", () => {
         const support = yield* storage.support("/dev/shm");
         expect(support.supported).toBe(false);
         expect(support.reason).toContain("filesystem");
-      }).pipe(Effect.provide(configLayer), Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(configWithServicesLayer)),
     ),
   );
   it.effect("reports an explanatory disabled state on unsupported platforms", () =>
@@ -156,8 +156,7 @@ describe("copy-on-write worktree storage", () => {
         expect(support.reason).toContain("Linux or macOS");
       }).pipe(
         Effect.provideService(HostProcessPlatform, "win32"),
-        Effect.provide(configLayer),
-        Effect.provide(NodeServices.layer),
+        Effect.provide(configWithServicesLayer),
       ),
     ),
   );
@@ -194,7 +193,7 @@ describe("copy-on-write worktree storage", () => {
         expect(yield* fs.readFileString(path.join(destination, "assets", "model.bin"))).toBe(
           "edited",
         );
-      }).pipe(Effect.provide(configLayer), Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(configWithServicesLayer)),
     ),
   );
 

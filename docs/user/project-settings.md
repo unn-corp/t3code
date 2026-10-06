@@ -143,7 +143,7 @@ Agents can save other temporary review outputs there too. Keep permanent deliver
 project or another destination. Only files in managed conversation storage follow these policies.
 
 Age limits use file modification times and are checked at startup and hourly. Busy conversations
-wait until work finishes. Age-based cleanup continues for deleted conversations. Removed evidence
+wait until work finishes and its terminal shells are closed. Age-based cleanup continues for deleted conversations. Removed evidence
 links stop working, including after unarchiving. Uploaded message attachments, project files,
 browser profiles, and conversation history are kept.
 

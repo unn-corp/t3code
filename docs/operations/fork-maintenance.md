@@ -156,7 +156,8 @@ storage. Legacy browser captures and desktop-local recording copies retain their
 
 **Ownership and coupling.** [ConversationEvidence.ts](../../apps/server/src/assets/ConversationEvidence.ts)
 owns safe per-conversation paths and file capture; [storageCleanup.ts](../../apps/server/src/storageCleanup.ts)
-owns retention and waits for active runs, background tasks, and shell processes to stop. Shared
+owns retention and waits for active runs, background tasks, and shell processes to stop. Cleanup
+sweeps use the host admission lease, and evidence is included in update restore points and rescue copies. Shared
 [Storage settings](../../apps/web/src/components/settings/StorageSettings.tsx) reach web, desktop,
 and the fork APK; the APK needs a rebuilt web bundle. Upstream mobile has its own Storage route.
 Older hosts omit the capability and do not receive evidence settings. Existing installations need

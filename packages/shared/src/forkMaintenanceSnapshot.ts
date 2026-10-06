@@ -166,10 +166,29 @@ export const stateDirectory = (home: string) => NodePath.join(home, "userdata");
 export const restorePointsDirectory = (home: string) =>
   NodePath.join(home, ...RESTORE_POINT_DIRECTORY.split("/"));
 
+/**
+ * Restore swaps the literal `home/userdata` directory atomically. Following a
+ * relocated symlink here would snapshot one tree, then replace the link itself
+ * during restore; capacity would also be charged to the wrong filesystem.
+ */
+async function assertLocalStateDirectory(home: string, allowMissing = false): Promise<void> {
+  const state = stateDirectory(home);
+  let stat: NodeFS.Stats;
+  try {
+    stat = await NodeFSP.lstat(state);
+  } catch (cause) {
+    if (allowMissing && isCode(cause, "ENOENT")) return;
+    throw cause;
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory())
+    throw new Error("Automatic maintenance does not support relocated userdata directories.");
+}
+
 /** Bytes a restore point of this home adds, and the filesystem (by device identity) that must hold them. */
 export async function snapshotRequirement(
   home: string,
 ): Promise<FilesystemCapacity & { readonly deviceId: string }> {
+  await assertLocalStateDirectory(home);
   const state = stateDirectory(home);
   let bytes = 0;
   for (const name of await NodeFSP.readdir(state)) {
@@ -245,6 +264,7 @@ export async function createSnapshot(
 ): Promise<string> {
   const restrict = options.restrict ?? restrictByPlatform;
   const kind = options.kind ?? "restore-point";
+  await assertLocalStateDirectory(home);
   const state = await NodeFSP.realpath(stateDirectory(home));
   const root = restorePointsDirectory(home);
   await NodeFSP.mkdir(root, { recursive: true, mode: 0o700 });
@@ -337,6 +357,9 @@ export async function restoreSnapshot(
   transactionId: string,
   restrict: RestrictAccess = restrictByPlatform,
 ): Promise<void> {
+  // The state directory can be absent after a crash between the two swap renames.
+  // In that replay case, the stage can still be atomically installed at its literal path.
+  await assertLocalStateDirectory(home, true);
   const manifest = await verifySnapshot(home, snapshotId);
   const state = stateDirectory(home);
   const stage = NodePath.join(home, `.maintenance-stage-${safeSegment(transactionId)}`);
