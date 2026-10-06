@@ -6,6 +6,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { parseUpdateManifest } from "./lib/update-manifest.ts";
+import { verifyEmbeddedBlockMap } from "./lib/embedded-blockmap.ts";
 import {
   FORK_ANDROID_PACKAGE,
   decodeForkReleaseManifest,
@@ -480,7 +481,28 @@ export const verifyFeed = (input: {
       problems.push(`${input.feed.name}: ${name} does not match the feed's sha512.`);
     }
   };
-  for (const file of parsed.files) check(file.url, file.sha512, file.size);
+  for (const file of parsed.files) {
+    check(file.url, file.sha512, file.size);
+    const asset = byName.get(decodeURIComponent(file.url));
+    if (
+      asset?.name.endsWith(".AppImage") &&
+      file.blockMapSize === undefined &&
+      !byName.has(`${asset.name}.blockmap`)
+    ) {
+      problems.push(
+        `${input.feed.name}: ${asset.name} has neither an embedded nor an external block map.`,
+      );
+    }
+    if (asset && file.blockMapSize !== undefined) {
+      try {
+        verifyEmbeddedBlockMap(asset.path, file.blockMapSize);
+      } catch (cause) {
+        problems.push(
+          `${input.feed.name}: ${asset.name}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+    }
+  }
   if (typeof parsed.extras.path === "string") check(parsed.extras.path, null, null);
   for (const installer of input.installers) {
     if (!referenced.has(installer)) {

@@ -2,6 +2,8 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
+import * as NodeZlib from "node:zlib";
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 import {
   ANDROID_METADATA_FILE,
@@ -293,6 +295,59 @@ describe("build verification", () => {
   it("passes a complete build whose feeds, WSL runtime, and APKs all agree", () => {
     const result = buildOf(writeFixtureTree(root));
     assert.deepStrictEqual(result.problems, []);
+  });
+
+  it("validates an AppImage's embedded block map against the feed and shipped bytes", () => {
+    const tree = writeFixtureTree(root, {
+      tamper: (dir) => {
+        const linux = NodePath.join(dir, ARTIFACT_DIRS.linuxDesktop);
+        const name = NodeFS.readdirSync(linux).find((file) => file.endsWith(".AppImage"))!;
+        NodeFS.unlinkSync(NodePath.join(linux, `${name}.blockmap`));
+        const map = NodeZlib.deflateRawSync(
+          JSON.stringify({
+            version: "2",
+            files: [{ name: "file", offset: 0, checksums: ["checksum"], sizes: [2048] }],
+          }),
+        );
+        const trailer = Buffer.alloc(4);
+        trailer.writeUInt32BE(map.length);
+        const bytes = Buffer.concat([Buffer.alloc(2048), map, trailer]);
+        NodeFS.writeFileSync(NodePath.join(linux, name), bytes);
+        const digest = NodeCrypto.createHash("sha512").update(bytes).digest("base64");
+        const feed = NodePath.join(linux, "nightly-linux.yml");
+        NodeFS.writeFileSync(
+          feed,
+          NodeFS.readFileSync(feed, "utf8")
+            .replaceAll(/sha512: .*/g, `sha512: ${digest}`)
+            .replace(/    size: .*/, `    size: ${bytes.length}\n    blockMapSize: ${map.length}`),
+        );
+      },
+    });
+    assert.deepStrictEqual(buildOf(tree).problems, []);
+    const feed = NodePath.join(root, ARTIFACT_DIRS.linuxDesktop, "nightly-linux.yml");
+    NodeFS.writeFileSync(
+      feed,
+      NodeFS.readFileSync(feed, "utf8").replace(
+        /blockMapSize: (\d+)/,
+        (_, size) => `blockMapSize: ${Number(size) + 1}`,
+      ),
+    );
+    assert.isTrue(buildOf(tree).problems.some((problem) => problem.includes("trailer differs")));
+  });
+
+  it("requires an AppImage block map when no embedded size is recorded", () => {
+    const tree = writeFixtureTree(root, {
+      tamper: (dir) => {
+        const linux = NodePath.join(dir, ARTIFACT_DIRS.linuxDesktop);
+        const name = NodeFS.readdirSync(linux).find((file) => file.endsWith(".AppImage.blockmap"))!;
+        NodeFS.unlinkSync(NodePath.join(linux, name));
+      },
+    });
+    assert.isTrue(
+      buildOf(tree).problems.some((problem) =>
+        problem.includes("neither an embedded nor an external block map"),
+      ),
+    );
   });
 
   it("rejects a feed whose digest, size, or version does not match the shipped file", () => {

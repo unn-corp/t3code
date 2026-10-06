@@ -101,6 +101,10 @@ permissions and an isolated home; its result is diagnostic evidence, not a relea
 The smoke probe requires an actual HTTP 200 within 90 seconds on a clean Windows runner or 30 seconds
 on Linux. It reports startup elapsed time and redacts pairing credentials from failed startup output;
 this cold-start allowance does not change coordinator activity or ownership deadlines.
+Linux AppImage feeds retain electron-builder’s per-file `blockMapSize`. Assembly verifies the embedded
+size trailer, raw-deflated block-map structure, and block ranges as well as the whole payload’s size
+and digest. An absent external AppImage `.blockmap` is allowed when the map is embedded; a malformed
+or mismatched embedded map blocks publication.
 It reserves no Android codes. A corrected candidate still needs the complete release workflow.
 
 ### Hardware commissioning rebuilds
