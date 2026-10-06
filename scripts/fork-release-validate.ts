@@ -43,7 +43,8 @@ export const locatePayloadAssets = (dir: string): PayloadAssets => {
   const files = NodeFS.existsSync(dir) ? NodeFS.readdirSync(dir) : [];
   const find = (pattern: RegExp): string | null => {
     const match = files.find((name) => pattern.test(name));
-    return match ? NodePath.join(dir, match) : null;
+    // Validators change the child cwd to private extraction/runtime directories.
+    return match ? NodePath.resolve(dir, match) : null;
   };
   return {
     windowsInstaller: find(/^T3-Code-.*-x64\.exe$/),

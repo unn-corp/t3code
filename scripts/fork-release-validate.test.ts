@@ -212,6 +212,11 @@ const appImage = (dir: string, withUpdateConfig: boolean, verbose = false) => {
 };
 
 describe("Linux AppImage", () => {
+  it("extracts payloads supplied through a relative candidate directory", () => {
+    appImage(root, true);
+    const payload = locatePayloadAssets(NodePath.relative(process.cwd(), root));
+    checkLinuxPackages(payload, scratch("relative-extraction"));
+  });
   it("accepts a successful extraction whose file listing exceeds the child output buffer", () => {
     checkLinuxPackages(
       {
