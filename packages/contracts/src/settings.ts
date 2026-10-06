@@ -1669,6 +1669,7 @@ export const ServerSettings = Schema.Struct({
    * so older clients, which require a literal here, keep decoding.
    */
   defaultThreadEnvMode: OmittedWhenNull(ThreadEnvMode),
+  spaceEfficientWorktrees: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -1947,6 +1948,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  spaceEfficientWorktrees: Schema.optionalKey(Schema.Boolean),
   runLimits: Schema.optionalKey(RunLimits),
   threadRunLimits: Schema.optionalKey(Schema.Record(ThreadId, Schema.NullOr(RunLimits))),
   worktreeCleanup: Schema.optionalKey(

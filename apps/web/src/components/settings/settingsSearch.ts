@@ -666,6 +666,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["git submodule init recursive top-level none worktree t3.json"],
   },
   {
+    id: "space-efficient-worktrees",
+    title: "Space-efficient worktrees",
+    to: "/settings/source-control",
+    scope: "environment-defaults",
+    searchTerms: ["copy on write reflink asset storage disk space git worktrees"],
+  },
+  {
     id: "start-from-origin",
     title: "Start from origin",
     to: "/settings/general",

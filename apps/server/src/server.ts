@@ -276,6 +276,8 @@ const ServerSettingsLayerLive = ServerSettings.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerConfig),
 );
 
+const GitVcsDriverLayerLive = GitVcsDriver.layer.pipe(Layer.provide(ServerSettingsLayerLive));
+
 const NativeTelemetryLayerLive = NativeTelemetryClient.layer.pipe(
   Layer.provide(ResourceMonitorBinary.layer),
 );
@@ -353,7 +355,7 @@ const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.lay
       ForgejoCli.layer,
     ),
   ),
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitVcsDriverLayerLive),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
 
@@ -371,7 +373,7 @@ const GitManagerLayerLive = GitManager.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
   Layer.provideMerge(ProjectSetupScriptRunnerLayerLive),
   Layer.provideMerge(WorktreeSetupTracker.layer),
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitVcsDriverLayerLive),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(
     TextGeneration.layer.pipe(Layer.provide(SourceControlProviderRegistryLayerLive)),
@@ -380,7 +382,7 @@ const GitManagerLayerLive = GitManager.layer.pipe(
 
 const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitManagerLayerLive),
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitVcsDriverLayerLive),
 );
 
 const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
@@ -389,7 +391,7 @@ const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
 );
 
 const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.layer.pipe(
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitVcsDriverLayerLive),
   Layer.provideMerge(GitHubCli.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
 );
@@ -399,7 +401,7 @@ const ProjectCloneTrackerLayerLive = ProjectCloneTracker.layer.pipe(
 );
 
 const ReviewLayerLive = ReviewService.layer.pipe(
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitVcsDriverLayerLive),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
 

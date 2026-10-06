@@ -126,6 +126,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
+import * as WorktreeStorage from "./vcs/WorktreeStorage.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -1761,6 +1762,7 @@ const makeCoreWsRpcLayer = (
           ),
         );
 
+      const worktreeStorage = yield* WorktreeStorage.make;
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
         Effect.gen(function* () {
           const keybindingsConfig = yield* keybindings.loadConfigState;
@@ -1781,6 +1783,7 @@ const makeCoreWsRpcLayer = (
 
           return {
             environment,
+            worktreeStorageSupport: yield* worktreeStorage.support(),
             buildIdentity: BUILD_IDENTITY,
             runLimits: true,
             threadExport: true,

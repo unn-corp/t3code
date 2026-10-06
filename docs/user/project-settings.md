@@ -87,6 +87,23 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+## Space-efficient worktrees
+
+Enable **Space-efficient worktrees** in **Settings → Source control**, with an environment or
+**All environments** selected. T3 checks the server's worktree filesystem and disables the
+option with a reason when copy-on-write copies are unavailable. This check runs on the host,
+including when you change the setting from a phone or a remote browser.
+
+The first worktree builds a clean reusable base. Later worktrees share unchanged file data and
+allocate separate storage when edited. The setting applies to future worktrees; existing
+worktrees and engine-generated caches keep their current storage. Turning it off returns future
+creation to standard Git checkout. Existing worktrees remain independently usable.
+
+T3 retains one clean base per repository. Checkout attribute changes rebuild that base.
+Repositories with custom smudge filters, external attributes, or sparse-checkout configuration
+use standard checkout, as do custom destinations that cannot share storage with the cache.
+Submodules keep their normal initialization behavior.
+
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected

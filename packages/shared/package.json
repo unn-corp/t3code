@@ -450,6 +450,10 @@
     "./codexAuthHandoff": {
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
+    },
+    "./worktreeStorage": {
+      "types": "./src/worktreeStorage.ts",
+      "import": "./src/worktreeStorage.ts"
     }
   },
   "scripts": {

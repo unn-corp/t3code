@@ -33,6 +33,7 @@ import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
+const decodeSettingsJson = Schema.decodeEffect(Schema.fromJsonString(ServerSettings));
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
@@ -98,6 +99,25 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("persists the global copy-on-write preference and can disable it again", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      assert.isFalse((yield* settings.getSettings).spaceEfficientWorktrees);
+      yield* settings.updateSettings({ spaceEfficientWorktrees: true });
+      yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+      const persisted = yield* decodeSettingsJson(yield* fs.readFileString(config.settingsPath));
+      assert.isTrue(persisted.spaceEfficientWorktrees);
+      yield* settings.updateSettings({ spaceEfficientWorktrees: false });
+      assert.isFalse((yield* settings.getSettings).spaceEfficientWorktrees);
+      assert.isFalse(
+        (yield* decodeSettingsJson(yield* fs.readFileString(config.settingsPath)))
+          .spaceEfficientWorktrees,
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect(
     "stores GitHub account tokens separately and preserves them across unrelated updates",
     () =>

@@ -1,3 +1,4 @@
+import { worktreeStorageUnavailableReason } from "@t3tools/shared/worktreeStorage";
 import { useNavigation } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
@@ -203,6 +204,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   );
   const disabled =
     pendingWrites > 0 || !hasConnectedSelection || (projectSelected && !supportsProjectOverrides);
+  const worktreeStorageReason = worktreeStorageUnavailableReason(
+    targets.map((target) => target.environment.serverConfig.worktreeStorageSupport),
+  );
   const supportsContinuation = targets.every(
     (target) =>
       target.environment.serverConfig.environment.capabilities.threadRestartContinuation === true,
@@ -345,6 +349,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                   </SettingsSection>
                   <SettingsSection title="Worktrees">
+                    <SettingsSwitchRow
+                      icon="internaldrive"
+                      label="Space-efficient worktrees"
+                      subtitle={
+                        projectSelected
+                          ? "Change this global setting with no project selected."
+                          : (worktreeStorageReason ??
+                            "Share unchanged file data while keeping edits independent. Applies to future worktrees.")
+                      }
+                      value={uniform("spaceEfficientWorktrees")}
+                      disabled={
+                        disabledFor("spaceEfficientWorktrees") || worktreeStorageReason !== null
+                      }
+                      onValueChange={(value) => write({ spaceEfficientWorktrees: value })}
+                    />
                     <SettingsSwitchRow
                       icon="arrow.triangle.branch"
                       label="Start from origin"

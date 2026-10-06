@@ -621,7 +621,14 @@ export const ServerDirectEndpoint = Schema.Struct({
 });
 export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
 
+export const WorktreeStorageSupport = Schema.Struct({
+  supported: Schema.Boolean,
+  reason: Schema.NullOr(Schema.String),
+});
+export type WorktreeStorageSupport = typeof WorktreeStorageSupport.Type;
+
 export const ServerConfig = Schema.Struct({
+  worktreeStorageSupport: Schema.optionalKey(WorktreeStorageSupport),
   buildIdentity: Schema.optionalKey(BuildIdentity),
   runLimits: Schema.optionalKey(Schema.Boolean),
   threadExport: Schema.optionalKey(Schema.Boolean),

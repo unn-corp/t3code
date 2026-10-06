@@ -42,6 +42,8 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as WorktreeStorage from "./WorktreeStorage.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
@@ -49,6 +51,7 @@ const gitProcesses = Semaphore.makeUnsafe(8);
 // take well beyond the default 30s (e.g. a 375k-file repo takes ~40s on an idle
 // machine). Give it generous headroom while still bounding a genuinely hung git.
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
+const WORKTREE_METADATA_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -848,6 +851,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
+  const storage = yield* WorktreeStorage.make;
+  const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
@@ -3316,32 +3321,225 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
     const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
-    yield* executeGit(
-      "GitVcsDriver.createWorktree",
-      input.cwd,
-      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
-      {
-        fallbackErrorDetail: "git worktree add failed",
-        timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
+    const enabled = Option.isSome(settingsService)
+      ? yield* settingsService.value.getSettings.pipe(
+          Effect.map((settings) => settings.spaceEfficientWorktrees),
+          Effect.orElseSucceed(() => false),
+        )
+      : false;
+    const repository = enabled ? yield* resolveRepositoryPaths(input.cwd) : null;
+    const prepare = Effect.gen(function* () {
+      const support = enabled ? yield* storage.support(path.dirname(worktreePath)) : null;
+      let signature: string | null = null;
+      if (support?.supported && repository !== null) {
+        const checkoutConfig = yield* executeGit(
+          "GitVcsDriver.worktreeStorage.config",
+          input.cwd,
+          [
+            "config",
+            "--get-regexp",
+            "^(core[.](autocrlf|eol|symlinks|attributesfile|sparsecheckout)|filter[.]|lfs[.]|extensions[.]worktreeconfig)",
+          ],
+          { allowNonZeroExit: true },
+        );
+        const attributeTree = yield* executeGit(
+          "GitVcsDriver.worktreeStorage.attributes",
+          input.cwd,
+          ["ls-tree", "-r", "-z", input.refName],
+          { maxOutputBytes: WORKTREE_METADATA_MAX_OUTPUT_BYTES },
+        );
+        const attributes = attributeTree.stdout
+          .split("\0")
+          .filter((entry) => {
+            const name = entry.slice(entry.indexOf("\t") + 1);
+            return (
+              name === ".gitattributes" || name.endsWith("/.gitattributes") || name === ".lfsconfig"
+            );
+          })
+          .join("\0");
+        const customAttributes = yield* fileSystem
+          .exists(path.join(repository.gitCommonDir, "info", "attributes"))
+          .pipe(Effect.orElseSucceed(() => true));
+        const userAttributes = yield* fileSystem
+          .exists(
+            path.join(
+              process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? "", ".config"),
+              "git",
+              "attributes",
+            ),
+          )
+          .pipe(Effect.orElseSucceed(() => true));
+        // Arbitrary smudge filters can depend on external mutable state. Let Git
+        // materialize those normally; Git LFS objects are content addressed.
+        const unsafeConfig = checkoutConfig.stdout
+          .split("\n")
+          .some(
+            (line) =>
+              (line.startsWith("filter.") && !line.startsWith("filter.lfs.")) ||
+              line.startsWith("core.attributesfile ") ||
+              /^(core[.]sparsecheckout|extensions[.]worktreeconfig) /.test(line),
+          );
+        if (
+          !unsafeConfig &&
+          !customAttributes &&
+          !userAttributes &&
+          !checkoutConfig.stdoutTruncated &&
+          !attributeTree.stdoutTruncated
+        ) {
+          signature = [
+            checkoutConfig.stdout,
+            attributes,
+            process.env.GIT_LFS_SKIP_SMUDGE ?? "",
+            process.env.GIT_LFS_SKIP_DOWNLOAD_ERRORS ?? "",
+            process.env.GIT_ATTR_NOSYSTEM ?? "",
+          ].join("\0");
+        }
+      }
+      const snapshot =
+        signature !== null && repository !== null
+          ? yield* storage
+              .read(repository.gitCommonDir, signature)
+              .pipe(Effect.catch(() => Effect.succeed(null)))
+          : null;
+      const addArgs =
+        snapshot === null ? args : [...args.slice(0, 2), "--no-checkout", ...args.slice(2)];
+      yield* executeGit(
+        "GitVcsDriver.createWorktree",
+        input.cwd,
+        ["-c", `checkout.workers=${checkoutWorkers}`, ...addArgs],
+        {
+          fallbackErrorDetail: "git worktree add failed",
+          timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+          ...(onCheckoutProgress
+            ? {
+                env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
+                progress: {
+                  onStderrLine: (line: string) => {
+                    const parsed = parseGitCheckoutProgressLine(line);
+                    return parsed ? onCheckoutProgress(parsed) : Effect.void;
+                  },
                 },
-              },
-            }
-          : {}),
-      },
-    );
-
-    if (progress?.onWorktreeClaimed) {
-      yield* progress.onWorktreeClaimed(worktreePath);
-    }
+              }
+            : {}),
+        },
+      );
+      if (progress?.onWorktreeClaimed) yield* progress.onWorktreeClaimed(worktreePath);
+      if (snapshot !== null) {
+        // Load the base index before copying so reset can safely reconcile a
+        // partially restored generation if the destination rejects reflinks.
+        yield* Effect.gen(function* () {
+          yield* runGit("GitVcsDriver.worktreeStorage.index", worktreePath, [
+            "read-tree",
+            snapshot.tree,
+          ]);
+          yield* storage.restore(snapshot, worktreePath);
+          yield* runGit(
+            "GitVcsDriver.worktreeStorage.refresh",
+            worktreePath,
+            ["update-index", "--refresh"],
+            { timeoutMs: WORKTREE_ADD_TIMEOUT_MS },
+          );
+          yield* runGit(
+            "GitVcsDriver.worktreeStorage.checkout",
+            worktreePath,
+            [
+              "-c",
+              `checkout.workers=${checkoutWorkers}`,
+              "read-tree",
+              "-m",
+              "-u",
+              snapshot.tree,
+              "HEAD",
+            ],
+            { timeoutMs: WORKTREE_ADD_TIMEOUT_MS },
+          );
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Copy-on-write restore failed; using standard checkout", {
+              cause,
+            }).pipe(
+              Effect.andThen(
+                runGit(
+                  "GitVcsDriver.worktreeStorage.fallback",
+                  worktreePath,
+                  ["reset", "--hard", "HEAD"],
+                  { timeoutMs: WORKTREE_ADD_TIMEOUT_MS },
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      if (signature !== null && repository !== null) {
+        const clean = yield* executeGit(
+          "GitVcsDriver.worktreeStorage.clean",
+          worktreePath,
+          ["diff-index", "--quiet", "HEAD", "--"],
+          { allowNonZeroExit: true },
+        );
+        const files = yield* executeGit(
+          "GitVcsDriver.worktreeStorage.files",
+          worktreePath,
+          ["ls-files", "--stage", "-z"],
+          { maxOutputBytes: WORKTREE_METADATA_MAX_OUTPUT_BYTES },
+        );
+        const entries = files.stdout.split("\0").filter(Boolean);
+        // Submodule checkouts have their own indexes, filters and credentials.
+        // Keep their existing initialization path and never cache nested .git data.
+        if (
+          clean.exitCode === 0 &&
+          !files.stdoutTruncated &&
+          !entries.some((entry) => entry.startsWith("160000 "))
+        ) {
+          const tree = yield* runGitStdout("GitVcsDriver.worktreeStorage.tree", worktreePath, [
+            "rev-parse",
+            "HEAD^{tree}",
+          ]);
+          yield* storage
+            .capture(
+              repository.gitCommonDir,
+              signature,
+              tree.trim(),
+              worktreePath,
+              entries.map((entry) => entry.slice(entry.indexOf("\t") + 1)),
+            )
+            .pipe(
+              Effect.andThen(
+                runGit("GitVcsDriver.worktreeStorage.keepTree", worktreePath, [
+                  "update-ref",
+                  "refs/t3/worktree-storage/base",
+                  "HEAD",
+                ]),
+              ),
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not cache copy-on-write checkout", { cause }),
+              ),
+            );
+        }
+      }
+      if (snapshot !== null) {
+        const head = yield* runGitStdout("GitVcsDriver.worktreeStorage.head", worktreePath, [
+          "rev-parse",
+          "HEAD",
+        ]);
+        yield* runGit(
+          "GitVcsDriver.worktreeStorage.hook",
+          worktreePath,
+          [
+            "hook",
+            "run",
+            "--ignore-missing",
+            "post-checkout",
+            "--",
+            "0".repeat(head.trim().length),
+            head.trim(),
+            "1",
+          ],
+          { timeoutMs: WORKTREE_ADD_TIMEOUT_MS },
+        );
+      }
+    });
+    yield* enabled ? storage.withLock(repository?.gitCommonDir ?? input.cwd, prepare) : prepare;
 
     // `git worktree add` leaves submodules empty, so a repo that keeps agent
     // skills, tooling or source in one gets a worktree that is quietly missing

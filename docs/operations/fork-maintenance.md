@@ -236,3 +236,24 @@ instructions out of live guides. Link meaningful verification scenarios and test
 a file inventory for feature ownership. Before an upstream merge lands, check retained behavior,
 shared contracts, both sidebars, all update entry points, APK origin boundaries, and operating docs.
 Use isolated data/coordinator namespaces and Luna agents for delegated testing and review.
+
+## Copy-on-write worktrees
+
+**Delivery.** Implemented in source; desktop and APK release delivery has not been commissioned.
+
+**Behavior and entry.** Settings → Source control → Space-efficient worktrees is an opt-in
+server setting. The host probes mandatory file cloning on the worktree filesystem; incompatible
+hosts show a disabled control with the reason in web, desktop, the fork APK, and upstream mobile.
+A clean checkout base shares unchanged data across new worktrees. Existing worktrees are not
+converted, and engine caches remain separate.
+
+**Ownership.** [WorktreeStorage.ts](../../apps/server/src/vcs/WorktreeStorage.ts) owns filesystem
+probing and the per-repository checkout cache. [GitVcsDriverCore.ts](../../apps/server/src/vcs/GitVcsDriverCore.ts)
+initializes independent Git indexes and reconciles the base with the requested tree for UI,
+MCP, and background creation paths. The shared client compatibility rule uses the selected
+server's advertised support, never the client device's filesystem.
+
+**Verification and coupling.** Focused storage and Git worktree tests cover clean indexes,
+cross-commit deletions, independent edits, tracked-only caching, cache replacement, and unsupported
+hosts. Custom checkout filters and external attributes bypass reuse; submodule initialization
+continues through Git. Shared web changes require rebuilding the fork APK to ship there.
