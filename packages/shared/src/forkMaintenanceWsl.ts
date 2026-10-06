@@ -10,7 +10,12 @@
  * \\wsl$ paths from Windows.
  */
 import * as Schema from "effect/Schema";
-import { AGENT_IDLE_WINDOW_MS, CURRENT_ACTIVITY_PROTOCOL } from "./forkMaintenanceAdmission.ts";
+import {
+  AGENT_IDLE_WINDOW_MS,
+  CURRENT_ACTIVITY_PROTOCOL,
+  capacityShortfalls,
+  type FilesystemCapacity,
+} from "./forkMaintenanceAdmission.ts";
 import {
   runFenceOperation,
   type FenceOperation,
@@ -329,24 +334,53 @@ export function createCohortStorage(homes: ReadonlyArray<CohortHome>) {
           createdAt,
           bytes,
         })),
-    /** Every home checks its own filesystem; the cohort fails if any one cannot hold its restore points. */
+    /** Homes share a capacity pool within their owning OS; device numbers from different WSL distributions are unrelated. */
     assertCapacity: async (
       ids: ReadonlyArray<string>,
       reserve: { readonly rescue?: boolean; readonly artifactBytes?: number } = {},
     ) => {
-      for (const id of ids) {
+      const pools = new Map<string, { names: string[]; required: number; available: number }>();
+      for (const id of new Set(ids)) {
         const home = find(id);
-        unwrap(
-          await home.control.run({
-            op: "capacity",
-            ...(reserve.rescue === undefined ? {} : { rescue: reserve.rescue }),
-            ...(reserve.artifactBytes === undefined
-              ? {}
-              : { artifactBytes: reserve.artifactBytes }),
-          }),
+        const requirement = unwrap<FilesystemCapacity & { readonly deviceId: string }>(
+          await home.control.run({ op: "requirement" }),
           home,
         );
+        if (
+          typeof requirement?.deviceId !== "string" ||
+          requirement.deviceId.length === 0 ||
+          ![requirement.requiredAdditionalBytes, requirement.availableBytes].every(
+            (value) => Number.isFinite(value) && value >= 0,
+          )
+        )
+          throw new Error(`${home.label}: filesystem capacity could not be verified.`);
+        const member = parseWslHomeId(id);
+        const key = JSON.stringify(
+          member === null
+            ? ["local", requirement.deviceId]
+            : ["wsl", member.distro, requirement.deviceId],
+        );
+        const pool = pools.get(key) ?? {
+          names: [],
+          required: 0,
+          available: requirement.availableBytes,
+        };
+        pool.names.push(home.label);
+        pool.required +=
+          requirement.requiredAdditionalBytes * (reserve.rescue === true ? 2 : 1) +
+          (reserve.artifactBytes ?? 0);
+        pool.available = Math.min(pool.available, requirement.availableBytes);
+        pools.set(key, pool);
       }
+      const shortfalls = capacityShortfalls(
+        [...pools.values()].map((pool) => ({
+          filesystem: pool.names.join(" + "),
+          requiredAdditionalBytes: pool.required,
+          availableBytes: pool.available,
+        })),
+      );
+      if (shortfalls.length > 0)
+        throw new Error(`Not enough free space for restore points on: ${shortfalls.join(", ")}.`);
     },
   };
 }

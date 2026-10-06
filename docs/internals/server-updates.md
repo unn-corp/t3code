@@ -113,6 +113,9 @@ restore-verified`. `aborted` is a pre-trial boundary: nothing live changed.
   before retrying.
 - Capacity is aggregated per physical filesystem and includes rescue copies and staged artifacts, with one
   margin per filesystem. It is checked before the fence and again while quiescent.
+  Cohort checks retrieve each home's capacity requirement and combine homes on the same device within
+  their owning OS. WSL device numbers are scoped to the explicitly registered distribution; a missing
+  or invalid requirement blocks admission rather than falling back to separate per-home checks.
 - Commit requires a health receipt for every home, written by the trial runtime itself after migrations,
   live routes and a projection read-back. The coordinator refuses to release the fence unless the journal is
   durably `committed`, `restore-verified` or `aborted`, so no adapter can admit writes ahead of the commit.

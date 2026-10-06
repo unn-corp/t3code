@@ -23,10 +23,31 @@ import {
   wslHomeId,
   wslInvocation,
   type Exec,
+  type CohortHome,
   type WslMember,
 } from "./forkMaintenanceWsl.ts";
 
 const roots: string[] = [];
+const capacityHome = (
+  id: string,
+  bytes: number,
+  available: number,
+  deviceId = "same-disk",
+): CohortHome => ({
+  id,
+  label: id,
+  control: {
+    run: async () => ({
+      ok: true,
+      value: {
+        filesystem: id,
+        deviceId,
+        requiredAdditionalBytes: bytes,
+        availableBytes: available,
+      },
+    }),
+  },
+});
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
@@ -236,6 +257,60 @@ describe("explicit Windows/WSL membership", () => {
     );
     await expect(storage.assertCapacity(["wsl:Gone:/nowhere"])).rejects.toThrow(
       "There is no distribution",
+    );
+  });
+
+  it("blocks a cohort whose homes fit separately but exceed their shared filesystem together", async () => {
+    const gib = 1024 ** 3;
+    const storage = createCohortStorage([
+      capacityHome("/homes/first", 1.2 * gib, 3 * gib),
+      capacityHome("/homes/second", 1.2 * gib, 3 * gib),
+    ]);
+    await expect(storage.assertCapacity(["/homes/first"])).resolves.toBeUndefined();
+    await expect(storage.assertCapacity(await storage.affectedHomes())).rejects.toThrow(
+      "free space",
+    );
+  });
+
+  it("combines homes in one WSL filesystem without mixing device numbers from different OSes", async () => {
+    const gib = 1024 ** 3;
+    const storage = createCohortStorage([
+      capacityHome("/local", 1.2 * gib, 3 * gib),
+      capacityHome("wsl:local:/first", 1.2 * gib, 3 * gib),
+      capacityHome("wsl:local:/second", 1.2 * gib, 3 * gib),
+      capacityHome("wsl:Other:/first", 1.2 * gib, 3 * gib),
+    ]);
+    await expect(
+      storage.assertCapacity(["/local", "wsl:local:/first", "wsl:Other:/first"]),
+    ).resolves.toBeUndefined();
+    await expect(storage.assertCapacity(["wsl:local:/first", "wsl:local:/second"])).rejects.toThrow(
+      "free space",
+    );
+  });
+
+  it("reserves rescue copies and artifacts together using the smallest free-space report", async () => {
+    const gib = 1024 ** 3;
+    const storage = createCohortStorage([
+      capacityHome("/a", gib / 2, 4 * gib),
+      capacityHome("/b", gib / 2, 3 * gib),
+    ]);
+    await expect(storage.assertCapacity(["/a", "/b"], { rescue: true })).resolves.toBeUndefined();
+    await expect(
+      storage.assertCapacity(["/a", "/b"], { rescue: true, artifactBytes: gib / 4 }),
+    ).rejects.toThrow("free space");
+    await expect(
+      storage.assertCapacity(["/a", "/a"], { rescue: true, artifactBytes: gib }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("blocks unverifiable or older capacity responses", async () => {
+    const home = capacityHome("/a", Number.NaN, 1024 ** 4);
+    await expect(createCohortStorage([home]).assertCapacity([home.id])).rejects.toThrow(
+      "could not be verified",
+    );
+    const older = { ...home, control: { run: async () => ({ ok: true as const, value: true }) } };
+    await expect(createCohortStorage([older]).assertCapacity([home.id])).rejects.toThrow(
+      "could not be verified",
     );
   });
 
