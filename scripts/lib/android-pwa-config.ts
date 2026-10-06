@@ -3,7 +3,7 @@ export const ANDROID_PWA_PACKAGE = "com.devotek.t3code.pwa";
 export const ANDROID_UPDATER_PROTOCOL = 1;
 /** Sidecar written beside each release APK. The release workflow cross-checks it against the APK. */
 export const ANDROID_METADATA_FILE = "metadata.json";
-/** Android rejects codes above this; recovery takes the code after its normal build. */
+/** Android rejects codes above this. Every recovery code must exceed the paired normal code. */
 export const ANDROID_MAX_VERSION_CODE = 2_147_483_647;
 
 export type AndroidBuildKind = "normal" | "recovery";
@@ -41,7 +41,7 @@ export interface AndroidBuildInput {
   readonly kind: AndroidBuildKind;
   readonly versionName: string;
   readonly versionCode: number | null;
-  /** Required for recovery: the paired normal build's code. Recovery always takes the next one. */
+  /** Required for recovery: the paired normal build's code. */
   readonly normalVersionCode: number | null;
   readonly sourceCommit: string | null;
   readonly sourceDir: string | null;
@@ -53,9 +53,8 @@ const invalidCode = (label: string, value: number, max: number) =>
   new Error(`${label} must be an integer from 1 to ${max}; received ${value}.`);
 
 /**
- * Validates one APK build request. A normal build reserves the code above its own for the recovery
- * build, and a recovery build must name the normal code it follows, so the pair stays adjacent and
- * Android will always accept the recovery build over the normal one.
+ * Validates one APK build request. A recovery build must name the normal code it follows and may
+ * use an explicitly reserved code above it; absent that code, it uses the next one.
  */
 export const planAndroidBuild = (input: AndroidBuildInput): AndroidBuildPlan => {
   if (!VERSION_NAME.test(input.versionName)) {
@@ -78,12 +77,13 @@ export const planAndroidBuild = (input: AndroidBuildInput): AndroidBuildPlan => 
       );
     }
     const normal = input.normalVersionCode;
-    if (!Number.isInteger(normal) || normal < 1 || normal + 1 > ANDROID_MAX_VERSION_CODE) {
+    if (!Number.isInteger(normal) || normal < 1 || normal >= ANDROID_MAX_VERSION_CODE) {
       throw invalidCode("normal-version-code", normal, ANDROID_MAX_VERSION_CODE - 1);
     }
-    if (input.versionCode !== null && input.versionCode !== normal + 1) {
+    const code = input.versionCode ?? normal + 1;
+    if (!Number.isInteger(code) || code <= normal || code > ANDROID_MAX_VERSION_CODE) {
       throw new Error(
-        `A recovery build's code is its normal code plus one (${normal + 1}), not ${input.versionCode}.`,
+        `A recovery build's code must be an integer greater than its paired normal code ${normal} and no greater than ${ANDROID_MAX_VERSION_CODE}; received ${code}.`,
       );
     }
     if (input.sourceCommit === null || input.sourceCommit === "unknown") {
@@ -94,7 +94,7 @@ export const planAndroidBuild = (input: AndroidBuildInput): AndroidBuildPlan => 
     return {
       kind: "recovery",
       versionName: input.versionName,
-      versionCode: normal + 1,
+      versionCode: code,
       sourceCommit: input.sourceCommit,
       recovery: true,
       sourceDir: input.sourceDir,

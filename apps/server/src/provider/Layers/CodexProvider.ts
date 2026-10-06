@@ -12,6 +12,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import * as IdleProcessRoots from "../../maintenance/IdleProcessRoots.ts";
 
 import type {
   CodexSettings,
@@ -376,6 +377,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   // Expand here for parity with `CodexTextGeneration`.
   const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const scope = yield* Scope.Scope;
   const environment = {
     ...input.environment,
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
@@ -404,6 +406,12 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
           }),
       ),
     );
+  const releaseRoot = yield* IdleProcessRoots.registerIdleProcessRoot(
+    Number(child.pid),
+    "provider",
+    child.isRunning.pipe(Effect.orElseSucceed(() => false)),
+  );
+  yield* Scope.addFinalizer(scope, releaseRoot);
   const clientContext = yield* Layer.build(CodexClient.layerChildProcess(child));
   const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
     Effect.provide(clientContext),

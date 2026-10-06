@@ -87,8 +87,9 @@ cannot be mistaken for a release build.
 The default version code is the current minutes since the Unix epoch. Every update must have a
 higher code than the installed APK; builds within the same minute need an explicit higher
 `--version-code`. A manually assigned high code must also be exceeded on subsequent builds.
-Changing only `--version-name` does not make an APK an update. A normal build also reserves the
-next code for its recovery build, so leave at least one code between releases.
+Changing only `--version-name` does not make an APK an update. A normal build defaults its primary
+recovery to the next code. Additional recovery builds use separately reserved `--version-code R`
+values greater than their paired `--normal-version-code`; never reuse an Android version code.
 
 Keep `VITE_HTTP_URL` and `VITE_WS_URL` unset. The app chooses remote hosts through Connections;
 embedding a localhost origin in its web bundle breaks use from the phone.
@@ -102,16 +103,17 @@ asset name, and size). The release workflow compares that sidecar with the APK i
 assembles the release JSON in `packages/contracts/src/forkRelease.ts`, so the sidecar is a claim
 and never proof.
 
-| Build    | Command shape                                                                                                                                                                            | Code                        | Source                                   |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | ---------------------------------------- |
-| Normal   | `--kind normal --version-name V --version-code N --asset-name t3-code-android-V.apk --output-dir out/normal`                                                                             | `N`                         | This checkout at the release commit      |
-| Recovery | `--kind recovery --version-name PREV --normal-version-code N --source-dir ../t3code-prev --source-commit PREV_SHA --asset-name t3-code-android-recovery-V.apk --output-dir out/recovery` | `N + 1`, computed by helper | The predecessor's checkout, not this one |
+| Build    | Command shape                                                                                                                                                                                               | Code                                            | Source                                   |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------- |
+| Normal   | `--kind normal --version-name V --version-code N --asset-name t3-code-android-V.apk --output-dir out/normal`                                                                                                | `N`                                             | This checkout at the release commit      |
+| Recovery | `--kind recovery --version-name PREV --normal-version-code N [--version-code R] --source-dir ../t3code-prev --source-commit PREV_SHA --asset-name t3-code-android-recovery-V.apk --output-dir out/recovery` | `R`, or `N + 1` by default; `R` must exceed `N` | The predecessor's checkout, not this one |
 
 A recovery APK exists because Android refuses to downgrade: a bad update can only be replaced by
-a build with a **higher** code. So each release also ships its predecessor's source recompiled with
-the next code up. A device caches and verifies that recovery APK before it installs the normal
-one, which is what makes an automatic update reversible without uninstalling. The recovery build
-carries its own updater, so a device rolled back to it can still update later.
+a build with a **higher** code. The release reservation assigns a unique code to each recovery
+source, and each code must exceed its paired normal code. A device caches and verifies the recovery
+APK matching its exact installed source version and commit before it installs the normal one, which
+is what makes an automatic update reversible without uninstalling. The recovery build carries its
+own updater, so a device rolled back to it can still update later.
 
 The predecessor checkout must be at `--source-commit`, clean, have its dependencies installed
 (`vp i`), and itself contain the native updater (`NativeUpdateController.java` and a `build.gradle`
@@ -365,11 +367,13 @@ hold until the main-frame load finishes, fails, or its tab closes, including whe
 `readiness: none`. Browser
 commands keep a 5 minute lease only because native code bounds every command to 60 seconds. A leaked
 hold therefore blocks installation rather than allowing one. `beginAndroidUpload()` in `updates.ts`
-must be awaited before sending bytes and wrap the actual request lifetime. Native registers the
-hold against the installation fence before acknowledging it; a lost or rejected reply prevents the
-transfer from starting. Dictation holds acquisition, recording, decoding, and transcription through
-the same pipeline; cancellation releases it after the pending acquisition/transfer settles. The final quiet check is repeated after writing the installer session,
-immediately before OS commit.
+is awaited before the first upload network request, including minting a server upload ID, and remains
+held through the byte transfer. Browser-recording uploads use the same admission. Native registers
+the hold against the installation fence before acknowledging it; a lost or rejected reply prevents
+the upload cycle from starting. Dictation holds acquisition, recording, decoding, and transcription
+through the same pipeline; cancellation releases it after the pending acquisition/transfer settles.
+The native file-save bridge takes its hold before decoding the supplied payload. The final quiet
+check is repeated after writing the installer session, immediately before OS commit.
 
 ### State, pins, and restart verification
 
@@ -415,12 +419,24 @@ A launch counts as healthy when the shell calls `markAndroidShellHealthy()` (mou
 update interaction coordinator). Only an actual render signal counts, including pairing and onboarding screens. A page-load timer
 cannot prove a functioning shell.
 
-The staged update's paired recovery and the screen's rollback choices are different sets. The paired
-recovery can have the same source commit as the currently installed baseline while carrying the next
-Android version code; it still makes that forward update installable. Readiness must resolve
-`target.recoverySha256` to its verified cache record and file. Only after the forward build is
-installed can that predecessor be offered as a rollback choice (its source then differs from the
-running build).
+The staged update's paired recovery and the screen's rollback choices are different sets. The
+updater selects a recovery artifact matching the installed build's exact source version and commit
+from the release's recovery list (or the legacy primary recovery entry), and requires its Android
+version code to exceed the target normal APK. This can be the same source commit as the currently
+installed baseline while carrying a different source version and a higher installation code. The
+selected digest is saved as `target.recoverySha256`; readiness must resolve it to its verified cache
+record and file. Only after the forward build is installed can that predecessor be offered as a
+rollback choice (its full source identity then differs from the running build).
+
+Before downloading, the updater checks free bytes on both its app-private staging filesystem and the
+installed package's filesystem. It budgets every uncached selected APK plus the later PackageInstaller
+session and package expansion, then reserves headroom equal to the greater of 10% of that budget or
+1 GiB. When both paths share a filesystem it checks the combined peak; otherwise it checks each
+volume separately. It repeats the
+install-space check after the two-minute quiet period and immediately before committing the OS
+session. Unknown capacity blocks installation. A `storage` blocker leaves the selected target,
+paired recovery APK, and manual install request intact; the updater never deletes a recovery APK to
+make room.
 
 ### External recovery when the app cannot open
 

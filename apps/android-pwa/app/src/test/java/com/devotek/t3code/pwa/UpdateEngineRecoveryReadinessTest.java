@@ -46,6 +46,21 @@ public final class UpdateEngineRecoveryReadinessTest {
         assertFalse(UpdateEngine.pairedRecoveryReady(wrongRecord, directory));
     }
 
+    @Test public void revalidationKeepsTheExactRecoveryDigestBoundToTheInstalledSource() throws Exception {
+        ReleaseManifest manifest = Fixtures.manifest();
+        UpdateState.Target target = new UpdateState.Target();
+        target.sha256 = Fixtures.NORMAL_SHA;
+        target.versionCode = Fixtures.NORMAL_CODE;
+        target.recoverySha256 = Fixtures.RECOVERY_SHA;
+        target.manifestSha256 = "a".repeat(64);
+
+        assertTrue(UpdateEngine.exactTargetPair(target, manifest, target.manifestSha256, "1.0.0", Fixtures.PREVIOUS_COMMIT));
+        assertFalse(UpdateEngine.exactTargetPair(target, manifest, "f".repeat(64), "1.0.0", Fixtures.PREVIOUS_COMMIT));
+        target.recoverySha256 = "d".repeat(64);
+        assertFalse(UpdateEngine.exactTargetPair(target, manifest, target.manifestSha256, "1.0.0", Fixtures.PREVIOUS_COMMIT));
+        assertFalse(UpdateEngine.exactTargetPair(target, manifest, target.manifestSha256, "9.9.9", Fixtures.PREVIOUS_COMMIT));
+    }
+
     @Test public void missingWrongSizeWrongDigestAndEscapingCacheFilesAreNotReady() throws Exception {
         File directory = folder.newFolder("recovery-cache");
         UpdateState state = pairedState(directory, new byte[] {1, 2, 3});

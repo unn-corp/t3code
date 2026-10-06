@@ -39,6 +39,17 @@ background service, development servers). Constraints that are easy to get wrong
   verifies the exact exited owner and every recorded child, and an operator confirms unrecorded work
   was checked. That command refuses a live runtime or transaction fence and removes only the named
   orphan; it never terminates work.
+- **A fresh live process must be explained.** Every live process in a current diagnostics census blocks
+  unless it is the exact creation identity of a registered, still-running provider server root; that
+  exemption never covers the provider's children. A terminal shell stays a `commands` blocker even
+  when its metadata says it has no child command, because a shell can run work in its own PID and
+  telemetry cannot prove it is waiting at the prompt. Close a terminal after its work finishes; the
+  updater never closes it or infers idle from a shell name. A census row whose PID is confirmed exited
+  is dropped, while an unreadable identity remains unknown activity.
+- **Registration precedes database opening.** On supported update platforms, a coordinator open,
+  lock, or registry-read failure refuses runtime startup even if no transaction journal exists. Running
+  without registration after a transient error would hide work from peers whose next check succeeds.
+  Only unsupported OSes retain the non-updating unavailable mode.
 - **Unknown is never idle.** Every activity source is required in the composition (projection runtime
   set, delegated and subagent deliveries, organization work, Architect requests, terminals, repository
   clones, descendants), and one that cannot be read blocks as `unknown-participant`.
@@ -47,6 +58,13 @@ background service, development servers). Constraints that are easy to get wrong
   capabilities remain readable but receive manual-bootstrap guidance. A participant written by an older
   runtime without the marker blocks admission until that runtime exits or rejoins with current census
   semantics; a legacy writer may erase markers while it is running, which safely blocks the device.
+  Windows process creation identities are read in bounded PowerShell batches (at most 256 numeric PIDs
+  and an 8 KB command payload per invocation), with at most four batches active and a 10 second timeout
+  per batch. Exact UTC `StartTime` ticks
+  remain the persisted identity. Each PID is classified as present, absent, or unreadable; a timeout,
+  missing row, or malformed row is unreadable and keeps admission blocked. Fresh descendant collection,
+  lease cleanup, and child reconciliation use batches, splitting oversized trees rather than truncating
+  them or spawning one PowerShell process per child while holding the registry lock.
 - **Idle means five stopped minutes** for every participant, then the fence is taken and every
   participant must re-observe it (`frozenFor`) before the transaction starts. Held queues are not
   activity and are never cleared.
@@ -54,9 +72,9 @@ background service, development servers). Constraints that are easy to get wrong
   a runtime that read "no fence" an instant earlier is still refused. A runtime started by the
   transaction itself presents a one-use capability bound to its exact home, consumed in that same section.
 - **Start is gated before the database opens.** `SqlitePersistence.layerConfig` runs the host gate
-  first; a refused runtime never creates, opens or migrates a database. An OS where process identity cannot be
-  verified degrades to ordinary operation with no capability advertised, so installation fails closed
-  without breaking use.
+  first; a refused runtime never creates, opens or migrates a database. Unsupported OSes retain
+  ordinary operation with no capability advertised; on supported update platforms, a process-identity
+  error refuses startup and installation fails closed.
 - **Writes are held, not just orchestrator commands.** RPC authorization takes a work lease for every
   method whose scope is not a read scope (derived from the scope table, so a new write is covered by
   default); the terminal event and metadata subscriptions check admission when opened but do not hold

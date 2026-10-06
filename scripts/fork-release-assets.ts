@@ -23,6 +23,7 @@ import {
   type ValidationTarget,
 } from "./fork-release-suites.ts";
 import {
+  ANDROID_MAX_VERSION_CODE,
   FORK_CHECKSUMS_ASSET,
   FORK_MANIFEST_ASSET,
   type ForkChannel,
@@ -232,6 +233,7 @@ export const ARTIFACT_DIRS = {
   androidRecovery: "android-recovery",
   wslEmbedded: "wsl-embedded-x64",
 } as const;
+export const ANDROID_RECOVERY_EXTRAS_DIR = "android-recovery-extras";
 export const ANDROID_METADATA_FILE = "metadata.json";
 export const WSL_EMBEDDED_FILE = "wsl-embedded.json";
 /** electron-builder's configuration dump: never a feed and never published. */
@@ -253,6 +255,10 @@ export interface DiscoveryInput {
   readonly version: string;
   readonly channel: ForkChannel;
   readonly helperAssets: ReadonlyArray<HelperAssetSpec>;
+  readonly androidRecoveries?: ReadonlyArray<{
+    readonly directory: string;
+    readonly asset: string;
+  }>;
 }
 
 export interface Discovery {
@@ -381,17 +387,31 @@ export const discoverCandidateAssets = (input: DiscoveryInput): Discovery => {
     [{ file: `t3-code-android-${input.version}.apk`, kind: "android", platform: "android" }],
     new Set([ANDROID_METADATA_FILE]),
   );
-  claim(
-    ARTIFACT_DIRS.androidRecovery,
-    [
-      {
-        file: `t3-code-android-recovery-${input.version}.apk`,
-        kind: "android-recovery",
-        platform: "android",
-      },
-    ],
-    new Set([ANDROID_METADATA_FILE]),
-  );
+  if (input.androidRecoveries === undefined) {
+    claim(
+      ARTIFACT_DIRS.androidRecovery,
+      [
+        {
+          file: `t3-code-android-recovery-${input.version}.apk`,
+          kind: "android-recovery",
+          platform: "android",
+        },
+      ],
+      new Set([ANDROID_METADATA_FILE]),
+    );
+  } else {
+    for (const recovery of input.androidRecoveries) {
+      claim(
+        recovery.directory,
+        [{ file: recovery.asset, kind: "android-recovery", platform: "android" }],
+        new Set(
+          listFiles(NodePath.join(input.inputDir, recovery.directory)).filter((file) =>
+            file.startsWith("metadata"),
+          ),
+        ),
+      );
+    }
+  }
 
   if (input.helperAssets.length === 0) {
     problems.push("The recovery helper assets are not configured, so none can be validated.");
@@ -479,6 +499,7 @@ export interface BuildVerificationInput extends DiscoveryInput {
   readonly android: {
     readonly normal: VerifiedAndroidApk | null;
     readonly recovery: VerifiedAndroidApk | null;
+    readonly recoveries?: ReadonlyArray<VerifiedAndroidApk>;
   };
   readonly wslEmbedded: WslEmbeddedReceipt | null;
 }
@@ -490,7 +511,17 @@ export interface BuildVerification {
 
 /** Everything the `build` check means: complete assets, honest feeds, exact embedded WSL bytes. */
 export const verifyBuild = (input: BuildVerificationInput): BuildVerification => {
-  const discovery = discoverCandidateAssets(input);
+  const recoveries =
+    input.android.recoveries ?? (input.android.recovery ? [input.android.recovery] : []);
+  const discovery = discoverCandidateAssets({
+    ...input,
+    androidRecoveries:
+      input.androidRecoveries ??
+      recoveries.map((entry, index) => ({
+        directory: index === 0 ? ARTIFACT_DIRS.androidRecovery : `android-recovery-${index}`,
+        asset: entry.asset,
+      })),
+  });
   const problems = [...discovery.problems];
   const assets = discovery.assets;
 
@@ -521,27 +552,67 @@ export const verifyBuild = (input: BuildVerificationInput): BuildVerification =>
     );
   }
 
-  for (const role of ["normal", "recovery"] as const) {
-    const verified = input.android[role];
-    const asset = assets.find(
-      (entry) => entry.kind === (role === "normal" ? "android" : "android-recovery"),
-    );
-    if (!verified) {
-      problems.push(`The ${role} Android APK has no verified metadata.`);
-    } else if (!asset || asset.name !== verified.asset || asset.sha256 !== verified.apkSha256) {
-      problems.push(`The ${role} Android APK differs from the bytes that were verified.`);
-    }
+  const normal = input.android.normal;
+  const primary = input.android.recovery;
+  if (!normal) problems.push("The normal Android APK has no verified metadata.");
+  else {
+    const asset = assets.find((entry) => entry.kind === "android");
+    if (!asset || asset.name !== normal.asset || asset.sha256 !== normal.apkSha256)
+      problems.push("The normal Android APK differs from the bytes that were verified.");
   }
-  if (input.android.normal && input.android.recovery) {
-    if (input.android.normal.signerSha256 !== input.android.recovery.signerSha256) {
-      problems.push("The normal and recovery APKs are signed by different keys.");
-    }
-    if (input.android.normal.versionCode >= input.android.recovery.versionCode) {
-      problems.push("The recovery APK must have a higher installation code than the normal APK.");
-    }
-    if (input.android.normal.sourceCommit === input.android.recovery.sourceCommit) {
-      problems.push("The recovery APK is built from the same source as the normal APK.");
-    }
+  if (!primary) problems.push("The primary recovery Android APK has no verified metadata.");
+  const firstRecovery = recoveries[0];
+  if (
+    primary &&
+    firstRecovery &&
+    (primary.asset !== firstRecovery.asset ||
+      primary.versionCode !== firstRecovery.versionCode ||
+      primary.sourceVersion !== firstRecovery.sourceVersion ||
+      primary.sourceCommit !== firstRecovery.sourceCommit ||
+      primary.packageName !== firstRecovery.packageName ||
+      primary.signerSha256 !== firstRecovery.signerSha256 ||
+      primary.updaterProtocol !== firstRecovery.updaterProtocol)
+  )
+    problems.push("The primary recovery APK must be identical to recovery entry zero.");
+  if (normal && normal.versionCode > ANDROID_MAX_VERSION_CODE)
+    problems.push("The normal Android APK exceeds Android's maximum version code.");
+  const codes = new Set<number>();
+  const identities = new Set<string>();
+  const recoveryAssets = new Set<string>();
+  for (const [index, recovery] of recoveries.entries()) {
+    const asset = assets.find((entry) => entry.name === recovery.asset);
+    if (!asset || asset.kind !== "android-recovery" || asset.sha256 !== recovery.apkSha256)
+      problems.push(
+        `Recovery Android APK ${recovery.asset} differs from the bytes that were verified.`,
+      );
+    if (normal && recovery.signerSha256 !== normal.signerSha256)
+      problems.push(`Recovery Android APK ${recovery.asset} is signed by a different key.`);
+    if (normal && recovery.versionCode <= normal.versionCode)
+      problems.push(
+        `Recovery Android APK ${recovery.asset} must have a higher installation code than the normal APK.`,
+      );
+    if (
+      normal &&
+      recovery.sourceCommit === normal.sourceCommit &&
+      recovery.sourceVersion === normal.sourceVersion
+    )
+      problems.push(
+        `Recovery Android APK ${recovery.asset} has the same source identity as the normal APK.`,
+      );
+    if (recovery.versionCode > ANDROID_MAX_VERSION_CODE)
+      problems.push(
+        `Recovery Android APK ${recovery.asset} exceeds Android's maximum version code.`,
+      );
+    if (codes.has(recovery.versionCode))
+      problems.push(`Recovery Android APK ${recovery.asset} reuses an installation code.`);
+    if (recoveryAssets.has(recovery.asset))
+      problems.push(`Recovery Android APK ${recovery.asset} duplicates an asset name.`);
+    codes.add(recovery.versionCode);
+    const identity = `${recovery.sourceVersion}\0${recovery.sourceCommit}`;
+    if (identities.has(identity) && (index !== 0 || recovery.asset !== primary?.asset))
+      problems.push(`Recovery Android APK ${recovery.asset} duplicates a source identity.`);
+    identities.add(identity);
+    recoveryAssets.add(recovery.asset);
   }
 
   return { assets, problems };
@@ -694,7 +765,11 @@ export const composeManifest = (input: {
   readonly channel: ForkChannel;
   readonly releasedAt: string;
   readonly assets: ReadonlyArray<CandidateAsset>;
-  readonly android: { readonly normal: VerifiedAndroidApk; readonly recovery: VerifiedAndroidApk };
+  readonly android: {
+    readonly normal: VerifiedAndroidApk;
+    readonly recovery: VerifiedAndroidApk;
+    readonly recoveries?: ReadonlyArray<VerifiedAndroidApk>;
+  };
   readonly checks: ForkReleaseManifest["checks"];
 }): ForkReleaseManifest =>
   decodeForkReleaseManifest({
@@ -710,6 +785,9 @@ export const composeManifest = (input: {
     android: {
       normal: toAndroidArtifact(input.android.normal),
       recovery: toAndroidArtifact(input.android.recovery),
+      ...(input.android.recoveries === undefined
+        ? {}
+        : { recoveries: input.android.recoveries.map(toAndroidArtifact) }),
     },
     checks: input.checks,
   });

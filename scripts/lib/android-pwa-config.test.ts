@@ -90,15 +90,64 @@ describe("planAndroidBuild", () => {
       sourceDir: "/predecessor",
       sourceCommit: "b".repeat(40),
     });
-    expect(() =>
+    expect(
       planAndroidBuild({
         ...base,
         kind: "recovery",
         versionCode: 29_853_705,
         normalVersionCode: 29_853_700,
         sourceDir: "/p",
+      }).versionCode,
+    ).toBe(29_853_705);
+  });
+
+  it("accepts a separately reserved recovery code above its paired normal code", () => {
+    const plan = planAndroidBuild({
+      ...base,
+      kind: "recovery",
+      versionCode: 29_853_711,
+      normalVersionCode: 29_853_700,
+      sourceDir: "/predecessor",
+      sourceCommit: "b".repeat(40),
+    });
+    expect(plan.versionCode).toBe(29_853_711);
+    expect(
+      planAndroidBuild({
+        ...base,
+        kind: "recovery",
+        versionCode: ANDROID_MAX_VERSION_CODE,
+        normalVersionCode: ANDROID_MAX_VERSION_CODE - 1,
+        sourceDir: "/predecessor",
+        sourceCommit: "b".repeat(40),
+      }).versionCode,
+    ).toBe(ANDROID_MAX_VERSION_CODE);
+    expect(() =>
+      planAndroidBuild({
+        ...base,
+        kind: "recovery",
+        versionCode: 29_853_700,
+        normalVersionCode: 29_853_700,
+        sourceDir: "/p",
       }),
-    ).toThrow(/plus one/);
+    ).toThrow(/greater than its paired normal code/);
+    expect(() =>
+      planAndroidBuild({
+        ...base,
+        kind: "recovery",
+        versionCode: ANDROID_MAX_VERSION_CODE + 1,
+        normalVersionCode: 29_853_700,
+        sourceDir: "/p",
+      }),
+    ).toThrow(/greater than its paired normal code/);
+    expect(() =>
+      planAndroidBuild({
+        ...base,
+        kind: "recovery",
+        versionCode: ANDROID_MAX_VERSION_CODE,
+        normalVersionCode: ANDROID_MAX_VERSION_CODE,
+        sourceDir: "/p",
+      }),
+    ).toThrow(/normal-version-code/);
   });
 
   it("fails closed with manual baseline guidance when no predecessor exists", () => {

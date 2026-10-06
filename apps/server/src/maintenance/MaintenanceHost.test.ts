@@ -153,6 +153,25 @@ describe("maintenance host and start gate", () => {
     expect(second).toBe(first);
   });
 
+  it("refuses supported-runtime startup when the coordinator directory cannot be opened", async () => {
+    const d = await device();
+    await NodeFSP.writeFile(d.namespace, "not a directory");
+    await expect(acquire(d.input())).rejects.toThrow("could not join device maintenance");
+    expect(await NodeFSP.readFile(NodePath.join(d.home, "userdata", "settings.json"), "utf8")).toBe(
+      "before",
+    );
+  });
+
+  it("refuses an unreadable registry even when no transaction journal exists", async () => {
+    const d = await device();
+    await CoordinatorStore.open(d.namespace);
+    await NodeFSP.writeFile(NodePath.join(d.namespace, "registry.json"), "{");
+    await expect(acquire(d.input())).rejects.toThrow("could not read device maintenance");
+    expect(await NodeFSP.readFile(NodePath.join(d.home, "userdata", "settings.json"), "utf8")).toBe(
+      "before",
+    );
+  });
+
   it("refuses any runtime that is not the transaction's own while a fence is held, before it can open the database", async () => {
     const d = await device();
     await d.abandonedFence("trial");

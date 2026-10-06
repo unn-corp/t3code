@@ -220,6 +220,75 @@ describe("target selection", () => {
   });
 });
 
+describe("retained Android recovery eligibility", () => {
+  const retained = (): ForkReleaseRecord => {
+    const record = release("1.0.1");
+    const manifest = record.manifest!;
+    const primary = manifest.android.recovery;
+    const extra = {
+      ...primary,
+      asset: "android-recovery-retained.apk",
+      versionCode: primary.versionCode + 1,
+      sourceVersion: "1.0.1-nightly.20261005.1",
+      // Stable promotion retains the commit while changing the source-version identity.
+      sourceCommit: manifest.commit,
+    };
+    const asset = {
+      name: extra.asset,
+      sha256: sha("8"),
+      bytes: 10,
+      kind: "android-recovery" as const,
+      platform: "android" as const,
+    };
+    return {
+      ...record,
+      assets: [...record.assets, { name: asset.name, size: asset.bytes }],
+      manifest: {
+        ...manifest,
+        assets: [...manifest.assets, asset],
+        android: { ...manifest.android, recoveries: [primary, extra] },
+      },
+    };
+  };
+  const publisher = (record: ForkReleaseRecord) =>
+    publisherClassify(
+      { ...record, assets: record.assets.map((asset, index) => ({ ...asset, id: index })) },
+      [],
+    );
+
+  it("allows exact-source coverage for nightly and stable builds sharing a commit", () => {
+    const record = retained();
+    expect(classifyForkRelease(record, []).eligible).toBe(true);
+    expect(publisher(record)).toEqual(classifyForkRelease(record, []));
+  });
+  it("rejects missing retained assets, ambiguous identities, reused codes and a divergent primary alias", () => {
+    const original = retained();
+    const manifest = original.manifest!;
+    const [primary, extra] = manifest.android.recoveries!;
+    const cases: ForkReleaseRecord[] = [
+      { ...original, assets: original.assets.filter((asset) => asset.name !== extra!.asset) },
+      ...[
+        [
+          primary!,
+          { ...extra!, sourceVersion: primary!.sourceVersion, sourceCommit: primary!.sourceCommit },
+        ],
+        [primary!, { ...extra!, versionCode: primary!.versionCode }],
+        [{ ...primary!, signerSha256: sha("7") }, extra!],
+        [primary!, { ...extra!, sourceVersion: manifest.version, sourceCommit: manifest.commit }],
+        [primary!, { ...extra!, versionCode: 2_147_483_648 }],
+      ].map((recoveries) => ({
+        ...original,
+        manifest: { ...manifest, android: { ...manifest.android, recoveries } },
+      })),
+    ];
+    for (const record of cases) {
+      const result = classifyForkRelease(record, []);
+      expect(result.eligible).toBe(false);
+      expect(publisher(record)).toEqual(result);
+    }
+  });
+});
+
 describe("packaging-aware desktop assets", () => {
   const both = () => {
     const record = release("1.0.1", { id: 9, commitSeed: "9" });

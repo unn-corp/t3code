@@ -62,6 +62,10 @@ public final class InstallGuardTest {
         InstallGuard.Input input = clear(); input.confirmationAvailable = false;
         assertEquals("authorization", reasons(input).get(0));
     }
+    @Test public void unknownOrInsufficientStorageBlocksInstallation() {
+        InstallGuard.Input input = clear(); input.storageReady = false;
+        assertEquals("storage", reasons(input).get(0));
+    }
     @Test public void missingPrerequisitesBlockWithoutGuessing() {
         InstallGuard.Input input = clear();
         input.installPermission = false; input.recoveryReady = false; input.pending = true; input.supported = false;
@@ -104,6 +108,16 @@ public final class InstallGuardTest {
         assertEquals(1, operations.active().size());
         operations.end("file-chooser", "picker");
         assertTrue(operations.active().isEmpty());
+    }
+    @Test public void saveDownloadAdmissionCoversPayloadPreparationAndRejectsLateSaves() {
+        PhoneOperations operations = new PhoneOperations(() -> 0);
+        operations.begin("save-file", "download", PhoneOperations.UNTIL_ENDED);
+        assertFalse(operations.admit(() -> true));
+        operations.end("save-file", "download");
+
+        assertTrue(operations.admit(() -> true));
+        assertThrows(IllegalStateException.class,
+            () -> operations.begin("save-file", "download", PhoneOperations.UNTIL_ENDED));
     }
     @Test public void uploadsAreReleasedWhenTheShellIsKnownToBeGone() {
         PhoneOperations operations = new PhoneOperations(() -> 0);

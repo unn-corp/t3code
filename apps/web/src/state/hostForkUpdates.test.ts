@@ -45,7 +45,12 @@ it("rechecks the current host capability before mutations, while allowing read-o
     admission: true,
     recovery: true,
   };
-  for (const activityProtocol of [undefined, 1, FORK_ACTIVITY_PROTOCOL + 1]) {
+  for (const activityProtocol of [
+    undefined,
+    1,
+    FORK_ACTIVITY_PROTOCOL - 1,
+    FORK_ACTIVITY_PROTOCOL + 1,
+  ]) {
     state.capability = { ...base, activityProtocol };
     await expect(
       controller.action({ action: "install", targetArtifactSha256: "b".repeat(64) }),

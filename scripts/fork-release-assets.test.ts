@@ -357,7 +357,7 @@ describe("build verification", () => {
       ...base,
       android: { normal: v.normal, recovery: { ...v.recovery, signerSha256: "b".repeat(64) } },
     });
-    assert.isTrue(differentKey.problems.some((p) => p.includes("different keys")));
+    assert.isTrue(differentKey.problems.some((p) => p.includes("different key")));
     const lowerCode = verifyBuild({
       ...base,
       android: { normal: v.normal, recovery: { ...v.recovery, versionCode: v.normal.versionCode } },
@@ -367,7 +367,11 @@ describe("build verification", () => {
       ...base,
       android: {
         normal: v.normal,
-        recovery: { ...v.recovery, sourceCommit: v.normal.sourceCommit },
+        recovery: {
+          ...v.recovery,
+          sourceVersion: v.normal.sourceVersion,
+          sourceCommit: v.normal.sourceCommit,
+        },
       },
     });
     assert.isTrue(sameSource.problems.some((p) => p.includes("same source")));

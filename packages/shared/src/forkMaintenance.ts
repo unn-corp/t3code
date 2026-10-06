@@ -144,21 +144,65 @@ export function classifyForkRelease(
     manifest.assets.length > 0 &&
     manifest.assets.every((asset) => present.get(asset.name) === asset.bytes) &&
     present.has(FORK_MANIFEST_ASSET) &&
-    [manifest.android.normal.asset, manifest.android.recovery.asset].every((name) =>
-      manifest.assets.some((asset) => asset.name === name),
-    );
+    [
+      manifest.android.normal.asset,
+      manifest.android.recovery.asset,
+      ...(manifest.android.recoveries ?? []).map((entry) => entry.asset),
+    ].every((name) => manifest.assets.some((asset) => asset.name === name));
   if (!complete) reasons.push("partial");
   if (!REQUIRED_CHECKS.every((check) => manifest.checks[check])) reasons.push("checks-incomplete");
   const { normal, recovery } = manifest.android;
   if (
     normal.asset === recovery.asset ||
-    recovery.sourceCommit === normal.sourceCommit ||
+    (recovery.sourceCommit === normal.sourceCommit &&
+      recovery.sourceVersion === normal.sourceVersion) ||
     recovery.versionCode <= normal.versionCode ||
     normal.signerSha256 !== recovery.signerSha256 ||
     normal.sourceCommit !== manifest.commit ||
     normal.sourceVersion !== manifest.version
   ) {
     reasons.push("duplicate-recovery");
+  }
+  if (manifest.android.recoveries !== undefined) {
+    const recoveries = manifest.android.recoveries;
+    const primary = recoveries[0];
+    const samePrimary =
+      primary !== undefined &&
+      primary.asset === recovery.asset &&
+      primary.versionCode === recovery.versionCode &&
+      primary.sourceVersion === recovery.sourceVersion &&
+      primary.sourceCommit === recovery.sourceCommit &&
+      primary.packageName === recovery.packageName &&
+      primary.signerSha256 === recovery.signerSha256 &&
+      primary.updaterProtocol === recovery.updaterProtocol;
+    if (!samePrimary) reasons.push("duplicate-recovery");
+    const codes = new Set<number>();
+    const identities = new Set<string>();
+    const names = new Set<string>();
+    for (const candidate of recoveries) {
+      const identity = `${candidate.sourceVersion}\0${candidate.sourceCommit}`;
+      const assets = manifest.assets.filter((asset) => asset.name === candidate.asset);
+      if (
+        candidate.versionCode <= normal.versionCode ||
+        candidate.versionCode > 2_147_483_647 ||
+        candidate.signerSha256 !== normal.signerSha256 ||
+        candidate.packageName !== normal.packageName ||
+        candidate.updaterProtocol !== normal.updaterProtocol ||
+        (candidate.sourceVersion === normal.sourceVersion &&
+          candidate.sourceCommit === normal.sourceCommit) ||
+        codes.has(candidate.versionCode) ||
+        identities.has(identity) ||
+        names.has(candidate.asset) ||
+        candidate.asset === normal.asset ||
+        assets.length !== 1 ||
+        assets[0]?.kind !== "android-recovery" ||
+        assets[0]?.platform !== "android"
+      )
+        reasons.push("duplicate-recovery");
+      codes.add(candidate.versionCode);
+      identities.add(identity);
+      names.add(candidate.asset);
+    }
   }
   const rank = (candidate: ForkReleaseRecord) => candidate.publishedAt ?? candidate.createdAt;
   const duplicateOf = all.some(

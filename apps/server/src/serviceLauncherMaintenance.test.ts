@@ -80,7 +80,6 @@ it.layer(NodeServices.layer)("service launcher maintenance capability", (it) => 
         yield* fs.writeFileString(databasePath, "before trial");
         const report = path.join(root, "reports");
         yield* fs.makeDirectory(report, { recursive: true });
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds paths in fake child source.
         const encoded = (value: string) => JSON.stringify(value);
         const childSource = `
 const fs = require("fs");

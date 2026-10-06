@@ -12,6 +12,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as IdleProcessRoots from "./IdleProcessRoots.ts";
 import { collectActivity, receiptSlotFor } from "./MaintenanceCoordinator.ts";
 
 const terminal = (overrides: Partial<TerminalSummary> = {}): TerminalSummary => ({
@@ -39,6 +40,8 @@ interface Sources {
   }>;
   readonly processError?: string;
   readonly staleProcessRead?: boolean;
+  readonly roots?: ReadonlyArray<IdleProcessRoots.IdleProcessRoot>;
+  readonly identities?: Readonly<Record<number, "present" | "absent" | "unreadable">>;
 }
 const processRead = (sources: Sources) =>
   Clock.currentTimeMillis.pipe(
@@ -86,6 +89,26 @@ const layer = (sources: Sources = {}) =>
     } as never),
     Layer.succeed(ProcessDiagnostics.ProcessDiagnostics, {
       read: processRead(sources),
+    } as never),
+    Layer.succeed(IdleProcessRoots.IdleProcessRoots, {
+      register: () => Effect.succeed(Effect.void),
+      snapshot: Effect.succeed(sources.roots ?? []),
+      identify: (pids: ReadonlyArray<number>) =>
+        Promise.resolve(
+          pids.map((pid: number) => {
+            const state = sources.identities?.[pid] ?? "present";
+            return state === "present"
+              ? {
+                  kind: "present" as const,
+                  identity: String(
+                    sources.processes?.find((entry) => entry.pid === pid)?.startTimeMs ?? pid,
+                  ),
+                }
+              : state === "absent"
+                ? { kind: "absent" as const }
+                : { kind: "unreadable" as const, cause: new Error("unreadable") };
+          }),
+        ),
     } as never),
   ).pipe(Layer.provideMerge(SqlitePersistenceMemory));
 
@@ -141,20 +164,89 @@ describe("device activity sources", () => {
     }),
   );
 
-  it.effect(
-    "reports the processes the runtime started so they keep blocking if it exits first",
-    () =>
-      Effect.gen(function* () {
-        const result = yield* collectActivity("participant").pipe(
-          Effect.provide(
-            layer({ processes: [{ pid: 4242, startTimeMs: 1, command: "codex app-server" }] }),
-          ),
-        );
-        expect(result.descendants).toEqual([
-          { pid: 4242, started: "1", label: "codex app-server" },
-        ]);
-        expect(result.descendantsKnown).toBe(true);
-      }),
+  it.effect("blocks live processes outside a registered idle root", () =>
+    Effect.gen(function* () {
+      const result = yield* collectActivity("participant").pipe(
+        Effect.provide(
+          layer({ processes: [{ pid: 4242, startTimeMs: 1, command: "codex app-server" }] }),
+        ),
+      );
+      expect(result.descendants).toEqual([{ pid: 4242, started: "1", label: "codex app-server" }]);
+      expect(result.blockers).toContainEqual(
+        expect.objectContaining({
+          reason: "background-work",
+          label: expect.stringContaining("service root"),
+        }),
+      );
+      expect(result.descendantsKnown).toBe(true);
+    }),
+  );
+
+  it.effect("exempts only the exact registered root identity, not its child", () =>
+    Effect.gen(function* () {
+      const result = yield* collectActivity("participant").pipe(
+        Effect.provide(
+          layer({
+            processes: [
+              { pid: 4242, startTimeMs: 1, command: "codex app-server" },
+              { pid: 4243, startTimeMs: 2, command: "sleep" },
+            ],
+            roots: [{ pid: 4242, started: "1", kind: "provider" }],
+          }),
+        ),
+      );
+      expect(result.descendants.map((entry) => entry.pid)).toEqual([4242, 4243]);
+      expect(result.blockers).toEqual([
+        expect.objectContaining({
+          reason: "background-work",
+          label: expect.stringContaining("service root"),
+        }),
+      ]);
+    }),
+  );
+
+  it.effect("treats a reused root PID as work and an unreadable child as unknown", () =>
+    Effect.gen(function* () {
+      const reused = yield* collectActivity("participant").pipe(
+        Effect.provide(
+          layer({
+            processes: [{ pid: 4242, startTimeMs: 2, command: "worker" }],
+            roots: [{ pid: 4242, started: "1", kind: "provider" }],
+          }),
+        ),
+      );
+      expect(reused.blockers[0]?.reason).toBe("background-work");
+      const unreadable = yield* collectActivity("participant").pipe(
+        Effect.provide(
+          layer({
+            processes: [{ pid: 4242, startTimeMs: 2, command: "worker" }],
+            identities: { 4242: "unreadable" },
+          }),
+        ),
+      );
+      expect(unreadable.blockers).toContainEqual(
+        expect.objectContaining({
+          reason: "unknown-participant",
+          label: expect.stringContaining("identity"),
+        }),
+      );
+    }),
+  );
+
+  it.effect("does not block a process found absent by the fresh identity check", () =>
+    Effect.gen(function* () {
+      const result = yield* collectActivity("participant").pipe(
+        Effect.provide(
+          layer({
+            processes: [{ pid: 4242, startTimeMs: 1, command: "finished sampler" }],
+            identities: { 4242: "absent" },
+          }),
+        ),
+      );
+      expect(result.blockers).toEqual([]);
+      expect(result.descendants).toEqual([]);
+      expect(result.descendantsKnown).toBe(true);
+    }),
   );
 
   it.effect("treats a stale or incomplete process census as unknown activity", () =>
@@ -262,6 +354,7 @@ describe("device activity sources", () => {
         const result = yield* collectActivity("participant").pipe(
           Effect.provide(
             Layer.mergeAll(
+              IdleProcessRoots.layer,
               Layer.succeed(TerminalManager.TerminalManager, {
                 subscribeMetadata: () => Effect.die("terminals unreadable"),
               } as never),

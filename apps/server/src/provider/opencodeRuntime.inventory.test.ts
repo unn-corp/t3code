@@ -17,8 +17,10 @@ import {
 
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
+import * as IdleProcessRoots from "../maintenance/IdleProcessRoots.ts";
 
 const testLayer = OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
+  Layer.provide(IdleProcessRoots.layer),
   Layer.provide(OpenCodeServerLedger.layerTest),
   Layer.provideMerge(NodeServices.layer),
 );

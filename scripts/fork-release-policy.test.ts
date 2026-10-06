@@ -12,6 +12,8 @@ import {
   forkVersionFromTag,
   highestUsedAndroidCode,
   nextAndroidCodePair,
+  nextAndroidCodeAllocation,
+  reservedAndroidCodeEnd,
   nextStableVersion,
   nightlyVersionFor,
   parseForkVersion,
@@ -72,7 +74,11 @@ describe("independent version allocation", () => {
       version: "1.0.1",
       body: withWithdrawal("", "bad build", "2026-10-07T00:00:00Z"),
     });
-    const draft = makeRelease({ version: "1.0.2", draft: true, publishedAt: null });
+    const draft = makeRelease({
+      version: "1.0.2",
+      draft: true,
+      publishedAt: null,
+    });
     assert.equal(nextStableVersion([makeRelease({ version: "1.0.0" }), withdrawn, draft]), "1.0.3");
   });
 
@@ -101,11 +107,18 @@ describe("independent version allocation", () => {
 describe("release eligibility", () => {
   it("accepts a complete, validated, published release", () => {
     const release = makeRelease({ version: "1.0.0" });
-    assert.deepStrictEqual(classifyRelease(release, [release]), { eligible: true, reasons: [] });
+    assert.deepStrictEqual(classifyRelease(release, [release]), {
+      eligible: true,
+      reasons: [],
+    });
   });
 
   it("excludes drafts and withdrawn releases", () => {
-    const draft = makeRelease({ version: "1.0.0", draft: true, publishedAt: null });
+    const draft = makeRelease({
+      version: "1.0.0",
+      draft: true,
+      publishedAt: null,
+    });
     assert.deepStrictEqual(classifyRelease(draft, [draft]).reasons, ["draft"]);
     const withdrawn = makeRelease({
       version: "1.0.0",
@@ -137,7 +150,10 @@ describe("release eligibility", () => {
 
   it("excludes releases whose recorded checks are not all true", () => {
     for (const check of ["build", "install", "update", "recovery"] as const) {
-      const release = makeRelease({ version: "1.0.0", checks: { [check]: false } });
+      const release = makeRelease({
+        version: "1.0.0",
+        checks: { [check]: false },
+      });
       assert.deepStrictEqual(
         classifyRelease(release, [release]).reasons,
         ["checks-incomplete"],
@@ -151,11 +167,16 @@ describe("release eligibility", () => {
       version: "1.0.0",
       commit: sha("c"),
       recoveryCommit: sha("c"),
+      recoveryVersion: "1.0.0",
     });
     assert.deepStrictEqual(classifyRelease(sameSource, [sameSource]).reasons, [
       "duplicate-recovery",
     ]);
-    const lowCode = makeRelease({ version: "1.0.0", normalCode: 100, recoveryCode: 100 });
+    const lowCode = makeRelease({
+      version: "1.0.0",
+      normalCode: 100,
+      recoveryCode: 100,
+    });
     assert.deepStrictEqual(classifyRelease(lowCode, [lowCode]).reasons, ["duplicate-recovery"]);
   });
 
@@ -187,12 +208,18 @@ describe("release eligibility", () => {
 });
 
 describe("update candidate selection", () => {
-  const stable100 = makeRelease({ version: "1.0.0", releasedAt: "2026-10-01T08:30:00Z" });
+  const stable100 = makeRelease({
+    version: "1.0.0",
+    releasedAt: "2026-10-01T08:30:00Z",
+  });
   const nightlyOld = makeRelease({
     version: "1.0.1-nightly.20261003.9",
     releasedAt: "2026-10-03T07:40:00Z",
   });
-  const stable101 = makeRelease({ version: "1.0.1", releasedAt: "2026-10-04T08:30:00Z" });
+  const stable101 = makeRelease({
+    version: "1.0.1",
+    releasedAt: "2026-10-04T08:30:00Z",
+  });
   const nightlyNew = makeRelease({
     version: "1.0.2-nightly.20261005.3",
     releasedAt: "2026-10-05T07:40:00Z",
@@ -233,14 +260,22 @@ describe("update candidate selection", () => {
       null,
     );
     assert.equal(
-      selectUpdateCandidate({ channel: "stable", installedVersion: "1.0.1", releases: all }),
+      selectUpdateCandidate({
+        channel: "stable",
+        installedVersion: "1.0.1",
+        releases: all,
+      }),
       null,
     );
     const withdrawn = makeRelease({
       version: "1.0.2",
       body: withWithdrawal("", "bad", "2026-10-06T00:00:00Z"),
     });
-    const draft = makeRelease({ version: "1.0.3", draft: true, publishedAt: null });
+    const draft = makeRelease({
+      version: "1.0.3",
+      draft: true,
+      publishedAt: null,
+    });
     assert.equal(
       selectUpdateCandidate({
         channel: "stable",
@@ -295,9 +330,18 @@ describe("stable promotion", () => {
   const hours = (n: number) => new Date(NOW.getTime() - n * 3_600_000).toISOString();
 
   it("promotes the newest nightly whose checks completed at least 24 hours ago", () => {
-    const old = makeRelease({ version: "1.0.1-nightly.20261008.1", releasedAt: hours(60) });
-    const mature = makeRelease({ version: "1.0.1-nightly.20261009.2", releasedAt: hours(30) });
-    const young = makeRelease({ version: "1.0.1-nightly.20261010.3", releasedAt: hours(23) });
+    const old = makeRelease({
+      version: "1.0.1-nightly.20261008.1",
+      releasedAt: hours(60),
+    });
+    const mature = makeRelease({
+      version: "1.0.1-nightly.20261009.2",
+      releasedAt: hours(30),
+    });
+    const young = makeRelease({
+      version: "1.0.1-nightly.20261010.3",
+      releasedAt: hours(23),
+    });
     assert.equal(
       selectStableSource({ now: NOW, releases: [old, mature, young] })?.manifest?.version,
       "1.0.1-nightly.20261009.2",
@@ -308,7 +352,12 @@ describe("stable promotion", () => {
     assert.equal(
       selectStableSource({
         now: NOW,
-        releases: [makeRelease({ version: "1.0.1-nightly.20261010.3", releasedAt: hours(23) })],
+        releases: [
+          makeRelease({
+            version: "1.0.1-nightly.20261010.3",
+            releasedAt: hours(23),
+          }),
+        ],
       }),
       null,
     );
@@ -327,10 +376,20 @@ describe("stable promotion", () => {
       commit,
       releasedAt: hours(200),
     });
-    const stable = makeRelease({ version: "1.0.0", commit, releasedAt: hours(150) });
-    const older = makeRelease({ version: "1.0.1-nightly.20260930.9", releasedAt: hours(220) });
+    const stable = makeRelease({
+      version: "1.0.0",
+      commit,
+      releasedAt: hours(150),
+    });
+    const older = makeRelease({
+      version: "1.0.1-nightly.20260930.9",
+      releasedAt: hours(220),
+    });
     assert.equal(selectStableSource({ now: NOW, releases: [base, stable, older] }), null);
-    const newer = makeRelease({ version: "1.0.1-nightly.20261005.2", releasedAt: hours(100) });
+    const newer = makeRelease({
+      version: "1.0.1-nightly.20261005.2",
+      releasedAt: hours(100),
+    });
     assert.equal(
       selectStableSource({ now: NOW, releases: [base, stable, older, newer] })?.manifest?.version,
       "1.0.1-nightly.20261005.2",
@@ -367,8 +426,48 @@ describe("stable promotion", () => {
 });
 
 describe("recovery predecessor", () => {
+  it("freezes newest two sources per channel plus the promotion source without collapsing same-commit versions", () => {
+    const stableOld = makeRelease({
+      version: "1.0.0",
+      commit: sha("stable-old"),
+    });
+    const stableNew = makeRelease({
+      version: "1.0.1",
+      commit: sha("stable-new"),
+    });
+    const nightlyOld = makeRelease({
+      version: "1.0.2-nightly.20261008.1",
+      commit: sha("nightly-old"),
+    });
+    const promotedCommit = sha("promoted-nightly");
+    const nightlyNew = makeRelease({
+      version: "1.0.2-nightly.20261009.1",
+      commit: promotedCommit,
+    });
+    const outcome = buildPlan({
+      channel: "stable",
+      now: NOW,
+      runNumber: 9,
+      releases: [stableOld, stableNew, nightlyOld, nightlyNew],
+    });
+    assert.equal(outcome.kind, "release");
+    if (outcome.kind !== "release") return;
+    const identities = outcome.plan.recoverySources.map(
+      ({ version, commit }) => `${version}:${commit}`,
+    );
+    assert.isAtLeast(outcome.plan.recoverySources.length, 4);
+    assert.include(identities, `1.0.2-nightly.20261009.1:${promotedCommit}`);
+    assert.notInclude(identities, `1.0.2:${promotedCommit}`);
+    assert.include(identities, `1.0.1:${sha("stable-new")}`);
+    assert.equal(new Set(identities).size, identities.length);
+  });
+
   it("allocates above a hand-installed stable baseline for nightly and stable promotion", () => {
-    const baseline = { tag: "fork-baseline", version: "1.0.0", commit: sha("baseline") };
+    const baseline = {
+      tag: "fork-baseline",
+      version: "1.0.0",
+      commit: sha("baseline"),
+    };
     const nightlyPlan = buildPlan({
       channel: "nightly",
       commit: sha("tip"),
@@ -402,7 +501,10 @@ describe("recovery predecessor", () => {
   it("picks the newest eligible release built from a different commit", () => {
     const commit = sha("candidate");
     const older = makeRelease({ version: "1.0.0" });
-    const sameSource = makeRelease({ version: "1.0.1-nightly.20261006.1", commit });
+    const sameSource = makeRelease({
+      version: "1.0.1-nightly.20261006.1",
+      commit,
+    });
     const newer = makeRelease({ version: "1.0.1-nightly.20261005.1" });
     const draft = makeRelease({
       version: "1.0.1-nightly.20261007.1",
@@ -417,7 +519,13 @@ describe("recovery predecessor", () => {
   it("refuses to plan a release when there is no predecessor to recover to", () => {
     assert.throws(
       () =>
-        buildPlan({ channel: "nightly", commit: sha("tip"), now: NOW, runNumber: 1, releases: [] }),
+        buildPlan({
+          channel: "nightly",
+          commit: sha("tip"),
+          now: NOW,
+          runNumber: 1,
+          releases: [],
+        }),
       /baseline/,
     );
   });
@@ -434,20 +542,45 @@ describe("android installation codes", () => {
 
   it("allocates above every published normal and recovery code and every reservation", () => {
     const releases = [
-      makeRelease({ version: "1.0.0", normalCode: 29_853_700, recoveryCode: 29_853_701 }),
-      makeRelease({ version: "1.0.1", normalCode: 29_853_710, recoveryCode: 29_853_720 }),
+      makeRelease({
+        version: "1.0.0",
+        normalCode: 29_853_700,
+        recoveryCode: 29_853_701,
+      }),
+      makeRelease({
+        version: "1.0.1",
+        normalCode: 29_853_710,
+        recoveryCode: 29_853_720,
+      }),
     ];
     assert.equal(highestUsedAndroidCode({ releases, reservationTags: [] }), 29_853_720);
     assert.equal(
-      highestUsedAndroidCode({ releases, reservationTags: ["fork-android-code-29853730"] }),
+      highestUsedAndroidCode({
+        releases,
+        reservationTags: ["fork-android-code-29853730"],
+      }),
       29_853_731,
     );
     assert.equal(
       nextAndroidCodePair(
-        highestUsedAndroidCode({ releases, reservationTags: ["fork-android-code-29853730"] }),
+        highestUsedAndroidCode({
+          releases,
+          reservationTags: ["fork-android-code-29853730"],
+        }),
       ).normal,
       29_853_732,
     );
+  });
+
+  it("reserves a contiguous recovery range and honors its full extent after cancellation", () => {
+    const allocation = nextAndroidCodeAllocation(29_853_700, 4);
+    assert.deepStrictEqual(allocation, {
+      normal: 29_853_701,
+      recovery: 29_853_702,
+      recoveries: [29_853_702, 29_853_703, 29_853_704, 29_853_705],
+      reservedThrough: 29_853_705,
+    });
+    assert.equal(reservedAndroidCodeEnd("fork-android-code-range-29853701-29853705"), 29_853_705);
   });
 
   it("counts withdrawn and draft releases, which still occupy their codes", () => {

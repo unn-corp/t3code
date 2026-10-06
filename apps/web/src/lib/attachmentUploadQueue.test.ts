@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   removeUpload: Symbol("remove-upload"),
   runAtomCommand: vi.fn(),
   readPreparedConnection: vi.fn(),
+  beginUpdateUpload: vi.fn(),
 }));
 
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
@@ -49,6 +50,10 @@ vi.mock("../state/attachments", () => ({
 
 vi.mock("../state/session", () => ({
   readPreparedConnection: mocks.readPreparedConnection,
+}));
+
+vi.mock("../state/updateInteraction", () => ({
+  beginClientUpdateUpload: mocks.beginUpdateUpload,
 }));
 
 import {
@@ -174,6 +179,8 @@ describe("attachmentUploadQueue", () => {
     mocks.runAtomCommand.mockReset();
     mocks.readPreparedConnection.mockReset();
     mocks.readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://environment.test/" });
+    mocks.beginUpdateUpload.mockReset();
+    mocks.beginUpdateUpload.mockImplementation(() => () => {});
     mocks.runAtomCommand.mockImplementation(
       async (
         _registry: unknown,
@@ -205,6 +212,69 @@ describe("attachmentUploadQueue", () => {
       releaseAttachmentUpload(imageId);
     }
     vi.unstubAllGlobals();
+  });
+
+  it("waits for native admission before minting an upload and holds through byte transfer", async () => {
+    let admit: (release: () => void) => void = () => {};
+    const admission = new Promise<() => void>((resolve) => {
+      admit = resolve;
+    });
+    const release = vi.fn();
+    const events: string[] = [];
+    mocks.beginUpdateUpload.mockReturnValue(admission);
+    mocks.runAtomCommand.mockImplementation(
+      async (
+        _registry: unknown,
+        command: unknown,
+        target: { readonly input: { readonly name?: string } },
+      ) => {
+        if (command === mocks.createUploadUrl) {
+          events.push("mint");
+          return {
+            _tag: "Success",
+            value: {
+              attachmentId: `pending-${target.input.name}`,
+              relativeUrl: "/api/attachments/upload/pending",
+              expiresAt: 1,
+            },
+          };
+        }
+        return { _tag: "Success", value: undefined };
+      },
+    );
+    const image = makeFile("admission-order");
+    startAttachmentUpload({ environmentId: firstEnvironment, image });
+    const settled = awaitAttachmentUploads([image.id]);
+    await Promise.resolve();
+
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    admit(() => {
+      events.push("release");
+      release();
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events).toEqual(["mint"]);
+    expect(TestXmlHttpRequest.requests).toHaveLength(1);
+
+    TestXmlHttpRequest.requests[0]!.complete();
+    await settled;
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(["mint", "release"]);
+  });
+
+  it("keeps a local file retryable without minting when native admission is denied", async () => {
+    const image = makeFile("admission-denied");
+    mocks.beginUpdateUpload.mockRejectedValue(new Error("installation is in progress"));
+
+    startAttachmentUpload({ environmentId: firstEnvironment, image });
+    await awaitAttachmentUploads([image.id]);
+
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    expect(readAttachmentUpload(image.id)).toMatchObject({ status: "failed" });
+    expect(image.file).toBeInstanceOf(File);
   });
 
   it.each([false, true])(

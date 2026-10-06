@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  CURRENT_ACTIVITY_PROTOCOL,
   capacityShortfalls,
   participantBlockers,
   type MaintenanceParticipant,
@@ -20,15 +21,16 @@ const participant = (overrides: Partial<MaintenanceParticipant> = {}): Maintenan
   descendants: [],
   orphaned: false,
   blockers: [],
-  activityProtocol: 2,
+  activityProtocol: CURRENT_ACTIVITY_PROTOCOL,
   ...overrides,
 });
 describe("device admission", () => {
   it("does not trust a legacy participant's idle attestation", () => {
     const legacy = { ...participant() };
     delete (legacy as { activityProtocol?: number }).activityProtocol;
-    const future = participant({ activityProtocol: 3 });
-    for (const entry of [legacy, future])
+    const future = participant({ activityProtocol: CURRENT_ACTIVITY_PROTOCOL + 1 });
+    const previous = participant({ activityProtocol: CURRENT_ACTIVITY_PROTOCOL - 1 });
+    for (const entry of [legacy, previous, future])
       expect(participantBlockers([entry], 600_000)).toEqual([
         expect.objectContaining({
           participantId: "p1",

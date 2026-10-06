@@ -8,6 +8,7 @@ import {
   ORPHAN_ATTESTATION_CONFIRMATION,
   UNKNOWN_PROCESS_IDENTITY,
   processCreationIdentity,
+  processCreationIdentities,
   UnsupportedPlatformError,
 } from "./forkMaintenanceStore.ts";
 import { newJournal } from "./forkMaintenanceJournal.ts";
@@ -88,6 +89,83 @@ const idle = async (store: CoordinatorStore, id: string) => {
 };
 
 describe("host coordinator", () => {
+  it("resets idle admission when a registered owner's identity becomes unreadable", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-maintenance-test-"));
+    directories.push(directory);
+    let unreadablePid: number | null = null;
+    const identities: Record<number, string> = { 100: "boot:1", 200: "boot:2" };
+    const identity = async (pid: number) => {
+      if (pid === unreadablePid) throw new Error("temporarily unreadable");
+      return identities[pid] ?? null;
+    };
+    const home = NodePath.join(directory, "home");
+    await NodeFSP.mkdir(home);
+    const runtime = await CoordinatorStore.open(
+      NodePath.join(directory, "coordinator"),
+      identity,
+      200,
+    );
+    await runtime.register(
+      { id: "desktop", label: "Desktop", kind: "desktop", homes: [home], updateTarget: true },
+      0,
+    );
+    await runtime.confirmBootstrap();
+    await runtime.observe("desktop", [], 0);
+    await runtime.observe("desktop", [], 600_000);
+    unreadablePid = 200;
+
+    const observer = await CoordinatorStore.open(
+      NodePath.join(directory, "coordinator"),
+      identity,
+      100,
+    );
+    const status = await observer.status(600_000);
+    expect(status.blockers).toContainEqual(
+      expect.objectContaining({ participantId: "desktop", reason: "unknown-participant" }),
+    );
+    expect(status.participants[0]).toMatchObject({ idleSince: null, frozenFor: null });
+    await expect(observer.freeze("tx", 600_000)).rejects.toThrow("could not be verified");
+  });
+
+  it("does not accept a fresh matching child row after a prior child identity check fails", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-maintenance-test-"));
+    directories.push(directory);
+    let childUnreadable = false;
+    const identity = async (pid: number) => {
+      if (pid === 300 && childUnreadable) throw new Error("temporarily unreadable");
+      return (
+        new Map([
+          [100, "boot:1"],
+          [200, "boot:2"],
+          [300, "boot:3"],
+        ]).get(pid) ?? null
+      );
+    };
+    const home = NodePath.join(directory, "home");
+    await NodeFSP.mkdir(home);
+    const store = await CoordinatorStore.open(
+      NodePath.join(directory, "coordinator"),
+      identity,
+      100,
+    );
+    await store.register(
+      { id: "desktop", label: "Desktop", kind: "desktop", homes: [home], updateTarget: true },
+      0,
+    );
+    await store.confirmBootstrap();
+    const child = [{ pid: 300, started: "boot:3", label: "child" }];
+    await store.observe("desktop", [], 0, child);
+    childUnreadable = true;
+
+    await store.observe("desktop", [], 600_000, child);
+    const status = await store.status(600_000);
+    expect(status.blockers).toContainEqual(
+      expect.objectContaining({ participantId: "desktop", reason: "unknown-participant" }),
+    );
+    expect(status.participants[0]?.idleSince).toBeNull();
+    await expect(store.freeze("tx", 600_000)).rejects.toThrow("could not be verified");
+  });
+
   it("blocks until bootstrap is confirmed and never makes development runtimes update targets", async () => {
     const f = await fixture();
     const store = await f.open(100);
@@ -1002,5 +1080,57 @@ describe("process identity", () => {
     await expect(processCreationIdentity(42, "freebsd")).rejects.toBeInstanceOf(
       UnsupportedPlatformError,
     );
+  });
+  it("batches Windows identities with exact ticks and distinguishes absence from unreadable", async () => {
+    const calls: Array<{ args: ReadonlyArray<string>; options: unknown }> = [];
+    const run = (async (_file: string, args: ReadonlyArray<string>, options: unknown) => {
+      calls.push({ args, options });
+      return { stdout: "41\tP\t638950000000000000\r\n42\tA\r\n43\tU\r\n", stderr: "" };
+    }) as never;
+    const result = await processCreationIdentities([41, 42, 43], "win32", run);
+    expect(result).toEqual([
+      { kind: "present", identity: "638950000000000000" },
+      { kind: "absent" },
+      expect.objectContaining({ kind: "unreadable" }),
+    ]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.options).toMatchObject({ timeout: 10_000, windowsHide: true });
+  });
+  it("bounds Windows command input into complete batches and fails closed on missing rows", async () => {
+    const commands: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const run = (async (_file: string, args: ReadonlyArray<string>) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      const command = args.at(-1)!;
+      commands.push(command);
+      const ids = [...command.matchAll(/\$ids=@\(([^)]*)\)/g)][0]?.[1]?.split(",") ?? [];
+      await Promise.resolve();
+      active--;
+      return { stdout: ids.map((id) => `${id}\tP\t${id}`).join("\n"), stderr: "" };
+    }) as never;
+    const pids = Array.from({ length: 1600 }, (_, index) => index + 1000);
+    const result = await processCreationIdentities(pids, "win32", run);
+    expect(commands.length).toBeGreaterThan(1);
+    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBeLessThanOrEqual(4);
+    expect(commands.every((command) => command.length < 8_500)).toBe(true);
+    expect(result).toHaveLength(pids.length);
+    expect(result.every((entry) => entry.kind === "present")).toBe(true);
+
+    const omitted = await processCreationIdentities([7001], "win32", (async () => ({
+      stdout: "",
+      stderr: "",
+    })) as never);
+    expect(omitted[0]).toMatchObject({ kind: "unreadable" });
+  });
+  it("marks every PID in a timed-out Windows batch unreadable", async () => {
+    const run = (async () => {
+      throw new Error("timed out");
+    }) as never;
+    const result = await processCreationIdentities([51, 52], "win32", run);
+    expect(result).toHaveLength(2);
+    expect(result.every((entry) => entry.kind === "unreadable")).toBe(true);
   });
 });

@@ -7,7 +7,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { IN_FLIGHT_PHASES } from "@t3tools/shared/forkMaintenanceJournal";
 import {
   CoordinatorStore,
   coordinatorDirectory,
@@ -46,7 +45,7 @@ export interface MaintenanceHostInput {
 export type MaintenanceHost =
   /** No host files are touched (isolated tests). */
   | { readonly mode: "disabled" }
-  /** Ordinary work proceeds. No capability is advertised and installation stays blocked. */
+  /** Unsupported OS: no local automatic update target exists and no capability is advertised. */
   | { readonly mode: "unavailable"; readonly reason: string }
   | {
       readonly mode: "active";
@@ -110,10 +109,9 @@ async function open(input: MaintenanceHostInput, env: NodeJS.ProcessEnv): Promis
     // An OS without process-identity verification must still run: only installation fails closed.
     if (cause instanceof UnsupportedPlatformError)
       return { mode: "unavailable", reason: cause.message };
-    return {
-      mode: "unavailable",
-      reason: `The device coordinator could not be opened: ${cause instanceof Error ? cause.message : String(cause)}`,
-    };
+    throw new MaintenanceStartupHeld({
+      reason: `This runtime could not join device maintenance: ${cause instanceof Error ? cause.message : String(cause)}. Resolve the coordinator before starting T3 Code.`,
+    });
   }
   const { kind, updateTarget } = participantKindFor(input, env);
   const participantId = `rt-${NodeCrypto.randomUUID().slice(0, 8)}`;
@@ -135,20 +133,11 @@ async function open(input: MaintenanceHostInput, env: NodeJS.ProcessEnv): Promis
   try {
     status = await store.status(Date.now());
   } catch (cause) {
-    // An unreadable registry cannot show a fence, but journals are separate files: an in-flight one still holds the device.
-    const inFlight = await store.listJournals().then(
-      (journals) => journals.some((journal) => IN_FLIGHT_PHASES.has(journal.phase)),
-      () => true,
-    );
-    if (inFlight)
-      throw new MaintenanceStartupHeld({
-        reason:
-          "Device maintenance is in progress and its coordinator is unreadable. Run `t3 maintenance status`.",
-      });
-    return {
-      mode: "unavailable",
-      reason: `The device coordinator is unreadable: ${cause instanceof Error ? cause.message : String(cause)}`,
-    };
+    // Supported runtimes must register before opening a database. Even a temporary lock/read failure
+    // cannot start an invisible runtime which another participant could miss when its next read succeeds.
+    throw new MaintenanceStartupHeld({
+      reason: `This runtime could not read device maintenance: ${cause instanceof Error ? cause.message : String(cause)}. Resolve the coordinator before starting T3 Code.`,
+    });
   }
   const heldReason =
     "Device maintenance is in progress. Wait for the update to finish verification or recovery, then start T3 Code again.";

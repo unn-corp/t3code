@@ -37,11 +37,11 @@ final class InstallIntents {
 
     /** Records a request to roll back to the cached recovery build the person selected. Mutates {@code state}. */
     static UpdateState.Intent requestRollback(UpdateState state, String optionId, String transactionId, long installedVersionCode,
-            String installedCommit, long now) throws Rejected {
+            String installedVersion, String installedCommit, long now) throws Rejected {
         if (state.pending != null) throw new Rejected("An installation is already in progress.");
         UpdateState.Recovery entry = optionId == null ? null : state.recovery(optionId);
         if (entry == null) throw new Rejected("That recovery build is not cached.");
-        if (!installable(entry, installedVersionCode, installedCommit)) throw new Rejected("Android cannot install that recovery build over the current app.");
+        if (!installable(entry, installedVersionCode, installedVersion, installedCommit)) throw new Rejected("Android cannot install that recovery build over the current app.");
         if (!recoveryTransactionId(installedVersionCode, entry.sha256).equals(transactionId))
             throw new Rejected("That recovery option was recorded for a different installed build. Review the current options.");
         UpdateState.Intent intent = new UpdateState.Intent();
@@ -50,18 +50,19 @@ final class InstallIntents {
         return intent;
     }
 
-    static boolean installable(UpdateState.Recovery entry, long installedVersionCode, String installedCommit) {
-        return entry.versionCode > installedVersionCode && !entry.commit.equals(installedCommit);
+    static boolean installable(UpdateState.Recovery entry, long installedVersionCode, String installedVersion, String installedCommit) {
+        boolean sameSource = entry.commit.equals(installedCommit) && entry.version.equals(installedVersion);
+        return entry.versionCode > installedVersionCode && !sameSource;
     }
 
     /** Null while the request may still be satisfied; otherwise why it must be dropped. Never selects a substitute. */
-    static String staleReason(UpdateState state, long installedVersionCode, String installedCommit, long now) {
+    static String staleReason(UpdateState state, long installedVersionCode, String installedVersion, String installedCommit, long now) {
         UpdateState.Intent intent = state.intent;
         if (intent == null) return null;
         if (now - intent.requestedAt > TTL_MS) return "The install request expired. Request it again.";
         if ("rollback".equals(intent.kind)) {
             UpdateState.Recovery entry = state.recovery(intent.targetSha256);
-            if (entry == null || !installable(entry, installedVersionCode, installedCommit))
+            if (entry == null || !installable(entry, installedVersionCode, installedVersion, installedCommit))
                 return "The selected recovery build is no longer available for this installation.";
             return null;
         }

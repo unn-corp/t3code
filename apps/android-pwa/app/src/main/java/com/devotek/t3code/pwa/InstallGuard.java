@@ -27,6 +27,7 @@ final class InstallGuard {
         boolean installPermission = true;
         boolean confirmationAvailable = true;
         boolean recoveryReady = true;
+        boolean storageReady = true;
         boolean pending;
         boolean supported = true;
         boolean uncertainState;
@@ -40,6 +41,7 @@ final class InstallGuard {
         if (!input.supported) blockers.add(new Blocker("bootstrap", "This Android version cannot verify updates in the app.", 0));
         if (input.pending) blockers.add(new Blocker("transaction", "An installation is already in progress.", 0));
         if (!input.recoveryReady) blockers.add(new Blocker("bootstrap", "A verified recovery build is not cached yet.", 0));
+        if (!input.storageReady) blockers.add(new Blocker("storage", UpdateCapacity.INSUFFICIENT_MESSAGE, 0));
         if (!input.confirmationAvailable) blockers.add(new Blocker("authorization", "Enable App updates notifications in Android settings so installation confirmation can reach you.", 0));
         if (!input.installPermission) blockers.add(new Blocker("authorization", "Allow T3 Code to install updates in Android settings.", 0));
         // No caller bypasses the quiet wait: a person's Install or Recovery request waits like an automatic one.

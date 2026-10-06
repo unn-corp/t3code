@@ -1,4 +1,8 @@
-import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  FORK_ACTIVITY_PROTOCOL,
+  type ExecutionEnvironmentDescriptor,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -123,7 +127,7 @@ describe("updateOutdatedHost", () => {
             coordinatorId: "c",
             participantId: "p",
             admission: true,
-            activityProtocol: 2,
+            activityProtocol: FORK_ACTIVITY_PROTOCOL,
             recovery: true,
           },
         });

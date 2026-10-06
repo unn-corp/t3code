@@ -2,7 +2,8 @@ import * as Schema from "effect/Schema";
 
 /** Additive fork protocol. Absence means manual bootstrap, never legacy installation. */
 export const FORK_MAINTENANCE_PROTOCOL = 1;
-export const FORK_ACTIVITY_PROTOCOL = 2;
+/** Complete census plus exact idle-root ownership; live background descendants block admission. */
+export const FORK_ACTIVITY_PROTOCOL = 3;
 export const ForkUpdateChannel = Schema.Literals(["stable", "nightly"]);
 export type ForkUpdateChannel = typeof ForkUpdateChannel.Type;
 export const ForkUpdatePhase = Schema.Literals([

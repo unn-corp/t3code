@@ -21,17 +21,18 @@ import {
   ANDROID_CODE_TAG_PREFIX,
   FORK_MANIFEST_ASSET,
   androidCodeTag,
+  androidCodeRangeTag,
   candidateMarker,
   classifyRelease,
   forkTagForVersion,
   highestUsedAndroidCode,
   isWithdrawn,
-  nextAndroidCodePair,
+  nextAndroidCodeAllocation,
   recordedChannel,
   recordedCommit,
   withWithdrawal,
   withoutWithdrawal,
-  type AndroidCodePair,
+  type AndroidCodeAllocation,
   type ReleasePlan,
   type ReleaseRecord,
 } from "./fork-release-policy.ts";
@@ -75,7 +76,12 @@ export interface GitHubApi {
   uploadAsset(releaseId: number, name: string, data: Uint8Array): Promise<RawAsset>;
   updateRelease(
     id: number,
-    patch: { body?: string; draft?: false; prerelease?: boolean; makeLatest?: boolean },
+    patch: {
+      body?: string;
+      draft?: false;
+      prerelease?: boolean;
+      makeLatest?: boolean;
+    },
   ): Promise<RawRelease>;
   deleteRelease(id: number): Promise<void>;
 }
@@ -261,8 +267,12 @@ export const loadReleaseRecords = async (github: GitHubApi): Promise<ReleaseReco
 export const reserveAndroidCodes = async (
   github: GitHubApi,
   commit: string,
-  options: { readonly dryRun?: boolean; readonly attempts?: number } = {},
-): Promise<AndroidCodePair> => {
+  options: {
+    readonly dryRun?: boolean;
+    readonly attempts?: number;
+    readonly recoveryCount?: number;
+  } = {},
+): Promise<AndroidCodeAllocation> => {
   for (let attempt = 0; attempt < (options.attempts ?? 8); attempt += 1) {
     const [releases, reservationTags] = await Promise.all([
       loadReleaseRecords(github),
@@ -274,10 +284,22 @@ export const reserveAndroidCodes = async (
         `${invalid.tagName} has an unreadable fork-release.json, so its codes are unknown.`,
       );
     }
-    const pair = nextAndroidCodePair(highestUsedAndroidCode({ releases, reservationTags }));
+    const allocation = nextAndroidCodeAllocation(
+      highestUsedAndroidCode({ releases, reservationTags }),
+      options.recoveryCount ?? 1,
+    );
     // A rehearsal reads the allocator but claims nothing, so it can never burn a real code.
-    if (options.dryRun || (await github.createTag(androidCodeTag(pair.normal), commit)))
-      return pair;
+    if (options.dryRun) return allocation;
+    // Publish the full range first so a crash or a losing start-code race still burns every
+    // allocated recovery code. The canonical start tag then arbitrates differing range lengths.
+    if (
+      !(await github.createTag(
+        androidCodeRangeTag(allocation.normal, allocation.reservedThrough),
+        commit,
+      ))
+    )
+      continue;
+    if (await github.createTag(androidCodeTag(allocation.normal), commit)) return allocation;
   }
   throw new Error("Could not reserve Android installation codes after repeated conflicts.");
 };
@@ -470,7 +492,9 @@ export const withdrawRelease = async (
   const release = await requireRelease(github, version);
   const body = release.body ?? "";
   if (isWithdrawn({ body })) return "already-withdrawn";
-  await github.updateRelease(release.id, { body: withWithdrawal(body, reason, at.toISOString()) });
+  await github.updateRelease(release.id, {
+    body: withWithdrawal(body, reason, at.toISOString()),
+  });
   return "withdrawn";
 };
 

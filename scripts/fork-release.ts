@@ -10,6 +10,7 @@ import * as NodeUtil from "node:util";
 import * as Effect from "effect/Effect";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
+  ANDROID_RECOVERY_EXTRAS_DIR,
   ANDROID_METADATA_FILE,
   ARTIFACT_DIRS,
   VALIDATION_CHECKS,
@@ -51,6 +52,7 @@ import {
   BASELINE_MANIFEST_ASSET,
   baselineDigest,
 } from "./fork-release-baseline.ts";
+import { androidCodeRangeTag, androidCodeTag } from "./fork-release-policy.ts";
 import {
   createDraft,
   createGitHubApi,
@@ -67,6 +69,7 @@ import {
   FORK_CHECKSUMS_ASSET,
   FORK_MANIFEST_ASSET,
   buildPlan,
+  type AndroidCodeAllocation,
   type ForkChannel,
   type PlannedRelease,
 } from "./fork-release-policy.ts";
@@ -74,6 +77,24 @@ import {
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 
 type Args = Readonly<Record<string, string | undefined>>;
+
+interface AndroidCodeReceipt extends AndroidCodeAllocation {
+  readonly plan: {
+    readonly version: string;
+    readonly commit: string;
+    readonly channel: ForkChannel;
+    readonly recoveries: ReadonlyArray<{
+      readonly version: string;
+      readonly commit: string;
+      readonly asset: string;
+      readonly tag: string;
+    }>;
+  };
+  readonly reservation: {
+    readonly rangeTag: string;
+    readonly startTag: string;
+  };
+}
 
 const readJson = (file: string): unknown => JSON.parse(NodeFS.readFileSync(file, "utf8"));
 const writeJson = (file: string, value: unknown) => {
@@ -125,7 +146,11 @@ const runPlan = async (values: Args) => {
     runNumber: Number(values["run-number"] ?? process.env.GITHUB_RUN_NUMBER ?? "0"),
     releases,
     baseline: baseline
-      ? { tag: BASELINE_TAG, version: baseline.manifest.version, commit: baseline.manifest.commit }
+      ? {
+          tag: BASELINE_TAG,
+          version: baseline.manifest.version,
+          commit: baseline.manifest.commit,
+        }
       : null,
   });
   const out = values.out ?? "fork-release-plan.json";
@@ -147,6 +172,8 @@ const runPlan = async (values: Args) => {
     predecessor_version: plan.predecessor.version,
     predecessor_commit: plan.predecessor.commit,
     predecessor_baseline: plan.predecessor.baseline === true,
+    recovery_sources: JSON.stringify(plan.recoverySources),
+    has_additional_recoveries: plan.recoverySources.length > 1,
   });
 };
 
@@ -194,9 +221,10 @@ const runAndroidVerify = (values: Args) => {
   // The build helper writes metadata.json beside every release APK, recovery builds included.
   const metadata = parseAndroidBuildMetadata(readJson(NodePath.resolve(values.metadata ?? "")));
   const assetName =
-    role === "normal"
+    values["asset-name"] ??
+    (role === "normal"
       ? `t3-code-android-${releaseVersion}.apk`
-      : `t3-code-android-recovery-${releaseVersion}.apk`;
+      : `t3-code-android-recovery-${releaseVersion}.apk`);
   const verified = verifyAndroidApk({
     assetName,
     apkSha256,
@@ -303,11 +331,18 @@ export interface CandidateRecord {
   readonly channel: ForkChannel;
   readonly candidateDigest: string;
   readonly assets: ReadonlyArray<Omit<CandidateAsset, "path">>;
-  readonly android: { readonly normal: VerifiedAndroidApk; readonly recovery: VerifiedAndroidApk };
+  readonly android: {
+    readonly normal: VerifiedAndroidApk;
+    readonly recovery: VerifiedAndroidApk;
+    readonly recoveries: ReadonlyArray<VerifiedAndroidApk>;
+  };
 }
 
-const readVerifiedApk = (dir: string): VerifiedAndroidApk | null => {
-  const file = NodePath.join(dir, ANDROID_METADATA_FILE);
+const readVerifiedApk = (
+  dir: string,
+  metadataName = ANDROID_METADATA_FILE,
+): VerifiedAndroidApk | null => {
+  const file = NodePath.join(dir, metadataName);
   return NodeFS.existsSync(file) ? (readJson(file) as VerifiedAndroidApk) : null;
 };
 
@@ -324,35 +359,106 @@ export const assembleCandidate = (input: {
   readonly plan: PlannedRelease;
   readonly inputDir: string;
   readonly outDir: string;
+  readonly codeAllocation?: AndroidCodeReceipt;
 }): { problems: string[]; record: CandidateRecord | null } => {
   const { plan } = input;
   const normal = readVerifiedApk(NodePath.join(input.inputDir, ARTIFACT_DIRS.androidNormal));
-  const recovery = readVerifiedApk(NodePath.join(input.inputDir, ARTIFACT_DIRS.androidRecovery));
+  const recoverySources = plan.recoverySources ?? [
+    {
+      ...plan.predecessor,
+      channel: null,
+      asset: `t3-code-android-recovery-${plan.version}.apk`,
+    },
+  ];
+  const recoveryDirectories = recoverySources.map((source, index) => ({
+    directory: index === 0 ? ARTIFACT_DIRS.androidRecovery : ANDROID_RECOVERY_EXTRAS_DIR,
+    asset: source.asset,
+  }));
+  const recoveries = recoverySources.map((source, index) =>
+    readVerifiedApk(
+      NodePath.join(input.inputDir, recoveryDirectories[index]!.directory),
+      index === 0 ? ANDROID_METADATA_FILE : `metadata-${index}.json`,
+    ),
+  );
+  const recovery = recoveries[0] ?? null;
   const verification = verifyBuild({
     inputDir: input.inputDir,
     version: plan.version,
     channel: plan.channel,
     helperAssets: RECOVERY_HELPER_ASSETS,
-    android: { normal, recovery },
+    android: {
+      normal,
+      recovery,
+      recoveries: recoveries.filter((entry): entry is VerifiedAndroidApk => entry !== null),
+    },
+    androidRecoveries: recoveryDirectories,
     wslEmbedded: readWslReceipt(input.inputDir),
   });
   const problems = [...verification.problems];
+  if (input.codeAllocation) {
+    const allocation = input.codeAllocation;
+    if (
+      allocation.plan.version !== plan.version ||
+      allocation.plan.commit !== plan.commit ||
+      allocation.plan.channel !== plan.channel ||
+      allocation.plan.recoveries.length !== recoverySources.length ||
+      allocation.plan.recoveries.some(
+        (source, index) =>
+          source.version !== recoverySources[index]?.version ||
+          source.commit !== recoverySources[index]?.commit ||
+          source.asset !== recoverySources[index]?.asset ||
+          source.tag !== recoverySources[index]?.tag,
+      ) ||
+      allocation.reservation.rangeTag !==
+        androidCodeRangeTag(allocation.normal, allocation.reservedThrough) ||
+      allocation.reservation.startTag !== androidCodeTag(allocation.normal) ||
+      !normal ||
+      normal.versionCode !== allocation.normal ||
+      allocation.recoveries.length !== recoverySources.length ||
+      allocation.recovery !== allocation.recoveries[0] ||
+      allocation.reservedThrough !== allocation.normal + allocation.recoveries.length
+    ) {
+      problems.push("Android APK codes do not match the durable reserved allocation.");
+    } else {
+      for (const [index, verified] of recoveries.entries()) {
+        if (verified && verified.versionCode !== allocation.recoveries[index]) {
+          problems.push(`Recovery APK ${index} does not use its exact reserved versionCode.`);
+        }
+      }
+    }
+  }
   if (normal && normal.sourceCommit !== plan.commit) {
     problems.push(
       `The normal APK was built from ${normal.sourceCommit}, not the pinned ${plan.commit}.`,
     );
   }
-  if (recovery && recovery.sourceCommit !== plan.predecessor.commit) {
+  if (
+    recovery &&
+    (recovery.sourceCommit !== plan.predecessor.commit ||
+      recovery.sourceVersion !== plan.predecessor.version)
+  ) {
     problems.push(
-      `The recovery APK was built from ${recovery.sourceCommit}, not ${plan.predecessor.commit}.`,
+      `The primary recovery APK reports ${recovery.sourceVersion} at ${recovery.sourceCommit}, not ${plan.predecessor.version} at ${plan.predecessor.commit}.`,
     );
   }
-  if (recovery && recovery.sourceVersion !== plan.predecessor.version) {
-    problems.push(
-      `The recovery APK reports ${recovery.sourceVersion}, not ${plan.predecessor.version}.`,
-    );
+  for (let index = 0; index < recoverySources.length; index++) {
+    const source = recoverySources[index]!;
+    const verified = recoveries[index];
+    if (!verified) {
+      problems.push(`Recovery APK metadata is missing for ${source.version} at ${source.commit}.`);
+      continue;
+    }
+    if (
+      verified.asset !== source.asset ||
+      verified.sourceVersion !== source.version ||
+      verified.sourceCommit !== source.commit
+    )
+      problems.push(
+        `Recovery APK ${source.asset} does not match its frozen source ${source.version} at ${source.commit}.`,
+      );
   }
-  if (problems.length > 0 || !normal || !recovery) return { problems, record: null };
+  if (problems.length > 0 || !normal || !recovery || recoveries.some((entry) => entry === null))
+    return { problems, record: null };
 
   NodeFS.rmSync(input.outDir, { recursive: true, force: true });
   NodeFS.mkdirSync(input.outDir, { recursive: true });
@@ -377,7 +483,11 @@ export const assembleCandidate = (input: {
     channel: plan.channel,
     candidateDigest: candidateDigest(assets),
     assets: assets.map(({ path: _path, ...rest }) => rest),
-    android: { normal, recovery },
+    android: {
+      normal,
+      recovery,
+      recoveries: recoveries as VerifiedAndroidApk[],
+    },
   };
   writeJson(candidateRecordPath(input.outDir), record);
   return { problems, record };
@@ -405,7 +515,10 @@ const runReceipt = (values: Args): number => {
     throw new Error("--check and --target must name a known validation.");
   }
   const receipt = runValidation(
-    { run: PACKAGE_VALIDATION.run, timeoutMinutes: PACKAGE_VALIDATION.timeoutMinutes[check] },
+    {
+      run: PACKAGE_VALIDATION.run,
+      timeoutMinutes: PACKAGE_VALIDATION.timeoutMinutes[check],
+    },
     {
       check,
       target,
@@ -554,11 +667,13 @@ const main = async (argv: ReadonlyArray<string>): Promise<number> => {
       role: { type: "string" },
       apk: { type: "string" },
       metadata: { type: "string" },
+      "asset-name": { type: "string" },
       "release-version": { type: "string" },
       "source-version": { type: "string" },
       code: { type: "string" },
       "pinned-signer": { type: "string" },
       input: { type: "string" },
+      codes: { type: "string" },
       candidate: { type: "string" },
       check: { type: "string" },
       target: { type: "string" },
@@ -596,11 +711,47 @@ const main = async (argv: ReadonlyArray<string>): Promise<number> => {
       return 0;
     case "reserve-codes": {
       const plan = loadPlan(values.plan ?? "");
-      const pair = await reserveAndroidCodes(githubFromEnv(), plan.commit, {
+      const allocation = await reserveAndroidCodes(githubFromEnv(), plan.commit, {
         dryRun,
+        recoveryCount: plan.recoverySources.length,
       });
-      writeJson(values.out ?? "android-codes.json", pair);
-      setOutputs({ normal_code: pair.normal, recovery_code: pair.recovery });
+      const recoveries = plan.recoverySources.map((source, index) => ({
+        index,
+        version: source.version,
+        commit: source.commit,
+        tag: source.tag,
+        asset: source.asset,
+        baseline: source.baseline === true,
+        code: allocation.recoveries[index]!,
+      }));
+      writeJson(values.out ?? "android-codes.json", {
+        normal: allocation.normal,
+        recovery: allocation.recovery,
+        recoveries: allocation.recoveries,
+        reservedThrough: allocation.reservedThrough,
+        plan: {
+          version: plan.version,
+          commit: plan.commit,
+          channel: plan.channel,
+          recoveries: plan.recoverySources.map((source) => ({
+            version: source.version,
+            commit: source.commit,
+            asset: source.asset,
+            tag: source.tag,
+          })),
+        },
+        reservation: {
+          rangeTag: androidCodeRangeTag(allocation.normal, allocation.reservedThrough),
+          startTag: androidCodeTag(allocation.normal),
+        },
+        recoveryMatrix: recoveries.slice(1),
+      });
+      setOutputs({
+        normal_code: allocation.normal,
+        recovery_code: allocation.recovery,
+        recovery_codes: JSON.stringify(allocation.recoveries),
+        recovery_matrix: JSON.stringify(recoveries.slice(1)),
+      });
       return 0;
     }
     case "android-verify":
@@ -617,10 +768,12 @@ const main = async (argv: ReadonlyArray<string>): Promise<number> => {
       return problems.length === 0 ? 0 : 1;
     }
     case "assemble": {
+      const codeAllocation = readJson(NodePath.resolve(values.codes ?? "")) as AndroidCodeReceipt;
       const { problems } = assembleCandidate({
         plan: loadPlan(values.plan ?? ""),
         inputDir: NodePath.resolve(values.input ?? ""),
         outDir: NodePath.resolve(values.out ?? ""),
+        codeAllocation,
       });
       problems.forEach((problem) => console.error(problem));
       return problems.length === 0 ? 0 : 1;
@@ -631,7 +784,10 @@ const main = async (argv: ReadonlyArray<string>): Promise<number> => {
         values.tag ?? "",
         values.out ?? "predecessor",
       );
-      setOutputs({ predecessor_digest: fetched.digest, predecessor_version: fetched.version });
+      setOutputs({
+        predecessor_digest: fetched.digest,
+        predecessor_version: fetched.version,
+      });
       return 0;
     }
     case "baseline-pack":

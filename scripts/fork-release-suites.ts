@@ -24,7 +24,12 @@ export const PACKAGE_VALIDATION = {
   timeoutMinutes: { install: 30, update: 45, recovery: 45 },
 } as const;
 
-export type SuiteId = "coordinator" | "host-runtime" | "desktop-updater" | "native-android";
+export type SuiteId =
+  | "coordinator"
+  | "host-runtime"
+  | "desktop-updater"
+  | "client-updates"
+  | "native-android";
 
 export interface SuiteSpec {
   readonly id: SuiteId;
@@ -96,6 +101,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
     required: [
       "src/maintenance/MaintenanceHost.test.ts",
       "src/maintenance/MaintenanceCoordinator.test.ts",
+      "src/maintenance/IdleProcessRoots.test.ts",
       "src/diagnostics/ProcessDiagnostics.test.ts",
       "src/maintenance/MaintenanceOperatorHttp.test.ts",
       "src/maintenance/WorkAdmission.test.ts",
@@ -135,6 +141,28 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
     ],
     timeoutMinutes: 30,
   },
+  "client-updates": {
+    id: "client-updates",
+    description:
+      "Shared client update controls: waiting state, host capability admission, device grouping, exact recovery confirmation, restored automation review, Android bridge, and full upload admission.",
+    // The same web source ships in both desktop packages and the fork APK. The native adapters
+    // also run on their own target suites; this suite proves the shared controller integration.
+    targets: ["linux-x64"],
+    workdir: "apps/web",
+    command: VITEST,
+    results: "vitest",
+    required: [
+      "src/state/forkUpdates.test.ts",
+      "src/state/hostForkUpdates.test.ts",
+      "src/state/hostUpdateBatcher.test.ts",
+      "src/components/settings/UpdateRecoveryDialog.test.tsx",
+      "src/components/settings/UpdateSafetyReviewDialog.test.tsx",
+      "src/android/updates.test.ts",
+      "src/lib/attachmentUploadQueue.test.ts",
+      "src/browser/browserRecordingUpload.test.ts",
+    ],
+    timeoutMinutes: 30,
+  },
   "native-android": {
     id: "native-android",
     description:
@@ -153,6 +181,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       pwa("ReleaseClientTest"),
       pwa("ReleaseManifestTest"),
       pwa("UpdateEligibilityTest"),
+      pwa("UpdateCapacityTest"),
       pwa("UpdateReconcilerTest"),
       pwa("UpdateStoreTest"),
       pwa("UpdateEngineRecoveryReadinessTest"),
@@ -178,8 +207,8 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
  */
 export const REQUIRED_SUITES: Readonly<Record<ValidationCheck, ReadonlyArray<SuiteId>>> = {
   install: ["coordinator", "host-runtime"],
-  update: ["coordinator", "host-runtime", "desktop-updater", "native-android"],
-  recovery: ["coordinator", "host-runtime", "desktop-updater", "native-android"],
+  update: ["coordinator", "host-runtime", "desktop-updater", "client-updates", "native-android"],
+  recovery: ["coordinator", "host-runtime", "desktop-updater", "client-updates", "native-android"],
 };
 
 export const suiteSpecDigest = (spec: SuiteSpec): string =>

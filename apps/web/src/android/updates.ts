@@ -20,6 +20,7 @@ export type AndroidUpdateBlockerReason =
   | "commands"
   | "uploads"
   | "input-active"
+  | "storage"
   | "authorization"
   | "offline"
   | "transaction"
@@ -61,6 +62,7 @@ export interface AndroidRecoveryBuild {
   readonly versionCode: number;
   readonly version: string;
   readonly commit: string;
+  readonly channel: ForkUpdateChannel;
   readonly sha256: string;
   /** Recorded with the option; native rejects it if the installed build has since changed. */
   readonly transactionId: string;
@@ -331,7 +333,7 @@ export function toForkUpdateStatus(status: AndroidUpdateStatus): ForkUpdateStatu
       build: {
         version: build.version,
         commit: build.commit,
-        channel: status.current.channel,
+        channel: build.channel,
         artifactSha256: build.sha256,
       },
       homes: [],

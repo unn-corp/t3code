@@ -74,6 +74,8 @@ jobs:
       predecessor_version: ${{ steps.plan.outputs.predecessor_version }}
       predecessor_commit: ${{ steps.plan.outputs.predecessor_commit }}
       predecessor_baseline: ${{ steps.plan.outputs.predecessor_baseline }}
+      recovery_sources: ${{ steps.plan.outputs.recovery_sources }}
+      has_additional_recoveries: ${{ steps.plan.outputs.has_additional_recoveries }}
       publish: ${{ steps.intent.outputs.publish }}
     steps:
       # Orchestration always runs from the commit that defines this workflow, never from the
@@ -177,9 +179,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Android installation codes are a serial counter across both channels. The reservation tag is
-  # the atomic step, so concurrent runs can never share a code. A rehearsal reads the counter and
-  # claims nothing.
+  # Android installation codes are a serial counter across both channels. The durable range tag
+  # burns every code before the canonical start claim arbitrates differing range lengths. A
+  # rehearsal reads the counter and claims nothing.
   reserve_android_codes:
     name: Reserve Android codes
     needs: [plan]
@@ -191,6 +193,7 @@ jobs:
     outputs:
       normal_code: ${{ steps.reserve.outputs.normal_code }}
       recovery_code: ${{ steps.reserve.outputs.recovery_code }}
+      recovery_matrix: ${{ steps.reserve.outputs.recovery_matrix }}
     steps:
       # Orchestration always runs from the commit that defines this workflow, never from the
       # (possibly older) commit being released.
@@ -227,6 +230,13 @@ jobs:
         # $DRY is intentionally unquoted: it is empty or a single flag.
         run: node scripts/fork-release.ts reserve-codes --plan fork-release-plan.json --out android-codes.json $DRY
 
+      - name: Upload reserved Android code allocation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-code-allocation
+          path: android-codes.json
+          if-no-files-found: error
+
   # The JS bundle is built once from the pinned commit. There is no T3 Connect account
   # provisioning in this fork, so no relay, Clerk, or tracing configuration is baked in.
   build_bundle:
@@ -260,9 +270,13 @@ jobs:
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
-          node-version-file: source/package.json
+          node-version-file: tooling/package.json
           cache: false
           run-install: false
+
+      - name: Install current release tooling and builder
+        working-directory: tooling
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts... --filter=@t3tools/web...
 
       - name: Install bundle dependencies
         working-directory: source
@@ -564,6 +578,139 @@ jobs:
           path: tooling/android-recovery/*
           if-no-files-found: error
 
+  # Extra retained-source recovery APKs let clients resume after restoring any of the frozen
+  # recent stable/nightly builds. Each matrix item is pinned in the plan and gets its own code.
+  android_recovery_extras:
+    name: Android recovery ${{ matrix.version }}
+    needs: [plan, reserve_android_codes]
+    if: needs.plan.outputs.skip == 'false' && needs.plan.outputs.has_additional_recoveries == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.reserve_android_codes.outputs.recovery_matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      NORMAL_CODE: ${{ needs.reserve_android_codes.outputs.normal_code }}
+      SIGNER_SHA256: ${{ vars.FORK_ANDROID_SIGNER_SHA256 }}
+      KEY_ALIAS: ${{ vars.FORK_ANDROID_KEY_ALIAS || 't3-pwa' }}
+      SOURCE_VERSION: ${{ matrix.version }}
+      SOURCE_COMMIT: ${{ matrix.commit }}
+      RECOVERY_CODE: ${{ matrix.code }}
+      RECOVERY_ASSET: ${{ matrix.asset }}
+      RECOVERY_INDEX: ${{ matrix.index }}
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Checkout pinned recovery source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ matrix.commit }}
+          path: source
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: tooling/package.json
+          cache: false
+          run-install: false
+
+      - name: Install current release tooling and builder
+        working-directory: tooling
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts... --filter=@t3tools/web...
+
+      - name: Install pinned source dependencies
+        working-directory: source
+        run: vp install --filter=@t3tools/web... --filter=@t3tools/scripts...
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK packages
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install signing material
+        env:
+          KEYSTORE_BASE64: ${{ secrets.FORK_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.FORK_ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "$KEYSTORE_BASE64" && -n "$KEYSTORE_PASSWORD" ]] || { echo "Android signing secrets are required." >&2; exit 1; }
+          [[ "$SIGNER_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "FORK_ANDROID_SIGNER_SHA256 must pin the release certificate." >&2; exit 1; }
+          umask 077
+          mkdir -p "$RUNNER_TEMP/android-signing"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-signing/release.jks"
+          printf '%s' "$KEYSTORE_PASSWORD" > "$RUNNER_TEMP/android-signing/password"
+
+      - name: Build recovery APK with current tooling
+        working-directory: tooling
+        run: |
+          set -euo pipefail
+          [[ "$(git -C "$GITHUB_WORKSPACE/source" rev-parse HEAD)" == "$SOURCE_COMMIT" ]] || { echo "Recovery source checkout mismatch." >&2; exit 1; }
+          node scripts/build-android-pwa.ts \
+            --kind recovery \
+            --source-dir "$GITHUB_WORKSPACE/source" \
+            --keystore "$RUNNER_TEMP/android-signing/release.jks" \
+            --password-file "$RUNNER_TEMP/android-signing/password" \
+            --key-alias "$KEY_ALIAS" \
+            --expect-signer "$SIGNER_SHA256" \
+            --version-name "$SOURCE_VERSION" \
+            --normal-version-code "$NORMAL_CODE" \
+            --version-code "$RECOVERY_CODE" \
+            --source-commit "$SOURCE_COMMIT" \
+            --asset-name "$RECOVERY_ASSET" \
+            --output-dir "$RUNNER_TEMP/android/recovery"
+
+      - name: Verify recovery APK bytes and metadata
+        working-directory: tooling
+        run: |
+          set -euo pipefail
+          node scripts/fork-release.ts android-verify \
+            --role recovery \
+            --apk "$RUNNER_TEMP/android/recovery/$RECOVERY_ASSET" \
+            --metadata "$RUNNER_TEMP/android/recovery/metadata.json" \
+            --release-version "$VERSION" --source-version "$SOURCE_VERSION" \
+            --code "$RECOVERY_CODE" --commit "$SOURCE_COMMIT" \
+            --asset-name "$RECOVERY_ASSET" \
+            --pinned-signer "$SIGNER_SHA256" \
+            --out "android-recovery-extra-$RECOVERY_INDEX"
+          mv "android-recovery-extra-$RECOVERY_INDEX/metadata.json" \
+             "android-recovery-extra-$RECOVERY_INDEX/metadata-$RECOVERY_INDEX.json"
+
+      - name: Remove signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/android-signing"
+
+      - name: Upload recovery APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-recovery-extra-${{ matrix.index }}
+          path: tooling/android-recovery-extra-${{ matrix.index }}/*
+          if-no-files-found: error
+
   # Helper assets live outside the replaced application directory on a device, so they ship as
   # their own release assets, one per platform. The helper belongs to the candidate's source, so
   # its commissioned build command runs in that checkout.
@@ -651,8 +798,17 @@ jobs:
   # predecessor that update and recovery tests start from is downloaded and verified here too.
   assemble:
     name: Assemble candidate
-    needs: [plan, desktop_linux_x64, desktop_win_x64, android, recovery_helper]
-    if: needs.plan.outputs.skip == 'false'
+    needs:
+      [
+        plan,
+        reserve_android_codes,
+        desktop_linux_x64,
+        desktop_win_x64,
+        android,
+        android_recovery_extras,
+        recovery_helper,
+      ]
+    if: always() && needs.plan.outputs.skip == 'false' && needs.desktop_linux_x64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.android.result == 'success' && needs.recovery_helper.result == 'success' && (needs.android_recovery_extras.result == 'success' || needs.android_recovery_extras.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -690,6 +846,11 @@ jobs:
       - name: Download Windows desktop
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with: { name: desktop-win-x64, path: inputs/desktop-win-x64 }
+      - name: Download Android code allocation
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: android-code-allocation
+          path: inputs/android-code-allocation
       - name: Download Linux desktop
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with: { name: desktop-linux-x64, path: inputs/desktop-linux-x64 }
@@ -708,6 +869,13 @@ jobs:
       - name: Download recovery APK
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with: { name: android-recovery, path: inputs/android-recovery }
+      - name: Download additional recovery APKs
+        if: needs.plan.outputs.has_additional_recoveries == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: android-recovery-extra-*
+          path: inputs/android-recovery-extras
+          merge-multiple: true
       - name: Download recovery helpers
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -722,7 +890,7 @@ jobs:
         run: node scripts/fork-release.ts fetch-predecessor --tag "$TAG" --out predecessor
 
       - name: Assemble and verify
-        run: node scripts/fork-release.ts assemble --plan fork-release-plan.json --input inputs --out candidate
+        run: node scripts/fork-release.ts assemble --plan fork-release-plan.json --input inputs --codes inputs/android-code-allocation/android-codes.json --out candidate
 
       - name: Upload candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -838,7 +1006,7 @@ jobs:
 
   # The safety suites a release cannot do without, run from a clean checkout of the exact commit
   # the artifacts were built from. They are defined in code (scripts/fork-release-suites.ts):
-  # the device maintenance coordinator and recovery helper, the desktop updater, and the native
+  # the device maintenance coordinator and recovery helper, desktop and shared client controls, and the native
   # Android updater. Each receipt is bound to that commit and to the artifact payload, so a green
   # run elsewhere, on other source, or with a smaller file list cannot count.
   suites:
@@ -855,6 +1023,7 @@ jobs:
           - { suite: host-runtime, target: windows-x64, runner: windows-2025 }
           - { suite: desktop-updater, target: linux-x64, runner: ubuntu-24.04 }
           - { suite: desktop-updater, target: windows-x64, runner: windows-2025 }
+          - { suite: client-updates, target: linux-x64, runner: ubuntu-24.04 }
           - { suite: native-android, target: android, runner: ubuntu-24.04 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120

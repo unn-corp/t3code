@@ -71,7 +71,9 @@ kept, a publisher never cancelled):
 1. **plan** pins the commit, version, tag, and predecessor, uploads the plan, and skips cleanly when
    there is nothing to release. It fails closed when there is no eligible predecessor and no
    [baseline](#baseline).
-2. **reserve_android_codes** allocates the Android code pair (rehearsals read it and claim nothing).
+2. **reserve_android_codes** allocates one normal code and a recovery code for every frozen retained
+   source identity (rehearsals read it and claim nothing). Published runs upload the allocation
+   receipt; assembly rejects APK codes that differ from it.
 3. **build_bundle**, **desktop_linux_x64**, **desktop_win_x64** (the reusable
    `release-desktop.yml`, GitHub-hosted runners, no relay, Clerk, or tracing configuration),
    **android**, and **recovery_helper** build from the pinned commit.
@@ -112,6 +114,7 @@ commit, receipts bound to that commit and to the payload digest):
 | `coordinator`     | linux-x64, windows-x64 | Work admission and idle windows, the coordination store and fencing, multi-home snapshots, the update/recovery transaction and its commit boundary, the controller, and the recovery helper | install, update, recovery |
 | `host-runtime`    | linux-x64, windows-x64 | Actual server registration, database startup fencing, work/restart admission, operator permissions, and launcher health boundaries                                                          | install, update, recovery |
 | `desktop-updater` | linux-x64, windows-x64 | The desktop update state machine, channels, remote update flow, and adapters                                                                                                                | update, recovery          |
+| `client-updates`  | linux-x64              | Shared client waiting and recovery controls, host capability guards, device grouping, Android bridge, upload admission, and restored automation review                                      | update, recovery          |
 | `native-android`  | android                | APK verification, install guard and transaction, release manifest and client, eligibility, reconciliation, recovery cache, update store                                                     | update, recovery          |
 
 The commands, the exact required test files and JUnit classes, and the check mapping are code, not
@@ -136,16 +139,20 @@ to the `coordinator` suite's required list as they land.
 - **Identity.** Package `com.devotek.t3code.pwa`, one signing key. `FORK_ANDROID_SIGNER_SHA256` pins
   the release certificate; every APK is verified against it with `apksigner` and `aapt2`, and must
   not be debuggable.
-- **Installation codes.** A single serial counter across both channels. The normal APK takes the
-  next free code and its recovery APK the one above, so a device on the normal build can always
-  install the recovery build. The next code is above the highest of: the installed baseline
-  `29853678`, every published or draft normal and recovery code, and every reservation. Reserving is
-  creating the git tag `fork-android-code-<normal>`; GitHub rejects a duplicate ref, so concurrent
-  runs cannot share a code. **Never delete reservation tags**; a failed build burns its codes, which
-  is fine. Codes are checked against the 2,147,483,647 maximum.
-- **Recovery APK.** The predecessor's source (the newest eligible release of a different commit, or
-  the baseline) rebuilt with `--kind recovery`. The predecessor must itself contain the updater, or
-  the helper refuses to build it.
+- **Installation codes.** A single serial counter across both channels. Each release reserves a
+  contiguous range for its normal APK and all recovery APKs, above the highest published/draft code
+  and prior reservation. The builder writes a durable `fork-android-code-range-<start>-<end>` tag,
+  then atomically claims the canonical `fork-android-code-<start>` tag. The canonical claim
+  arbitrates runs with different range lengths; a crash or losing race leaves its full range burned.
+  **Never delete reservation tags.** Assembly checks each APK against the uploaded allocation
+  receipt. Codes are checked against the 2,147,483,647 maximum.
+- **Recovery APKs.** The manifest retains the primary predecessor plus the newest two eligible exact
+  normal-build identities per channel and a required promotion source, deduplicated by version and
+  commit. Each is rebuilt with `--kind recovery` and a unique code above the release normal code.
+  Extra recovery builds use the current builder against the exact retained source checkout. The
+  finite retained set guarantees recovery for those identities; deeper historical rollback and
+  unpublished baseline upgrades may require manual bootstrap. Every recovery source must itself
+  contain the updater, or the helper refuses to build it.
 - **Build helper contract** (`scripts/build-android-pwa.ts`, owned by the Android developer). Each
   APK is built into its own `--output-dir` and the helper writes `metadata.json` beside it:
   `format 1`, `packageName`, `versionName`, `versionCode`, `sourceCommit`, `signerSha256`,
@@ -246,7 +253,7 @@ an installed-build record. Prove desktop in-product update and recovery between 
 The baseline remains immutable and is still the recorded predecessor for package validation and
 the first Android recovery APK. Its presence alone does not commission automatic delivery.
 
-Registered participants must attest activity protocol 2. An older standalone/development runtime
+Registered participants must attest activity protocol 3. An older standalone/development runtime
 can block a newer desktop even when its old status reports idle. Let all its work finish, verify
 process termination, then update and restart that runtime manually; it never updates its own binary
 automatically. A Windows parent verifies this marker in every WSL status response before relaying

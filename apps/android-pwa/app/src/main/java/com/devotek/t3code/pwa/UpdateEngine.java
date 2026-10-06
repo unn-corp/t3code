@@ -109,6 +109,22 @@ final class UpdateEngine {
     private void changed() { for (Runnable listener : listeners) listener.run(); }
     private static long now() { return System.currentTimeMillis(); }
 
+    private static String sourceChannel(String version) {
+        return version != null && version.matches(".*-nightly\\.\\d{8}\\.\\d+") ? "nightly" : "stable";
+    }
+
+    private UpdateState.Identity runningIdentity(UpdateState state) {
+        UpdateState.Identity identity = state == null ? null : state.identity;
+        if (identity != null && identity.versionCode == runningVersionCode()
+                && !identity.version.isEmpty() && !identity.commit.isEmpty()) return identity;
+        UpdateState.Identity fallback = new UpdateState.Identity();
+        fallback.version = BuildConfig.SOURCE_VERSION;
+        fallback.commit = BuildConfig.SOURCE_COMMIT;
+        fallback.channel = defaultChannel();
+        fallback.versionCode = runningVersionCode();
+        return fallback;
+    }
+
     // ---- lifecycle ---------------------------------------------------------------------------
 
     UpdateEligibility.Installed installed() {
@@ -363,6 +379,11 @@ final class UpdateEngine {
         catch (ApkVerifier.Failure | IOException invalid) { return false; }
     }
 
+    private UpdateCapacity.Snapshot capacitySnapshot() {
+        String source = app.getApplicationInfo().sourceDir;
+        return source == null ? UpdateCapacity.Snapshot.unknown() : AndroidStorage.inspect(apkDir, new File(source));
+    }
+
     private static File pairedRecoveryFile(UpdateState state, File recoveryDirectory) throws IOException {
         if (state == null || state.target == null) return null;
         String digest = state.target.recoverySha256;
@@ -419,22 +440,46 @@ final class UpdateEngine {
     private void stageFiles(Candidate chosen, UpdateEligibility.Installed installed) throws IOException, UpdateException {
         ReleaseManifest manifest = chosen.decision.manifest;
         ReleaseRef release = chosen.decision.release;
-        ReleaseManifest.Asset normalAsset = manifest.asset(manifest.normal.asset), recoveryAsset = manifest.asset(manifest.recovery.asset);
         UpdateState state = store.snapshot();
-        UpdateState.Recovery cached = state.recovery(recoveryAsset.sha256);
-        if (cached == null || !verifiedFileMatches(new File(recoveryDir, cached.file), recoveryAsset.sha256, recoveryAsset.bytes)) {
-            File file = fetchVerified(release, recoveryAsset, manifest.recovery, true, installed, recoveryDir);
-            UpdateState.Recovery entry = new UpdateState.Recovery();
-            entry.sha256 = recoveryAsset.sha256; entry.version = manifest.recovery.sourceVersion; entry.commit = manifest.recovery.sourceCommit;
-            entry.channel = manifest.channel; entry.file = file.getName(); entry.versionCode = manifest.recovery.versionCode;
-            entry.bytes = recoveryAsset.bytes; entry.cachedAt = now();
-            store.mutate(next -> { next.recovery.removeIf(old -> old.sha256.equals(entry.sha256)); next.recovery.add(entry); });
+        UpdateState.Identity identity = runningIdentity(state);
+        String sourceVersion = identity.version;
+        String sourceCommit = identity.commit;
+        ReleaseManifest.Artifact pairedRecovery = manifest.recoveryForSource(sourceVersion, sourceCommit);
+        if (pairedRecovery == null || pairedRecovery.versionCode <= manifest.normal.versionCode
+                || !installed.packageName.equals(pairedRecovery.packageName)
+                || !installed.signerSha256.equals(pairedRecovery.signerSha256)) {
+            throw new UpdateException("This release has no valid recovery APK for the installed build.");
         }
+        ReleaseManifest.Asset normalAsset = manifest.asset(manifest.normal.asset), recoveryAsset = manifest.asset(pairedRecovery.asset);
+        if (normalAsset == null || recoveryAsset == null || !"android-recovery".equals(recoveryAsset.kind)
+                || !"android".equals(recoveryAsset.platform)) {
+            throw new UpdateException("This release has no valid recovery APK for the installed build.");
+        }
+        UpdateState.Recovery cached = state.recovery(recoveryAsset.sha256);
+        boolean recoveryCached = cached != null
+            && verifiedFileMatches(new File(recoveryDir, cached.file), recoveryAsset.sha256, recoveryAsset.bytes);
         UpdateState.Target existing = state.target;
         boolean normalStaged = existing != null && existing.versionCode == manifest.normal.versionCode && existing.sha256.equals(normalAsset.sha256)
             && existing.manifestSha256.equals(chosen.manifestSha256)
             && verifiedFileMatches(new File(apkDir, existing.file), normalAsset.sha256, normalAsset.bytes);
-        File apk = normalStaged ? new File(apkDir, existing.file) : fetchVerified(release, normalAsset, manifest.normal, false, installed, apkDir);
+        if (!UpdateCapacity.canStageUpdate(capacitySnapshot(), normalAsset.bytes, normalStaged, recoveryAsset.bytes, recoveryCached))
+            throw new UpdateException(UpdateCapacity.INSUFFICIENT_MESSAGE);
+        if (!recoveryCached) {
+            File file = fetchVerified(release, recoveryAsset, pairedRecovery, true, installed, recoveryDir);
+            UpdateState.Recovery entry = new UpdateState.Recovery();
+            entry.sha256 = recoveryAsset.sha256; entry.version = pairedRecovery.sourceVersion; entry.commit = pairedRecovery.sourceCommit;
+            entry.channel = sourceChannel(pairedRecovery.sourceVersion); entry.file = file.getName(); entry.versionCode = pairedRecovery.versionCode;
+            entry.bytes = recoveryAsset.bytes; entry.cachedAt = now();
+            store.mutate(next -> { next.recovery.removeIf(old -> old.sha256.equals(entry.sha256)); next.recovery.add(entry); });
+            recoveryCached = true;
+        }
+        File apk;
+        if (normalStaged) apk = new File(apkDir, existing.file);
+        else {
+            if (!UpdateCapacity.canStageUpdate(capacitySnapshot(), normalAsset.bytes, false, recoveryAsset.bytes, true))
+                throw new UpdateException(UpdateCapacity.INSUFFICIENT_MESSAGE);
+            apk = fetchVerified(release, normalAsset, manifest.normal, false, installed, apkDir);
+        }
         UpdateState.Target target = new UpdateState.Target();
         target.tag = release.tag; target.version = manifest.normal.sourceVersion; target.commit = manifest.normal.sourceCommit;
         target.channel = manifest.channel; target.sha256 = normalAsset.sha256; target.file = apk.getName(); target.bytes = normalAsset.bytes;
@@ -500,6 +545,13 @@ final class UpdateEngine {
         input.installPermission = Build.VERSION.SDK_INT < 26 || app.getPackageManager().canRequestPackageInstalls();
         boolean rollback = state.intent != null && "rollback".equals(state.intent.kind);
         input.recoveryReady = rollback || pairedRecoveryReadyCached(state);
+        if (rollback) {
+            UpdateState.Recovery recovery = state.recovery(state.intent.targetSha256);
+            input.storageReady = recovery != null
+                && UpdateCapacity.canStartInstall(capacitySnapshot(), recovery.bytes);
+        } else if (state.target != null) {
+            input.storageReady = UpdateCapacity.canStartInstall(capacitySnapshot(), state.target.bytes);
+        }
         return input;
     }
 
@@ -523,7 +575,8 @@ final class UpdateEngine {
         long delay = -1;
         for (InstallGuard.Blocker blocker : blockers) {
             long next = "idle-window".equals(blocker.reason) ? blocker.retryAfterMs + 2000
-                : "commands".equals(blocker.reason) || "uploads".equals(blocker.reason) || "input-active".equals(blocker.reason) ? POLL_MS : -1;
+                : "commands".equals(blocker.reason) || "uploads".equals(blocker.reason) || "input-active".equals(blocker.reason)
+                    || "storage".equals(blocker.reason) ? POLL_MS : -1;
             if (next > 0 && (delay < 0 || next < delay)) delay = next;
         }
         if (delay > 0) scheduleRecheck(delay);
@@ -544,7 +597,8 @@ final class UpdateEngine {
         UpdateEligibility.Installed installed = installed();
         UpdateState state = store.snapshot();
         if (state.pending != null || installed == null) return;
-        String stale = InstallIntents.staleReason(state, installed.versionCode, BuildConfig.SOURCE_COMMIT, now());
+        UpdateState.Identity identity = runningIdentity(state);
+        String stale = InstallIntents.staleReason(state, installed.versionCode, identity.version, identity.commit, now());
         if (stale != null) { store.tryMutate(next -> { next.intent = null; next.lastError = stale; }); state = store.snapshot(); }
         if (!wanted(state)) return;
         List<InstallGuard.Blocker> blockers = InstallGuard.blockers(guardInput(state));
@@ -569,23 +623,33 @@ final class UpdateEngine {
         if (target == null) throw new UpdateException("No verified update is ready.");
         // Eligibility is decided again from the release as it exists now, never from the earlier check.
         activity = "verifying"; changed();
+        UpdateState.Identity installedIdentity = runningIdentity(state);
         Candidate fresh;
         try { fresh = freshCandidate(target.tag, installed, state); }
         catch (IOException error) { throw new RetryLater("Could not re-check the release: " + safe(error)); }
-        if (fresh == null || !fresh.decision.eligible() || !sameRelease(target, fresh)) {
+        if (fresh == null || !fresh.decision.eligible()
+                || !sameRelease(target, fresh, installedIdentity.version, installedIdentity.commit)) {
             store.tryMutate(next -> next.target = null);
             throw new UpdateException("The release changed, was withdrawn, or is no longer eligible.");
         }
         ReleaseManifest manifest = fresh.decision.manifest;
+        ReleaseManifest.Artifact pairedRecovery = manifest.recoveryForSource(installedIdentity.version, installedIdentity.commit);
+        if (pairedRecovery == null || pairedRecovery.versionCode <= manifest.normal.versionCode) {
+            store.tryMutate(next -> next.target = null);
+            throw new UpdateException("The release no longer has a recovery APK for the installed build.");
+        }
         File apk = new File(apkDir, target.file);
         UpdateState.Recovery recovery = state.recovery(target.recoverySha256);
-        if (recovery == null) throw new UpdateException("A verified recovery build is not cached.");
+        ReleaseManifest.Asset pairedRecoveryAsset = manifest.asset(pairedRecovery.asset);
+        if (recovery == null || pairedRecoveryAsset == null
+                || !recovery.sha256.equals(pairedRecoveryAsset.sha256)
+                || recovery.bytes != pairedRecoveryAsset.bytes) throw new UpdateException("A verified recovery build is not cached.");
         try {
             ApkVerifier.verifyFile(apk, target.sha256, target.bytes);
             ApkVerifier.verifyFacts(ApkVerifier.read(app, apk), manifest.normal, false, installed);
             File recoveryFile = new File(recoveryDir, recovery.file);
             ApkVerifier.verifyFile(recoveryFile, recovery.sha256, recovery.bytes);
-            ApkVerifier.verifyFacts(ApkVerifier.read(app, recoveryFile), manifest.recovery, true, installed);
+            ApkVerifier.verifyFacts(ApkVerifier.read(app, recoveryFile), pairedRecovery, true, installed);
         } catch (ApkVerifier.Failure failure) { throw new UpdateException(failure.getMessage()); }
         catch (IOException error) { throw new UpdateException("Could not read the staged update."); }
         // Phone work may have started during the network check and verification.
@@ -598,6 +662,8 @@ final class UpdateEngine {
         pending.targetVersion = target.version; pending.targetCommit = target.commit; pending.targetChannel = target.channel;
         pending.targetSha256 = target.sha256; pending.manifestSha256 = target.manifestSha256;
         pending.targetVersionCode = target.versionCode; pending.previousVersionCode = installed.versionCode;
+        pending.userRequested = latest.intent != null;
+        pending.requestedAt = latest.intent != null ? latest.intent.requestedAt : now();
         pending.previousCommit = BuildConfig.SOURCE_COMMIT; pending.startedAt = now();
         begin(apk, pending, null);
     }
@@ -620,6 +686,8 @@ final class UpdateEngine {
         pending.transactionId = state.intent.transactionId; pending.kind = "rollback"; pending.tag = "recovery";
         pending.targetVersion = entry.version; pending.targetCommit = entry.commit; pending.targetChannel = entry.channel;
         pending.targetSha256 = entry.sha256; pending.targetVersionCode = entry.versionCode;
+        pending.userRequested = true;
+        pending.requestedAt = state.intent.requestedAt;
         pending.previousVersionCode = installed.versionCode; pending.previousCommit = BuildConfig.SOURCE_COMMIT; pending.startedAt = now();
         UpdateState.Pin pin = new UpdateState.Pin();
         pin.versionCode = entry.versionCode; pin.version = entry.version; pin.commit = entry.commit; pin.reason = "rollback"; pin.artifactSha256 = entry.sha256;
@@ -629,6 +697,11 @@ final class UpdateEngine {
     private void begin(File apk, UpdateState.Pending pending, UpdateState.Pin pin) throws UpdateException {
         // Acquire the phone-work fence before persisting/streaming the APK. It stays through OS
         // confirmation until replacement or a matching failure; new work cannot race this hand-off.
+        if (!UpdateCapacity.canStartInstall(capacitySnapshot(), apk.length())) {
+            scheduleRecheck(POLL_MS);
+            changed();
+            return;
+        }
         if (!operations.admit(() -> InstallGuard.blockers(guardInput(store.snapshot())).isEmpty())) {
             scheduleRecheck(POLL_MS);
             return;
@@ -645,6 +718,7 @@ final class UpdateEngine {
             });
         } catch (IOException | RuntimeException error) {
             operations.installationPending(false);
+            if (error instanceof UpdateCapacity.Insufficient) throw new RetryLater(error.getMessage());
             throw new UpdateException("Android could not start the installation.");
         }
     }
@@ -680,7 +754,10 @@ final class UpdateEngine {
     /** The person selected a recorded recovery option; same waiting rules, same exact-digest binding. */
     void requestRollback(String optionId, String transactionId) throws UpdateException {
         if (store == null || !supported()) throw new UpdateException("In-app updates are unavailable on this device.");
-        record(state -> InstallIntents.requestRollback(state, optionId, transactionId, installed().versionCode, BuildConfig.SOURCE_COMMIT, now()));
+        record(state -> {
+            UpdateState.Identity identity = runningIdentity(state);
+            InstallIntents.requestRollback(state, optionId, transactionId, installed().versionCode, identity.version, identity.commit, now());
+        });
         changed();
         run(Trigger.INTENT);
     }
@@ -705,11 +782,18 @@ final class UpdateEngine {
         return null;
     }
 
-    private static boolean sameRelease(UpdateState.Target target, Candidate fresh) {
-        ReleaseManifest manifest = fresh.decision.manifest;
-        ReleaseManifest.Asset normal = manifest.asset(manifest.normal.asset), recovery = manifest.asset(manifest.recovery.asset);
-        return fresh.manifestSha256.equals(target.manifestSha256) && manifest.normal.versionCode == target.versionCode
-            && normal != null && normal.sha256.equals(target.sha256) && recovery != null && recovery.sha256.equals(target.recoverySha256);
+    static boolean exactTargetPair(UpdateState.Target target, ReleaseManifest manifest, String manifestSha256,
+            String installedVersion, String installedCommit) {
+        ReleaseManifest.Asset normal = manifest.asset(manifest.normal.asset);
+        ReleaseManifest.Artifact pairedRecovery = manifest.recoveryForSource(installedVersion, installedCommit);
+        ReleaseManifest.Asset recovery = pairedRecovery == null ? null : manifest.asset(pairedRecovery.asset);
+        return manifestSha256.equals(target.manifestSha256) && manifest.normal.versionCode == target.versionCode
+            && normal != null && normal.sha256.equals(target.sha256) && recovery != null
+            && recovery.sha256.equals(target.recoverySha256) && pairedRecovery.versionCode > manifest.normal.versionCode;
+    }
+
+    private static boolean sameRelease(UpdateState.Target target, Candidate fresh, String installedVersion, String installedCommit) {
+        return exactTargetPair(target, fresh.decision.manifest, fresh.manifestSha256, installedVersion, installedCommit);
     }
 
     // ---- recovery ----------------------------------------------------------------------------
@@ -719,8 +803,10 @@ final class UpdateEngine {
         List<UpdateState.Recovery> result = new ArrayList<>();
         if (store == null) return result;
         long code = runningVersionCode();
+        UpdateState.Identity identity = runningIdentity(store.snapshot());
         for (UpdateState.Recovery entry : store.snapshot().recovery) {
-            if (entry.versionCode > code && !entry.commit.equals(BuildConfig.SOURCE_COMMIT) && new File(recoveryDir, entry.file).isFile()) result.add(entry);
+            if (InstallIntents.installable(entry, code, identity.version, identity.commit)
+                    && new File(recoveryDir, entry.file).isFile()) result.add(entry);
         }
         result.sort((a, b) -> Long.compare(b.versionCode, a.versionCode));
         return result;
@@ -734,24 +820,39 @@ final class UpdateEngine {
         try {
             activity = "checking"; changed();
             UpdateEligibility.Installed installed = installed();
+            UpdateState.Identity identity = runningIdentity(store.snapshot());
             Candidate best = null;
+            ReleaseManifest.Artifact bestRecovery = null;
             for (Candidate candidate : discover(installed, store.snapshot())) {
                 UpdateEligibility.Reason reason = candidate.decision.reason;
                 // Only the recovery side matters here, so a build that is not newer than this one still qualifies.
                 if (reason != UpdateEligibility.Reason.ELIGIBLE && reason != UpdateEligibility.Reason.NOT_NEWER && reason != UpdateEligibility.Reason.PINNED) continue;
-                ReleaseManifest.Artifact recovery = candidate.decision.manifest.recovery;
-                if (recovery.versionCode <= installed.versionCode || recovery.sourceCommit.equals(BuildConfig.SOURCE_COMMIT)) continue;
-                if (best == null || recovery.versionCode > best.decision.manifest.recovery.versionCode) best = candidate;
+                for (ReleaseManifest.Artifact recovery : candidate.decision.manifest.allRecoveries()) {
+                    ReleaseManifest.Asset asset = candidate.decision.manifest.asset(recovery.asset);
+                    boolean sameSource = recovery.sourceCommit.equals(identity.commit) && recovery.sourceVersion.equals(identity.version);
+                    if (recovery.versionCode <= installed.versionCode || sameSource
+                            || !installed.packageName.equals(recovery.packageName) || !installed.signerSha256.equals(recovery.signerSha256)
+                            || asset == null || !"android-recovery".equals(asset.kind) || !"android".equals(asset.platform)) continue;
+                    if (bestRecovery == null || recovery.versionCode > bestRecovery.versionCode) {
+                        best = candidate;
+                        bestRecovery = recovery;
+                    }
+                }
             }
-            if (best == null) throw new UpdateException("No newer recovery build is published for this installation.");
+            if (best == null || bestRecovery == null) throw new UpdateException("No newer recovery build is published for this installation.");
             activity = "downloading"; changed();
             ReleaseManifest manifest = best.decision.manifest;
-            ReleaseManifest.Asset asset = manifest.asset(manifest.recovery.asset);
-            if (store.snapshot().recovery(asset.sha256) == null) {
-                File file = fetchVerified(best.decision.release, asset, manifest.recovery, true, installed, recoveryDir);
+            ReleaseManifest.Asset asset = manifest.asset(bestRecovery.asset);
+            UpdateState.Recovery cached = store.snapshot().recovery(asset.sha256);
+            boolean recoveryCached = cached != null
+                && verifiedFileMatches(new File(recoveryDir, cached.file), asset.sha256, asset.bytes);
+            if (!recoveryCached && !UpdateCapacity.canStageRecovery(capacitySnapshot(), asset.bytes, false))
+                throw new UpdateException(UpdateCapacity.INSUFFICIENT_MESSAGE);
+            if (!recoveryCached) {
+                File file = fetchVerified(best.decision.release, asset, bestRecovery, true, installed, recoveryDir);
                 UpdateState.Recovery entry = new UpdateState.Recovery();
-                entry.sha256 = asset.sha256; entry.version = manifest.recovery.sourceVersion; entry.commit = manifest.recovery.sourceCommit;
-                entry.channel = manifest.channel; entry.file = file.getName(); entry.versionCode = manifest.recovery.versionCode;
+                entry.sha256 = asset.sha256; entry.version = bestRecovery.sourceVersion; entry.commit = bestRecovery.sourceCommit;
+                entry.channel = sourceChannel(bestRecovery.sourceVersion); entry.file = file.getName(); entry.versionCode = bestRecovery.versionCode;
                 entry.bytes = asset.bytes; entry.cachedAt = now();
                 List<File> deleted = new ArrayList<>();
                 store.mutate(next -> { next.recovery.add(entry); pruneRecovery(next, deleted); });
@@ -793,9 +894,14 @@ final class UpdateEngine {
                     return !MainActivity.visible && !RecoveryActivity.visible && latest.pending != null
                         && transactionId.equals(latest.pending.transactionId) && latest.backgroundSince > 0
                         && now() - latest.backgroundSince >= InstallGuard.BACKGROUND_QUIET_MS;
-                }, () -> session.commit(PendingIntent.getBroadcast(app, id, intent, flags).getIntentSender()));
+                }, () -> {
+                    if (!UpdateCapacity.canCommit(capacitySnapshot(), apk.length())) throw new UpdateCapacity.Insufficient();
+                    session.commit(PendingIntent.getBroadcast(app, id, intent, flags).getIntentSender());
+                });
             } catch (IOException | RuntimeException error) {
                 try { installer.abandonSession(id); } catch (RuntimeException ignored) { /* Already closed. */ }
+                if (error instanceof IOException && !(error instanceof UpdateCapacity.Insufficient)
+                        && !UpdateCapacity.canStartInstall(capacitySnapshot(), apk.length())) throw new UpdateCapacity.Insufficient();
                 throw error;
             }
         }
@@ -821,20 +927,30 @@ final class UpdateEngine {
             return;
         }
         boolean cancelled = status == PackageInstaller.STATUS_FAILURE_ABORTED;
+        boolean insufficientStorage = status == PackageInstaller.STATUS_FAILURE_STORAGE;
         boolean updated = store.tryMutatePending(transaction, state -> {
             UpdateState.Pending pending = state.pending;
             UpdateState.Outcome outcome = new UpdateState.Outcome();
             outcome.transactionId = pending.transactionId; outcome.kind = pending.kind; outcome.at = now();
-            outcome.result = cancelled ? "cancelled" : "failed";
-            outcome.message = cancelled ? "The installation was cancelled." : (message == null ? "Android rejected the installation." : message);
+            outcome.result = cancelled ? "cancelled" : insufficientStorage ? "waiting" : "failed";
+            outcome.message = cancelled ? "The installation was cancelled." : insufficientStorage
+                ? UpdateCapacity.INSUFFICIENT_MESSAGE : (message == null ? "Android rejected the installation." : message);
             state.lastOutcome = outcome; state.pending = null;
-            if (!cancelled) state.failedArtifactSha256 = pending.targetSha256;
+            if (!cancelled && !insufficientStorage) state.failedArtifactSha256 = pending.targetSha256;
+            if (insufficientStorage && pending.userRequested && state.intent == null) {
+                UpdateState.Intent intent = new UpdateState.Intent();
+                intent.kind = pending.kind; intent.targetSha256 = pending.targetSha256;
+                intent.transactionId = pending.transactionId; intent.requestedAt = pending.requestedAt;
+                state.intent = intent;
+                state.lastError = UpdateCapacity.INSUFFICIENT_MESSAGE;
+            }
             // A refused install must not nag: wait a day before asking again.
             if (cancelled) state.deferUntil = now() + CANCEL_DEFER_MS; else state.lastError = outcome.message;
         });
         if (!updated) return;
         operations.installationPending(store.snapshot().pending != null);
         if (!cancelled) UpdateNotifications.failure(app);
+        if (insufficientStorage && recorded.userRequested) scheduleRecheck(POLL_MS);
         changed();
     }
 
@@ -861,7 +977,7 @@ final class UpdateEngine {
             JSONArray cached = new JSONArray();
             for (UpdateState.Recovery entry : installableRecovery())
                 cached.put(new JSONObject().put("versionCode", entry.versionCode).put("version", entry.version).put("commit", entry.commit)
-                    .put("sha256", entry.sha256).put("transactionId", recoveryTransactionId(entry)));
+                    .put("channel", sourceChannel(entry.version)).put("sha256", entry.sha256).put("transactionId", recoveryTransactionId(entry)));
             JSONObject target = null;
             UpdateState.Pending pending = state.pending;
             if (pending != null) target = build(pending.targetVersion, pending.targetCommit, pending.targetVersionCode, pending.targetChannel, pending.targetSha256, pending.tag);

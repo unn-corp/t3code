@@ -47,6 +47,7 @@ const status = (over: Partial<AndroidUpdateStatus> = {}): AndroidUpdateStatus =>
         versionCode: 103,
         version: "1.0.0",
         commit: "a".repeat(40),
+        channel: "stable",
         sha256: "e".repeat(64),
         transactionId: "recovery-100-eeeeeeeeeeeeeeee",
       },
@@ -187,8 +188,24 @@ it("maps native state into the shared maintenance status", async () => {
     id: "e".repeat(64),
     transactionId: "recovery-100-eeeeeeeeeeeeeeee",
     requiresDataRestore: false,
-    build: { artifactSha256: "e".repeat(64) },
+    build: { artifactSha256: "e".repeat(64), channel: "stable" },
   });
+});
+
+it("preserves the native storage blocker in the shared status", async () => {
+  const { toForkUpdateStatus } = await import("./updates");
+  const mapped = toForkUpdateStatus(
+    status({
+      blockers: [{ reason: "storage", label: "Not enough free storage; free space and retry." }],
+    }),
+  );
+  expect(mapped.blockers).toEqual([
+    {
+      participantId: "android-phone",
+      reason: "storage",
+      label: "Not enough free storage; free space and retry.",
+    },
+  ]);
 });
 
 it("binds Install to the reviewed digest and Recovery to the recorded option", async () => {

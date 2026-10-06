@@ -4,6 +4,7 @@ import { ForkUpdateChannel } from "./maintenance.ts";
 export const FORK_RELEASE_MANIFEST_ASSET = "fork-release.json";
 export const FORK_RELEASE_REPOSITORY = "unn-corp/t3code";
 export const FORK_ANDROID_PACKAGE = "com.devotek.t3code.pwa";
+export const FORK_ANDROID_MAX_VERSION_CODE = 2_147_483_647;
 export const ForkArtifactDigest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 export const ForkSourceCommit = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/));
 export const ForkReleaseAsset = Schema.Struct({
@@ -23,7 +24,10 @@ export const ForkReleaseAsset = Schema.Struct({
 });
 export const ForkAndroidReleaseArtifact = Schema.Struct({
   asset: Schema.String,
-  versionCode: Schema.Int.check(Schema.isGreaterThan(0)),
+  versionCode: Schema.Int.check(
+    Schema.isGreaterThan(0),
+    Schema.isLessThanOrEqualTo(FORK_ANDROID_MAX_VERSION_CODE),
+  ),
   sourceVersion: Schema.String,
   sourceCommit: ForkSourceCommit,
   packageName: Schema.Literal(FORK_ANDROID_PACKAGE),
@@ -41,6 +45,8 @@ export const ForkReleaseManifest = Schema.Struct({
   android: Schema.Struct({
     normal: ForkAndroidReleaseArtifact,
     recovery: ForkAndroidReleaseArtifact,
+    /** Exact-source rollback APKs for retained normal builds; omitted by legacy manifests. */
+    recoveries: Schema.optionalKey(Schema.Array(ForkAndroidReleaseArtifact)),
   }),
   checks: Schema.Struct({
     build: Schema.Boolean,

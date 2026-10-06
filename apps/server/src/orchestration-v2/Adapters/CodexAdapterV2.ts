@@ -29,6 +29,7 @@ import {
   type ProviderSetupError,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import * as IdleProcessRoots from "../../maintenance/IdleProcessRoots.ts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
@@ -1300,6 +1301,12 @@ const makeCodexAppServerClientFactoryCommandLayer = (
                   }),
               ),
             );
+            const releaseRoot = yield* IdleProcessRoots.registerIdleProcessRoot(
+              Number(handle.pid),
+              "provider",
+              handle.isRunning.pipe(Effect.orElseSucceed(() => false)),
+            );
+            yield* Scope.addFinalizer(scope, releaseRoot);
             const context = yield* Layer.build(CodexClient.layerChildProcess(handle, options));
             return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
               Effect.provide(context),
@@ -1419,6 +1426,12 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
                 }),
             ),
           );
+          const releaseRoot = yield* IdleProcessRoots.registerIdleProcessRoot(
+            Number(handle.pid),
+            "provider",
+            handle.isRunning.pipe(Effect.orElseSucceed(() => false)),
+          );
+          yield* Scope.addFinalizer(scope, releaseRoot);
           const protocolLogger = makeCodexAppServerProtocolLogger({
             nativeEventLogger,
             threadId: input.threadId,

@@ -45,18 +45,44 @@ final class ReleaseManifest {
     final String version, commit, channel, releasedAt;
     final List<Asset> assets;
     final Artifact normal, recovery;
+    /** Complete optional source-matched recovery list, with `recovery` repeated first for legacy readers. */
+    final List<Artifact> recoveries;
     final boolean build, install, update, recoveryCheck;
 
     private ReleaseManifest(String version, String commit, String channel, String releasedAt, List<Asset> assets,
-            Artifact normal, Artifact recovery, boolean build, boolean install, boolean update, boolean recoveryCheck) {
+            Artifact normal, Artifact recovery, List<Artifact> recoveries, boolean build, boolean install, boolean update, boolean recoveryCheck) {
         this.version = version; this.commit = commit; this.channel = channel; this.releasedAt = releasedAt;
         this.assets = Collections.unmodifiableList(assets); this.normal = normal; this.recovery = recovery;
+        this.recoveries = Collections.unmodifiableList(recoveries);
         this.build = build; this.install = install; this.update = update; this.recoveryCheck = recoveryCheck;
     }
 
     Asset asset(String name) {
         for (Asset asset : assets) if (asset.name.equals(name)) return asset;
         return null;
+    }
+    List<Artifact> allRecoveries() {
+        List<Artifact> all = new ArrayList<>();
+        if (recoveries.isEmpty()) all.add(recovery);
+        else all.addAll(recoveries); // The additive list is the complete set and begins with primary.
+        return all;
+    }
+    Artifact recoveryForSource(String sourceVersion, String sourceCommit) {
+        Artifact match = null;
+        for (Artifact candidate : allRecoveries()) {
+            if (!candidate.sourceVersion.equals(sourceVersion) || !candidate.sourceCommit.equals(sourceCommit)) continue;
+            if (match != null) return null;
+            match = candidate;
+        }
+        return match;
+    }
+    boolean hasRecoveryDigest(String digest) {
+        if (digest == null) return false;
+        for (Artifact candidate : allRecoveries()) {
+            Asset candidateAsset = asset(candidate.asset);
+            if (candidateAsset != null && digest.equals(candidateAsset.sha256)) return true;
+        }
+        return false;
     }
     boolean checksPassed() { return build && install && update && recoveryCheck; }
 
@@ -86,8 +112,16 @@ final class ReleaseManifest {
             }
             JSONObject android = object(root, "android");
             JSONObject checks = object(root, "checks");
+            Artifact normal = artifact(object(android, "normal"));
+            Artifact recovery = artifact(object(android, "recovery"));
+            List<Artifact> recoveries = new ArrayList<>();
+            if (android.has("recoveries")) {
+                JSONArray rawRecoveries = array(android, "recoveries");
+                for (int i = 0; i < rawRecoveries.length(); i++) recoveries.add(artifact(object(rawRecoveries, i)));
+                validateRecoveries(normal, recovery, recoveries, assets);
+            }
             return new ReleaseManifest(string(root, "version"), hex(root, "commit", 40), channel, releasedAt, assets,
-                artifact(object(android, "normal")), artifact(object(android, "recovery")),
+                normal, recovery, recoveries,
                 bool(checks, "build"), bool(checks, "install"), bool(checks, "update"), bool(checks, "recovery"));
         } catch (JSONException error) { throw new Invalid("Malformed release manifest"); }
     }
@@ -100,6 +134,37 @@ final class ReleaseManifest {
         if (protocol != UPDATER_PROTOCOL) throw new Invalid("Unsupported updater protocol");
         return new Artifact(string(item, "asset"), code, string(item, "sourceVersion"), hex(item, "sourceCommit", 40),
             PACKAGE, hex(item, "signerSha256", 64), protocol);
+    }
+    private static void validateRecoveries(Artifact normal, Artifact primary, List<Artifact> recoveries, List<Asset> assets)
+            throws Invalid {
+        if (recoveries.isEmpty() || !sameArtifact(primary, recoveries.get(0)))
+            throw new Invalid("Recovery list must begin with its primary recovery artifact");
+        java.util.Set<String> identities = new java.util.HashSet<>();
+        java.util.Set<Long> codes = new java.util.HashSet<>();
+        java.util.Set<String> names = new java.util.HashSet<>();
+        identities.add(sourceKey(primary));
+        codes.add(primary.versionCode);
+        names.add(primary.asset);
+        for (int index = 1; index < recoveries.size(); index++) {
+            Artifact recovery = recoveries.get(index);
+            if (recovery.versionCode <= normal.versionCode || recovery.sourceCommit.equals(normal.sourceCommit)
+                    && recovery.sourceVersion.equals(normal.sourceVersion)) throw new Invalid("Invalid recovery source");
+            if (!identities.add(sourceKey(recovery))) throw new Invalid("Duplicate recovery source identity");
+            if (!codes.add(recovery.versionCode)) throw new Invalid("Duplicate recovery version code");
+            if (!names.add(recovery.asset)) throw new Invalid("Duplicate recovery asset");
+            if (!primary.signerSha256.equals(recovery.signerSha256)) throw new Invalid("Recovery signer mismatch");
+            Asset asset = null;
+            for (Asset candidate : assets) if (candidate.name.equals(recovery.asset)) asset = candidate;
+            if (asset == null || !"android-recovery".equals(asset.kind) || !"android".equals(asset.platform))
+                throw new Invalid("Invalid recovery asset");
+        }
+    }
+    private static String sourceKey(Artifact artifact) { return artifact.sourceVersion + "\n" + artifact.sourceCommit; }
+    private static boolean sameArtifact(Artifact left, Artifact right) {
+        return left.asset.equals(right.asset) && left.versionCode == right.versionCode
+            && left.sourceVersion.equals(right.sourceVersion) && left.sourceCommit.equals(right.sourceCommit)
+            && left.packageName.equals(right.packageName) && left.signerSha256.equals(right.signerSha256)
+            && left.updaterProtocol == right.updaterProtocol;
     }
     private static boolean oneOf(String value, String... options) {
         for (String option : options) if (option.equals(value)) return true;

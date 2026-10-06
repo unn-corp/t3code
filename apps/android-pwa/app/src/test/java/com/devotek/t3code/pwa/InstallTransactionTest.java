@@ -56,6 +56,31 @@ public final class InstallTransactionTest {
         assertEquals("failed", state.lastOutcome.result);
         assertEquals("tx-1", state.lastOutcome.transactionId);
     }
+    @Test public void insufficientStorageRestoresTheExactManualRequestAndKeepsTheRollbackPin() throws Exception {
+        File dir = folder.newFolder("storage-state");
+        UpdateStore store = UpdateStore.open(dir);
+        UpdateState.Intent request = new UpdateState.Intent();
+        request.kind = "rollback"; request.targetSha256 = "c".repeat(64); request.transactionId = "reviewed-tx"; request.requestedAt = 7L;
+        store.mutate(state -> state.intent = request);
+        UpdateState.Pending pending = pending();
+        pending.transactionId = request.transactionId; pending.targetSha256 = request.targetSha256;
+        pending.userRequested = true; pending.startedAt = 9L; pending.requestedAt = request.requestedAt;
+        try {
+            InstallTransaction.begin(store, (apk, silent) -> { throw new UpdateCapacity.Insufficient(); },
+                new File("x.apk"), false, pending, pin(), 9L);
+            fail();
+        } catch (UpdateCapacity.Insufficient expected) { }
+        UpdateState state = UpdateStore.open(dir).snapshot();
+        assertNull(state.pending);
+        assertEquals("rollback", state.pin.reason);
+        assertNotNull(state.intent);
+        assertEquals(request.kind, state.intent.kind);
+        assertEquals(request.targetSha256, state.intent.targetSha256);
+        assertEquals(request.transactionId, state.intent.transactionId);
+        assertEquals(request.requestedAt, state.intent.requestedAt);
+        assertEquals(UpdateCapacity.INSUFFICIENT_MESSAGE, state.lastError);
+        assertEquals("waiting", state.lastOutcome.result);
+    }
     @Test public void aSecondInstallCannotStartWhileOneIsPending() throws Exception {
         UpdateStore store = UpdateStore.open(folder.newFolder("state"));
         InstallTransaction.begin(store, (apk, silent) -> { }, new File("x.apk"), true, pending(), null, 1L);

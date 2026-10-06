@@ -808,15 +808,17 @@ describe("DesktopForkMaintenance", () => {
     expect(wsl?.homes).toEqual(["wsl:Ubuntu:/home/u/.t3"]);
     expect(wsl?.parentId).toMatch(/^desktop-/);
     expect(status.blockers.some((blocker) => blocker.label === "Agent running in WSL.")).toBe(true);
-    remoteActivityProtocol = undefined;
-    await core.observe();
-    expect((await store.status(device.clock.value)).blockers).toContainEqual(
-      expect.objectContaining({
-        participantId: wsl!.id,
-        reason: "unknown-participant",
-        label: expect.stringContaining("current process activity census"),
-      }),
-    );
+    for (const outdated of [undefined, CURRENT_ACTIVITY_PROTOCOL - 1]) {
+      remoteActivityProtocol = outdated;
+      await core.observe();
+      expect((await store.status(device.clock.value)).blockers).toContainEqual(
+        expect.objectContaining({
+          participantId: wsl!.id,
+          reason: "unknown-participant",
+          label: expect.stringContaining("current process activity census"),
+        }),
+      );
+    }
     // Activity participants and affected homes stay separate: the cohort is Windows plus the confirmed member.
     expect((await core.status()).affectedHomes?.map((entry) => entry.id)).toEqual([
       device.home,

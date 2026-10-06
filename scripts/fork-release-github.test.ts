@@ -38,22 +38,35 @@ describe("Android code reservation", () => {
     assert.deepStrictEqual(first, {
       normal: ANDROID_BASELINE_VERSION_CODE + 1,
       recovery: ANDROID_BASELINE_VERSION_CODE + 2,
+      recoveries: [ANDROID_BASELINE_VERSION_CODE + 2],
+      reservedThrough: ANDROID_BASELINE_VERSION_CODE + 2,
     });
     const second = await reserveAndroidCodes(github, sha("b"));
     assert.deepStrictEqual(second, {
       normal: ANDROID_BASELINE_VERSION_CODE + 3,
       recovery: ANDROID_BASELINE_VERSION_CODE + 4,
+      recoveries: [ANDROID_BASELINE_VERSION_CODE + 4],
+      reservedThrough: ANDROID_BASELINE_VERSION_CODE + 4,
     });
     assert.deepStrictEqual(
       [...github.tags.keys()],
-      ["fork-android-code-29853679", "fork-android-code-29853681"],
+      [
+        "fork-android-code-range-29853679-29853680",
+        "fork-android-code-29853679",
+        "fork-android-code-range-29853681-29853682",
+        "fork-android-code-29853681",
+      ],
     );
   });
 
   it("allocates above every published normal and recovery code across channels", async () => {
     const github = new FakeGitHub();
     github.seedPublished(
-      makeManifest({ version: "1.0.0", normalCode: 29_860_000, recoveryCode: 29_860_001 }),
+      makeManifest({
+        version: "1.0.0",
+        normalCode: 29_860_000,
+        recoveryCode: 29_860_001,
+      }),
     );
     github.seedPublished(
       makeManifest({
@@ -63,7 +76,12 @@ describe("Android code reservation", () => {
       }),
     );
     const pair = await reserveAndroidCodes(github, sha("a"));
-    assert.deepStrictEqual(pair, { normal: 29_860_051, recovery: 29_860_052 });
+    assert.deepStrictEqual(pair, {
+      normal: 29_860_051,
+      recovery: 29_860_052,
+      recoveries: [29_860_052],
+      reservedThrough: 29_860_052,
+    });
   });
 
   it("never hands two concurrent runs the same code", async () => {
@@ -71,11 +89,32 @@ describe("Android code reservation", () => {
     const pairs = await Promise.all(
       [1, 2, 3, 4, 5].map((n) => reserveAndroidCodes(github, sha(`run-${n}`))),
     );
-    const codes = pairs.flatMap((pair) => [pair.normal, pair.recovery]);
+    const codes = pairs.flatMap((pair) => [pair.normal, ...pair.recoveries]);
     assert.equal(new Set(codes).size, codes.length);
     assert.isAbove(Math.min(...codes), ANDROID_BASELINE_VERSION_CODE);
     const sorted = pairs.map((pair) => pair.normal).toSorted((a, b) => a - b);
     for (let i = 1; i < sorted.length; i += 1) assert.isAtLeast(sorted[i]! - sorted[i - 1]!, 2);
+  });
+
+  it("arbitrates concurrent reservations with different range lengths and burns interrupted ranges", async () => {
+    const github = new FakeGitHub();
+    const allocations = await Promise.all([
+      reserveAndroidCodes(github, sha("short"), { recoveryCount: 1 }),
+      reserveAndroidCodes(github, sha("long"), { recoveryCount: 4 }),
+    ]);
+    assert.notEqual(allocations[0]?.normal, allocations[1]?.normal);
+    const allCodes = allocations.flatMap((entry) => [entry.normal, ...entry.recoveries]);
+    assert.equal(new Set(allCodes).size, allCodes.length);
+
+    const interrupted = new FakeGitHub();
+    // Simulate a runner stopping after its durable range tag was created but before it
+    // claimed the canonical start tag.
+    interrupted.tags.set("fork-android-code-range-29853679-29853684", sha("cancelled"));
+    const after = await reserveAndroidCodes(interrupted, sha("after"), {
+      recoveryCount: 1,
+    });
+    assert.isAbove(after.normal, ANDROID_BASELINE_VERSION_CODE + 5);
+    assert.isTrue(interrupted.tags.has("fork-android-code-range-29853679-29853684"));
   });
 
   it("retries after losing the race for a tag", async () => {
@@ -91,6 +130,8 @@ describe("Android code reservation", () => {
     assert.deepStrictEqual(pair, {
       normal: ANDROID_BASELINE_VERSION_CODE + 3,
       recovery: ANDROID_BASELINE_VERSION_CODE + 4,
+      recoveries: [ANDROID_BASELINE_VERSION_CODE + 4],
+      reservedThrough: ANDROID_BASELINE_VERSION_CODE + 4,
     });
   });
 
@@ -268,10 +309,16 @@ describe("publishing", () => {
     assert.equal(published.prerelease, true);
     const records = await loadReleaseRecords(github);
     const record = records.find((r) => r.id === id)!;
-    assert.deepStrictEqual(classifyRelease(record, records), { eligible: true, reasons: [] });
+    assert.deepStrictEqual(classifyRelease(record, records), {
+      eligible: true,
+      reasons: [],
+    });
     assert.equal(
-      selectUpdateCandidate({ channel: "nightly", installedVersion: "1.0.0", releases: records })
-        ?.manifest?.version,
+      selectUpdateCandidate({
+        channel: "nightly",
+        installedVersion: "1.0.0",
+        releases: records,
+      })?.manifest?.version,
       candidate.plan.version,
     );
   });
@@ -303,7 +350,10 @@ describe("publishing", () => {
     const raced = new FakeGitHub();
     const raceId = await draftOf(raced, candidate);
     raced.seedPublished(
-      makeManifest({ version: "1.0.1-nightly.20261006.99", commit: candidate.plan.commit }),
+      makeManifest({
+        version: "1.0.1-nightly.20261006.99",
+        commit: candidate.plan.commit,
+      }),
     );
     failure = undefined;
     await publishDraft(raced, candidate.plan, raceId, NodePath.join(root, "scratch-b")).catch(
@@ -402,7 +452,11 @@ describe("withdrawal and restoration", () => {
       ["withdrawn"],
     );
     assert.equal(
-      selectUpdateCandidate({ channel: "nightly", installedVersion: "1.0.0", releases: records }),
+      selectUpdateCandidate({
+        channel: "nightly",
+        installedVersion: "1.0.0",
+        releases: records,
+      }),
       null,
     );
     const after = [...github.releases.get(id)!.assets.values()].map((asset) => [
@@ -494,7 +548,9 @@ describe("GitHub REST client", () => {
         body: init?.body,
       });
       const { status, body } = handler(url, method);
-      return new Response(body === undefined ? null : JSON.stringify(body), { status });
+      return new Response(body === undefined ? null : JSON.stringify(body), {
+        status,
+      });
     }) as typeof fetch;
   beforeEach(() => {
     recorded.length = 0;
@@ -502,7 +558,11 @@ describe("GitHub REST client", () => {
 
   it("authenticates, pages through every release, and reads drafts the token can see", async () => {
     const page = (n: number) =>
-      Array.from({ length: n }, (_, i) => ({ id: i, tag_name: `t${i}`, assets: [] }));
+      Array.from({ length: n }, (_, i) => ({
+        id: i,
+        tag_name: `t${i}`,
+        assets: [],
+      }));
     const api = createGitHubApi({
       token: "tok",
       repository: "unn-corp/t3code",
@@ -544,7 +604,10 @@ describe("GitHub REST client", () => {
     const api = createGitHubApi({
       token: "tok",
       repository: "unn-corp/t3code",
-      fetch: respond(() => ({ status: 200, body: { id: 5, tag_name: "fork-v1.0.0", assets: [] } })),
+      fetch: respond(() => ({
+        status: 200,
+        body: { id: 5, tag_name: "fork-v1.0.0", assets: [] },
+      })),
     });
     await api.createDraftRelease({
       tagName: "fork-v1.0.0",
@@ -553,7 +616,11 @@ describe("GitHub REST client", () => {
       body: "b",
       prerelease: false,
     });
-    await api.updateRelease(5, { draft: false, prerelease: false, makeLatest: true });
+    await api.updateRelease(5, {
+      draft: false,
+      prerelease: false,
+      makeLatest: true,
+    });
     const [create, update] = recorded.map((call) => JSON.parse(String(call.body)));
     assert.deepStrictEqual(
       [create.target_commitish, create.draft, create.make_latest, update.draft, update.make_latest],

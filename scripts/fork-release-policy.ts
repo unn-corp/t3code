@@ -155,6 +155,17 @@ export interface Classification {
 }
 
 const REQUIRED_CHECKS = ["build", "install", "update", "recovery"] as const;
+const sameAndroidArtifact = (
+  left: ForkReleaseManifest["android"]["recovery"],
+  right: ForkReleaseManifest["android"]["recovery"],
+) =>
+  left.asset === right.asset &&
+  left.versionCode === right.versionCode &&
+  left.sourceVersion === right.sourceVersion &&
+  left.sourceCommit === right.sourceCommit &&
+  left.packageName === right.packageName &&
+  left.signerSha256 === right.signerSha256 &&
+  left.updaterProtocol === right.updaterProtocol;
 
 /** Drafts and withdrawn releases are never targets; neither are incomplete or duplicate ones. */
 export const classifyRelease = (
@@ -179,13 +190,21 @@ export const classifyRelease = (
   }
 
   const present = new Map(record.assets.map((asset) => [asset.name, asset.size]));
+  const listedAssets = new Map(manifest.assets.map((asset) => [asset.name, asset]));
   const complete =
     manifest.assets.length > 0 &&
     manifest.assets.every((asset) => present.get(asset.name) === asset.bytes) &&
     present.has(FORK_MANIFEST_ASSET) &&
-    [manifest.android.normal.asset, manifest.android.recovery.asset].every((name) =>
-      manifest.assets.some((asset) => asset.name === name),
-    );
+    [
+      manifest.android.normal.asset,
+      manifest.android.recovery.asset,
+      ...(manifest.android.recoveries ?? []).map((recovery) => recovery.asset),
+    ].every((name, index) => {
+      const matches = manifest.assets.filter((asset) => asset.name === name);
+      const asset = matches[0];
+      const expectedKind = index === 0 ? "android" : "android-recovery";
+      return matches.length === 1 && asset?.kind === expectedKind && asset.platform === "android";
+    });
   if (!complete) reasons.push("partial");
 
   if (!REQUIRED_CHECKS.every((check) => manifest.checks[check])) reasons.push("checks-incomplete");
@@ -193,13 +212,52 @@ export const classifyRelease = (
   const { normal, recovery } = manifest.android;
   if (
     normal.asset === recovery.asset ||
-    recovery.sourceCommit === normal.sourceCommit ||
+    (recovery.sourceCommit === normal.sourceCommit &&
+      recovery.sourceVersion === normal.sourceVersion) ||
     recovery.versionCode <= normal.versionCode ||
     normal.signerSha256 !== recovery.signerSha256 ||
     normal.sourceCommit !== manifest.commit ||
-    normal.sourceVersion !== manifest.version
+    normal.sourceVersion !== manifest.version ||
+    normal.versionCode > ANDROID_MAX_VERSION_CODE ||
+    recovery.versionCode > ANDROID_MAX_VERSION_CODE
   ) {
     reasons.push("duplicate-recovery");
+  }
+  if (manifest.android.recoveries !== undefined) {
+    const recoveries = manifest.android.recoveries;
+    const codes = new Set<number>();
+    const identities = new Set<string>();
+    const assets = new Set<string>();
+    if (!sameAndroidArtifact(recoveries[0]!, recovery)) reasons.push("duplicate-recovery");
+    for (const [index, candidate] of recoveries.entries()) {
+      const identity = `${candidate.sourceVersion}\0${candidate.sourceCommit}`;
+      if (
+        candidate.versionCode <= normal.versionCode ||
+        candidate.versionCode > ANDROID_MAX_VERSION_CODE ||
+        candidate.signerSha256 !== normal.signerSha256 ||
+        candidate.packageName !== normal.packageName ||
+        candidate.updaterProtocol !== normal.updaterProtocol ||
+        (candidate.sourceVersion === normal.sourceVersion &&
+          candidate.sourceCommit === normal.sourceCommit) ||
+        codes.has(candidate.versionCode) ||
+        identities.has(identity) ||
+        assets.has(candidate.asset) ||
+        candidate.asset === normal.asset
+      )
+        reasons.push("duplicate-recovery");
+      const payloadAsset = listedAssets.get(candidate.asset);
+      if (!payloadAsset) reasons.push("partial");
+      const payloadMatches = manifest.assets.filter((asset) => asset.name === candidate.asset);
+      if (
+        payloadMatches.length !== 1 ||
+        payloadAsset?.kind !== "android-recovery" ||
+        payloadAsset.platform !== "android"
+      )
+        reasons.push("duplicate-recovery");
+      codes.add(candidate.versionCode);
+      identities.add(identity);
+      assets.add(candidate.asset);
+    }
   }
 
   // Keep the earliest of releases that claim the same version or the same commit and channel.
@@ -314,7 +372,11 @@ export const selectPredecessor = (
     }
   }
   return best
-    ? { tag: best.tagName, version: best.manifest!.version, commit: best.manifest!.commit }
+    ? {
+        tag: best.tagName,
+        version: best.manifest!.version,
+        commit: best.manifest!.commit,
+      }
     : null;
 };
 
@@ -455,12 +517,28 @@ export const planStable = (input: {
 // ---------------------------------------------------------------------------------------------
 
 export const androidCodeTag = (code: number): string => `${ANDROID_CODE_TAG_PREFIX}${code}`;
+export const androidCodeRangeTag = (start: number, end: number): string =>
+  `${ANDROID_CODE_TAG_PREFIX}range-${start}-${end}`;
 
 /** A reservation tag claims its code and the one after it (normal, then recovery). */
 export const codeFromReservationTag = (tag: string): number | null => {
   if (!tag.startsWith(ANDROID_CODE_TAG_PREFIX)) return null;
   const suffix = tag.slice(ANDROID_CODE_TAG_PREFIX.length);
   return /^[1-9]\d*$/.test(suffix) ? Number(suffix) : null;
+};
+
+/** End of the permanently reserved range encoded by either a legacy pair tag or a range tag. */
+export const reservedAndroidCodeEnd = (tag: string): number | null => {
+  if (!tag.startsWith(ANDROID_CODE_TAG_PREFIX)) return null;
+  const suffix = tag.slice(ANDROID_CODE_TAG_PREFIX.length);
+  const range = /^range-([1-9]\d*)-([1-9]\d*)$/.exec(suffix);
+  if (!range) {
+    const legacy = codeFromReservationTag(tag);
+    return legacy === null ? null : legacy + 1;
+  }
+  const start = Number(range[1]);
+  const end = Number(range[2]);
+  return Number.isSafeInteger(start) && Number.isSafeInteger(end) && end >= start ? end : null;
 };
 
 export const highestUsedAndroidCode = (input: {
@@ -473,11 +551,12 @@ export const highestUsedAndroidCode = (input: {
     used.push(
       record.manifest.android.normal.versionCode,
       record.manifest.android.recovery.versionCode,
+      ...(record.manifest.android.recoveries ?? []).map((recovery) => recovery.versionCode),
     );
   }
   for (const tag of input.reservationTags) {
-    const code = codeFromReservationTag(tag);
-    if (code !== null) used.push(code + 1);
+    const code = reservedAndroidCodeEnd(tag);
+    if (code !== null) used.push(code);
   }
   return Math.max(...used);
 };
@@ -485,6 +564,11 @@ export const highestUsedAndroidCode = (input: {
 export interface AndroidCodePair {
   readonly normal: number;
   readonly recovery: number;
+}
+
+export interface AndroidCodeAllocation extends AndroidCodePair {
+  readonly recoveries: ReadonlyArray<number>;
+  readonly reservedThrough: number;
 }
 
 /**
@@ -500,6 +584,21 @@ export const nextAndroidCodePair = (highestUsed: number): AndroidCodePair => {
   return { normal, recovery };
 };
 
+/** Allocates one normal code followed by one distinct recovery code per frozen source identity. */
+export const nextAndroidCodeAllocation = (
+  highestUsed: number,
+  recoveryCount: number,
+): AndroidCodeAllocation => {
+  if (!Number.isSafeInteger(recoveryCount) || recoveryCount < 1)
+    throw new Error("At least one recovery APK is required.");
+  const normal = highestUsed + 1;
+  const reservedThrough = normal + recoveryCount;
+  if (!Number.isSafeInteger(normal) || reservedThrough > ANDROID_MAX_VERSION_CODE)
+    throw new Error(`Android installation codes are exhausted above ${highestUsed}.`);
+  const recoveries = Array.from({ length: recoveryCount }, (_, index) => normal + index + 1);
+  return { normal, recovery: recoveries[0]!, recoveries, reservedThrough };
+};
+
 // ---------------------------------------------------------------------------------------------
 // Whole-run planning
 // ---------------------------------------------------------------------------------------------
@@ -507,6 +606,13 @@ export const nextAndroidCodePair = (highestUsed: number): AndroidCodePair => {
 export interface PlannedRelease extends ReleasePlan {
   /** The release whose source the recovery APK is rebuilt from. */
   readonly predecessor: Predecessor;
+  /** Frozen, bounded set of exact normal-build identities for which recovery APKs are shipped. */
+  readonly recoverySources: ReadonlyArray<RecoverySource>;
+}
+
+export interface RecoverySource extends Predecessor {
+  readonly channel: ForkChannel | null;
+  readonly asset: string;
 }
 
 /**
@@ -554,5 +660,67 @@ export const buildPlan = (input: {
         "first (see docs/operations/fork-releases.md, Baseline).",
     );
   }
-  return { kind: "release", plan: { ...outcome.plan, predecessor } };
+  const eligible = eligibleReleases(input.releases);
+  const recoverySources: RecoverySource[] = [];
+  const seen = new Set<string>();
+  const add = (source: RecoverySource) => {
+    if (source.version === outcome.plan.version && source.commit === outcome.plan.commit) return;
+    const identity = `${source.version}\0${source.commit}`;
+    if (seen.has(identity)) return;
+    seen.add(identity);
+    recoverySources.push(source);
+  };
+  // Preserve the historical pair as the first item for old clients.
+  add({
+    ...predecessor,
+    asset: "",
+    channel: predecessor.baseline
+      ? null
+      : (eligible.find((record) => record.tagName === predecessor.tag)?.manifest?.channel ?? null),
+  });
+  // Keep the newest two normal identities per channel: this covers the current lane and one
+  // previously retained release if a user rolls back before resuming updates.
+  for (const channel of ["stable", "nightly"] as const) {
+    const recent = eligible
+      .filter((record) => record.manifest!.channel === channel)
+      .toSorted((left, right) =>
+        compareForkVersions(right.manifest!.version, left.manifest!.version),
+      )
+      .slice(0, 2);
+    for (const record of recent)
+      add({
+        tag: record.tagName,
+        version: record.manifest!.android.normal.sourceVersion,
+        commit: record.manifest!.android.normal.sourceCommit,
+        channel,
+        asset: "",
+      });
+  }
+  // Stable promotion changes the version identity while keeping the promoted source commit.
+  if (outcome.plan.source) {
+    const promoted = eligible.find((record) => record.tagName === outcome.plan.source!.tag);
+    if (promoted)
+      add({
+        tag: promoted.tagName,
+        version: promoted.manifest!.android.normal.sourceVersion,
+        commit: promoted.manifest!.android.normal.sourceCommit,
+        channel: promoted.manifest!.channel,
+        asset: "",
+      });
+  }
+  const namedRecoverySources = recoverySources.map((source, index) => ({
+    ...source,
+    asset:
+      index === 0
+        ? `t3-code-android-recovery-${outcome.plan.version}.apk`
+        : `t3-code-android-recovery-${outcome.plan.version}-from-${source.version}-${source.commit.slice(0, 12)}.apk`,
+  }));
+  return {
+    kind: "release",
+    plan: {
+      ...outcome.plan,
+      predecessor,
+      recoverySources: namedRecoverySources,
+    },
+  };
 };

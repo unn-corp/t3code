@@ -33,6 +33,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { signalProcessGroup } from "../process/processGroup.ts";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
+import * as IdleProcessRoots from "../maintenance/IdleProcessRoots.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -728,6 +729,13 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
               }),
           ),
         );
+
+      const releaseIdleRoot = yield* IdleProcessRoots.registerIdleProcessRoot(
+        Number(child.pid),
+        "provider",
+        child.isRunning.pipe(Effect.orElseSucceed(() => false)),
+      );
+      yield* Scope.addFinalizer(runtimeScope, releaseIdleRoot);
 
       const killOpenCodeProcessGroup = (signal: NodeJS.Signals) =>
         hostPlatform === "win32"

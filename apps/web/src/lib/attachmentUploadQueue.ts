@@ -155,34 +155,31 @@ function uploadBytes(input: {
 }): { readonly done: Promise<void>; readonly abort: () => void } {
   const xhr = new XMLHttpRequest();
   let aborted = false;
-  const hold = beginClientUpdateUpload();
-  const start = (releaseUpdateHold: () => void) =>
-    new Promise<void>((resolve, reject) => {
-      if (aborted) {
-        reject(new Error("Upload cancelled"));
-        return;
+  const done = new Promise<void>((resolve, reject) => {
+    if (aborted) {
+      reject(new Error("Upload cancelled"));
+      return;
+    }
+    xhr.open("POST", input.url, true);
+    xhr.timeout = UPLOAD_TIMEOUT_MS;
+    xhr.setRequestHeader("Content-Type", input.mimeType);
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        input.onProgress(event.loaded / event.total);
       }
-      xhr.open("POST", input.url, true);
-      xhr.timeout = UPLOAD_TIMEOUT_MS;
-      xhr.setRequestHeader("Content-Type", input.mimeType);
-      xhr.upload.addEventListener("progress", (event) => {
-        if (event.lengthComputable && event.total > 0) {
-          input.onProgress(event.loaded / event.total);
-        }
-      });
-      xhr.addEventListener("load", () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve();
-        } else {
-          reject(new Error(`Upload rejected (${xhr.status})`));
-        }
-      });
-      xhr.addEventListener("error", () => reject(new Error("Upload failed")));
-      xhr.addEventListener("timeout", () => reject(new Error("Upload timed out")));
-      xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
-      xhr.send(input.file);
-    }).finally(releaseUpdateHold);
-  const done = typeof hold === "function" ? start(hold) : hold.then(start);
+    });
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`Upload rejected (${xhr.status})`));
+      }
+    });
+    xhr.addEventListener("error", () => reject(new Error("Upload failed")));
+    xhr.addEventListener("timeout", () => reject(new Error("Upload timed out")));
+    xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
+    xhr.send(input.file);
+  });
 
   return {
     done,
@@ -193,7 +190,21 @@ function uploadBytes(input: {
   };
 }
 
-async function runUpload(job: UploadJob): Promise<void> {
+function runUpload(job: UploadJob): Promise<void> {
+  const hold = beginClientUpdateUpload();
+  const runAdmitted = async (releaseUpdateHold: () => void): Promise<void> => {
+    try {
+      if (!job.cancelled) await runUploadWithAdmission(job);
+    } finally {
+      releaseUpdateHold();
+    }
+  };
+  // Keep non-Android uploads on their existing synchronous start path. On Android the hold is
+  // asynchronous, so no upload-ID request or other network activity starts before admission.
+  return typeof hold === "function" ? runAdmitted(hold) : hold.then(runAdmitted);
+}
+
+async function runUploadWithAdmission(job: UploadJob): Promise<void> {
   if (job.persistedAttachmentId) {
     const verification = await verifyPersistedAttachmentUpload({
       registry: appAtomRegistry,

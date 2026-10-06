@@ -19,10 +19,10 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProcessDiagnostics from "../diagnostics/ProcessDiagnostics.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
-import {
-  processCreationIdentity,
-  UNKNOWN_PROCESS_IDENTITY,
-} from "@t3tools/shared/forkMaintenanceStore";
+import * as IdleProcessRoots from "./IdleProcessRoots.ts";
+import { type IdleProcessRoot, classifyProcessActivity } from "./IdleProcessRoots.ts";
+
+import { UNKNOWN_PROCESS_IDENTITY } from "@t3tools/shared/forkMaintenanceStore";
 import {
   acquireMaintenanceHost,
   describeCapability,
@@ -58,36 +58,47 @@ export { describeCapability };
 
 /** OS creation identity for each descendant, so a reused PID is never mistaken for the original process. */
 const identifyDescendants = async (
+  participantId: string,
   descendants: ReadonlyArray<{ pid: number; started: string; label: string }>,
+  roots: ReadonlyArray<IdleProcessRoot>,
+  identify: IdleProcessRoots.IdleProcessRootsShape["identify"],
 ): Promise<{
   descendants: Array<{ pid: number; started: string; label: string }>;
   complete: boolean;
+  blockers: ReturnType<typeof classifyProcessActivity>["blockers"];
 }> => {
-  const identified = await Promise.all(
-    descendants.map(async (entry) => {
-      try {
-        return {
-          pid: entry.pid,
-          started: await processCreationIdentity(entry.pid),
-          label: entry.label.slice(0, 120),
-          unreadable: false,
-        };
-      } catch {
-        return {
-          pid: entry.pid,
-          started: UNKNOWN_PROCESS_IDENTITY,
-          label: entry.label.slice(0, 120),
-          unreadable: true,
-        };
-      }
-    }),
+  const identities = await identify(descendants.map((entry) => entry.pid));
+  const identified = descendants.map((entry, index) => {
+    const result = identities[index];
+    return {
+      pid: entry.pid,
+      started:
+        result?.kind === "present"
+          ? result.identity
+          : result?.kind === "absent"
+            ? null
+            : UNKNOWN_PROCESS_IDENTITY,
+      label: entry.label.slice(0, 120),
+      unreadable: result?.kind === "unreadable" || result === undefined,
+    };
+  });
+  const classified = classifyProcessActivity(
+    participantId,
+    identified.map((entry) => ({
+      pid: entry.pid,
+      label: entry.label,
+      result:
+        entry.started === null
+          ? ({ kind: "absent" } as const)
+          : entry.unreadable
+            ? ({ kind: "unreadable" } as const)
+            : ({ kind: "present", identity: entry.started } as const),
+    })),
+    roots,
   );
   return {
-    descendants: identified.flatMap((entry) =>
-      entry.started === null
-        ? []
-        : [{ pid: entry.pid, started: entry.started, label: entry.label }],
-    ),
+    descendants: classified.descendants,
+    blockers: classified.blockers,
     complete: identified.every((entry) => !entry.unreadable),
   };
 };
@@ -106,6 +117,7 @@ export const collectActivity = (participantId: string) =>
     const terminals = yield* TerminalManager.TerminalManager;
     const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
     const diagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
+    const processRoots = yield* IdleProcessRoots.IdleProcessRoots;
     const blockers: ForkActivityBlocker[] = [];
     const unknown = (source: string): ForkActivityBlocker => ({
       participantId,
@@ -218,21 +230,34 @@ export const collectActivity = (participantId: string) =>
       return { blockers, descendants: [], descendantsKnown: false };
     }
     const snapshot = processSnapshot.value;
+    const roots = yield* processRoots.snapshot;
     const descendants = snapshot.processes.map((entry) => ({
       pid: entry.pid,
       started: String(entry.startTimeMs),
       label: entry.command,
     }));
     const processReadAt = DateTime.toEpochMillis(snapshot.readAt);
-    if (
+    const censusComplete = !(
       Option.isSome(snapshot.error) ||
       processReadAt < processReadStartedAt ||
       snapshot.processCount !== snapshot.processes.length
-    ) {
-      blockers.push(unknown("Process"));
-      return { blockers, descendants, descendantsKnown: false };
-    }
-    return { blockers, descendants, descendantsKnown: true };
+    );
+    if (!censusComplete) blockers.push(unknown("Process"));
+    const identified = yield* Effect.tryPromise({
+      try: () => identifyDescendants(participantId, descendants, roots, processRoots.identify),
+      catch: (cause) => new MaintenanceCoordinatorError({ operation: "process identity", cause }),
+    }).pipe(
+      Effect.catchTag("MaintenanceCoordinatorError", () =>
+        Effect.succeed({ descendants: [], complete: false, blockers: [] }),
+      ),
+    );
+    blockers.push(...identified.blockers);
+    if (!identified.complete) blockers.push(unknown("Process identity"));
+    return {
+      blockers,
+      descendants: identified.descendants,
+      descendantsKnown: censusComplete && identified.complete,
+    };
   });
 
 /** First metadata snapshot is the full list of terminals; the subscription is released at once. */
@@ -276,26 +301,15 @@ const make = Effect.gen(function* () {
         host.trial !== null || host.successorOf !== null
           ? { blockers: [], descendants: [], descendantsKnown: true }
           : yield* collectActivity(host.participantId);
-      const identified = yield* Effect.tryPromise({
-        try: () => identifyDescendants(activity.descendants),
-        catch: () =>
-          new MaintenanceCoordinatorError({ operation: "process identity", cause: "unreadable" }),
-      }).pipe(Effect.orElseSucceed(() => ({ descendants: [], complete: false })));
-      if (!identified.complete)
-        activity.blockers.push({
-          participantId: host.participantId,
-          reason: "unknown-participant",
-          label: "Process identity could not be verified.",
-        });
       yield* Effect.tryPromise({
         try: () =>
           host.store.observe(
             host.participantId,
             activity.blockers,
             timestamp,
-            identified.descendants,
+            activity.descendants,
             {
-              descendantsKnown: activity.descendantsKnown && identified.complete,
+              descendantsKnown: activity.descendantsKnown,
             },
           ),
         catch: (cause) =>

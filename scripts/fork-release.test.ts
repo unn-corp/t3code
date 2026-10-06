@@ -5,7 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
-import { candidateDigest, ARTIFACT_DIRS, type CheckReceipt } from "./fork-release-assets.ts";
+import {
+  candidateDigest,
+  sha256Bytes,
+  ARTIFACT_DIRS,
+  type CheckReceipt,
+} from "./fork-release-assets.ts";
 import { runValidation, type ValidationContext } from "./fork-release-config.ts";
 import {
   PREDECESSOR_DIGEST,
@@ -14,6 +19,7 @@ import {
   writeFixtureTree,
 } from "./fork-release-fixtures.ts";
 import { assembleCandidate } from "./fork-release.ts";
+import { androidCodeRangeTag, androidCodeTag } from "./fork-release-policy.ts";
 
 const SCRIPT = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
@@ -28,7 +34,10 @@ afterEach(() => {
   NodeFS.rmSync(root, { recursive: true, force: true });
 });
 
-const node = (code: string) => ({ run: ["node", "-e", code], timeoutMinutes: 1 });
+const node = (code: string) => ({
+  run: ["node", "-e", code],
+  timeoutMinutes: 1,
+});
 
 describe("assembling a candidate", () => {
   it("flattens a complete build into the exact release payload with checksums and a record", () => {
@@ -87,22 +96,119 @@ describe("assembling a candidate", () => {
     });
     assert.isTrue(wrongCommit.problems.some((p) => p.includes("not the pinned")));
     const wrongPredecessor = assembleCandidate({
-      plan: { ...tree.plan, predecessor: { ...tree.plan.predecessor, commit: sha("elsewhere") } },
+      plan: {
+        ...tree.plan,
+        predecessor: { ...tree.plan.predecessor, commit: sha("elsewhere") },
+      },
       inputDir,
       outDir,
     });
-    assert.isTrue(wrongPredecessor.problems.some((p) => p.includes("recovery APK was built from")));
+    assert.isTrue(
+      wrongPredecessor.problems.some((p) => p.includes("primary recovery APK reports")),
+    );
     assert.isFalse(NodeFS.existsSync(outDir));
     assert.isFalse(NodeFS.existsSync(`${outDir}.json`));
+  });
+
+  it("verifies and publishes every frozen recovery source with unique higher codes", () => {
+    const inputDir = NodePath.join(root, "input");
+    const tree = writeFixtureTree(inputDir);
+    const extraVersion = "1.0.0";
+    const extraCommit = sha("retained-stable");
+    const extraAsset = `t3-code-android-recovery-${tree.plan.version}-from-${extraVersion}-${extraCommit.slice(0, 12)}.apk`;
+    const extraBytes = Buffer.from("extra-recovery-apk");
+    const extra = {
+      asset: extraAsset,
+      versionCode: 29_853_681,
+      sourceVersion: extraVersion,
+      sourceCommit: extraCommit,
+      packageName: "com.devotek.t3code.pwa" as const,
+      signerSha256: "a".repeat(64),
+      updaterProtocol: 1 as const,
+      apkSha256: sha256Bytes(extraBytes),
+    };
+    const extraDir = NodePath.join(inputDir, "android-recovery-extras");
+    NodeFS.mkdirSync(extraDir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(extraDir, extraAsset), extraBytes);
+    NodeFS.writeFileSync(NodePath.join(extraDir, "metadata-1.json"), JSON.stringify(extra));
+    const plan = {
+      ...tree.plan,
+      recoverySources: [
+        ...tree.plan.recoverySources,
+        {
+          tag: "fork-v1.0.0",
+          version: extraVersion,
+          commit: extraCommit,
+          channel: "stable" as const,
+          asset: extraAsset,
+        },
+      ],
+    };
+    const outDir = NodePath.join(root, "candidate-with-recoveries");
+    const result = assembleCandidate({ plan, inputDir, outDir });
+    assert.deepStrictEqual(result.problems, []);
+    assert.isNotNull(result.record);
+    assert.include(
+      result.record!.assets.map((asset) => asset.name),
+      extraAsset,
+    );
+    assert.equal(result.record!.android.recoveries.length, 2);
+    assert.equal(result.record!.android.recoveries[1]?.sourceVersion, extraVersion);
+  });
+
+  it("rejects a code allocation receipt from a different pinned plan", () => {
+    const inputDir = NodePath.join(root, "input");
+    const tree = writeFixtureTree(inputDir);
+    const source = tree.plan.recoverySources[0]!;
+    const normal = 29_853_679;
+    const allocation = {
+      normal,
+      recovery: normal + 1,
+      recoveries: [normal + 1],
+      reservedThrough: normal + 1,
+      plan: {
+        version: tree.plan.version,
+        commit: sha("stale-plan"),
+        channel: tree.plan.channel,
+        recoveries: [
+          {
+            version: source.version,
+            commit: source.commit,
+            asset: source.asset,
+            tag: source.tag,
+          },
+        ],
+      },
+      reservation: {
+        rangeTag: androidCodeRangeTag(normal, normal + 1),
+        startTag: androidCodeTag(normal),
+      },
+    };
+    const result = assembleCandidate({
+      plan: tree.plan,
+      inputDir,
+      outDir: NodePath.join(root, "stale-allocation"),
+      codeAllocation: allocation,
+    });
+    assert.isNull(result.record);
+    assert.isTrue(
+      result.problems.some((problem) => problem.includes("durable reserved allocation")),
+    );
   });
 
   it("rejects an incomplete build: missing helper, missing server archive, no WSL receipt", () => {
     const inputDir = NodePath.join(root, "input");
     const tree = writeFixtureTree(inputDir, {
       tamper: (dir) => {
-        NodeFS.rmSync(NodePath.join(dir, ARTIFACT_DIRS.windowsServer), { recursive: true });
-        NodeFS.rmSync(NodePath.join(dir, ARTIFACT_DIRS.wslEmbedded), { recursive: true });
-        NodeFS.rmSync(NodePath.join(dir, "recovery-helper-windows-x64"), { recursive: true });
+        NodeFS.rmSync(NodePath.join(dir, ARTIFACT_DIRS.windowsServer), {
+          recursive: true,
+        });
+        NodeFS.rmSync(NodePath.join(dir, ARTIFACT_DIRS.wslEmbedded), {
+          recursive: true,
+        });
+        NodeFS.rmSync(NodePath.join(dir, "recovery-helper-windows-x64"), {
+          recursive: true,
+        });
       },
     });
     const { problems, record } = assembleCandidate({
@@ -171,7 +277,11 @@ describe("running a validation", () => {
     const command = node(`require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`);
     const receipt = runValidation(
       command,
-      context({ check: "update", predecessorDir: null, predecessorDigest: null }),
+      context({
+        check: "update",
+        predecessorDir: null,
+        predecessorDigest: null,
+      }),
     );
     assert.deepStrictEqual([receipt.exitCode, receipt.passed], [-1, false]);
     assert.isFalse(NodeFS.existsSync(marker));
@@ -215,7 +325,9 @@ describe("command line", () => {
   });
 
   it("turns receipts into manifest checks and exits non-zero when a required suite has no receipt", () => {
-    const candidate = prepareCandidate(root, { omitSuites: ["native-android"] });
+    const candidate = prepareCandidate(root, {
+      omitSuites: ["native-android"],
+    });
     const output = NodePath.join(root, "github-output");
     const result = cli(
       [

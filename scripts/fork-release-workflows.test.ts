@@ -24,6 +24,7 @@ interface Step {
   readonly if?: string;
   readonly uses?: string;
   readonly run?: string;
+  readonly "working-directory"?: string;
   readonly env?: Record<string, string>;
   readonly with?: Record<string, unknown>;
 }
@@ -41,7 +42,11 @@ interface Job {
 }
 interface Workflow {
   readonly on: Record<string, unknown>;
-  readonly concurrency: { group: string; queue?: string; "cancel-in-progress": boolean };
+  readonly concurrency: {
+    group: string;
+    queue?: string;
+    "cancel-in-progress": boolean;
+  };
   readonly permissions: Record<string, string>;
   readonly jobs: Record<string, Job>;
 }
@@ -106,7 +111,13 @@ describe("fork-release.yml structure", () => {
     assert.deepStrictEqual(needsOf(release.jobs.publish!).toSorted(), ["manifest", "plan"]);
     assert.isTrue(needsOf(release.jobs.manifest!).includes("validate"));
     assert.isTrue(needsOf(release.jobs.validate!).includes("assemble"));
-    for (const build of ["desktop_linux_x64", "desktop_win_x64", "android", "recovery_helper"]) {
+    for (const build of [
+      "desktop_linux_x64",
+      "desktop_win_x64",
+      "android",
+      "android_recovery_extras",
+      "recovery_helper",
+    ]) {
       assert.isTrue(
         needsOf(release.jobs.assemble!).includes(build),
         `assemble must wait for ${build}`,
@@ -132,6 +143,7 @@ describe("fork-release.yml structure", () => {
       [...jobText(job).matchAll(/secrets\.([A-Z0-9_]+)/g)].map((match) => match[1]!);
     const allowed: Record<string, RegExp> = {
       android: /^FORK_ANDROID_/,
+      android_recovery_extras: /^FORK_ANDROID_/,
       desktop_win_x64: /^AZURE_/,
     };
     for (const [name, job] of Object.entries(release.jobs)) {
@@ -156,7 +168,9 @@ describe("fork-release.yml structure", () => {
     }
     const runners = Object.values(release.jobs).flatMap((job) => [
       job["runs-on"],
-      ...(job.strategy?.matrix?.include?.map((entry) => entry.runner) ?? []),
+      ...(Array.isArray(job.strategy?.matrix?.include)
+        ? job.strategy!.matrix!.include!.map((entry) => entry.runner)
+        : []),
     ]);
     for (const runner of runners.filter(
       (entry): entry is string => typeof entry === "string" && !entry.includes("${{"),
@@ -216,12 +230,20 @@ describe("fork-release.yml gating", () => {
   it.skipIf(!hasBash)(
     "maps the two cron entries to channels and publishes only when enabled",
     () => {
-      const nightly = bash({ EVENT: "schedule", SCHEDULE: "23 7 * * *", ENABLED: "true" });
+      const nightly = bash({
+        EVENT: "schedule",
+        SCHEDULE: "23 7 * * *",
+        ENABLED: "true",
+      });
       assert.deepStrictEqual(
         [nightly.status, nightly.outputs.channel, nightly.outputs.publish],
         [0, "nightly", "true"],
       );
-      const stable = bash({ EVENT: "schedule", SCHEDULE: "23 8 * * 0", ENABLED: "true" });
+      const stable = bash({
+        EVENT: "schedule",
+        SCHEDULE: "23 8 * * 0",
+        ENABLED: "true",
+      });
       assert.deepStrictEqual([stable.outputs.channel, stable.outputs.publish], ["stable", "true"]);
       assert.equal(
         bash({ EVENT: "schedule", SCHEDULE: "23 7 * * *", ENABLED: "" }).outputs.publish,
@@ -395,7 +417,9 @@ describe("artifact and CLI agreement", () => {
   const ownUploads = (): string[] => {
     const names: string[] = [];
     for (const job of Object.values(release.jobs)) {
-      const platforms = job.strategy?.matrix?.include?.map((entry) => entry.platform) ?? [];
+      const platforms = Array.isArray(job.strategy?.matrix?.include)
+        ? job.strategy!.matrix!.include!.map((entry) => entry.platform)
+        : [];
       for (const step of job.steps ?? []) {
         const name = step.with?.name;
         if (!step.uses?.startsWith("actions/upload-artifact") || typeof name !== "string") continue;
@@ -414,6 +438,14 @@ describe("artifact and CLI agreement", () => {
     for (const dir of Object.values(ARTIFACT_DIRS))
       assert.isTrue(uploaded.has(dir), `no job uploads ${dir}`);
     const assemble = release.jobs.assemble!.steps!;
+    assert.isTrue(
+      assemble.some((step) => step.with?.pattern === "android-recovery-extra-*"),
+      "assemble downloads all additional recovery APKs",
+    );
+    assert.isTrue(
+      assemble.some((step) => step.with?.name === "android-code-allocation"),
+      "assemble verifies exact codes against the uploaded durable reservation",
+    );
     for (const step of assemble.filter((entry) =>
       entry.uses?.startsWith("actions/download-artifact"),
     )) {
@@ -441,6 +473,29 @@ describe("artifact and CLI agreement", () => {
     const build = stepNamed(release.jobs.recovery_helper!, "Build recovery helper");
     assert.include(build.run!, "--workdir");
     assert.include(build.env!.WORKDIR!, "/source");
+  });
+
+  it("builds extra recovery APKs with current tooling against the exact pinned source checkout", () => {
+    const job = release.jobs.android_recovery_extras!;
+    const build = stepNamed(job, "Build recovery APK with current tooling");
+    assert.equal(build["working-directory"], "tooling");
+    assert.equal(stepNamed(job, "Setup Vite+").with?.["node-version-file"], "tooling/package.json");
+    assert.equal(
+      stepNamed(job, "Install current release tooling and builder")["working-directory"],
+      "tooling",
+    );
+    assert.include(
+      stepNamed(job, "Install current release tooling and builder").run!,
+      "--filter=@t3tools/scripts...",
+    );
+    assert.equal(
+      stepNamed(job, "Install pinned source dependencies")["working-directory"],
+      "source",
+    );
+    assert.include(build.run!, 'git -C "$GITHUB_WORKSPACE/source" rev-parse HEAD');
+    assert.include(build.run!, '--source-dir "$GITHUB_WORKSPACE/source"');
+    assert.include(build.run!, '--normal-version-code "$NORMAL_CODE"');
+    assert.include(build.run!, '--version-code "$RECOVERY_CODE"');
   });
 
   it("validates the three targets with the package validation defined in code, not in configuration", () => {
@@ -569,8 +624,11 @@ describe("withdrawal workflow", () => {
   });
 
   it("offers both the withdrawal and its reverse", () => {
-    const action = (withdraw.on.workflow_dispatch as { inputs: { action: { options: string[] } } })
-      .inputs.action;
+    const action = (
+      withdraw.on.workflow_dispatch as {
+        inputs: { action: { options: string[] } };
+      }
+    ).inputs.action;
     assert.deepStrictEqual(action.options, ["withdraw", "restore"]);
   });
 });

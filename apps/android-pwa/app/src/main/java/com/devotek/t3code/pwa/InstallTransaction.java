@@ -36,9 +36,19 @@ final class InstallTransaction {
             store.tryMutate(state -> {
                 state.pending = null;
                 UpdateState.Outcome outcome = new UpdateState.Outcome();
-                outcome.transactionId = pending.transactionId; outcome.kind = pending.kind; outcome.result = "failed";
-                outcome.message = "Android could not start the installation."; outcome.at = now;
+                outcome.transactionId = pending.transactionId; outcome.kind = pending.kind;
+                outcome.result = error instanceof UpdateCapacity.Insufficient ? "waiting" : "failed";
+                outcome.message = error instanceof UpdateCapacity.Insufficient
+                    ? error.getMessage() : "Android could not start the installation.";
+                outcome.at = now;
                 state.lastOutcome = outcome;
+                if (error instanceof UpdateCapacity.Insufficient && pending.userRequested && state.intent == null) {
+                    UpdateState.Intent intent = new UpdateState.Intent();
+                    intent.kind = pending.kind; intent.targetSha256 = pending.targetSha256;
+                    intent.transactionId = pending.transactionId; intent.requestedAt = pending.requestedAt;
+                    state.intent = intent;
+                    state.lastError = error.getMessage();
+                }
             });
             throw error;
         }

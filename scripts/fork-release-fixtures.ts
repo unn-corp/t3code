@@ -53,6 +53,7 @@ export interface ManifestOptions {
   readonly normalCode?: number;
   readonly recoveryCode?: number;
   readonly recoveryCommit?: string;
+  readonly recoveryVersion?: string;
   readonly checks?: Partial<ForkReleaseManifest["checks"]>;
 }
 
@@ -94,7 +95,7 @@ export const makeManifest = (options: ManifestOptions): ForkReleaseManifest => {
       recovery: {
         asset: recoveryName,
         versionCode: options.recoveryCode ?? normalCode + 1,
-        sourceVersion: "0.9.0",
+        sourceVersion: options.recoveryVersion ?? "0.9.0",
         sourceCommit: options.recoveryCommit ?? sha(`recovery-${options.version}`),
         packageName: FORK_ANDROID_PACKAGE,
         signerSha256: SIGNER,
@@ -294,6 +295,15 @@ export const writeFixtureTree = (inputDir: string, options: FixtureOptions = {})
         version: predecessorVersion,
         commit: predecessorCommit,
       },
+      recoverySources: [
+        {
+          tag: forkTagForVersion(predecessorVersion),
+          version: predecessorVersion,
+          commit: predecessorCommit,
+          channel: "stable",
+          asset: `t3-code-android-recovery-${version}.apk`,
+        },
+      ],
     },
   };
 };

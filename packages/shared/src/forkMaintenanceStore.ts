@@ -72,6 +72,10 @@ const isCode = (cause: unknown, code: string) =>
   typeof cause === "object" && cause !== null && "code" in cause && cause.code === code;
 
 export type ProcessIdentity = (pid: number) => Promise<string | null>;
+export type ProcessIdentityResult =
+  | { readonly kind: "present"; readonly identity: string }
+  | { readonly kind: "absent" }
+  | { readonly kind: "unreadable"; readonly cause: Error };
 /** Stored identity marker for a process whose PID was visible but whose creation identity was unreadable. */
 export const UNKNOWN_PROCESS_IDENTITY = "unknown-process-identity";
 export const ORPHAN_ATTESTATION_CONFIRMATION = "I checked for unrecorded processes";
@@ -117,22 +121,130 @@ export async function processCreationIdentity(
     }
   }
   if (platform === "win32") {
-    const { stdout } = await run(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($p) { $p.StartTime.ToUniversalTime().Ticks }`,
-      ],
-      { windowsHide: true },
-    );
-    const started = stdout.trim();
-    return started.length === 0 ? null : started;
+    const [result] = await processCreationIdentities([pid], platform, run);
+    if (result?.kind === "present") return result.identity;
+    if (result?.kind === "absent") return null;
+    throw result?.cause ?? new Error("Unreadable process identity.");
   }
   throw new UnsupportedPlatformError(
     `Process ownership verification is unsupported on ${platform}.`,
   );
+}
+
+/**
+ * Reads many creation identities without starting one PowerShell process per PID.
+ * Windows batches are bounded by both count and command length; each batch is
+ * complete or reported unreadable, never silently truncated. The PowerShell
+ * timeout is intentionally shorter than the coordinator's stale-heartbeat window.
+ */
+export async function processCreationIdentities(
+  pids: ReadonlyArray<number>,
+  platform: NodeJS.Platform = process.platform,
+  run: typeof exec = exec,
+): Promise<ReadonlyArray<ProcessIdentityResult>> {
+  if (pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
+    throw new Error("Invalid process owner.");
+  if (pids.length === 0) return [];
+  if (platform !== "win32") {
+    return Promise.all(
+      pids.map(async (pid) => {
+        try {
+          const identity = await processCreationIdentity(pid, platform, run);
+          return identity === null
+            ? { kind: "absent" as const }
+            : { kind: "present" as const, identity };
+        } catch (cause) {
+          return {
+            kind: "unreadable" as const,
+            cause: cause instanceof Error ? cause : new Error(String(cause)),
+          };
+        }
+      }),
+    );
+  }
+
+  const output: ProcessIdentityResult[] = Array.from({ length: pids.length }, () => ({
+    kind: "unreadable",
+    cause: new Error("Windows process identity response was incomplete."),
+  }));
+  // Numeric-only literals make the command injection-safe. Keep ample space
+  // below Windows' command-line limit after executable and wrapper arguments.
+  const batches: Array<{ start: number; ids: number[] }> = [];
+  let start = 0;
+  let ids: number[] = [];
+  let chars = 0;
+  for (let index = 0; index < pids.length; index++) {
+    const pid = pids[index]!;
+    const size = String(pid).length + 2;
+    if (ids.length > 0 && (ids.length >= 256 || chars + size > 8_000)) {
+      batches.push({ start, ids });
+      start = index;
+      ids = [];
+      chars = 0;
+    }
+    ids.push(pid);
+    chars += size;
+  }
+  batches.push({ start, ids });
+
+  const readBatch = async (batch: (typeof batches)[number]) => {
+    const command = [
+      "$ErrorActionPreference='Stop';",
+      `$ids=@(${batch.ids.join(",")});`,
+      "foreach($id in $ids){",
+      "try{$p=Get-Process -Id $id -ErrorAction Stop; try{$ticks=$p.StartTime.ToUniversalTime().Ticks; Write-Output ($id.ToString()+[char]9+'P'+[char]9+$ticks.ToString())}catch{Write-Output ($id.ToString()+[char]9+'U')}}",
+      "catch{if($_.CategoryInfo.Category -eq 'ObjectNotFound'){Write-Output ($id.ToString()+[char]9+'A')}else{Write-Output ($id.ToString()+[char]9+'U')}}",
+      "}",
+    ].join("");
+    try {
+      const { stdout } = await run(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", command],
+        {
+          windowsHide: true,
+          timeout: 10_000,
+          maxBuffer: 2 * 1024 * 1024,
+        },
+      );
+      const byPid = new Map<number, ProcessIdentityResult>();
+      for (const line of stdout.split(/\r?\n/)) {
+        if (line.length === 0) continue;
+        const fields = line.split("\t");
+        const pid = Number(fields[0]);
+        if (!batch.ids.includes(pid) || byPid.has(pid)) continue;
+        if (fields[1] === "P" && fields.length === 3 && /^\d+$/.test(fields[2]!))
+          byPid.set(pid, { kind: "present", identity: fields[2]! });
+        else if (fields[1] === "A" && fields.length === 2) byPid.set(pid, { kind: "absent" });
+        else
+          byPid.set(pid, {
+            kind: "unreadable",
+            cause: new Error(`Cannot read process identity for PID ${pid}.`),
+          });
+      }
+      for (let offset = 0; offset < batch.ids.length; offset++) {
+        output[batch.start + offset] = byPid.get(batch.ids[offset]!) ?? {
+          kind: "unreadable",
+          cause: new Error("Windows process identity response omitted a PID."),
+        };
+      }
+    } catch (cause) {
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      for (let offset = 0; offset < batch.ids.length; offset++)
+        output[batch.start + offset] = { kind: "unreadable", cause: error };
+    }
+  };
+  // A bounded worker pool avoids making large process trees wait for one
+  // PowerShell startup per batch without flooding the host with subprocesses.
+  let nextBatch = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(4, batches.length) }, async () => {
+      while (nextBatch < batches.length) {
+        const batch = batches[nextBatch++]!;
+        await readBatch(batch);
+      }
+    }),
+  );
+  return output;
 }
 
 export function coordinatorDirectory(namespace = process.env.T3CODE_MAINTENANCE_NAMESPACE): string {
@@ -192,7 +304,7 @@ export class CoordinatorStore {
   }
   static async open(
     directory = coordinatorDirectory(),
-    identity: ProcessIdentity = (pid) => processCreationIdentity(pid),
+    identity: ProcessIdentity = processCreationIdentity,
     selfPid: number = process.pid,
   ): Promise<CoordinatorStore> {
     await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -219,6 +331,28 @@ export class CoordinatorStore {
   }
   private async alive(owner: Owner): Promise<boolean> {
     return (await this.identity(owner.pid)) === owner.started;
+  }
+  private async identities(
+    pids: ReadonlyArray<number>,
+  ): Promise<ReadonlyMap<number, ProcessIdentityResult>> {
+    const results = new Map<number, ProcessIdentityResult>();
+    if (this.identity === processCreationIdentity) {
+      const batch = await processCreationIdentities(pids);
+      pids.forEach((pid, index) => results.set(pid, batch[index]!));
+      return results;
+    }
+    for (const pid of pids) {
+      try {
+        const identity = await this.identity(pid);
+        results.set(pid, identity === null ? { kind: "absent" } : { kind: "present", identity });
+      } catch (cause) {
+        results.set(pid, {
+          kind: "unreadable",
+          cause: cause instanceof Error ? cause : new Error(String(cause)),
+        });
+      }
+    }
+    return results;
   }
   private owns(owner: Owner) {
     return owner.pid === this.owner.pid && owner.started === this.owner.started;
@@ -367,8 +501,17 @@ export class CoordinatorStore {
   /** Leases owned by exited processes can never complete; clearing them keeps a crash from blocking updates forever. */
   private async liveLeases() {
     const live = [];
-    for (const lease of await this.leases()) {
-      if (lease.owner.pid > 0 && !(await this.alive(lease.owner))) {
+    const leases = await this.leases();
+    const identities = await this.identities(
+      leases.filter((lease) => lease.owner.pid > 0).map((lease) => lease.owner.pid),
+    );
+    for (const lease of leases) {
+      const identity = identities.get(lease.owner.pid);
+      if (
+        lease.owner.pid > 0 &&
+        (identity?.kind === "absent" ||
+          (identity?.kind === "present" && identity.identity !== lease.owner.started))
+      ) {
         await NodeFSP.unlink(NodePath.join(this.directory, lease.name)).catch((cause: unknown) => {
           if (!isCode(cause, "ENOENT")) throw cause;
         });
@@ -389,21 +532,58 @@ export class CoordinatorStore {
   ): Promise<{ readonly kept: ReadonlyArray<MaintenanceParticipant>; readonly changed: boolean }> {
     const kept: MaintenanceParticipant[] = [];
     let changed = false;
+    const ownerIdentities = await this.identities(
+      registry.participants.map((participant) => participant.owner.pid),
+    );
+    const deadParticipants = registry.participants.filter((participant) => {
+      const identity = ownerIdentities.get(participant.owner.pid);
+      return (
+        identity?.kind === "absent" ||
+        (identity?.kind === "present" && identity.identity !== participant.owner.started)
+      );
+    });
+    const childIdentities = await this.identities(
+      deadParticipants.flatMap((participant) =>
+        participant.descendants.map((descendant) => descendant.pid),
+      ),
+    );
     for (const participant of registry.participants) {
-      if (await this.alive(participant.owner)) {
+      const ownerIdentity = ownerIdentities.get(participant.owner.pid);
+      if (ownerIdentity === undefined || ownerIdentity.kind === "unreadable") {
+        const blocker = {
+          participantId: participant.id,
+          reason: "unknown-participant" as const,
+          label: `${participant.label} process identity could not be verified.`,
+        };
+        const blockers = participant.blockers.some(
+          (entry) => entry.reason === blocker.reason && entry.label === blocker.label,
+        )
+          ? participant.blockers
+          : [...participant.blockers, blocker];
+        kept.push({ ...participant, blockers, idleSince: null, frozenFor: null });
+        if (
+          blockers !== participant.blockers ||
+          participant.idleSince !== null ||
+          participant.frozenFor !== null
+        )
+          changed = true;
+        continue;
+      }
+      if (
+        ownerIdentity.kind === "present" &&
+        ownerIdentity.identity === participant.owner.started
+      ) {
         kept.push(participant);
         continue;
       }
       const survivors: MaintenanceParticipant["descendants"][number][] = [];
       for (const descendant of participant.descendants) {
-        try {
-          const current = await this.identity(descendant.pid);
-          if (descendant.started === UNKNOWN_PROCESS_IDENTITY) {
-            if (current !== null) survivors.push({ ...descendant, started: current });
-          } else if (current === descendant.started) survivors.push(descendant);
-        } catch {
-          // An unreadable identity is not evidence that an orphaned child exited.
-          survivors.push(descendant);
+        const current = childIdentities.get(descendant.pid);
+        if (current?.kind === "unreadable") survivors.push(descendant);
+        else if (current?.kind === "present") {
+          if (descendant.started === UNKNOWN_PROCESS_IDENTITY)
+            survivors.push({ ...descendant, started: current.identity });
+          else if (current.identity === descendant.started) survivors.push(descendant);
         }
       }
       if (survivors.length === 0) {
@@ -629,16 +809,28 @@ export class CoordinatorStore {
       if (!target.orphaned)
         throw new Error("Only an exited orphan record can be resolved by operator attestation.");
 
+      const ownerIdentities = await this.identities(
+        registry.participants.map((participant) => participant.owner.pid),
+      );
       for (const participant of registry.participants) {
-        if ((await this.identity(participant.owner.pid)) === participant.owner.started)
+        const identity = ownerIdentities.get(participant.owner.pid);
+        if (identity?.kind === "unreadable" || identity === undefined)
+          throw new Error(`Cannot verify whether ${participant.label} is still running.`);
+        if (identity.kind === "present" && identity.identity === participant.owner.started)
           throw new Error(`${participant.label} is still running.`);
       }
       if ((await this.liveLeases()).length > 0)
         throw new Error(
           "A work lease is active or unreadable; resolve it before clearing an orphan.",
         );
+      const childIdentities = await this.identities(
+        target.descendants.map((descendant) => descendant.pid),
+      );
       for (const descendant of target.descendants) {
-        const current = await this.identity(descendant.pid);
+        const result = childIdentities.get(descendant.pid);
+        if (result?.kind === "unreadable" || result === undefined)
+          throw new Error(`Cannot verify recorded child PID ${descendant.pid}.`);
+        const current = result.kind === "present" ? result.identity : null;
         if (
           current !== null &&
           (descendant.started === UNKNOWN_PROCESS_IDENTITY || current === descendant.started)
@@ -688,15 +880,20 @@ export class CoordinatorStore {
       );
       const observedBlockers = [...actual, ...unresolvedPriorActivity];
       const inheritedDescendants: MaintenanceParticipant["descendants"][number][] = [];
+      const unreadablePriorDescendants: MaintenanceParticipant["descendants"][number][] = [];
       if (options.descendantsKnown !== false) {
+        const priorIdentities = await this.identities(
+          participant.descendants.map((entry) => entry.pid),
+        );
         for (const descendant of participant.descendants) {
-          try {
-            const current = await this.identity(descendant.pid);
-            if (descendant.started === UNKNOWN_PROCESS_IDENTITY) {
-              if (current !== null) inheritedDescendants.push({ ...descendant, started: current });
-            } else if (current === descendant.started) inheritedDescendants.push(descendant);
-          } catch {
+          const current = priorIdentities.get(descendant.pid);
+          if (current?.kind === "unreadable" || current === undefined) {
             inheritedDescendants.push(descendant);
+            unreadablePriorDescendants.push(descendant);
+          } else if (current.kind === "present") {
+            if (descendant.started === UNKNOWN_PROCESS_IDENTITY)
+              inheritedDescendants.push({ ...descendant, started: current.identity });
+            else if (current.identity === descendant.started) inheritedDescendants.push(descendant);
           }
         }
       }
@@ -711,6 +908,12 @@ export class CoordinatorStore {
           participantId: id,
           reason: "commands",
           label: `${unreportedInherited.length} process(es) started by a previous runtime are still running.`,
+        });
+      if (unreadablePriorDescendants.length > 0)
+        observedBlockers.push({
+          participantId: id,
+          reason: "unknown-participant",
+          label: `Previously recorded process identity could not be verified for ${unreadablePriorDescendants.length} child process(es).`,
         });
       const next: MaintenanceParticipant = {
         ...participant,

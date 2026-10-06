@@ -62,6 +62,8 @@ describe("the required suites", () => {
     assert.include(SUITES["desktop-updater"].required.join(" "), "updateMachine");
     assert.include(SUITES["native-android"].required.join(" "), "InstallTransactionTest");
     assert.include(SUITES["native-android"].required.join(" "), "UpdateReconcilerTest");
+    assert.include(SUITES["client-updates"].required.join(" "), "UpdateRecoveryDialog.test.tsx");
+    assert.include(SUITES["client-updates"].required.join(" "), "browserRecordingUpload.test.ts");
   });
 
   it("gate every check on the coordinator, and update and recovery on both updaters", () => {
@@ -70,11 +72,13 @@ describe("the required suites", () => {
     for (const check of ["update", "recovery"] as const) {
       assert.include(REQUIRED_SUITES[check], "desktop-updater");
       assert.include(REQUIRED_SUITES[check], "native-android");
+      assert.include(REQUIRED_SUITES[check], "client-updates");
     }
     const runs = requiredSuiteRuns()
       .map((run) => `${run.suite}:${run.target}`)
       .toSorted();
     assert.deepStrictEqual(runs, [
+      "client-updates:linux-x64",
       "coordinator:linux-x64",
       "coordinator:windows-x64",
       "desktop-updater:linux-x64",

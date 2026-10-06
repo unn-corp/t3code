@@ -76,6 +76,7 @@ import { expandHomePath } from "../pathExpansion.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
+import * as IdleProcessRoots from "../maintenance/IdleProcessRoots.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
@@ -1479,6 +1480,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const terminalRootReleases = new WeakMap<TerminalSessionState, Effect.Effect<void>>();
+  const releaseTerminalRoot = Effect.fn("terminal.releaseIdleRoot")(function* (
+    session: TerminalSessionState,
+  ) {
+    const release = terminalRootReleases.get(session);
+    terminalRootReleases.delete(session);
+    if (release) yield* release;
+  });
   const resolveLaunchInputEnvironment = Effect.fn("terminal.resolveLaunchInputEnvironment")(
     function* <Input extends TerminalOpenInput | TerminalAttachInput | TerminalRestartInput>(
       input: Input,
@@ -2081,6 +2090,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return;
       }
 
+      if (action.type === "exit") yield* releaseTerminalRoot(session);
+
       if (action.type === "output") {
         if (action.history !== null) {
           yield* queuePersist(action.threadId, action.terminalId, action.history);
@@ -2116,7 +2127,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const stopProcess = Effect.fn("terminal.stopProcess")(function* (session: TerminalSessionState) {
     const process = session.process;
-    if (!process) return;
+    if (!process) {
+      yield* releaseTerminalRoot(session);
+      return;
+    }
 
     const updatedAt = yield* nowIso;
     yield* modifyManagerState((state) => {
@@ -2140,6 +2154,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       terminalId: session.terminalId,
     });
     yield* startKillEscalation(process, session.threadId, session.terminalId);
+    yield* releaseTerminalRoot(session);
     yield* evictInactiveSessionsIfNeeded();
   });
 
@@ -2303,6 +2318,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               return [undefined, state] as const;
             });
 
+            const rootRelease = yield* IdleProcessRoots.registerIdleProcessRoot(
+              processPid,
+              "terminal",
+              Effect.sync(
+                () =>
+                  session.status === "running" &&
+                  session.process === spawnResult.process &&
+                  session.pid === processPid &&
+                  !session.pendingProcessEvents.some((event) => event.type === "exit"),
+              ),
+            );
+            terminalRootReleases.set(session, rootRelease);
+
             yield* publishEvent({
               type: eventType,
               threadId: session.threadId,
@@ -2327,6 +2355,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       if (ptyProcess) {
         yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
       }
+      yield* releaseTerminalRoot(session);
 
       yield* modifyManagerState((state) => {
         cleanupProcessHandles(session);

@@ -17,6 +17,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
+import * as IdleProcessRoots from "../maintenance/IdleProcessRoots.ts";
 
 describe("resolveOpenCodeConfigContent", () => {
   it("prefers the caller environment over the inherited environment", () => {
@@ -228,6 +229,7 @@ server.listen(0, "127.0.0.1", () => {
         Effect.scoped,
         Effect.provide([
           OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
+            Layer.provide(IdleProcessRoots.layer),
             Layer.provide(OpenCodeServerLedger.layerTest),
             Layer.provideMerge(NodeServices.layer),
           ),

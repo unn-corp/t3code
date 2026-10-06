@@ -72,13 +72,15 @@ final class UpdateState {
         String transactionId = "", kind = "update", tag = "", targetVersion = "", targetCommit = "", targetChannel = "stable";
         String targetSha256 = "", manifestSha256 = "", previousCommit = "", installerResult = "committing";
         int sessionId = -1;
-        long targetVersionCode, previousVersionCode, startedAt;
+        boolean userRequested;
+        long targetVersionCode, previousVersionCode, startedAt, requestedAt;
         JSONObject toJson() throws JSONException {
             return new JSONObject().put("transactionId", transactionId).put("kind", kind).put("tag", tag)
                 .put("targetVersion", targetVersion).put("targetCommit", targetCommit).put("targetChannel", targetChannel)
                 .put("targetSha256", targetSha256).put("manifestSha256", manifestSha256).put("previousCommit", previousCommit)
                 .put("installerResult", installerResult).put("targetVersionCode", targetVersionCode)
-                .put("previousVersionCode", previousVersionCode).put("startedAt", startedAt).put("sessionId", sessionId);
+                .put("previousVersionCode", previousVersionCode).put("startedAt", startedAt).put("requestedAt", requestedAt).put("sessionId", sessionId)
+                .put("userRequested", userRequested);
         }
         static Pending from(JSONObject json) {
             Pending pending = new Pending();
@@ -89,6 +91,8 @@ final class UpdateState {
             pending.previousCommit = json.optString("previousCommit"); pending.installerResult = json.optString("installerResult", "committing");
             pending.targetVersionCode = json.optLong("targetVersionCode"); pending.previousVersionCode = json.optLong("previousVersionCode");
             pending.startedAt = json.optLong("startedAt"); pending.sessionId = json.optInt("sessionId", -1);
+            pending.requestedAt = json.optLong("requestedAt", pending.startedAt);
+            pending.userRequested = json.optBoolean("userRequested");
             return pending;
         }
     }

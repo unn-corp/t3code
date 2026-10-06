@@ -22,6 +22,43 @@ public final class ReleaseManifestTest {
         assertEquals("android-recovery", manifest.asset(Fixtures.RECOVERY_ASSET).kind);
         assertTrue(manifest.checksPassed());
     }
+    @Test public void parsesOptionalRecoverySourcesAndSelectsExactSourceIdentity() throws Exception {
+        JSONObject json = Fixtures.manifestJson();
+        String olderAsset = "t3-code-android-recovery-older.apk";
+        String olderDigest = "d".repeat(64);
+        json.getJSONArray("assets").put(new JSONObject().put("name", olderAsset).put("sha256", olderDigest)
+            .put("bytes", 3000).put("kind", "android-recovery").put("platform", "android"));
+        json.getJSONObject("android").put("recoveries", new org.json.JSONArray()
+            .put(Fixtures.artifact(Fixtures.RECOVERY_ASSET, Fixtures.RECOVERY_CODE, "1.0.0", Fixtures.PREVIOUS_COMMIT))
+            .put(Fixtures.artifact(olderAsset, Fixtures.RECOVERY_CODE + 1, "0.9.0", Fixtures.COMMIT)));
+
+        ReleaseManifest manifest = ReleaseManifest.parse(json.toString());
+        assertEquals(2, manifest.recoveries.size());
+        assertEquals(olderAsset, manifest.recoveryForSource("0.9.0", Fixtures.COMMIT).asset);
+        assertEquals(Fixtures.RECOVERY_ASSET, manifest.recoveryForSource("1.0.0", Fixtures.PREVIOUS_COMMIT).asset);
+        assertNull(manifest.recoveryForSource("0.9.0", Fixtures.PREVIOUS_COMMIT));
+        assertTrue(manifest.hasRecoveryDigest(olderDigest));
+    }
+    @Test public void rejectsDuplicateOptionalRecoveryIdentity() throws Exception {
+        JSONObject json = Fixtures.manifestJson();
+        String olderAsset = "t3-code-android-recovery-duplicate.apk";
+        json.getJSONArray("assets").put(new JSONObject().put("name", olderAsset).put("sha256", "d".repeat(64))
+            .put("bytes", 3000).put("kind", "android-recovery").put("platform", "android"));
+        json.getJSONObject("android").put("recoveries", new org.json.JSONArray()
+            .put(Fixtures.artifact(Fixtures.RECOVERY_ASSET, Fixtures.RECOVERY_CODE, "1.0.0", Fixtures.PREVIOUS_COMMIT))
+            .put(Fixtures.artifact(olderAsset, Fixtures.RECOVERY_CODE + 1, "1.0.0", Fixtures.PREVIOUS_COMMIT)));
+
+        try { ReleaseManifest.parse(json.toString()); fail("Accepted a duplicate source identity"); }
+        catch (ReleaseManifest.Invalid expected) { }
+    }
+    @Test public void rejectsOptionalRecoveryWithCodeNotAboveNormalOrWrongAssetKind() throws Exception {
+        JSONObject code = Fixtures.manifestJson();
+        code.getJSONObject("android").put("recoveries", new org.json.JSONArray()
+            .put(Fixtures.artifact(Fixtures.RECOVERY_ASSET, Fixtures.RECOVERY_CODE, "1.0.0", Fixtures.PREVIOUS_COMMIT))
+            .put(Fixtures.artifact("t3-code-android-1.0.1.apk", Fixtures.NORMAL_CODE + 1, "0.9.0", "3333333333333333333333333333333333333333")));
+        try { ReleaseManifest.parse(code.toString()); fail("Accepted a recovery sharing the normal asset"); }
+        catch (ReleaseManifest.Invalid expected) { }
+    }
     @Test public void rejectsForeignRepositoriesPackagesAndFormats() throws Exception {
         rejects("other repository", json -> json.put("repository", "someone/else"));
         rejects("other format", json -> json.put("format", 2));

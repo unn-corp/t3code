@@ -274,19 +274,22 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void saveDownload(String json) {
-        try { PhoneOperations.shared().requireOpen(); } catch (IllegalStateException held) { toast(held.getMessage()); return; }
         if (pendingDownload != null) { toast("Finish saving the current file first."); return; }
+        try { PhoneOperations.shared().begin("save-file", "download", PhoneOperations.UNTIL_ENDED); }
+        catch (IllegalStateException held) { toast(held.getMessage()); return; }
         try {
             JSONObject file = new JSONObject(json);
             byte[] bytes = Base64.decode(file.getString("data"), Base64.DEFAULT);
-            if (bytes.length > MAX_DOWNLOAD_BYTES) return;
+            if (bytes.length > MAX_DOWNLOAD_BYTES) {
+                PhoneOperations.shared().end("save-file", "download");
+                return;
+            }
             String name = file.optString("name", "download").replaceAll("[\\\\/\\p{Cntrl}]", "_");
             Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE);
             String mime = file.optString("mime", "application/octet-stream").split(";")[0];
             intent.setType(mime.contains("/") ? mime : "application/octet-stream");
             intent.putExtra(Intent.EXTRA_TITLE, name);
             pendingDownload = bytes;
-            PhoneOperations.shared().begin("save-file", "download", PhoneOperations.UNTIL_ENDED);
             startActivityForResult(intent, SAVE_FILE);
         } catch (JSONException | IllegalArgumentException | IllegalStateException | ActivityNotFoundException error) {
             pendingDownload = null;
@@ -305,18 +308,21 @@ public final class MainActivity extends ComponentActivity {
             fileCallback = null;
         }
         if (code == FILE_PICKER) PhoneOperations.shared().end("file-chooser", "picker");
-        if (code == SAVE_FILE) PhoneOperations.shared().end("save-file", "download");
         if (code == SAVE_FILE && pendingDownload != null) {
             byte[] bytes = pendingDownload;
             pendingDownload = null;
-            if (result == RESULT_OK && data != null && data.getData() != null) {
-                try (OutputStream stream = getContentResolver().openOutputStream(data.getData())) {
-                    if (stream == null) throw new IOException("No output stream");
-                    stream.write(bytes);
-                    toast("File saved.");
-                } catch (IOException error) { toast("Could not save the file."); }
+            try {
+                if (result == RESULT_OK && data != null && data.getData() != null) {
+                    try (OutputStream stream = getContentResolver().openOutputStream(data.getData())) {
+                        if (stream == null) throw new IOException("No output stream");
+                        stream.write(bytes);
+                        toast("File saved.");
+                    } catch (IOException error) { toast("Could not save the file."); }
+                }
+            } finally {
+                PhoneOperations.shared().end("save-file", "download");
             }
-        }
+        } else if (code == SAVE_FILE) PhoneOperations.shared().end("save-file", "download");
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
