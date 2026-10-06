@@ -243,6 +243,10 @@ update procedure rather than starting a second server against its live state.
 
 ### Background alerts
 
+Notification-service teardown stays on its background worker, including eviction of idle TLS
+connections. Android calls service destruction on the main thread; closing a socket pool there can
+raise `NetworkOnMainThreadException` during an update or when background alerts are stopped.
+
 `AndroidNotificationCoordinator` copies enabled directly paired Bearer connections to the native
 notification bridge. `NotificationCredentials` encrypts the native copy with an Android Keystore
 AES-GCM key. Removing or disabling an environment, or disabling alerts, removes the corresponding

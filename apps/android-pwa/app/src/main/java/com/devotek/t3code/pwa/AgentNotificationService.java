@@ -86,8 +86,15 @@ public final class AgentNotificationService extends Service {
     }
     @Override public void onDestroy() {
         destroyed = true;
-        worker.execute(() -> { for (Connection connection : connections.values()) connection.close(); connections.clear(); });
-        worker.shutdown(); http.dispatcher().executorService().shutdown(); http.connectionPool().evictAll();
+        // Evicting an idle TLS connection performs network I/O. Service.onDestroy runs on the
+        // main thread, so keep both socket and pool teardown on the worker during APK replacement.
+        worker.execute(() -> {
+            for (Connection connection : connections.values()) connection.close();
+            connections.clear();
+            http.dispatcher().executorService().shutdown();
+            http.connectionPool().evictAll();
+        });
+        worker.shutdown();
         stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy();
     }
     private final class Connection {
