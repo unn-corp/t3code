@@ -129,6 +129,7 @@ const serverInvocation = (contentDir: string, home: string) => {
   const serverArchive = NodePath.join(contentDir, "resources/server.asar");
   const entry = NodePath.join(serverArchive, "apps/server/dist/bin.mjs");
   if (NodeFS.existsSync(serverArchive)) {
+    Asar.uncache(serverArchive);
     Asar.statFile(serverArchive, "apps/server/dist/bin.mjs");
     return {
       executable: windowsDesktopExecutable(contentDir),
@@ -489,9 +490,13 @@ const installWindowsPayload = (installer: string, directory: string) => {
   for (const required of ["app-update.yml", "server.asar", "app.asar"])
     if (!NodeFS.existsSync(NodePath.join(resources, required)))
       throw new Error(`The installed desktop is missing ${required}.`);
-  const metadata = JSON.parse(
-    Asar.extractFile(NodePath.join(resources, "app.asar"), "package.json").toString(),
-  ) as { version?: string };
+  // The check replaces this path repeatedly. @electron/asar caches headers by pathname, so an
+  // old header would read the new archive at stale offsets after update or recovery.
+  const appArchive = NodePath.join(resources, "app.asar");
+  Asar.uncache(appArchive);
+  const metadata = JSON.parse(Asar.extractFile(appArchive, "package.json").toString()) as {
+    version?: string;
+  };
   if (!metadata.version) throw new Error("The installed desktop has no package version.");
   return { directory, version: metadata.version };
 };
