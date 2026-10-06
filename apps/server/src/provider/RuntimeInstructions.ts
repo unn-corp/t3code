@@ -20,7 +20,7 @@ export function buildRuntimeInstructions(runtime: {
     modelName && modelName !== model ? `${modelName} (model slug: ${model})` : model;
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${modelLabel}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
-  return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
+  return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n<conversation_evidence>When t3_evidence_directory is available, call it before saving generated screenshots, videos, or temporary workflow evidence and write those files into the returned directory. Browser captures saved by preview_snapshot and preview_recording_stop already use this storage. These files follow the user's storage retention settings and may be removed when the conversation is archived. Save permanent deliverables in the project or a user-designated destination.</conversation_evidence>`;
 }
 
 function toSingleLine(value: string): string {

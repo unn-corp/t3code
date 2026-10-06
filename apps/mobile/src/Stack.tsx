@@ -354,7 +354,7 @@ const SettingsContentStack = createNativeStackNavigator({
       screen: SettingsClientStorageRouteScreen,
       linking: "client-storage",
       options: {
-        title: "Client Storage",
+        title: "Storage",
       },
     }),
     SettingsDiagnostics: createNativeStackScreen({

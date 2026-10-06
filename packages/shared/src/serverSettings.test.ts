@@ -64,6 +64,8 @@ describe("serverSettings helpers", () => {
         storageCleanup: { worktreeAfterDays: null },
       }).storageCleanup,
     ).toEqual({
+      conversationEvidenceOnArchive: false,
+      conversationEvidenceAfterDays: null,
       worktreeAfterDays: null,
       worktreeOnMerge: true,
       worktreeOnDelete: false,
@@ -72,6 +74,20 @@ describe("serverSettings helpers", () => {
       logsAfterDays: 30,
     });
   });
+  it("adds conversation evidence retention without resetting existing storage choices", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { worktreeAfterDays: 8, browserArtifactsAfterDays: 14, logsAfterDays: 30 },
+    });
+    const next = applyServerSettingsPatch(current, {
+      storageCleanup: { conversationEvidenceOnArchive: true, conversationEvidenceAfterDays: 7 },
+    });
+    expect(next.storageCleanup).toEqual({
+      ...current.storageCleanup,
+      conversationEvidenceOnArchive: true,
+      conversationEvidenceAfterDays: 7,
+    });
+  });
+
   it("replaces SSH host lists when saving, editing, and removing hosts", () => {
     const host = { id: "mini", label: "Mac mini", target: "mini" };
     const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { deviceHosts: [host] });

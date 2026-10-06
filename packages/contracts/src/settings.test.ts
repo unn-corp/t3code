@@ -52,6 +52,8 @@ describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
     expect(decodeServerSettings({}).storageCleanup).toEqual({
+      conversationEvidenceOnArchive: false,
+      conversationEvidenceAfterDays: null,
       worktreeAfterDays: null,
       worktreeOnMerge: false,
       worktreeOnDelete: false,
@@ -88,6 +90,9 @@ describe("storage cleanup settings", () => {
   it.each([0, -1, 1.5, 3651])("rejects invalid retention %s", (days) => {
     expect(() =>
       decodeServerSettingsPatch({ storageCleanup: { browserArtifactsAfterDays: days } }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({ storageCleanup: { conversationEvidenceAfterDays: days } }),
     ).toThrow();
   });
 });

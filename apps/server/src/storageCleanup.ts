@@ -9,6 +9,8 @@ import type {
   ProjectId,
   ServerSettings,
   ServerSettingsError,
+  StorageCleanupSettings,
+  ThreadId,
   TerminalSummary,
   WorktreeCleanupRules,
 } from "@t3tools/contracts";
@@ -26,6 +28,7 @@ import type { PlatformError } from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
+import * as ConversationEvidence from "./assets/ConversationEvidence.ts";
 import * as ServerConfig from "./config.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -84,11 +87,32 @@ export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now
   return (
     thread.branch !== null &&
     thread.worktreePath !== null &&
+    storageCleanupEvidenceIdle(thread, now)
+  );
+}
+
+function storageCleanupEvidenceIdle(thread: OrchestrationV2ThreadShell, now: number): boolean {
+  return (
     thread.activeRunId === null &&
     (thread.status === "idle" || thread.status === "failed") &&
     (thread.pendingBackgroundTasks?.length ?? 0) === 0 &&
     thread.pendingRuntimeRequest === null &&
     !threadHasQueuedTurnStart(thread, now)
+  );
+}
+
+/** Evidence retention is independent of whether a conversation owns a worktree. */
+export function storageCleanupEvidenceExpired(
+  thread: OrchestrationV2ThreadShell,
+  settings: StorageCleanupSettings,
+  now: number,
+  modifiedAt: number,
+): boolean {
+  return (
+    storageCleanupEvidenceIdle(thread, now) &&
+    ((settings.conversationEvidenceOnArchive && thread.archivedAt !== null) ||
+      (settings.conversationEvidenceAfterDays !== null &&
+        modifiedAt < now - settings.conversationEvidenceAfterDays * DAY_MS))
   );
 }
 
@@ -107,6 +131,7 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
 
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const evidence = yield* ConversationEvidence.ConversationEvidence;
   const settingsService = yield* Settings.ServerSettingsService;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const engine = yield* Orchestrator.OrchestratorV2;
@@ -415,10 +440,92 @@ export const make = Effect.gen(function* () {
     yield* visit(realRoot);
   });
 
+  const cleanEvidence = Effect.fn("StorageCleanup.cleanEvidence")(function* (
+    serverSettings: ServerSettings,
+    now: number,
+  ) {
+    const rules = serverSettings.storageCleanup;
+    if (!rules.conversationEvidenceOnArchive && rules.conversationEvidenceAfterDays === null)
+      return;
+    const snapshot = yield* readThreads();
+    // Retention continues after deletion; projection tombstones retain ownership.
+    const deleted = yield* sql<{ threadId: ThreadId }>`
+      SELECT thread_id AS "threadId" FROM orchestration_v2_projection_threads
+      WHERE deleted_at IS NOT NULL
+    `;
+    const threadsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
+    const cutoff =
+      rules.conversationEvidenceAfterDays === null
+        ? null
+        : now - rules.conversationEvidenceAfterDays * DAY_MS;
+    const ids = new Set([
+      ...snapshot.threads
+        .filter((thread) => storageCleanupEvidenceIdle(thread, now))
+        .map((thread) => thread.id),
+      ...deleted.map((row) => row.threadId),
+    ]);
+    for (const id of ids) {
+      yield* evidence
+        .clean(id, (modifiedAt) =>
+          Effect.gen(function* () {
+            const original = threadsById.get(id);
+            const archiveCandidate =
+              rules.conversationEvidenceOnArchive &&
+              (original === undefined || original.archivedAt !== null);
+            // Fresh files need no projection reads unless this conversation is archived.
+            if (!archiveCandidate && (cutoff === null || modifiedAt >= cutoff)) return false;
+            const settings = (yield* settingsService.getSettings).storageCleanup;
+            let thread = yield* projections.getThreadShell(id);
+            if (thread === null) {
+              thread = ProjectionStore.threadShellFromProjection(
+                yield* projections.getThreadProjection(id),
+              );
+            }
+            const terminals = liveTerminals.get(id);
+            if (
+              [...(terminals?.values() ?? [])].some(
+                (terminal) =>
+                  terminal.status === "starting" ||
+                  (terminal.status === "running" && terminal.hasRunningSubprocess),
+              )
+            )
+              return false;
+            return storageCleanupEvidenceExpired(thread, settings, now, modifiedAt);
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("evidence cleanup could not recheck thread", {
+                threadId: id,
+                error,
+              }).pipe(Effect.as(false)),
+            ),
+          ),
+        )
+        .pipe(
+          Effect.flatMap((removed) =>
+            removed > 0
+              ? Effect.logInfo("storage cleanup removed conversation evidence", {
+                  threadId: id,
+                  files: removed,
+                })
+              : Effect.void,
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning("conversation evidence cleanup skipped thread", {
+              threadId: id,
+              error,
+            }),
+          ),
+        );
+    }
+  });
+
   const sweep = Effect.fn("StorageCleanup.sweep")(function* () {
     const serverSettings = yield* settingsService.getSettings;
     const settings = serverSettings.storageCleanup;
     const now = yield* Clock.currentTimeMillis;
+    yield* cleanEvidence(serverSettings, now).pipe(
+      Effect.catch((error) => Effect.logWarning("conversation evidence cleanup failed", { error })),
+    );
     yield* cleanWorktrees(serverSettings, now).pipe(
       Effect.catch((error) => Effect.logWarning("worktree cleanup failed", { error })),
     );
@@ -485,8 +592,14 @@ export const make = Effect.gen(function* () {
     );
     yield* forkParked(
       Stream.runForEach(events, (event) =>
-        (event.type === "thread.deleted" || event.type === "provider-session.updated") &&
-        anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)
+        ((event.type === "thread.deleted" || event.type === "provider-session.updated") &&
+          anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)) ||
+        ((event.type === "thread.archived" ||
+          event.type === "thread.deleted" ||
+          event.type === "provider-session.updated" ||
+          event.type === "run.updated") &&
+          (lastSettings.storageCleanup.conversationEvidenceOnArchive ||
+            lastSettings.storageCleanup.conversationEvidenceAfterDays !== null))
           ? worker.enqueue(undefined)
           : Effect.void,
       ).pipe(
@@ -496,5 +609,5 @@ export const make = Effect.gen(function* () {
       ),
     );
   });
-  return { start, drain: worker.drain };
+  return { start, sweep, drain: worker.drain };
 });

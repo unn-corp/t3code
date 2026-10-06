@@ -20,12 +20,11 @@ import {
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import * as FileSystem from "effect/FileSystem";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
-import * as ServerConfig from "../../../config.ts";
+import * as ConversationEvidence from "../../../assets/ConversationEvidence.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -237,7 +236,7 @@ const PreviewRecordingStopTool = safeBrowserTool(
     parameters: PreviewAutomationTabTargetInput,
     success: Schema.Struct({ ...PreviewAutomationRecordingArtifact.fields, ...presentationFields }),
     failure: PreviewAutomationError,
-    dependencies: [...dependencies, FileSystem.FileSystem, ServerConfig.ServerConfig],
+    dependencies: [...dependencies, ConversationEvidence.ConversationEvidence],
   }).annotate(Tool.Title, "Stop browser recording"),
 );
 

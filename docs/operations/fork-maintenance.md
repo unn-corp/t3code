@@ -145,6 +145,30 @@ Run the relevant checkpoint/provider regression tests when syncing upstream. Mod
 comes from the live provider catalog, not a documentation snapshot. Confirm whether upstream has
 incorporated equivalent behavior before retaining compatibility patches.
 
+## Conversation evidence retention
+
+**Behavior and entry.** Settings → Storage → Conversation evidence controls environment-wide
+cleanup when a conversation is archived or its evidence reaches the chosen age. Both policies
+start disabled. Saved agent browser screenshots and claimed recordings are owned by their
+conversation. Agents receive instructions and the `t3_evidence_directory` tool for other temporary
+outputs; arbitrary shell writes are not redirected. Permanent deliverables belong outside this
+storage. Legacy browser captures and desktop-local recording copies retain their separate policy.
+
+**Ownership and coupling.** [ConversationEvidence.ts](../../apps/server/src/assets/ConversationEvidence.ts)
+owns safe per-conversation paths and file capture; [storageCleanup.ts](../../apps/server/src/storageCleanup.ts)
+owns retention and waits for active runs, background tasks, and shell processes to stop. Shared
+[Storage settings](../../apps/web/src/components/settings/StorageSettings.tsx) reach web, desktop,
+and the fork APK; the APK needs a rebuilt web bundle. Upstream mobile has its own Storage route.
+Older hosts omit the capability and do not receive evidence settings. Existing installations need
+an updated host before captures use the new storage.
+
+**Verification.** [Evidence service tests](../../apps/server/src/assets/ConversationEvidence.test.ts),
+[cleanup tests](../../apps/server/src/storageCleanup.test.ts), and the MCP preview/registration tests
+cover conversation ownership, upload retries, archive and age policies, busy-thread protection,
+and safe cleanup boundaries. Deleted conversations remain eligible for age cleanup. Removing
+files invalidates their evidence links; unarchiving cannot restore them. Uploaded message
+attachments, conversation history, and project files remain outside these policies.
+
 ## Updates and recovery
 
 ### Resolve an unknown orphan after offline verification

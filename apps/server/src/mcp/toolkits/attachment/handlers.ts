@@ -1,5 +1,6 @@
 import { type ChatAttachment, MessageId, OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as ConversationEvidence from "../../../assets/ConversationEvidence.ts";
 import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
@@ -32,6 +33,15 @@ export function resolveAttachmentReferences(
 }
 
 export const AttachmentHandlersLive = AttachmentToolkit.toLayer({
+  t3_evidence_directory: () =>
+    Effect.gen(function* () {
+      const { scope } = yield* readMutationCaller();
+      const evidence = yield* ConversationEvidence.ConversationEvidence;
+      const directoryPath = yield* evidence
+        .directory(scope.threadId)
+        .pipe(Effect.mapError(unavailable));
+      return { directoryPath };
+    }),
   t3_attachment_prepare_upload: (input) =>
     Effect.gen(function* () {
       yield* readMutationCaller();

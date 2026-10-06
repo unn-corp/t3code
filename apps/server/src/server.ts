@@ -6,6 +6,7 @@ import * as AutomationOrchestration from "./agentDashboard/AutomationOrchestrati
 import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
+import * as ConversationEvidence from "./assets/ConversationEvidence.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
@@ -629,6 +630,7 @@ const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
       Layer.provide(ProcessDiagnosticsLayerLive),
     ),
   ),
+  Layer.provideMerge(ConversationEvidence.layer),
   Layer.provideMerge(PtyAdapterLive),
   // Search, prepare, status inspection, and turn launch share one registry
   // cache so every client and provider instance sees the same prepared agents.

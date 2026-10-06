@@ -1,3 +1,4 @@
+import * as ConversationEvidence from "../../../assets/ConversationEvidence.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
@@ -75,6 +76,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
           }),
         ),
         Layer.provide(PreviewAutomationBroker.layer),
+        Layer.provide(ConversationEvidence.layer),
         Layer.provide(StubServicesLive),
         Layer.build,
       );
@@ -131,6 +133,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       expect(handoff?.annotations?.readOnlyHint).toBe(false);
       expect(handoff?.annotations?.destructiveHint).toBe(true);
       expect(handoff?.annotations?.openWorldHint).toBe(true);
+      expect(tools.some((tool) => tool.name === "t3_evidence_directory")).toBe(true);
       const status = tools.find((tool) => tool.name === "t3_worktree_status");
       expect(status?.annotations?.readOnlyHint).toBe(true);
       expect(status?.annotations?.destructiveHint).toBe(false);

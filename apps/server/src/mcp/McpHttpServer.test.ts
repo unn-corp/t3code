@@ -1,3 +1,4 @@
+import * as ConversationEvidence from "../assets/ConversationEvidence.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { expect, it } from "@effect/vitest";
@@ -48,6 +49,7 @@ const client = McpSchema.McpServerClient.of({
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
+  Layer.provideMerge(ConversationEvidence.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -374,7 +376,6 @@ it.effect("rejects non-boolean snapshot image options before selecting a browser
 it.effect("saves the snapshot PNG on request and reports its path", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const inputs = yield* serveSnapshots("mcp-save-client", snapshotResult);
@@ -387,7 +388,9 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       const structured = snapshot.structuredContent as { readonly screenshotPath?: string };
       const screenshotPath = structured.screenshotPath;
       expect(typeof screenshotPath).toBe("string");
-      expect(path.dirname(screenshotPath!)).toBe(config.browserArtifactsDir);
+      expect(path.dirname(screenshotPath!)).toBe(
+        yield* (yield* ConversationEvidence.ConversationEvidence).directory(threadId),
+      );
       expect(path.basename(screenshotPath!)).toMatch(
         /^browser-screenshot-example-test-[0-9a-z]+-[0-9a-f]{8}\.png$/,
       );
@@ -415,18 +418,19 @@ it.effect("reports a tagged error when the screenshot cannot be saved", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       // A regular file where the artifacts directory should be makes every write fail.
-      yield* fileSystem.writeFileString(config.browserArtifactsDir, "");
+      yield* fileSystem.writeFileString(path.join(config.stateDir, "conversation-evidence"), "");
       yield* serveSnapshots("mcp-save-failure-client", snapshotResult);
 
       const snapshot = yield* callSnapshot({ save: true });
 
       expect(snapshot.isError).toBe(true);
       expect(snapshot.content).toEqual([
-        { type: "text", text: "Preview snapshot failed: PreviewScreenshotSaveError." },
+        { type: "text", text: "Preview snapshot failed: ConversationEvidenceError." },
       ]);
       expect(snapshot.structuredContent).toEqual({
-        error: { _tag: "PreviewScreenshotSaveError", operation: "snapshot", failureCount: 1 },
+        error: { _tag: "ConversationEvidenceError", operation: "snapshot", failureCount: 1 },
       });
     }),
   ).pipe(Effect.provide(TestLayer)),

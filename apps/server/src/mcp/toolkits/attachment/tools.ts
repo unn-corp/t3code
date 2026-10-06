@@ -9,6 +9,7 @@ import {
   OrchestrationV2RunStatus,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
+import * as ConversationEvidence from "../../../assets/ConversationEvidence.ts";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -28,6 +29,7 @@ const shared = {
     ServerSecretStore.ServerSecretStore,
     FileSystem.FileSystem,
     Crypto.Crypto,
+    ConversationEvidence.ConversationEvidence,
   ],
 };
 const AttachmentUploadTool = Tool.make("t3_attachment_prepare_upload", {
@@ -65,7 +67,17 @@ const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
+const EvidenceDirectoryTool = Tool.make("t3_evidence_directory", {
+  ...shared,
+  description:
+    "Allocate and return this conversation's evidence directory. Write generated screenshots, recordings, and temporary review outputs here. Files follow the environment's conversation evidence retention settings, including cleanup on archive. Save permanent deliverables outside this directory.",
+  success: Schema.Struct({ directoryPath: Schema.String }),
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 export const AttachmentToolkit = Toolkit.make(
+  EvidenceDirectoryTool,
   AttachmentUploadTool,
   AttachmentDiscardTool,
   AttachmentSendTool,

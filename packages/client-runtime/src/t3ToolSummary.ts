@@ -326,6 +326,9 @@ export function summarizeT3ToolCalls(
     case "environment-update":
       label = phrase("Updated", "update", `environment preferences ${times}`);
       break;
+    case "evidence-directory":
+      label = phrase("Allocated", "allocate", `conversation evidence storage ${times}`);
+      break;
     case "attachment-prepare":
       label = phrase(
         "Prepared",

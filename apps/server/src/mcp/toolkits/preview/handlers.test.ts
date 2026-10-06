@@ -1,3 +1,4 @@
+import * as ConversationEvidence from "../../../assets/ConversationEvidence.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadId } from "@t3tools/contracts";
@@ -64,6 +65,11 @@ describe("claimPreviewRecording", () => {
       const claim = claimPreviewRecording(ThreadId.make("thread-1"), response);
       const [first, second] = yield* Effect.all([claim, claim], { concurrency: "unbounded" });
       expect(first).toEqual(second);
+      expect(path.dirname(first.path)).toBe(
+        yield* (yield* ConversationEvidence.ConversationEvidence).directory(
+          ThreadId.make("thread-1"),
+        ),
+      );
       expect(yield* claim).toEqual(first);
       expect(yield* fileSystem.readFileString(first.path)).toBe("video!");
       expect(yield* fileSystem.exists(pendingPath)).toBe(false);
@@ -78,7 +84,10 @@ describe("claimPreviewRecording", () => {
       expect(wrongPath._tag).toBe("Failure");
     }).pipe(
       Effect.provide(
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-recording-" }).pipe(
+        ConversationEvidence.layer.pipe(
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-recording-" }),
+          ),
           Layer.provideMerge(NodeServices.layer),
         ),
       ),
@@ -123,7 +132,10 @@ describe("claimPreviewRecording", () => {
         }
       }).pipe(
         Effect.provide(
-          ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-recording-" }).pipe(
+          ConversationEvidence.layer.pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-recording-" }),
+            ),
             Layer.provideMerge(NodeServices.layer),
           ),
         ),
@@ -146,7 +158,10 @@ describe("claimPreviewRecording", () => {
       expect(result.failure.message).toContain("Update the desktop app");
     }).pipe(
       Effect.provide(
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-recording-" }).pipe(
+        ConversationEvidence.layer.pipe(
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-recording-" }),
+          ),
           Layer.provideMerge(NodeServices.layer),
         ),
       ),

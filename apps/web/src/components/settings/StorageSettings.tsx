@@ -254,11 +254,67 @@ export function StorageSettingsPanel() {
       </SettingsSection>
 
       {!isProjectScope && (
+        <SettingsSection id="storage-conversation-evidence" title="Conversation evidence">
+          {connectedEnvironments.some(
+            (environment) =>
+              environment.serverConfig?.environment.capabilities.conversationEvidenceStorage !==
+              true,
+          ) ? (
+            <SettingsScopeNotice
+              target="environment"
+              eligibleEnvironmentIds={connectedEnvironments
+                .filter(
+                  (environment) =>
+                    environment.serverConfig?.environment.capabilities
+                      .conversationEvidenceStorage === true,
+                )
+                .map((environment) => environment.environmentId)}
+            >
+              Update the selected machines to configure conversation evidence storage.
+            </SettingsScopeNotice>
+          ) : (
+            <>
+              <SettingsRow
+                title="Delete evidence when archived"
+                status={ruleStatus("conversationEvidenceOnArchive")}
+                description="Delete generated screenshots, recordings, and temporary review files when their conversation is archived. Busy conversations wait until work finishes. Evidence links will no longer open."
+                serverScoped
+                control={
+                  <Switch
+                    aria-label="Delete evidence when archived"
+                    checked={settings.conversationEvidenceOnArchive}
+                    onCheckedChange={(conversationEvidenceOnArchive) =>
+                      update({ conversationEvidenceOnArchive })
+                    }
+                  />
+                }
+              />
+              <SettingsRow
+                title="Delete old conversation evidence"
+                status={ruleStatus("conversationEvidenceAfterDays")}
+                description="Delete generated evidence after this many days, including in conversations you keep. Uploaded attachments and project files are kept."
+                serverScoped
+                control={
+                  <RetentionControl
+                    label="Delete old conversation evidence"
+                    value={settings.conversationEvidenceAfterDays}
+                    onChange={(conversationEvidenceAfterDays) =>
+                      update({ conversationEvidenceAfterDays })
+                    }
+                  />
+                }
+              />
+            </>
+          )}
+        </SettingsSection>
+      )}
+
+      {!isProjectScope && (
         <SettingsSection id="storage-artifacts" title="Artifacts and logs">
           <SettingsRow
             title="Delete old browser artifacts"
             status={ruleStatus("browserArtifactsAfterDays")}
-            description="Delete saved browser captures after this many days. Older capture links will no longer open."
+            description="Delete older captures saved in the shared browser folder. New agent captures use conversation evidence storage. Older capture links will no longer open."
             serverScoped
             control={
               <RetentionControl

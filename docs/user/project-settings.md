@@ -133,8 +133,23 @@ thread is deleted, including archived threads and worktrees left by earlier dele
 server waits for sessions and terminals to stop and retries skipped worktrees after restart.
 Existing prompts for deleting a worktree manually remain available when this policy is off.
 
-Browser captures and rotated logs have separate retention periods. Expired capture links stop
-working. Current logs, message attachments, and browser profiles are kept.
+Under **Storage → Conversation evidence**, enable **Delete evidence when archived**, choose an
+age limit with **Delete old conversation evidence**, or use both. On mobile, open **Settings →
+Storage** and configure each selected environment. Both rules start disabled and preserve your
+existing storage settings. Enabling archive cleanup also applies to already archived conversations.
+
+Generated agent browser screenshots and recordings use storage owned by their conversation.
+Agents can save other temporary review outputs there too. Keep permanent deliverables in the
+project or another destination. Only files in managed conversation storage follow these policies.
+
+Age limits use file modification times and are checked at startup and hourly. Busy conversations
+wait until work finishes. Age-based cleanup continues for deleted conversations. Removed evidence
+links stop working, including after unarchiving. Uploaded message attachments, project files,
+browser profiles, and conversation history are kept.
+
+Existing captures in the shared browser folder (including desktop-local recording copies) and
+rotated logs still have their separate retention periods. Old files elsewhere are not moved or
+deleted automatically because their ownership is unknown.
 
 ## Project icons
 

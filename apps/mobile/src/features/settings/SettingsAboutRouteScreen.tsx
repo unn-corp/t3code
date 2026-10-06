@@ -127,7 +127,7 @@ function AppSettingsSection() {
 
   return (
     <SettingsSection title="App">
-      <SettingsRow icon="internaldrive" label="Client Storage" target="SettingsClientStorage" />
+      <SettingsRow icon="internaldrive" label="Storage" target="SettingsClientStorage" />
       <SettingsRow icon="stethoscope" label="Diagnostics" target="SettingsDiagnostics" />
       <SettingsRow
         icon="doc.on.doc"
