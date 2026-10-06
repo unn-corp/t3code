@@ -499,6 +499,10 @@ artifact and is excluded from normal and recovery feeds. The validator requires
 `FORK_VALIDATION_ANDROID_SERIAL=emulator-5554` (or another explicitly selected emulator) and
 `FORK_VALIDATION_ANDROID_TEST_APK` naming that artifact; it rejects physical-device serials.
 Each install/update/recovery check starts a fresh emulator package fixture, then verifies in-place
-replacement within that check. This prevents the candidate installed by the preceding check from
+replacement within that check. Recovery selects APKs by the candidate metadata, never directory
+order, and installs and cold-starts every retained source's recovery APK in its own fresh fixture.
+The lower-code probe requires Android's explicit version-downgrade rejection; an unrelated installer
+or connection failure does not satisfy it.
+This prevents the candidate installed by the preceding check from
 making the next predecessor install an Android downgrade. Fixture resets apply only to the named
 throwaway emulator. They are never part of a user update or recovery procedure.

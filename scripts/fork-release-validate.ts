@@ -39,7 +39,10 @@ export interface PayloadAssets {
 }
 
 /** Finds the files of a release payload or baseline by their canonical names. */
-export const locatePayloadAssets = (dir: string): PayloadAssets => {
+export const locatePayloadAssets = (
+  dir: string,
+  android?: Pick<CandidateRecord["android"], "normal" | "recovery">,
+): PayloadAssets => {
   const files = NodeFS.existsSync(dir) ? NodeFS.readdirSync(dir) : [];
   const find = (pattern: RegExp): string | null => {
     const match = files.find((name) => pattern.test(name));
@@ -52,9 +55,33 @@ export const locatePayloadAssets = (dir: string): PayloadAssets => {
     deb: find(/^T3-Code-.*\.deb$/),
     linuxServer: find(/^t3-.*-linux-x64\.tar\.gz$/),
     windowsServer: find(/^t3-.*-win32-x64\.zip$/),
-    apk: find(/^t3-code-android-(?!recovery-).*\.apk$/),
-    recoveryApk: find(/^t3-code-android-recovery-.*\.apk$/),
+    apk: android
+      ? declaredApk(dir, android.normal.asset)
+      : find(/^t3-code-android-(?!recovery-).*\.apk$/),
+    recoveryApk: android
+      ? declaredApk(dir, android.recovery.asset)
+      : find(/^t3-code-android-recovery-.*\.apk$/),
   };
+};
+
+const declaredApk = (dir: string, name: string): string => {
+  if (NodePath.basename(name) !== name || !name.endsWith(".apk"))
+    throw new Error("Invalid declared APK name.");
+  const file = NodePath.resolve(dir, name);
+  if (!NodeFS.existsSync(file) || !NodeFS.statSync(file).isFile())
+    throw new Error(`The candidate has no declared APK ${name}.`);
+  return file;
+};
+
+/** Directory order cannot bind a retained source's APK to another source's installation code. */
+export const androidRecoveryTargets = (dir: string, android: CandidateRecord["android"]) => {
+  if (!android.recoveries.some((recovery) => recovery.asset === android.recovery.asset))
+    throw new Error("Recovery validation needs the declared primary recovery APK.");
+  return android.recoveries.map((recovery) => ({
+    apk: declaredApk(dir, recovery.asset),
+    versionCode: recovery.versionCode,
+    sourceVersion: recovery.sourceVersion,
+  }));
 };
 
 const need = (value: string | null, label: string, where: string): string => {
@@ -553,6 +580,21 @@ const installedPackage = (): InstalledPackage => {
 
 const adbInstall = (apk: string) => adb(["install", "-r", apk]);
 
+export const requireAndroidDowngradeRejection = (result: {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}): void => {
+  if (
+    result.status === null ||
+    result.status === 0 ||
+    !/INSTALL_FAILED_VERSION_DOWNGRADE/.test(`${result.stdout}${result.stderr}`)
+  )
+    throw new Error(
+      "Android did not explicitly reject the lower installation code as a downgrade.",
+    );
+};
+
 /** Starts the app and confirms its process stays alive, so a crash on launch fails the check. */
 export const launchAndConfirm = async (
   ports: {
@@ -724,11 +766,7 @@ export const androidRecovery = async (
   await launchAndConfirm();
   const before = installedPackage();
   const downgrade = adbInstall(need(predecessor.apk, "normal APK", "the predecessor"));
-  if (downgrade.status === 0 && /Success/.test(downgrade.stdout)) {
-    throw new Error(
-      "Android accepted a downgrade, so this test cannot prove the recovery APK is needed.",
-    );
-  }
+  requireAndroidDowngradeRejection(downgrade);
   mustInstall(need(candidate.recoveryApk, "recovery APK", "the candidate"));
   const after = installedPackage();
   if (after.versionCode !== plan.recoveryCode)
@@ -779,7 +817,7 @@ export const validate = async (env: NodeJS.ProcessEnv): Promise<string> => {
   const candidateDir = requireEnv("FORK_RELEASE_CANDIDATE_DIR");
   const predecessorDir = env.FORK_RELEASE_PREDECESSOR_DIR || null;
   const record = readRecord(candidateDir);
-  const candidate = locatePayloadAssets(candidateDir);
+  const candidate = locatePayloadAssets(candidateDir, record.android);
   const predecessor = predecessorDir ? locatePayloadAssets(predecessorDir) : null;
   if (check !== "install" && (!predecessorDir || !predecessor))
     throw new Error(`${check} needs a predecessor directory.`);
@@ -872,7 +910,18 @@ export const validate = async (env: NodeJS.ProcessEnv): Promise<string> => {
     };
     if (check === "install") await androidInstall(candidate, plan);
     else if (check === "update") await androidUpdate(candidate, predecessor!, plan);
-    else await androidRecovery(candidate, predecessor!, plan);
+    else {
+      // Every retained source must boot after recovery. Each uses a new throwaway fixture:
+      // installing the next normal APK over a higher recovery code would itself be a downgrade.
+      for (const recovery of androidRecoveryTargets(candidateDir, record.android)) {
+        resetAndroidValidationFixture();
+        await androidRecovery({ ...candidate, recoveryApk: recovery.apk }, predecessor!, {
+          ...plan,
+          recoveryCode: recovery.versionCode,
+          predecessorVersion: recovery.sourceVersion,
+        });
+      }
+    }
     return `android ${check} passed`;
   } finally {
     NodeFS.rmSync(scratch, { recursive: true, force: true });

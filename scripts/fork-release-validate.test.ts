@@ -5,6 +5,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 import {
+  androidRecoveryTargets,
+  requireAndroidDowngradeRejection,
   requireAndroidInstrumentationReceipt,
   launchAndConfirm,
   checkDebInstalled,
@@ -20,6 +22,7 @@ import {
   serverRecovery,
   serverUpdate,
 } from "./fork-release-validate.ts";
+import { makeManifest } from "./fork-release-fixtures.ts";
 
 let root: string;
 beforeEach(() => {
@@ -101,9 +104,55 @@ describe("asset lookup", () => {
     assert.isTrue(Object.values(found).every((value) => value !== null));
     assert.equal(locatePayloadAssets(NodePath.join(root, "nowhere")).apk, null);
   });
+
+  it("binds every retained recovery APK to its declared source and code", () => {
+    const manifest = makeManifest({ version: "1.0.1-nightly.20261006.28", normalCode: 51 });
+    const primary = { ...manifest.android.recovery, apkSha256: "a".repeat(64) };
+    const normal = { ...manifest.android.normal, apkSha256: "b".repeat(64) };
+    const baseline = {
+      ...primary,
+      asset: "t3-code-android-recovery-1.0.1-nightly.20261006.28-from-1.0.0-03e91091e405.apk",
+      versionCode: 53,
+      sourceVersion: "1.0.0",
+    };
+    for (const entry of [baseline, normal, primary])
+      NodeFS.writeFileSync(NodePath.join(root, entry.asset), "apk");
+    const android = { normal, recovery: primary, recoveries: [primary, baseline] };
+    // The extra baseline sorts before the primary in readdir, which caused the real CI failure.
+    assert.equal(NodePath.basename(locatePayloadAssets(root).recoveryApk!), baseline.asset);
+    assert.equal(NodePath.basename(locatePayloadAssets(root, android).recoveryApk!), primary.asset);
+    assert.deepEqual(androidRecoveryTargets(root, android), [
+      {
+        apk: NodePath.join(root, primary.asset),
+        versionCode: 52,
+        sourceVersion: primary.sourceVersion,
+      },
+      { apk: NodePath.join(root, baseline.asset), versionCode: 53, sourceVersion: "1.0.0" },
+    ]);
+    assert.throws(
+      () => androidRecoveryTargets(root, { ...android, recoveries: [] }),
+      "needs the declared primary",
+    );
+    NodeFS.unlinkSync(NodePath.join(root, baseline.asset));
+    assert.throws(() => androidRecoveryTargets(root, android), "no declared APK");
+  });
 });
 
 describe("dumpsys parsing", () => {
+  it("requires Android's explicit downgrade rejection rather than an unrelated install failure", () => {
+    requireAndroidDowngradeRejection({
+      status: 1,
+      stdout: "",
+      stderr: "Failure [INSTALL_FAILED_VERSION_DOWNGRADE: lower version code]",
+    });
+    for (const result of [
+      { status: 0, stdout: "Success", stderr: "" },
+      { status: 1, stdout: "", stderr: "device offline" },
+      { status: 1, stdout: "", stderr: "Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]" },
+      { status: null, stdout: "", stderr: "INSTALL_FAILED_VERSION_DOWNGRADE" },
+    ])
+      assert.throws(() => requireAndroidDowngradeRejection(result), "did not explicitly reject");
+  });
   it("reads the installed version and the install times", () => {
     const output = [
       "Packages:",
