@@ -63,6 +63,9 @@ type Fence = typeof Fence.Type;
 const decodeRegistry = Schema.decodeUnknownSync(Registry);
 const decodeOwner = Schema.decodeUnknownSync(Owner);
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
+const PROCESS_IDENTITY_TIMEOUT_MS = 10_000;
+/** Startup may pay the cold Windows PowerShell launch cost; uncertainty still refuses registration. */
+export const STARTUP_OWNER_IDENTITY_TIMEOUT_MS = 30_000;
 
 export class UnsupportedPlatformError extends Error {
   override readonly name = "UnsupportedPlatformError";
@@ -83,10 +86,11 @@ const ORPHANED_ACTIVITY_UNVERIFIED =
   "A previous runtime's process activity could not be verified; operator verification is required.";
 
 /** OS creation identity prevents PID reuse from clearing a live registration. */
-export async function processCreationIdentity(
+async function processCreationIdentityWithTimeout(
   pid: number,
   platform: NodeJS.Platform = process.platform,
   run: typeof exec = exec,
+  timeoutMs = PROCESS_IDENTITY_TIMEOUT_MS,
 ): Promise<string | null> {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid process owner.");
   if (platform === "linux") {
@@ -121,7 +125,7 @@ export async function processCreationIdentity(
     }
   }
   if (platform === "win32") {
-    const [result] = await processCreationIdentities([pid], platform, run);
+    const [result] = await processCreationIdentitiesWithTimeout([pid], platform, run, timeoutMs);
     if (result?.kind === "present") return result.identity;
     if (result?.kind === "absent") return null;
     throw result?.cause ?? new Error("Unreadable process identity.");
@@ -131,16 +135,74 @@ export async function processCreationIdentity(
   );
 }
 
+export const processCreationIdentity = (
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+  run: typeof exec = exec,
+): Promise<string | null> =>
+  processCreationIdentityWithTimeout(pid, platform, run, PROCESS_IDENTITY_TIMEOUT_MS);
+
+/** Startup-only owner proof gets more time for a cold PowerShell launch; ordinary reads stay at 10s. */
+export const processCreationIdentityForStartup = (
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+  run: typeof exec = exec,
+): Promise<string | null> =>
+  processCreationIdentityWithTimeout(
+    pid,
+    platform,
+    run,
+    platform === "win32" ? STARTUP_OWNER_IDENTITY_TIMEOUT_MS : PROCESS_IDENTITY_TIMEOUT_MS,
+  );
+
+export const coordinatorOwnerIdentity = (
+  pid: number,
+  identity: ProcessIdentity = processCreationIdentity,
+  platform: NodeJS.Platform = process.platform,
+  run: typeof exec = exec,
+): Promise<string | null> =>
+  identity === processCreationIdentity && platform === "win32"
+    ? processCreationIdentityForStartup(pid, platform, run)
+    : identity(pid);
+
+const describeWindowsProbeFailure = (cause: unknown, timeoutMs: number): Error => {
+  const details =
+    typeof cause === "object" && cause !== null
+      ? (cause as {
+          code?: unknown;
+          killed?: unknown;
+          signal?: unknown;
+        })
+      : {};
+  if (details.killed === true || details.code === "ETIMEDOUT")
+    return new Error(`Windows process identity probe timed out after ${timeoutMs} ms.`);
+  if (details.code === "ENOENT")
+    return new Error("Windows process identity probe could not start PowerShell (ENOENT).");
+  if (typeof details.code === "number" && Number.isInteger(details.code))
+    return new Error(`Windows process identity probe exited with code ${details.code}.`);
+  if (typeof details.signal === "string" && /^[A-Z0-9]+$/.test(details.signal))
+    return new Error(`Windows process identity probe ended with signal ${details.signal}.`);
+  return new Error("Windows process identity probe failed without a classifiable OS status.");
+};
+
 /**
  * Reads many creation identities without starting one PowerShell process per PID.
  * Windows batches are bounded by both count and command length; each batch is
  * complete or reported unreadable, never silently truncated. The PowerShell
  * timeout is intentionally shorter than the coordinator's stale-heartbeat window.
  */
-export async function processCreationIdentities(
+export const processCreationIdentities = (
   pids: ReadonlyArray<number>,
   platform: NodeJS.Platform = process.platform,
   run: typeof exec = exec,
+): Promise<ReadonlyArray<ProcessIdentityResult>> =>
+  processCreationIdentitiesWithTimeout(pids, platform, run, PROCESS_IDENTITY_TIMEOUT_MS);
+
+async function processCreationIdentitiesWithTimeout(
+  pids: ReadonlyArray<number>,
+  platform: NodeJS.Platform = process.platform,
+  run: typeof exec = exec,
+  timeoutMs = PROCESS_IDENTITY_TIMEOUT_MS,
 ): Promise<ReadonlyArray<ProcessIdentityResult>> {
   if (pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
     throw new Error("Invalid process owner.");
@@ -202,7 +264,7 @@ export async function processCreationIdentities(
         ["-NoProfile", "-NonInteractive", "-Command", command],
         {
           windowsHide: true,
-          timeout: 10_000,
+          timeout: timeoutMs,
           maxBuffer: 2 * 1024 * 1024,
         },
       );
@@ -228,7 +290,7 @@ export async function processCreationIdentities(
         };
       }
     } catch (cause) {
-      const error = cause instanceof Error ? cause : new Error(String(cause));
+      const error = describeWindowsProbeFailure(cause, timeoutMs);
       for (let offset = 0; offset < batch.ids.length; offset++)
         output[batch.start + offset] = { kind: "unreadable", cause: error };
     }
@@ -320,7 +382,9 @@ export class CoordinatorStore {
     }
     await NodeFSP.mkdir(NodePath.join(directory, "journals"), { recursive: true, mode: 0o700 });
     await NodeFSP.mkdir(NodePath.join(directory, "receipts"), { recursive: true, mode: 0o700 });
-    const started = await identity(selfPid);
+    // Only initial proof of our own process gets the cold-start allowance.
+    // All lock owners and later activity scans continue through the 10s default.
+    const started = await coordinatorOwnerIdentity(selfPid, identity);
     if (started === null) throw new Error("Cannot verify coordinator owner.");
     return new CoordinatorStore(directory, { pid: selfPid, started }, identity);
   }

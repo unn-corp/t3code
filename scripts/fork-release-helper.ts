@@ -16,7 +16,9 @@
 //   `recovery-helper-protocol=1`, and exits 0. Any other outcome exits non-zero.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { recoveryProofEnvironment } from "@t3tools/shared/forkRecoveryProofEnvironment";
 import type { HelperAssetSpec } from "./fork-release-assets.ts";
 
 export const RECOVERY_HELPER_PACKAGE = "packages/shared";
@@ -132,13 +134,46 @@ export const buildRecoveryHelper = (input: {
   }
   // The self-test runs with the retained runtime, from a neutral directory, so an unbundled dependency cannot hide behind
   // the source tree's node_modules.
-  const neutral = NodeFS.mkdtempSync(
-    NodePath.join(NodePath.dirname(input.outDir), "helper-selftest-"),
-  );
+  const neutral = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-helper-selftest-"));
+  const proofPaths = {
+    root: neutral,
+    cwd: NodePath.join(neutral, "work"),
+    home: NodePath.join(neutral, "home"),
+    temp: NodePath.join(neutral, "temp"),
+    appData: NodePath.join(neutral, "appdata"),
+    localAppData: NodePath.join(neutral, "local-appdata"),
+    coordinator: NodePath.join(neutral, "coordinator"),
+  };
   try {
+    for (const directory of [
+      proofPaths.cwd,
+      proofPaths.home,
+      proofPaths.temp,
+      proofPaths.appData,
+      proofPaths.localAppData,
+      proofPaths.coordinator,
+    ])
+      NodeFS.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32") {
+      NodeFS.chmodSync(neutral, 0o700);
+      for (const directory of [
+        proofPaths.cwd,
+        proofPaths.home,
+        proofPaths.temp,
+        proofPaths.appData,
+        proofPaths.localAppData,
+        proofPaths.coordinator,
+      ])
+        NodeFS.chmodSync(directory, 0o700);
+    }
     const result = NodeChildProcess.spawnSync(runtimeFile, [outFile, "--self-test"], {
-      cwd: neutral,
+      cwd: proofPaths.cwd,
       encoding: "utf8",
+      env: recoveryProofEnvironment({
+        platform: hostPlatform,
+        paths: proofPaths,
+        inherited: process.env,
+      }),
       timeout: 120_000,
     });
     if (result.status !== 0) {

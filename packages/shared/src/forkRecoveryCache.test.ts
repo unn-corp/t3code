@@ -13,6 +13,7 @@ import {
   recoveryInvocation,
   recoveryReady,
 } from "./forkRecoveryCache.ts";
+import { recoveryProofEnvironment } from "./forkRecoveryProofEnvironment.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -27,7 +28,23 @@ const HOST_PLATFORM: ForkPlatformKey = process.platform === "win32" ? "windows-x
 let nodeBytes: Uint8Array | undefined;
 const realNode = async () => (nodeBytes ??= await NodeFSP.readFile(process.execPath));
 const helperScript = (line = "recovery-helper-protocol=1") =>
-  new TextEncoder().encode(`console.log(${JSON.stringify(line)});\n`);
+  new TextEncoder().encode(`
+    import * as fs from "node:fs";
+    import * as os from "node:os";
+    import * as path from "node:path";
+    const env = process.env;
+    const expectedPath = process.platform === "win32"
+      ? [path.win32.join(env.SystemRoot, "System32"), path.win32.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0")].join(";")
+      : "";
+    const forbidden = ["NODE_OPTIONS", "PSModulePath", "T3CODE_HOME", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_ACCESS_KEY_ID"];
+    if (env.PATH !== expectedPath || !env.HOME || !env.T3CODE_MAINTENANCE_NAMESPACE ||
+        env.T3CODE_MAINTENANCE_NAMESPACE === env.T3CODE_HOME ||
+        forbidden.some((key) => env[key] !== undefined) ||
+        !fs.statSync(env.HOME).isDirectory() || !fs.statSync(os.tmpdir()).isDirectory() ||
+        !fs.statSync(env.T3CODE_MAINTENANCE_NAMESPACE).isDirectory() ||
+        (process.platform === "win32" && (!fs.statSync(env.APPDATA).isDirectory() || !fs.statSync(env.LOCALAPPDATA).isDirectory()))) process.exit(31);
+    console.log(${JSON.stringify(line)});
+  `);
 
 function manifest(version: string, helper: Uint8Array, node: Uint8Array): ForkReleaseManifest {
   const base = {
@@ -66,6 +83,15 @@ function manifest(version: string, helper: Uint8Array, node: Uint8Array): ForkRe
     ],
   } as unknown as ForkReleaseManifest;
 }
+const proofPaths = {
+  root: "C:\\isolated",
+  cwd: "C:\\isolated\\work",
+  home: "C:\\isolated\\home",
+  temp: "C:\\isolated\\temp",
+  appData: "C:\\isolated\\appdata",
+  localAppData: "C:\\isolated\\local-appdata",
+  coordinator: "C:\\isolated\\coordinator",
+};
 const cacheDir = async () => {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-recovery-cache-"));
   roots.push(root);
@@ -75,6 +101,89 @@ const serve = (helper: Uint8Array, node: Uint8Array) => async (name: string) =>
   name.endsWith(".mjs") ? helper : node;
 
 describe("recovery helper cache", () => {
+  it("builds a Windows proof environment with ACL prerequisites and no inherited developer or secret paths", () => {
+    const env = recoveryProofEnvironment({
+      platform: "windows-x64",
+      paths: proofPaths,
+      inherited: {
+        SystemRoot: "C:\\Windows",
+        SystemDrive: "C:",
+        ComSpec: "C:\\Windows\\System32\\cmd.exe",
+        USERNAME: "runner",
+        USERDOMAIN: "BUILD",
+        PATH: "C:\\dev\\node;C:\\Windows\\System32",
+        PSModulePath: "C:\\dev\\powershell-modules",
+        NODE_OPTIONS: "--require C:\\dev\\hook.js",
+        T3CODE_HOME: "C:\\real\\t3",
+        OPENAI_API_KEY: "test-secret",
+        AWS_ACCESS_KEY_ID: "test-secret",
+      },
+    });
+    expect(env).toMatchObject({
+      SystemRoot: "C:\\Windows",
+      SystemDrive: "C:",
+      OS: "Windows_NT",
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      USERNAME: "runner",
+      USERDOMAIN: "BUILD",
+      PATH: "C:\\Windows\\System32;C:\\Windows\\System32\\WindowsPowerShell\\v1.0",
+      HOME: proofPaths.home,
+      USERPROFILE: proofPaths.home,
+      TEMP: proofPaths.temp,
+      TMP: proofPaths.temp,
+      APPDATA: proofPaths.appData,
+      LOCALAPPDATA: proofPaths.localAppData,
+      T3CODE_MAINTENANCE_NAMESPACE: proofPaths.coordinator,
+    });
+    for (const key of [
+      "PSModulePath",
+      "NODE_OPTIONS",
+      "T3CODE_HOME",
+      "OPENAI_API_KEY",
+      "AWS_ACCESS_KEY_ID",
+    ])
+      expect(env[key]).toBeUndefined();
+    expect(env.PATH).not.toContain("C:\\dev");
+  });
+
+  it("requires Windows ACL prerequisites instead of silently proving without ACL support", () => {
+    expect(() =>
+      recoveryProofEnvironment({
+        platform: "windows-x64",
+        paths: proofPaths,
+        inherited: { SystemRoot: "C:\\Windows", USERDOMAIN: "BUILD" },
+      }),
+    ).toThrow("SystemRoot and USERNAME");
+  });
+
+  it("keeps Linux proofs on empty PATH with isolated homes and coordinator", () => {
+    const env = recoveryProofEnvironment({
+      platform: "linux-x64",
+      paths: {
+        root: "/proof",
+        cwd: "/proof/work",
+        home: "/proof/home",
+        temp: "/proof/temp",
+        appData: "/proof/appdata",
+        localAppData: "/proof/local-appdata",
+        coordinator: "/proof/coordinator",
+      },
+      inherited: {
+        PATH: "/usr/local/bin:/usr/bin",
+        HOME: "/home/developer",
+        NODE_OPTIONS: "--require /tmp/hook.js",
+        T3CODE_HOME: "/home/developer/.t3",
+        ANTHROPIC_API_KEY: "test-secret",
+      },
+    });
+    expect(env).toEqual({
+      PATH: "",
+      HOME: "/proof/home",
+      TMPDIR: "/proof/temp",
+      T3CODE_MAINTENANCE_NAMESPACE: "/proof/coordinator",
+    });
+  });
+
   it("stores the verified helper and its own Node runtime owner-only, outside the app, and proves them with an empty PATH", async () => {
     const dir = await cacheDir();
     const node = await realNode();

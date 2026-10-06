@@ -111,6 +111,8 @@ export interface ReleaseRecord {
 const WITHDRAWN_PATTERN = /^<!-- t3-fork-release:withdrawn\b[^>]*-->/m;
 const CANDIDATE_PATTERN =
   /^<!-- t3-fork-release:candidate commit=([0-9a-f]{40}) channel=(stable|nightly) -->/m;
+const COMMISSIONING_PATTERN =
+  /^<!-- t3-fork-release:commissioning source-tag=(\S+) source-version=(\S+) source-commit=([0-9a-f]{40}) -->/m;
 
 /** Withdrawal changes only the release notes; the tag and every asset stay untouched. */
 export const withdrawalMarker = (reason: string, at: string): string =>
@@ -118,6 +120,23 @@ export const withdrawalMarker = (reason: string, at: string): string =>
 
 export const candidateMarker = (commit: string, channel: ForkChannel): string =>
   `<!-- t3-fork-release:candidate commit=${commit} channel=${channel} -->`;
+
+export interface CommissioningSource {
+  readonly tag: string;
+  readonly version: string;
+  readonly commit: string;
+}
+
+export const commissioningMarker = (source: CommissioningSource): string =>
+  `<!-- t3-fork-release:commissioning source-tag=${source.tag} source-version=${source.version} source-commit=${source.commit} -->`;
+
+const commissioningSourceMarker = (
+  record: Pick<ReleaseRecord, "body">,
+): CommissioningSource | null => {
+  const match = COMMISSIONING_PATTERN.exec(record.body);
+  if (!match) return null;
+  return { tag: match[1]!, version: match[2]!, commit: match[3]! };
+};
 
 export const isWithdrawn = (record: Pick<ReleaseRecord, "body">): boolean =>
   WITHDRAWN_PATTERN.test(record.body);
@@ -138,6 +157,30 @@ export const recordedChannel = (record: ReleaseRecord): ForkChannel | null => {
   if (marked === "stable" || marked === "nightly") return marked;
   const version = forkVersionFromTag(record.tagName);
   return version ? requireVersion(version).channel : null;
+};
+
+const eligibleCommissioningSource = (
+  record: ReleaseRecord,
+  all: ReadonlyArray<ReleaseRecord>,
+): CommissioningSource | null => {
+  const marker = commissioningSourceMarker(record);
+  const manifest = record.manifest;
+  if (!marker || !manifest || manifest.channel !== "nightly") return null;
+  const source = all.find((candidate) => candidate.tagName === marker.tag);
+  if (
+    !source ||
+    source.draft ||
+    isWithdrawn(source) ||
+    !source.manifest ||
+    source.manifest.version !== marker.version ||
+    source.manifest.commit !== marker.commit ||
+    source.manifest.channel !== "nightly" ||
+    source.manifest.commit !== manifest.commit ||
+    compareForkVersions(source.manifest.version, manifest.version) >= 0 ||
+    !classifyRelease(source, all).eligible
+  )
+    return null;
+  return marker;
 };
 
 export type ExclusionReason =
@@ -229,7 +272,7 @@ export const classifyRelease = (
     const identities = new Set<string>();
     const assets = new Set<string>();
     if (!sameAndroidArtifact(recoveries[0]!, recovery)) reasons.push("duplicate-recovery");
-    for (const [index, candidate] of recoveries.entries()) {
+    for (const candidate of recoveries) {
       const identity = `${candidate.sourceVersion}\0${candidate.sourceCommit}`;
       if (
         candidate.versionCode <= normal.versionCode ||
@@ -262,17 +305,26 @@ export const classifyRelease = (
 
   // Keep the earliest of releases that claim the same version or the same commit and channel.
   const rank = (candidate: ReleaseRecord) => candidate.publishedAt ?? candidate.createdAt;
-  const duplicateOf = all.some(
-    (other) =>
-      other.id !== record.id &&
-      !other.draft &&
-      !isWithdrawn(other) &&
-      other.manifest !== null &&
-      (other.manifest.version === manifest.version ||
-        (other.manifest.commit === manifest.commit &&
-          other.manifest.channel === manifest.channel)) &&
-      (rank(other) < rank(record) || (rank(other) === rank(record) && other.id < record.id)),
-  );
+  const commissionSource = eligibleCommissioningSource(record, all);
+  const duplicateOf = all.some((other) => {
+    if (
+      other.id === record.id ||
+      other.draft ||
+      isWithdrawn(other) ||
+      !other.manifest ||
+      !(rank(other) < rank(record) || (rank(other) === rank(record) && other.id < record.id))
+    )
+      return false;
+    if (other.manifest.version === manifest.version) return true;
+    if (other.manifest.commit === manifest.commit && other.manifest.channel === manifest.channel) {
+      return !(
+        commissionSource &&
+        compareForkVersions(other.manifest.version, commissionSource.version) <= 0 &&
+        classifyRelease(other, all).eligible
+      );
+    }
+    return false;
+  });
   if (duplicateOf) reasons.push("duplicate");
 
   return { eligible: reasons.length === 0, reasons };
@@ -396,6 +448,8 @@ export interface ReleasePlan {
     readonly version: string;
     readonly releasedAt: string;
   } | null;
+  /** Exact eligible same-source nightly used to commission a higher-version rebuild. */
+  readonly commissioningSource?: CommissioningSource;
 }
 
 const assertFullSha = (commit: string): void => {
@@ -435,6 +489,30 @@ export const planNightly = (input: {
       source: null,
     },
   };
+};
+
+/**
+ * Selects the newest eligible nightly built from this exact source. Every same-source record
+ * must be a complete eligible published release; drafts and damaged or withdrawn attempts block
+ * commissioning rather than being silently skipped.
+ */
+export const selectCommissioningSource = (
+  releases: ReadonlyArray<ReleaseRecord>,
+  commit: string,
+): ReleaseRecord | null => {
+  assertFullSha(commit);
+  const sameSource = releases.filter(
+    (record) => recordedCommit(record) === commit && recordedChannel(record) === "nightly",
+  );
+  if (sameSource.length === 0) return null;
+  const invalid = sameSource.find((record) => !classifyRelease(record, releases).eligible);
+  if (invalid)
+    throw new Error(
+      `Commissioning source ${invalid.tagName} is not eligible (${classifyRelease(invalid, releases).reasons.join(", ")}).`,
+    );
+  return sameSource.toSorted((left, right) =>
+    compareForkVersions(right.manifest!.version, left.manifest!.version),
+  )[0]!;
 };
 
 /**
@@ -629,17 +707,60 @@ export const buildPlan = (input: {
   readonly releases: ReadonlyArray<ReleaseRecord>;
   /** The verified manual baseline, consulted only when no pipeline release is eligible. */
   readonly baseline?: Omit<Predecessor, "baseline"> | null;
+  /** Explicit commissioning rebuild. Ordinary runs keep duplicate commit suppression. */
+  readonly commission?: boolean;
 }): PlanOutcome<PlannedRelease> => {
   let outcome: PlanOutcome<ReleasePlan>;
+  const commissioningSource = input.commission
+    ? (() => {
+        if (input.channel !== "nightly" || !input.commit)
+          throw new Error("Commissioning rebuilds require a pinned nightly commit.");
+        return selectCommissioningSource(input.releases, input.commit);
+      })()
+    : null;
   if (input.channel === "nightly") {
     if (!input.commit) throw new Error("A nightly plan needs the pinned commit.");
-    outcome = planNightly({
-      commit: input.commit,
-      now: input.now,
-      runNumber: input.runNumber,
-      releases: input.releases,
-      ...(input.baseline ? { baselineVersion: input.baseline.version } : {}),
-    });
+    if (input.commission && commissioningSource) {
+      const version = nightlyVersionFor(
+        input.releases,
+        input.now,
+        input.runNumber,
+        input.baseline?.version,
+      );
+      const tag = forkTagForVersion(version);
+      if (
+        input.releases.some(
+          (record) => record.tagName === tag || record.manifest?.version === version,
+        )
+      )
+        return {
+          kind: "skip",
+          reason: `${tag} already exists; use a new workflow run for commissioning.`,
+        };
+      outcome = {
+        kind: "release",
+        plan: {
+          channel: "nightly",
+          version,
+          tag,
+          commit: input.commit,
+          source: null,
+          commissioningSource: {
+            tag: commissioningSource.tagName,
+            version: commissioningSource.manifest!.version,
+            commit: commissioningSource.manifest!.commit,
+          },
+        },
+      };
+    } else {
+      outcome = planNightly({
+        commit: input.commit,
+        now: input.now,
+        runNumber: input.runNumber,
+        releases: input.releases,
+        ...(input.baseline ? { baselineVersion: input.baseline.version } : {}),
+      });
+    }
   } else {
     outcome = planStable({
       now: input.now,
@@ -650,7 +771,13 @@ export const buildPlan = (input: {
   if (outcome.kind === "skip") return outcome;
 
   const predecessor =
-    selectPredecessor(input.releases, outcome.plan.commit) ??
+    (commissioningSource
+      ? {
+          tag: commissioningSource.tagName,
+          version: commissioningSource.manifest!.version,
+          commit: commissioningSource.manifest!.commit,
+        }
+      : selectPredecessor(input.releases, outcome.plan.commit)) ??
     (input.baseline && input.baseline.commit !== outcome.plan.commit
       ? { ...input.baseline, baseline: true as const }
       : null);

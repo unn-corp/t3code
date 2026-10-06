@@ -7,6 +7,7 @@ import {
   CoordinatorStore,
   ORPHAN_ATTESTATION_CONFIRMATION,
   UNKNOWN_PROCESS_IDENTITY,
+  coordinatorOwnerIdentity,
   processCreationIdentity,
   processCreationIdentities,
   UnsupportedPlatformError,
@@ -1096,6 +1097,52 @@ describe("process identity", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.options).toMatchObject({ timeout: 10_000, windowsHide: true });
   });
+  it("gives only startup owner proof a longer Windows PowerShell deadline", async () => {
+    const calls: Array<{ options: unknown }> = [];
+    const run = (async (_file: string, _args: ReadonlyArray<string>, options: unknown) => {
+      calls.push({ options });
+      return { stdout: "41\tP\t638950000000000000\r\n", stderr: "" };
+    }) as never;
+    expect(await coordinatorOwnerIdentity(41, processCreationIdentity, "win32", run)).toBe(
+      "638950000000000000",
+    );
+    expect(calls[0]?.options).toMatchObject({ timeout: 30_000, windowsHide: true });
+
+    const runtimeCalls: Array<{ options: unknown }> = [];
+    const runtimeRun = (async (_file: string, _args: ReadonlyArray<string>, options: unknown) => {
+      runtimeCalls.push({ options });
+      return { stdout: "41\tP\t638950000000000000\r\n", stderr: "" };
+    }) as never;
+    await processCreationIdentities([41], "win32", runtimeRun);
+    expect(runtimeCalls[0]?.options).toMatchObject({ timeout: 10_000, windowsHide: true });
+
+    let customIdentityCalls = 0;
+    await coordinatorOwnerIdentity(
+      41,
+      async () => {
+        customIdentityCalls++;
+        return "test-owner";
+      },
+      "win32",
+      run,
+    );
+    expect(customIdentityCalls).toBe(1);
+    expect(calls).toHaveLength(1);
+
+    const startupTimeouts: number[] = [];
+    const timedOut = (async (
+      _file: string,
+      _args: ReadonlyArray<string>,
+      options: { timeout: number },
+    ) => {
+      startupTimeouts.push(options.timeout);
+      throw Object.assign(new Error("sensitive command line"), { code: "ETIMEDOUT", killed: true });
+    }) as never;
+    await expect(
+      coordinatorOwnerIdentity(41, processCreationIdentity, "win32", timedOut),
+    ).rejects.toThrow("timed out after 30000 ms");
+    expect(startupTimeouts).toEqual([30_000]);
+  });
   it("bounds Windows command input into complete batches and fails closed on missing rows", async () => {
     const commands: string[] = [];
     let active = 0;
@@ -1127,10 +1174,34 @@ describe("process identity", () => {
   });
   it("marks every PID in a timed-out Windows batch unreadable", async () => {
     const run = (async () => {
-      throw new Error("timed out");
+      throw Object.assign(new Error("private command text"), { code: "ETIMEDOUT", killed: true });
     }) as never;
     const result = await processCreationIdentities([51, 52], "win32", run);
     expect(result).toHaveLength(2);
     expect(result.every((entry) => entry.kind === "unreadable")).toBe(true);
+    expect(result[0]?.kind === "unreadable" ? result[0].cause.message : "").toContain(
+      "timed out after 10000 ms",
+    );
+    expect(result[0]?.kind === "unreadable" ? result[0].cause.message : "").not.toContain(
+      "private command text",
+    );
+  });
+  it("classifies PowerShell exit and spawn failures without exposing command or stderr", async () => {
+    const exited = await processCreationIdentities([61], "win32", (async () => {
+      throw Object.assign(new Error("raw command with user path"), {
+        code: 7,
+        stderr: "private user path",
+      });
+    }) as never);
+    expect(exited[0]?.kind === "unreadable" ? exited[0].cause.message : "").toBe(
+      "Windows process identity probe exited with code 7.",
+    );
+
+    const missing = await processCreationIdentities([62], "win32", (async () => {
+      throw Object.assign(new Error("raw command"), { code: "ENOENT" });
+    }) as never);
+    expect(missing[0]?.kind === "unreadable" ? missing[0].cause.message : "").toBe(
+      "Windows process identity probe could not start PowerShell (ENOENT).",
+    );
   });
 });

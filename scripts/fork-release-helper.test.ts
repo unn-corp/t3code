@@ -81,6 +81,32 @@ describe("building the recovery helper from the coordinator", () => {
     );
   });
 
+  it("proves with isolated home, temporary and coordinator directories and no inherited secrets", () => {
+    const body = `
+      const fs = await import("node:fs");
+      const os = await import("node:os");
+      const path = await import("node:path");
+      const env = process.env;
+      const expectedPath = process.platform === "win32"
+        ? [path.win32.join(env.SystemRoot, "System32"), path.win32.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0")].join(";")
+        : "";
+      const forbidden = ["NODE_OPTIONS", "PSModulePath", "T3CODE_HOME", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_ACCESS_KEY_ID"];
+      if (env.PATH !== expectedPath || !env.HOME || !env.T3CODE_MAINTENANCE_NAMESPACE ||
+          forbidden.some((key) => env[key] !== undefined) ||
+          !fs.statSync(env.HOME).isDirectory() || !fs.statSync(os.tmpdir()).isDirectory() ||
+          !fs.statSync(env.T3CODE_MAINTENANCE_NAMESPACE).isDirectory() ||
+          (process.platform === "win32" && (!fs.statSync(env.APPDATA).isDirectory() || !fs.statSync(env.LOCALAPPDATA).isDirectory()))) process.exit(31);
+      console.log("recovery-helper-protocol=1");
+    `;
+    const problems = buildRecoveryHelper({
+      sourceDir: source(),
+      platform: hostPlatform,
+      outDir: out(),
+      bundler: bundling(selfTest(body)),
+    });
+    assert.deepStrictEqual(problems, []);
+  });
+
   it("rejects a bundle whose self-test fails, reports another protocol, or says nothing", () => {
     const build = (script: string) =>
       buildRecoveryHelper({

@@ -23,7 +23,9 @@ import {
   androidCodeTag,
   androidCodeRangeTag,
   candidateMarker,
+  commissioningMarker,
   classifyRelease,
+  compareForkVersions,
   forkTagForVersion,
   highestUsedAndroidCode,
   isWithdrawn,
@@ -311,6 +313,7 @@ export const reserveAndroidCodes = async (
 export const releaseNotes = (plan: ReleasePlan, summary: string): string =>
   [
     candidateMarker(plan.commit, plan.channel),
+    ...(plan.commissioningSource ? [commissioningMarker(plan.commissioningSource)] : []),
     `Fork ${plan.channel} release ${plan.version} built from \`${plan.commit}\`.`,
     plan.source
       ? `Promoted from nightly \`${plan.source.tag}\` (checks completed ${plan.source.releasedAt}).`
@@ -424,14 +427,33 @@ export const recheckCandidate = async (
   if (others.some((record) => record.tagName === plan.tag))
     problems.push(`${plan.tag} is already used.`);
   if (await github.tagExists(plan.tag)) problems.push(`Tag ${plan.tag} already exists.`);
-  for (const record of others) {
+  const sameSource = others.filter(
+    (record) => recordedCommit(record) === plan.commit && recordedChannel(record) === plan.channel,
+  );
+  if (plan.commissioningSource) {
+    const source = sameSource.find((record) => record.tagName === plan.commissioningSource!.tag);
     if (
-      !isWithdrawn(record) &&
-      recordedCommit(record) === plan.commit &&
-      recordedChannel(record) === plan.channel
+      !source ||
+      source.manifest?.version !== plan.commissioningSource.version ||
+      source.manifest?.commit !== plan.commissioningSource.commit ||
+      !classifyRelease(source, records).eligible
     ) {
-      problems.push(`${record.tagName} already ships this commit as ${plan.channel}.`);
+      problems.push("The bound commissioning source is no longer eligible.");
     }
+    const invalidPrior = sameSource.find((record) => !classifyRelease(record, records).eligible);
+    if (invalidPrior)
+      problems.push(`${invalidPrior.tagName} blocks commissioning because it is not eligible.`);
+    const newest = sameSource
+      .filter((record) => classifyRelease(record, records).eligible)
+      .toSorted((left, right) =>
+        compareForkVersions(right.manifest!.version, left.manifest!.version),
+      )[0];
+    if (newest && newest.tagName !== plan.commissioningSource.tag)
+      problems.push("A newer same-source nightly appeared after commissioning was planned.");
+  } else if (sameSource.some((record) => !isWithdrawn(record))) {
+    problems.push(
+      `${sameSource.find((record) => !isWithdrawn(record))!.tagName} already ships this commit as ${plan.channel}.`,
+    );
   }
 
   if (plan.source) {

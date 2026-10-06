@@ -576,9 +576,21 @@ jobs:
             --output-dir release-cli
 
       - name: Smoke-test CLI archive
+        id: cli_smoke
         if: inputs.cli_archive
         shell: bash
         run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version }}"
+
+      # Keep a failing Windows SEA available for diagnosis on real hardware. This name is
+      # excluded from assembly; the failed smoke step still blocks normal artifact publication.
+      - name: Upload failed Windows CLI for diagnosis
+        if: failure() && github.repository == 'unn-corp/t3code' && inputs.platform == 'win' && steps.cli_smoke.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-cli-win-${{ inputs.arch }}
+          path: release-cli/*
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Upload CLI archive
         if: inputs.cli_archive

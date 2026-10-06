@@ -363,6 +363,128 @@ describe("publishing", () => {
     assert.equal(raced.releases.get(raceId)!.draft, true);
   });
 
+  it("publishes repeated commissioning builds only while their exact prior eligible source remains newest", async () => {
+    const github = new FakeGitHub();
+    const commit = sha("commission-chain");
+    const sourceA = makeManifest({
+      version: "1.0.1-nightly.20261010.10",
+      commit,
+      releasedAt: "2026-10-06T06:00:00.000Z",
+    });
+    github.seedPublished(sourceA);
+    const sourceARef = {
+      tag: `fork-v${sourceA.version}`,
+      version: sourceA.version,
+      commit,
+    };
+
+    const candidateB = prepareCandidate(NodePath.join(root, "commission-b"), {
+      version: "1.0.1-nightly.20261010.11",
+      commit,
+    });
+    const planB = { ...candidateB.plan, commissioningSource: sourceARef };
+    const draftB = (await createDraft(github, planB, candidateB.candidateDir, "Commission B.")).id;
+    const publishedB = await publishDraft(
+      github,
+      planB,
+      draftB,
+      NodePath.join(root, "commission-b-verify"),
+    );
+    assert.isFalse(publishedB.draft);
+    const recordsB = await loadReleaseRecords(github);
+    const recordB = recordsB.find((record) => record.id === draftB)!;
+    assert.deepStrictEqual(classifyRelease(recordB, recordsB), {
+      eligible: true,
+      reasons: [],
+    });
+
+    const candidateC = prepareCandidate(NodePath.join(root, "commission-c"), {
+      version: "1.0.1-nightly.20261010.12",
+      commit,
+    });
+    const planC = {
+      ...candidateC.plan,
+      commissioningSource: {
+        tag: recordB.tagName,
+        version: recordB.manifest!.version,
+        commit,
+      },
+    };
+    const draftC = (await createDraft(github, planC, candidateC.candidateDir, "Commission C.")).id;
+    const publishedC = await publishDraft(
+      github,
+      planC,
+      draftC,
+      NodePath.join(root, "commission-c-verify"),
+    );
+    assert.isFalse(publishedC.draft);
+    const recordsC = await loadReleaseRecords(github);
+    assert.deepStrictEqual(
+      classifyRelease(
+        recordsC.find((record) => record.id === draftC)!,
+        recordsC,
+      ),
+      { eligible: true, reasons: [] },
+    );
+  });
+
+  it("blocks a commissioning publish if the bound source is withdrawn or a concurrent same-source draft appears", async () => {
+    const github = new FakeGitHub();
+    const commit = sha("commission-race");
+    const source = makeManifest({
+      version: "1.0.1-nightly.20261010.20",
+      commit,
+    });
+    const sourceRelease = github.seedPublished(source);
+    const candidate = prepareCandidate(NodePath.join(root, "commission-race"), {
+      version: "1.0.1-nightly.20261010.21",
+      commit,
+    });
+    const plan = {
+      ...candidate.plan,
+      commissioningSource: {
+        tag: `fork-v${source.version}`,
+        version: source.version,
+        commit,
+      },
+    };
+    const draftId = (await createDraft(github, plan, candidate.candidateDir, "Commission race."))
+      .id;
+    github.seedPublished(makeManifest({ version: "1.0.1-nightly.20261010.22", commit }), {
+      draft: true,
+      body: `<!-- t3-fork-release:candidate commit=${commit} channel=nightly -->`,
+    });
+    let failure: unknown;
+    await publishDraft(github, plan, draftId, NodePath.join(root, "commission-race-verify")).catch(
+      (cause) => (failure = cause),
+    );
+    assert.match(String(failure), /blocks commissioning/);
+    assert.isTrue(github.releases.get(draftId)!.draft);
+
+    for (const [id, release] of github.releases) {
+      if (id !== draftId && release.draft) github.releases.delete(id);
+    }
+    await withdrawRelease(
+      github,
+      source.version,
+      "commission source changed",
+      new Date("2026-10-11T08:40:00Z"),
+    );
+    failure = undefined;
+    await publishDraft(
+      github,
+      plan,
+      draftId,
+      NodePath.join(root, "commission-race-verify-2"),
+    ).catch((cause) => (failure = cause));
+    assert.match(
+      String(failure),
+      /bound commissioning source is no longer eligible|blocks commissioning/,
+    );
+    assert.isTrue(github.releases.get(draftId)!.draft);
+    assert.isTrue(github.releases.has(sourceRelease.id));
+  });
+
   it("rechecks the source nightly of a stable release and stops when it was withdrawn during the build", async () => {
     const github = new FakeGitHub();
     const nightly = prepareCandidate(NodePath.join(root, "nightly"), {

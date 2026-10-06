@@ -60,8 +60,10 @@ background service, development servers). Constraints that are easy to get wrong
   semantics; a legacy writer may erase markers while it is running, which safely blocks the device.
   Windows process creation identities are read in bounded PowerShell batches (at most 256 numeric PIDs
   and an 8 KB command payload per invocation), with at most four batches active and a 10 second timeout
-  per batch. Exact UTC `StartTime` ticks
-  remain the persisted identity. Each PID is classified as present, absent, or unreadable; a timeout,
+  per batch. Only the first proof of a new Windows runtime’s own identity permits 30 seconds, to
+  accommodate a cold PowerShell startup; recurring owner and activity reads retain the 10 second
+  bound. An unreadable initial identity still refuses startup before opening the database. Exact UTC
+  `StartTime` ticks remain the persisted identity. Each PID is classified as present, absent, or unreadable; a timeout,
   missing row, or malformed row is unreadable and keeps admission blocked. Fresh descendant collection,
   lease cleanup, and child reconciliation use batches, splitting oversized trees rather than truncating
   them or spawning one PowerShell process per child while holding the registry lock.
@@ -174,7 +176,11 @@ otherwise run the helper when the bundled server imports its maintenance service
 
 When the application is broken, the external helper,
 cached outside the app directory with its own Node runtime ([`forkRecoveryCache.ts`](../../packages/shared/src/forkRecoveryCache.ts):
-digest-checked, owner-only, executable, and self-tested from a neutral directory with an empty `PATH`), runs the same services:
+digest-checked, owner-only, executable, and self-tested from a neutral directory with isolated home,
+temporary storage, and coordinator paths), runs the same services. Proof processes use the retained
+Node runtime rather than a developer or system Node. Linux uses an empty `PATH`; Windows retains
+only its OS tools and account identity so private ACL enforcement can run. Neither proof inherits
+provider credentials or developer tool paths. The helper performs:
 cohort-wide admission and the five-minute idle window, a check that no runtime (a live trial owner included) or orphaned process
 owns any affected home, capacity with rescue copies, verified rescue copies of every home, then the restore. It stops at
 `restored`: it never writes a health receipt, never marks a runtime verified, and never releases the fence. The next healthy start

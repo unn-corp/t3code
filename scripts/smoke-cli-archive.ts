@@ -163,8 +163,11 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     }
     return true;
   });
+  const readinessSeconds = platform === "win32" ? 60 : 30;
   const ready = yield* pollUntilReady.pipe(
-    Effect.timeout(Duration.seconds(30)),
+    // Cold Windows runners may spend several seconds proving the process
+    // identity before the coordinator admits the first server startup.
+    Effect.timeout(Duration.seconds(readinessSeconds)),
     Effect.orElseSucceed(() => false),
   );
   yield* server.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
@@ -176,7 +179,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   if (!ready) {
     return yield* new CliArchiveSmokeError({
       step: "serving from the extracted archive",
-      detail: `no 200 from / within 30s\n${stdout}${stderr}`,
+      detail: `no 200 from / within ${readinessSeconds}s\n${stdout}${stderr}`,
     });
   }
   yield* Effect.log(`[cli-smoke] ${root}: --version passed and serve answered on ${String(port)}.`);

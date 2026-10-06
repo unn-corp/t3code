@@ -35,6 +35,7 @@ function release(
     withdrawn?: boolean;
     publishedAt?: string;
     windowsDigest?: string;
+    body?: string;
   } = {},
 ): ForkReleaseRecord {
   const channel = version.includes("nightly") ? "nightly" : "stable";
@@ -111,9 +112,10 @@ function release(
     tagName: `fork-v${version}`,
     draft: false,
     body:
-      options.withdrawn === true
+      options.body ??
+      (options.withdrawn === true
         ? "<!-- t3-fork-release:withdrawn at=2026-10-05 reason=bad -->"
-        : "",
+        : ""),
     createdAt: options.publishedAt ?? "2026-10-05T07:30:00Z",
     publishedAt: options.publishedAt ?? "2026-10-05T07:30:00Z",
     assets: [
@@ -574,6 +576,39 @@ describe("parity with the publisher's eligibility rules", () => {
         publisherClassify(toPublisher(record), all.map(toPublisher)),
       );
     }
+  });
+  it("admits a bound same-source commissioning chain and rejects unbound duplicates", () => {
+    const sourceCommit = commit("a");
+    const first = release("1.0.1-nightly.20261007.1", {
+      id: 20,
+      commitSeed: sourceCommit,
+      publishedAt: "2026-10-07T07:30:00Z",
+    });
+    const second = release("1.0.1-nightly.20261008.1", {
+      id: 21,
+      commitSeed: sourceCommit,
+      publishedAt: "2026-10-08T07:30:00Z",
+      body: `<!-- t3-fork-release:commissioning source-tag=${first.tagName} source-version=${first.manifest!.version} source-commit=${sourceCommit} -->`,
+    });
+    const third = release("1.0.1-nightly.20261009.1", {
+      id: 22,
+      commitSeed: sourceCommit,
+      publishedAt: "2026-10-09T07:30:00Z",
+      body: `<!-- t3-fork-release:commissioning source-tag=${second.tagName} source-version=${second.manifest!.version} source-commit=${sourceCommit} -->`,
+    });
+    const chain = [first, second, third];
+    for (const record of chain) {
+      expect(classifyForkRelease(record, chain), record.tagName).toEqual(
+        publisherClassify(toPublisher(record), chain.map(toPublisher)),
+      );
+      expect(classifyForkRelease(record, chain).eligible, record.tagName).toBe(true);
+    }
+    const unbound = release("1.0.1-nightly.20261010.1", {
+      id: 23,
+      commitSeed: sourceCommit,
+      publishedAt: "2026-10-10T07:30:00Z",
+    });
+    expect(classifyForkRelease(unbound, [...chain, unbound]).eligible).toBe(false);
   });
   it("selects the same candidate for every channel and installed version", () => {
     for (const channel of ["stable", "nightly"] as const) {

@@ -19,6 +19,10 @@
       "types": "./src/forkRecoveryCache.ts",
       "import": "./src/forkRecoveryCache.ts"
     },
+    "./forkRecoveryProofEnvironment": {
+      "types": "./src/forkRecoveryProofEnvironment.ts",
+      "import": "./src/forkRecoveryProofEnvironment.ts"
+    },
     "./forkRecoveryHelper": {
       "types": "./src/forkRecoveryHelper.ts",
       "import": "./src/forkRecoveryHelper.ts"

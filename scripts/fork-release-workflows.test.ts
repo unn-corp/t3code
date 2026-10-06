@@ -282,6 +282,15 @@ describe("fork-release.yml gating", () => {
       "false",
     );
     assert.equal(bash({ ...base, INPUT_PUBLISH: "true", ENABLED: "true" }).outputs.publish, "true");
+    assert.equal(
+      bash({
+        ...base,
+        INPUT_PUBLISH: "true",
+        INPUT_COMMISSION: "false",
+        ENABLED: "false",
+      }).outputs.publish,
+      "false",
+    );
   });
 
   it.skipIf(!hasBash)(
@@ -297,13 +306,11 @@ describe("fork-release.yml gating", () => {
       const manual = bash(base);
       assert.equal(manual.status, 0);
       assert.equal(manual.outputs.publish, "true");
-      assert.equal(bash({ ...base, INPUT_PUBLISH: "false" }).outputs.publish, "false");
-      assert.equal(bash({ ...base, INPUT_CHANNEL: "stable" }).outputs.publish, "false");
-      assert.equal(
-        bash({ ...base, EVENT: "schedule", SCHEDULE: "23 7 * * *" }).outputs.publish,
-        "false",
-      );
-      assert.equal(bash({ ...base, EVENT: "push" }).outputs.publish, "false");
+      assert.equal(bash({ ...base, INPUT_PUBLISH: "false" }).status, 1);
+      assert.equal(bash({ ...base, INPUT_CHANNEL: "stable" }).status, 1);
+      assert.equal(bash({ ...base, ENABLED: "true" }).status, 1);
+      assert.equal(bash({ ...base, EVENT: "schedule", SCHEDULE: "23 7 * * *" }).status, 1);
+      assert.equal(bash({ ...base, EVENT: "push" }).status, 1);
     },
   );
 
@@ -342,6 +349,15 @@ describe("fork-release.yml gating", () => {
       assert.equal(release.jobs[name]!.with!.ref, "${{ needs.plan.outputs.commit }}");
     }
   });
+
+  it("passes only the explicit dispatch commissioning input into nightly planning", () => {
+    const plan = stepNamed(release.jobs.plan!, "Plan");
+    assert.equal(plan.env!.COMMISSION, "${{ inputs.commission }}");
+    assert.include(plan.run!, "--commission");
+    const intent = stepNamed(release.jobs.plan!, "Resolve channel and intent");
+    assert.include(intent.run!, "Commissioning requires an explicit manual nightly publish");
+    assert.include(intent.run!, '"$ENABLED" != "true"');
+  });
 });
 
 describe("reusable desktop workflow contract", () => {
@@ -353,6 +369,23 @@ describe("reusable desktop workflow contract", () => {
       };
     }
   ).workflow_call;
+
+  it("keeps failed Windows smoke archives out of release assembly", () => {
+    const job = Object.values(desktop.jobs).find((entry) =>
+      entry.steps?.some((step) => step.name === "Smoke-test CLI archive"),
+    )!;
+    assert.equal(stepNamed(job, "Smoke-test CLI archive").id, "cli_smoke");
+    const diagnostic = stepNamed(job, "Upload failed Windows CLI for diagnosis");
+    assert.include(diagnostic.if!, "failure()");
+    assert.include(diagnostic.if!, "steps.cli_smoke.outcome == 'failure'");
+    assert.include(diagnostic.if!, "github.repository == 'unn-corp/t3code'");
+    assert.equal(diagnostic.with!.name, "diagnostic-cli-win-${{ inputs.arch }}");
+    assert.equal(diagnostic.with!["retention-days"], 1);
+    assert.notInclude(Object.values(ARTIFACT_DIRS), "diagnostic-cli-win-x64");
+    const normal = stepNamed(job, "Upload CLI archive");
+    assert.notInclude(normal.if!, "failure()");
+    assert.notInclude(normal.if!, "always()");
+  });
 
   it("receives every required input and nothing the callee does not declare", () => {
     for (const name of ["desktop_linux_x64", "desktop_win_x64"]) {

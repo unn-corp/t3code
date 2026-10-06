@@ -142,6 +142,7 @@ const runPlan = async (values: Args) => {
   const outcome = buildPlan({
     channel,
     ...(channel === "nightly" ? { commit: values.commit ?? requireEnv("GITHUB_SHA") } : {}),
+    ...(values.commission === "true" ? { commission: true } : {}),
     now: new Date(),
     runNumber: Number(values["run-number"] ?? process.env.GITHUB_RUN_NUMBER ?? "0"),
     releases,
@@ -660,6 +661,7 @@ const main = async (argv: ReadonlyArray<string>): Promise<number> => {
     allowPositionals: false,
     options: {
       channel: { type: "string" },
+      commission: { type: "boolean" },
       commit: { type: "string" },
       "run-number": { type: "string" },
       out: { type: "string" },
@@ -704,6 +706,9 @@ const main = async (argv: ReadonlyArray<string>): Promise<number> => {
       typeof value === "string" ? value : undefined,
     ]),
   );
+  if (parsed.commission === true) {
+    (values as Record<string, string | undefined>).commission = "true";
+  }
 
   switch (command) {
     case "plan":

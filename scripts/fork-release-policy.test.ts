@@ -6,6 +6,7 @@ import {
   ANDROID_MAX_VERSION_CODE,
   buildPlan,
   classifyRelease,
+  commissioningMarker,
   codeFromReservationTag,
   compareForkVersions,
   eligibleReleases,
@@ -323,6 +324,130 @@ describe("nightly planning", () => {
 
   it("rejects a commit that is not a full SHA", () => {
     assert.throws(() => planNightly({ commit: "abc1234", now: NOW, runNumber: 1, releases: [] }));
+  });
+
+  it("commissioning rebuild binds the newest eligible same-source nightly and uses it as recovery predecessor", () => {
+    const commit = sha("commission-source");
+    const first = makeRelease({ version: "1.0.1-nightly.20261010.4", commit });
+    const second = makeRelease({
+      version: "1.0.1-nightly.20261010.5",
+      commit,
+      body: commissioningMarker({
+        tag: first.tagName,
+        version: first.manifest!.version,
+        commit,
+      }),
+    });
+    const outcome = buildPlan({
+      channel: "nightly",
+      commit,
+      now: NOW,
+      runNumber: 7,
+      releases: [first, second],
+      baseline: {
+        tag: "fork-baseline",
+        version: "1.0.0",
+        commit: sha("commission-baseline"),
+      },
+      commission: true,
+    });
+    assert.equal(outcome.kind, "release");
+    if (outcome.kind !== "release") return;
+    assert.equal(outcome.plan.version, "1.0.1-nightly.20261011.7");
+    assert.deepStrictEqual(outcome.plan.commissioningSource, {
+      tag: second.tagName,
+      version: second.manifest!.version,
+      commit,
+    });
+    assert.equal(outcome.plan.predecessor.tag, second.tagName);
+    assert.deepStrictEqual(
+      outcome.plan.recoverySources
+        .slice(0, 2)
+        .map(({ version, commit: sourceCommit }) => [version, sourceCommit]),
+      [
+        [second.manifest!.version, commit],
+        [first.manifest!.version, commit],
+      ],
+    );
+  });
+
+  it("allows the first explicit commissioning publication and rejects unsafe repeat history", () => {
+    const commit = sha("commission-invalid");
+    const plan = (releases: ReturnType<typeof makeRelease>[]) =>
+      buildPlan({
+        channel: "nightly",
+        commit,
+        now: NOW,
+        runNumber: 8,
+        releases,
+        commission: true,
+      });
+    const first = buildPlan({
+      channel: "nightly",
+      commit,
+      now: NOW,
+      runNumber: 8,
+      releases: [makeRelease({ version: "1.0.0" })],
+      baseline: { tag: "fork-baseline", version: "1.0.0", commit: sha("commission-baseline") },
+      commission: true,
+    });
+    assert.equal(first.kind, "release");
+    if (first.kind === "release") {
+      assert.equal(first.plan.commissioningSource, undefined);
+      assert.equal(first.plan.predecessor.tag, "fork-v1.0.0");
+    }
+    const base = makeRelease({ version: "1.0.1-nightly.20261010.1", commit });
+    const draft = makeRelease({
+      version: "1.0.1-nightly.20261010.2",
+      commit,
+      draft: true,
+      publishedAt: null,
+      noManifest: true,
+      body: `<!-- t3-fork-release:candidate commit=${commit} channel=nightly -->`,
+    });
+    assert.throws(() => plan([base, draft]), /not eligible/);
+    const withdrawn = makeRelease({
+      version: "1.0.1-nightly.20261010.3",
+      commit,
+      body: withWithdrawal("", "withdrawn", NOW.toISOString()),
+    });
+    assert.throws(() => plan([withdrawn]), /not eligible.*withdrawn/);
+    const partial = makeRelease({
+      version: "1.0.1-nightly.20261010.4",
+      commit,
+      dropAsset: true,
+    });
+    assert.throws(() => plan([partial]), /not eligible.*partial/);
+    const invalid = makeRelease({
+      version: "1.0.1-nightly.20261010.5",
+      commit,
+      checks: { recovery: false },
+    });
+    assert.throws(() => plan([invalid]), /not eligible.*checks-incomplete/);
+  });
+
+  it("keeps ordinary duplicate suppression and refuses a commissioning rerun that reuses a tag", () => {
+    const commit = sha("commission-rerun");
+    const prior = makeRelease({ version: "1.0.1-nightly.20261010.6", commit });
+    assert.equal(
+      buildPlan({
+        channel: "nightly",
+        commit,
+        now: NOW,
+        runNumber: 7,
+        releases: [prior],
+      }).kind,
+      "skip",
+    );
+    const sameRun = buildPlan({
+      channel: "nightly",
+      commit,
+      now: new Date("2026-10-10T08:30:00Z"),
+      runNumber: 6,
+      releases: [makeRelease({ version: "1.0.0" }), prior],
+      commission: true,
+    });
+    assert.equal(sameRun.kind, "skip");
   });
 });
 

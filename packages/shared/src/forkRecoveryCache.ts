@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import type { ForkReleaseManifest } from "@t3tools/contracts";
 import { forkRecoveryAssetsFor, type ForkPlatformKey } from "./forkMaintenance.ts";
 import { restrictWindowsAcl } from "./forkMaintenanceSnapshot.ts";
+import { recoveryProofEnvironment } from "./forkRecoveryProofEnvironment.ts";
 
 const run = NodeUtil.promisify(NodeChildProcess.execFile);
 export const RECOVERY_HELPER_PROTOCOL_LINE = "recovery-helper-protocol=1";
@@ -70,24 +71,38 @@ async function atomicJson(file: string, value: unknown) {
 export async function selfTestRecoveryCommand(
   command: Pick<RecoveryCommand, "nodePath" | "helperPath">,
 ): Promise<void> {
-  const neutral = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-recovery-proof-"));
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-recovery-proof-"));
+  const paths = {
+    root,
+    cwd: NodePath.join(root, "work"),
+    home: NodePath.join(root, "home"),
+    temp: NodePath.join(root, "temp"),
+    appData: NodePath.join(root, "appdata"),
+    localAppData: NodePath.join(root, "local-appdata"),
+    coordinator: NodePath.join(root, "coordinator"),
+  };
   try {
-    // A minimal environment: nothing from the app or a system Node may be relied on.
+    await privateDirectory(root);
+    await Promise.all(
+      [paths.cwd, paths.home, paths.temp, paths.appData, paths.localAppData, paths.coordinator].map(
+        privateDirectory,
+      ),
+    );
+    // Keep system ACL tools available on Windows, but never inherit developer tools or secrets.
     const { stdout } = await run(command.nodePath, [command.helperPath, "--self-test"], {
-      cwd: neutral,
-      env: {
-        PATH: "",
-        ...(process.platform === "win32" && process.env.SystemRoot !== undefined
-          ? { SystemRoot: process.env.SystemRoot }
-          : {}),
-      },
+      cwd: paths.cwd,
+      env: recoveryProofEnvironment({
+        platform: process.platform === "win32" ? "windows-x64" : "linux-x64",
+        paths,
+        inherited: process.env,
+      }),
       timeout: 120_000,
       windowsHide: true,
     });
     if (!stdout.includes(RECOVERY_HELPER_PROTOCOL_LINE))
       throw new Error("The cached recovery runtime did not report the helper protocol.");
   } finally {
-    await NodeFSP.rm(neutral, { recursive: true, force: true });
+    await NodeFSP.rm(root, { recursive: true, force: true });
   }
 }
 

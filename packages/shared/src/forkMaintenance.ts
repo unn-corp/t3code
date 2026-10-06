@@ -109,9 +109,35 @@ export interface ForkReleaseRecord {
 }
 
 const WITHDRAWN_PATTERN = /^<!-- t3-fork-release:withdrawn\b[^>]*-->/m;
+const COMMISSIONING_PATTERN =
+  /^<!-- t3-fork-release:commissioning source-tag=(\S+) source-version=(\S+) source-commit=([0-9a-f]{40}) -->/m;
 const REQUIRED_CHECKS = ["build", "install", "update", "recovery"] as const;
 export const isWithdrawn = (record: Pick<ForkReleaseRecord, "body">): boolean =>
   WITHDRAWN_PATTERN.test(record.body);
+
+function commissioningSource(
+  record: ForkReleaseRecord,
+  all: ReadonlyArray<ForkReleaseRecord>,
+): { readonly version: string; readonly commit: string } | null {
+  const marker = COMMISSIONING_PATTERN.exec(record.body);
+  const manifest = record.manifest;
+  if (!marker || !manifest || manifest.channel !== "nightly") return null;
+  const source = all.find((candidate) => candidate.tagName === marker[1]);
+  if (
+    !source ||
+    source.draft ||
+    isWithdrawn(source) ||
+    !source.manifest ||
+    source.manifest.version !== marker[2] ||
+    source.manifest.commit !== marker[3] ||
+    source.manifest.channel !== "nightly" ||
+    source.manifest.commit !== manifest.commit ||
+    compareForkVersions(source.manifest.version, manifest.version) >= 0 ||
+    !classifyForkRelease(source, all).eligible
+  )
+    return null;
+  return { version: marker[2]!, commit: marker[3]! };
+}
 
 export type ForkExclusionReason =
   | "draft"
@@ -205,17 +231,25 @@ export function classifyForkRelease(
     }
   }
   const rank = (candidate: ForkReleaseRecord) => candidate.publishedAt ?? candidate.createdAt;
-  const duplicateOf = all.some(
-    (other) =>
-      other.id !== record.id &&
-      !other.draft &&
-      !isWithdrawn(other) &&
-      other.manifest !== null &&
-      (other.manifest.version === manifest.version ||
-        (other.manifest.commit === manifest.commit &&
-          other.manifest.channel === manifest.channel)) &&
-      (rank(other) < rank(record) || (rank(other) === rank(record) && other.id < record.id)),
-  );
+  const commission = commissioningSource(record, all);
+  const duplicateOf = all.some((other) => {
+    if (
+      other.id === record.id ||
+      other.draft ||
+      isWithdrawn(other) ||
+      !other.manifest ||
+      !(rank(other) < rank(record) || (rank(other) === rank(record) && other.id < record.id))
+    )
+      return false;
+    if (other.manifest.version === manifest.version) return true;
+    if (other.manifest.commit !== manifest.commit || other.manifest.channel !== manifest.channel)
+      return false;
+    return !(
+      commission &&
+      compareForkVersions(other.manifest.version, commission.version) <= 0 &&
+      classifyForkRelease(other, all).eligible
+    );
+  });
   if (duplicateOf) reasons.push("duplicate");
   return { eligible: reasons.length === 0, reasons };
 }

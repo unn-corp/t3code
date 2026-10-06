@@ -91,6 +91,33 @@ Orchestration scripts always run from the commit that defines the workflow. Buil
 helper, and the safety suites run from the pinned commit, and each confirms its checkout is exactly
 that commit.
 
+If the Windows CLI archive smoke check fails, the fork retains a `diagnostic-cli-win-x64` workflow
+artifact for one day. Use it to reproduce the failed standalone binary in an isolated fixture;
+it is excluded from release assembly, and the failed check still prevents publication. The artifact
+contains packaged binaries only, with no fixture data or test logs.
+
+### Hardware commissioning rebuilds
+
+Ordinary nightly planning skips a source commit that already has a nightly, including manual runs;
+scheduled duplicate suppression stays in place. For the one hardware proof that needs multiple
+release versions from the same source, use a manual `workflow_dispatch` for **nightly** with both
+`publish=true` and `commission=true` while `FORK_RELEASES_ENABLED` is still false. The workflow only
+admits that combination for publication. A source with no prior same-source nightly follows the
+ordinary first-release plan and its verified predecessor or baseline. Repeating a source requires an
+already published, fully eligible nightly for that exact pinned commit, binds its tag/version/commit
+into the plan, uses it as the recovery predecessor, and rechecks that it remains the newest eligible
+same-source nightly just before publication. A draft, withdrawn, partial, invalid, or concurrent same-source record blocks
+the rebuild. Every normal build, recovery APK, signature, immutable tag, emulator/package check,
+and release safety receipt still goes through the usual gates.
+
+For the real update/recovery proof, publish normal A, then commissioning normal B from the same
+source with a higher Android code. Install B, use its paired recovery APK to restore A, then publish
+commissioning normal C from that source using a fresh workflow run. C is bound to B and retains
+both B and A recovery identities. With C in the trusted feed, Resume on restored A must select and
+install C at its higher code. This mode exists only to establish the hardware commissioning proof;
+it does not enable scheduled publication. After the proof, use the normal release policy and enable
+scheduled publishing separately.
+
 ### What each check means
 
 `build` is true when assembly passed. `install`, `update`, and `recovery` are each true only when
