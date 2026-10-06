@@ -98,6 +98,9 @@ contains packaged binaries only, with no fixture data or test logs. Run **Fork W
 on `main` with that failed run’s numeric `run_id` and exact `expected_version` to exercise the same
 archive with current diagnostics on `windows-2025`. This manual job uses read-only repository/actions
 permissions and an isolated home; its result is diagnostic evidence, not a release validation receipt.
+The smoke probe requires an actual HTTP 200 within 90 seconds on a clean Windows runner or 30 seconds
+on Linux. It reports startup elapsed time and redacts pairing credentials from failed startup output;
+this cold-start allowance does not change coordinator activity or ownership deadlines.
 It reserves no Android codes. A corrected candidate still needs the complete release workflow.
 
 ### Hardware commissioning rebuilds

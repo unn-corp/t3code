@@ -9,6 +9,7 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -25,7 +26,7 @@ import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { windowsSystemTar } from "./build-cli-archive.ts";
 import { cliSmokeEnvironment } from "./lib/cli-smoke-environment.ts";
-import { appendCliSmokeOutput } from "./lib/cli-smoke-output.ts";
+import { appendCliSmokeOutput, redactCliSmokeOutput } from "./lib/cli-smoke-output.ts";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 export class CliArchiveSmokeError extends Schema.TaggedError<CliArchiveSmokeError>()(
@@ -125,7 +126,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   if (version.exitCode !== 0 || !version.stdout.includes(input.expectVersion)) {
     return yield* new CliArchiveSmokeError({
       step: "running --version",
-      detail: `exit ${String(version.exitCode)}\n${version.stdout}${version.stderr}`,
+      detail: `exit ${String(version.exitCode)}\n${redactCliSmokeOutput(version.stdout + version.stderr)}`,
     });
   }
 
@@ -136,6 +137,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const net = yield* NetService.NetService;
   const port = yield* net.findAvailablePort(47700);
   const home = path.join(scratch, "home");
+  const startedAt = yield* Clock.currentTimeMillis;
   const server = yield* spawner.spawn(
     ChildProcess.make(
       executable,
@@ -175,23 +177,29 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     }
     return true;
   });
-  const readinessSeconds = platform === "win32" ? 60 : 30;
+  // A fresh Windows runner reached listen after 60s while the identical archive
+  // took 7s on hardware. Allow that measured cold startup without relaxing the
+  // ownership probes or accepting anything other than an actual HTTP 200.
+  const readinessSeconds = platform === "win32" ? 90 : 30;
   const ready = yield* pollUntilReady.pipe(
     // Cold Windows runners may spend several seconds proving the process
     // identity before the coordinator admits the first server startup.
     Effect.timeout(Duration.seconds(readinessSeconds)),
     Effect.orElseSucceed(() => false),
   );
+  const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
   yield* server.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
   yield* server.exitCode.pipe(Effect.timeout(Duration.seconds(10)), Effect.ignore);
   yield* Fiber.join(output).pipe(Effect.timeout(Duration.seconds(5)), Effect.ignore);
   if (!ready) {
     return yield* new CliArchiveSmokeError({
       step: "serving from the extracted archive",
-      detail: `no 200 from / within ${readinessSeconds}s\nstdout:\n${captured.stdout}\nstderr:\n${captured.stderr}`,
+      detail: `no 200 from / within ${readinessSeconds}s (elapsed ${elapsed}ms)\nstdout:\n${redactCliSmokeOutput(captured.stdout)}\nstderr:\n${redactCliSmokeOutput(captured.stderr)}`,
     });
   }
-  yield* Effect.log(`[cli-smoke] ${root}: --version passed and serve answered on ${String(port)}.`);
+  yield* Effect.log(
+    `[cli-smoke] ${root}: --version passed and serve answered on ${String(port)} in ${elapsed}ms.`,
+  );
 });
 
 const command = Command.make(

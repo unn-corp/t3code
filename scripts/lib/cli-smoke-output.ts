@@ -9,3 +9,15 @@ export const appendCliSmokeOutput = (current: string, chunk: string): string => 
   if (combined.length <= available) return wasTruncated ? `${TRUNCATED}${combined}` : combined;
   return `${TRUNCATED}${combined.slice(-(OUTPUT_LIMIT - TRUNCATED.length))}`;
 };
+
+/** Startup prints pairing credentials, including a QR code; public CI only needs startup diagnostics. */
+export const redactCliSmokeOutput = (output: string): string =>
+  output
+    .split(/\r?\n/)
+    .filter((line) => !/[\u2580-\u259f]/u.test(line))
+    .map((line) =>
+      /(?:Token|Pairing URL|Connection string):/i.test(line)
+        ? "[pairing details redacted]"
+        : line.replace(/https?:\/\/\S+/g, "[URL redacted]"),
+    )
+    .join("\n");
