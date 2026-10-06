@@ -40,6 +40,9 @@ Agents running on your computers are not interrupted, since they run on those co
   updates download and wait.
 
 Android may ask you to confirm the install. T3 Code shows a notification when it needs you.
+You can also open **App updates → Open recovery → Open Android update confirmation**
+to reach that same Android prompt directly. Approve **Update** in Android; opening the prompt
+does not approve or start another installation.
 Your paired computers, drafts, and queued messages stay in place. Updates need Android 9 or newer;
 older phones need the APK installed by hand.
 

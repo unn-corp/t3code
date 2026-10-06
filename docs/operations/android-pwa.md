@@ -324,7 +324,9 @@ signed index. In-app update needs Android 9 (API 28) or newer, which is when And
 signing information for an APK that is not yet installed; older versions report it and update
 manually. Android may still show its own confirmation: silent replacement only applies when this
 app is the installer of record and the Android version allows it. The status reports which case
-applies, and an unconfirmed install is surfaced by notification.
+applies, and an unconfirmed install is surfaced by notification and the native recovery screen's
+**Open Android update confirmation** button. The button opens the already-committed session's
+system prompt; it never starts another installation or bypasses the install guard.
 
 ### Install guard and install requests
 
@@ -418,6 +420,16 @@ A recovery request is the `recovery` intent above: it waits for two minutes outs
 phone work to finish like any install, so leave the screen after requesting. It never uninstalls or
 clears data, so pairings, drafts, and queues stay in place. **Continue to T3 Code** resets the launch counter and is available when no installation
 is pending. While Android is replacing the app, phone work remains fenced.
+
+The process retains Android's immutable confirmation `PendingIntent` even if its notification is
+dismissed. After process death it retrieves the token if Android still holds it. Only its filter
+identity is recorded in app-private transaction state; reopening
+uses `FLAG_NO_CREATE`, validates the recorded transaction and app-owned installer session, and
+never reconstructs missing confirmation extras. A legacy pending transaction can reuse its still-active
+confirmation notification. A discarded OS token reports that Android's pending installer must be
+finished or cancelled instead of creating a replacement installation.
+Opening the prompt opts in to Android 14's sender rules only from a visible T3 activity; Android 16
+also enforces visibility at send time. See [Android's activity security rules](https://developer.android.com/guide/components/activities/secure-bal).
 
 A launch counts as healthy when the shell calls `markAndroidShellHealthy()` (mounted by the client
 update interaction coordinator). Only an actual render signal counts, including pairing and onboarding screens. A page-load timer

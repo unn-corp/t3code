@@ -90,6 +90,31 @@ public final class UpdateStoreTest {
         assertFalse(state.recoveredFromCorruption);
         assertFalse(state.recoveryRequired());
     }
+    @Test public void confirmationIdentitySurvivesRestartAndStaleCallbacksCannotReplaceIt() throws Exception {
+        File dir = folder.newFolder("confirmation");
+        UpdateStore store = UpdateStore.open(dir);
+        store.mutate(state -> {
+            state.pending = new UpdateState.Pending(); state.pending.transactionId = "current"; state.pending.sessionId = 83;
+        });
+        String filter = "intent:#Intent;action=android.content.pm.action.CONFIRM_INSTALL;component=com.android.packageinstaller/.PackageInstallerActivity;end";
+        assertTrue(store.tryMutatePending("current", state -> {
+            state.pending.installerResult = "awaiting-confirmation"; state.pending.confirmationFilterUri = filter;
+        }));
+        assertFalse(store.tryMutatePending("previous", state -> state.pending.confirmationFilterUri = "wrong-session"));
+        UpdateState reopened = UpdateStore.open(dir).snapshot();
+        assertEquals("awaiting-confirmation", reopened.pending.installerResult);
+        assertEquals(83, reopened.pending.sessionId);
+        assertEquals(filter, reopened.pending.confirmationFilterUri);
+        store.mutate(state -> state.pending = null);
+        assertNull(UpdateStore.open(dir).snapshot().pending);
+    }
+    @Test public void legacyPendingConfirmationDoesNotInventAnInstallerTarget() throws Exception {
+        File dir = folder.newFolder("legacy-confirmation");
+        Files.writeString(new File(dir, "state.json").toPath(), "{\"format\":1,\"pending\":{\"transactionId\":\"legacy\",\"sessionId\":18,\"installerResult\":\"awaiting-confirmation\"}}");
+        UpdateState.Pending pending = UpdateStore.open(dir).snapshot().pending;
+        assertEquals("legacy", pending.transactionId);
+        assertEquals("", pending.confirmationFilterUri);
+    }
     @Test public void aStateReadFromAnOlderBuildKeepsUnknownDefaults() throws Exception {
         File dir = folder.newFolder("state");
         Files.write(new File(dir, "state.json").toPath(), "{\"format\":1,\"channel\":\"stable\"}".getBytes(StandardCharsets.UTF_8));

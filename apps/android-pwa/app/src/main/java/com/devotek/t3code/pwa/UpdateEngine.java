@@ -918,8 +918,15 @@ final class UpdateEngine {
         if (recorded == null || transaction == null || !transaction.equals(recorded.transactionId)) return;
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             Intent confirm = IntentCompat.getParcelableExtra(result, Intent.EXTRA_INTENT, Intent.class);
-            boolean updated = store.tryMutatePending(transaction, state -> state.pending.installerResult = "awaiting-confirmation");
-            if (updated && confirm != null) UpdateNotifications.confirm(app, confirm);
+            boolean updated = store.tryMutatePending(transaction, state -> {
+                state.pending.installerResult = "awaiting-confirmation";
+                if (confirm != null) state.pending.confirmationFilterUri = confirm.cloneFilter().toUri(Intent.URI_INTENT_SCHEME);
+            });
+            UpdateState.Pending latest = store.snapshot().pending;
+            // A failed bookkeeping write must not cancel Android's already-committed installation
+            // or destroy its confirmation. Its notification remains a fallback for this exact session.
+            if (confirm != null && latest != null && transaction.equals(latest.transactionId) && recorded.sessionId == latest.sessionId)
+                UpdateNotifications.confirm(app, UpdateNotifications.confirmation(app, confirm, recorded.sessionId));
             if (updated) changed();
             return;
         }
@@ -956,6 +963,29 @@ final class UpdateEngine {
     }
 
     // ---- status ------------------------------------------------------------------------------
+
+    /** Reopens the already-admitted Android prompt; never creates a session or bypasses admission. */
+    void openInstallConfirmation(String transactionId) throws UpdateException {
+        if (store == null) throw new UpdateException(storeError);
+        UpdateState.Pending pending = store.snapshot().pending;
+        if (pending == null || !pending.transactionId.equals(transactionId) || !"awaiting-confirmation".equals(pending.installerResult))
+            throw new UpdateException("That installation is no longer awaiting Android confirmation.");
+        boolean owned = false;
+        try {
+            for (PackageInstaller.SessionInfo session : app.getPackageManager().getPackageInstaller().getMySessions())
+                if (session.getSessionId() == pending.sessionId) { owned = true; break; }
+        } catch (RuntimeException unavailable) { throw new UpdateException("Android's installation session is unavailable. Try again."); }
+        android.app.PendingIntent prompt = owned ? UpdateNotifications.existingConfirmation(app, pending) : null;
+        if (prompt == null) throw new UpdateException("Android's confirmation is no longer available. Finish or cancel the pending Android installer before retrying.");
+        UpdateState.Pending latest = store.snapshot().pending;
+        if (latest == null || !transactionId.equals(latest.transactionId) || latest.sessionId != pending.sessionId
+                || !"awaiting-confirmation".equals(latest.installerResult))
+            throw new UpdateException("That installation has changed. Review its current status.");
+        try { UpdateNotifications.openConfirmation(app, prompt); }
+        catch (android.app.PendingIntent.CanceledException | RuntimeException unavailable) {
+            throw new UpdateException("Android could not open its confirmation. Finish or cancel the pending Android installer before retrying.");
+        }
+    }
 
     private static String recentOutcome(UpdateState state) {
         if (state.lastOutcome == null || now() - state.lastOutcome.at > OUTCOME_VISIBLE_MS) return null;

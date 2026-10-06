@@ -71,6 +71,9 @@ final class UpdateState {
     static final class Pending {
         String transactionId = "", kind = "update", tag = "", targetVersion = "", targetCommit = "", targetChannel = "stable";
         String targetSha256 = "", manifestSha256 = "", previousCommit = "", installerResult = "committing";
+        // Only filter identity is persisted. Android keeps the original confirmation extras in its
+        // immutable PendingIntent; reopening uses FLAG_NO_CREATE and never rebuilds an installer intent.
+        String confirmationFilterUri = "";
         int sessionId = -1;
         boolean userRequested;
         long targetVersionCode, previousVersionCode, startedAt, requestedAt;
@@ -78,7 +81,7 @@ final class UpdateState {
             return new JSONObject().put("transactionId", transactionId).put("kind", kind).put("tag", tag)
                 .put("targetVersion", targetVersion).put("targetCommit", targetCommit).put("targetChannel", targetChannel)
                 .put("targetSha256", targetSha256).put("manifestSha256", manifestSha256).put("previousCommit", previousCommit)
-                .put("installerResult", installerResult).put("targetVersionCode", targetVersionCode)
+                .put("installerResult", installerResult).put("confirmationFilterUri", confirmationFilterUri).put("targetVersionCode", targetVersionCode)
                 .put("previousVersionCode", previousVersionCode).put("startedAt", startedAt).put("requestedAt", requestedAt).put("sessionId", sessionId)
                 .put("userRequested", userRequested);
         }
@@ -89,6 +92,7 @@ final class UpdateState {
             pending.targetCommit = json.optString("targetCommit"); pending.targetChannel = json.optString("targetChannel", "stable");
             pending.targetSha256 = json.optString("targetSha256"); pending.manifestSha256 = json.optString("manifestSha256");
             pending.previousCommit = json.optString("previousCommit"); pending.installerResult = json.optString("installerResult", "committing");
+            pending.confirmationFilterUri = json.optString("confirmationFilterUri");
             pending.targetVersionCode = json.optLong("targetVersionCode"); pending.previousVersionCode = json.optLong("previousVersionCode");
             pending.startedAt = json.optLong("startedAt"); pending.sessionId = json.optInt("sessionId", -1);
             pending.requestedAt = json.optLong("requestedAt", pending.startedAt);

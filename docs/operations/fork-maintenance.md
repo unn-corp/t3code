@@ -226,6 +226,11 @@ before enabling automatic publishing. Existing installations need the known-good
 and explicit device bootstrap before participating. A successful source test is not a hardware
 installation receipt.
 
+The native Android recovery screen also opens a pending Android installation confirmation directly.
+`RecoveryActivity`, `UpdateEngine`, and `UpdateNotifications` own this route. Verify it with both
+normal and recovery APKs, including a dismissed notification and a restarted app process; the
+button must open the existing app-owned installer session and must never submit another install.
+
 **Verification.** [forkMaintenanceAdmission.test.ts](../../packages/shared/src/forkMaintenanceAdmission.test.ts),
 [forkMaintenanceStore.test.ts](../../packages/shared/src/forkMaintenanceStore.test.ts), and
 [forkMaintenanceTransaction.test.ts](../../packages/shared/src/forkMaintenanceTransaction.test.ts) cover stale/unknown

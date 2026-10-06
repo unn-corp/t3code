@@ -103,6 +103,19 @@ public final class RecoveryActivity extends Activity {
             content.addView(text(state.forceRecovery ? "The last installed build did not match the verified update."
                 : "The last " + state.unhealthyLaunches + " launches did not finish loading.", 15, true));
 
+        if (state != null && state.pending != null && "awaiting-confirmation".equals(state.pending.installerResult)) {
+            String transaction = state.pending.transactionId;
+            content.addView(text("Android needs your approval to replace T3 Code with " + state.pending.targetVersion + ".", 15, true));
+            Button confirmation = button("Open Android update confirmation", view -> {
+                try { engine.openInstallConfirmation(transaction); }
+                catch (UpdateEngine.UpdateException error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); render(); }
+            });
+            boolean available = UpdateNotifications.existingConfirmation(this, state.pending) != null;
+            confirmation.setEnabled(!busy && available);
+            content.addView(confirmation);
+            if (!available) content.addView(text("Android's confirmation is unavailable. Finish or cancel the existing Android installer before retrying.", 14, false));
+        }
+
         if (state != null && !state.nativeOperations.isEmpty()) content.addView(text("A phone picker or permission dialog has not returned its result. Close that dialog and return to T3 Code. If Android lost the result, restart the phone before retrying the update.", 15, true));
         if (state != null && state.intent != null) {
             content.addView(text("An install is waiting. It starts after T3 Code has been out of the foreground for 2 minutes and no phone work is running. "

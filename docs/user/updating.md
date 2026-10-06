@@ -70,6 +70,8 @@ been backgrounded for two minutes and its browser automation, uploads, and
 native operations finish. Remote host agents can continue. Android may require
 **Allow from this source** permission and a system installation confirmation;
 waiting for either is shown explicitly. Denying permission does not clear connections.
+On the native recovery screen, **Open Android update confirmation** opens a pending system
+prompt directly, so finding the notification is optional. Android still requires its own approval.
 
 Older launchers and missing safety capabilities show bootstrap guidance.
 Other OS users, unrelated applications, and unregistered old installations are
