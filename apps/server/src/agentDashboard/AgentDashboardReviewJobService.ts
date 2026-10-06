@@ -563,7 +563,8 @@ const make = Effect.gen(function* () {
 
   // Older builds created repository reviews as ordinary visible chats. Hide
   // every durable review session on startup so historical research does not
-  // leak back into the sidebar after an upgrade.
+  // leak back into the sidebar after an upgrade. Archiving waits for command
+  // readiness, so it must not block acquisition of this startup dependency.
   if (runner.hideReviewThread) {
     yield* Effect.forEach(
       loadInitial.flatMap((run) =>
@@ -580,7 +581,7 @@ const make = Effect.gen(function* () {
           Effect.ignore,
         ) ?? Effect.void,
       { concurrency: 4, discard: true },
-    );
+    ).pipe(Effect.forkIn(scope));
   }
 
   const listRuns = Ref.get(runsRef);
