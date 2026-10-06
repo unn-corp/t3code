@@ -5,6 +5,7 @@ import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 import { ARTIFACT_DIRS } from "./fork-release-assets.ts";
 import { RECOVERY_HELPER_ASSETS } from "./fork-release-helper.ts";
@@ -211,6 +212,101 @@ describe("fork-release.yml structure", () => {
 });
 
 const hasBash = NodeChildProcess.spawnSync("bash", ["-c", "true"]).status === 0;
+
+describe("required release stages after optional recovery skips", () => {
+  const needs = () => ({
+    plan: { result: "success", outputs: { skip: "false", publish: "true" } },
+    reserve_android_codes: { result: "success" },
+    desktop_linux_x64: { result: "success" },
+    desktop_win_x64: { result: "success" },
+    android: { result: "success" },
+    recovery_helper: { result: "success" },
+    android_recovery_extras: { result: "skipped" },
+    assemble: { result: "success" },
+    validate: { result: "success" },
+    suites: { result: "success" },
+    manifest: { result: "success" },
+    publish: { result: "success" },
+  });
+  const admits = (name: string, states = needs(), cancelled = false) => {
+    const condition = release.jobs[name]!.if!;
+    // GitHub implicitly adds success() when a condition contains no status function.
+    // A skipped optional ancestor makes that implicit condition false, despite assembly passing.
+    const expression = /\b(?:always|cancelled|failure|success)\(/.test(condition)
+      ? condition
+      : `success() && (${condition})`;
+    return (
+      NodeVM.runInNewContext(expression, {
+        needs: states,
+        success: () => false,
+        always: () => true,
+        cancelled: () => cancelled,
+      }) === true
+    );
+  };
+
+  it("admits every required downstream stage despite the intentionally skipped recovery matrix", () => {
+    for (const name of ["assemble", "validate", "suites", "manifest", "publish", "completion"])
+      assert.isTrue(admits(name), name);
+  });
+
+  it("refuses cancellation, skipped plans, or failed and skipped mandatory prerequisites", () => {
+    for (const name of ["assemble", "validate", "suites", "manifest", "publish", "completion"]) {
+      assert.isFalse(admits(name, needs(), true), name);
+      const skipped = needs();
+      skipped.plan.outputs.skip = "true";
+      assert.isFalse(admits(name, skipped), name);
+    }
+    for (const [job, prerequisite] of [
+      ["assemble", "reserve_android_codes"],
+      ["validate", "assemble"],
+      ["suites", "assemble"],
+      ["manifest", "validate"],
+      ["manifest", "suites"],
+      ["publish", "manifest"],
+    ] as const) {
+      for (const result of ["failure", "skipped"]) {
+        const states = needs();
+        states[prerequisite].result = result;
+        assert.isFalse(admits(job, states), `${job} after ${prerequisite} ${result}`);
+      }
+    }
+  });
+
+  it.skipIf(!hasBash)(
+    "fails the final gate when validation or requested publication never ran",
+    () => {
+      const step = stepNamed(release.jobs.completion!, "Require every mandatory stage");
+      const run = (overrides: Record<string, string> = {}) =>
+        NodeChildProcess.spawnSync("bash", ["-c", step.run!], {
+          encoding: "utf8",
+          env: {
+            PATH: process.env.PATH,
+            ASSEMBLE_RESULT: "success",
+            VALIDATE_RESULT: "success",
+            SUITES_RESULT: "success",
+            MANIFEST_RESULT: "success",
+            PUBLISH_RESULT: "success",
+            PUBLICATION_REQUESTED: "true",
+            ...overrides,
+          },
+        }).status;
+      assert.equal(run(), 0);
+      for (const stage of [
+        "ASSEMBLE_RESULT",
+        "VALIDATE_RESULT",
+        "SUITES_RESULT",
+        "MANIFEST_RESULT",
+        "PUBLISH_RESULT",
+      ]) {
+        assert.equal(run({ [stage]: "skipped" }), 1, stage);
+        assert.equal(run({ [stage]: "failure" }), 1, stage);
+      }
+      assert.equal(run({ PUBLICATION_REQUESTED: "false", PUBLISH_RESULT: "skipped" }), 0);
+      assert.equal(run({ PUBLICATION_REQUESTED: "false" }), 1);
+    },
+  );
+});
 
 describe("fork-release.yml gating", () => {
   const intent = stepNamed(release.jobs.plan!, "Resolve channel and intent");

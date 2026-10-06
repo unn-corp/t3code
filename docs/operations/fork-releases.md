@@ -105,6 +105,10 @@ Linux AppImage feeds retain electron-builder’s per-file `blockMapSize`. Assemb
 size trailer, raw-deflated block-map structure, and block ranges as well as the whole payload’s size
 and digest. An absent external AppImage `.blockmap` is allowed when the map is embedded; a malformed
 or mismatched embedded map blocks publication.
+An intentionally skipped extra-recovery matrix must not skip validation or safety suites. Those jobs
+use explicit prerequisite results, and **Verify release completion** fails if a planned candidate lacks
+successful assembly, validation, suites, or manifest composition. Requested publication must also
+succeed; rehearsals must leave publication skipped. A green build job alone is not a completed release.
 It reserves no Android codes. A corrected candidate still needs the complete release workflow.
 
 ### Hardware commissioning rebuilds

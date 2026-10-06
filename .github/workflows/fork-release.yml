@@ -817,7 +817,7 @@ jobs:
         android_recovery_extras,
         recovery_helper,
       ]
-    if: always() && needs.plan.outputs.skip == 'false' && needs.desktop_linux_x64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.android.result == 'success' && needs.recovery_helper.result == 'success' && (needs.android_recovery_extras.result == 'success' || needs.android_recovery_extras.result == 'skipped')
+    if: "!cancelled() && needs.plan.result == 'success' && needs.plan.outputs.skip == 'false' && needs.reserve_android_codes.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.android.result == 'success' && needs.recovery_helper.result == 'success' && (needs.android_recovery_extras.result == 'success' || needs.android_recovery_extras.result == 'skipped')"
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -924,7 +924,7 @@ jobs:
   validate:
     name: Validate ${{ matrix.target }}
     needs: [plan, assemble]
-    if: needs.plan.outputs.skip == 'false'
+    if: "!cancelled() && needs.plan.result == 'success' && needs.assemble.result == 'success' && needs.plan.outputs.skip == 'false'"
     strategy:
       fail-fast: false
       matrix:
@@ -1021,7 +1021,7 @@ jobs:
   suites:
     name: Suite ${{ matrix.suite }} on ${{ matrix.target }}
     needs: [plan, assemble]
-    if: needs.plan.outputs.skip == 'false'
+    if: "!cancelled() && needs.plan.result == 'success' && needs.assemble.result == 'success' && needs.plan.outputs.skip == 'false'"
     strategy:
       fail-fast: false
       matrix:
@@ -1119,7 +1119,7 @@ jobs:
   manifest:
     name: Compose manifest
     needs: [plan, assemble, validate, suites]
-    if: needs.plan.outputs.skip == 'false'
+    if: "!cancelled() && needs.plan.result == 'success' && needs.assemble.result == 'success' && needs.validate.result == 'success' && needs.suites.result == 'success' && needs.plan.outputs.skip == 'false'"
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1179,7 +1179,7 @@ jobs:
   publish:
     name: Publish release
     needs: [plan, manifest]
-    if: needs.plan.outputs.skip == 'false' && needs.plan.outputs.publish == 'true'
+    if: "!cancelled() && needs.plan.result == 'success' && needs.manifest.result == 'success' && needs.plan.outputs.skip == 'false' && needs.plan.outputs.publish == 'true'"
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -1232,3 +1232,33 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.draft.outputs.release_id }}
         run: node scripts/fork-release.ts publish --plan fork-release-plan.json --release-id "$RELEASE_ID" --scratch verify-draft
+
+  completion:
+    name: Verify release completion
+    needs: [plan, assemble, validate, suites, manifest, publish]
+    # Status functions prevent an intentionally skipped optional recovery matrix from skipping this gate.
+    if: "!cancelled() && needs.plan.result == 'success' && needs.plan.outputs.skip == 'false'"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require every mandatory stage
+        shell: bash
+        env:
+          ASSEMBLE_RESULT: ${{ needs.assemble.result }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          SUITES_RESULT: ${{ needs.suites.result }}
+          MANIFEST_RESULT: ${{ needs.manifest.result }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          PUBLICATION_REQUESTED: ${{ needs.plan.outputs.publish }}
+        run: |
+          set -euo pipefail
+          for release_stage in ASSEMBLE_RESULT VALIDATE_RESULT SUITES_RESULT MANIFEST_RESULT; do
+            [[ "${!release_stage}" == 'success' ]] || { echo "$release_stage did not pass (${!release_stage})." >&2; exit 1; }
+          done
+          if [[ "$PUBLICATION_REQUESTED" == 'true' ]]; then
+            [[ "$PUBLISH_RESULT" == 'success' ]] || { echo "Requested publication did not pass ($PUBLISH_RESULT)." >&2; exit 1; }
+          else
+            [[ "$PUBLISH_RESULT" == 'skipped' ]] || { echo "An unrequested publication must be skipped ($PUBLISH_RESULT)." >&2; exit 1; }
+          fi
