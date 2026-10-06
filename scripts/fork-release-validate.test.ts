@@ -418,8 +418,21 @@ describe("native Android interaction receipt", () => {
       "-n",
       "com.devotek.t3code.pwa/.MainActivity",
     ]);
-    assert.deepEqual(commands.at(-2), ["logcat", "-d", "-b", "crash", "-t", "80"]);
-    assert.deepEqual(commands.at(-1), ["logcat", "-d", "-b", "system", "-t", "80"]);
+    assert.include(message, "Android process exits:");
+    assert.deepEqual(commands.at(-2), [
+      "shell",
+      "dumpsys",
+      "activity",
+      "exit-info",
+      "com.devotek.t3code.pwa",
+    ]);
+    assert.deepEqual(commands.at(-1), [
+      "shell",
+      "dumpsys",
+      "activity",
+      "activities",
+      "com.devotek.t3code.pwa",
+    ]);
   });
 
   it("rejects an unsuccessful Activity Manager result before accepting a surviving process", async () => {

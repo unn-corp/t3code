@@ -208,7 +208,8 @@ to the `coordinator` suite's required list as they land.
 APK startup validation explicitly launches `MainActivity` with Activity Manager and requires its
 successful acknowledgement and a surviving app process eight seconds later. It injects no random
 input. A missing process fails the check and retains bounded, redacted crash and system lifecycle
-logs to distinguish application crashes from Android stopping or failing to start a task.
+logs, process-exit information, and activity state to distinguish application crashes from Android
+stopping or failing to start a task.
 
 ## Android
 

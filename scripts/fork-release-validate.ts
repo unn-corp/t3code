@@ -583,9 +583,21 @@ export const launchAndConfirm = async (
     // The selected device is always a throwaway emulator. Retain the crash before the runner
     // tears it down, without exposing credentials that an exception message might contain.
     const crash = runAdb(["logcat", "-d", "-b", "crash", "-t", "80"]);
-    const lifecycle = runAdb(["logcat", "-d", "-b", "system", "-t", "80"]);
+    const lifecycle = runAdb([
+      "logcat",
+      "-d",
+      "-b",
+      "system",
+      "-t",
+      "500",
+      "ActivityManager:I",
+      "ActivityTaskManager:I",
+      "*:S",
+    ]);
+    const exitInfo = runAdb(["shell", "dumpsys", "activity", "exit-info", FORK_ANDROID_PACKAGE]);
+    const activity = runAdb(["shell", "dumpsys", "activity", "activities", FORK_ANDROID_PACKAGE]);
     throw new Error(
-      `The app process was not running after launch.\nLauncher:\n${redactCliSmokeOutput(`${start.stdout}${start.stderr}`).slice(-4_000)}\nAndroid crash log:\n${redactCliSmokeOutput(`${crash.stdout}${crash.stderr}`).slice(-8_000)}\nAndroid lifecycle log:\n${redactCliSmokeOutput(`${lifecycle.stdout}${lifecycle.stderr}`).slice(-8_000)}`,
+      `The app process was not running after launch.\nLauncher:\n${redactCliSmokeOutput(`${start.stdout}${start.stderr}`).slice(-4_000)}\nProcess probe (exit ${pid.status}):\n${redactCliSmokeOutput(`${pid.stdout}${pid.stderr}`).slice(-2_000)}\nAndroid crash log:\n${redactCliSmokeOutput(`${crash.stdout}${crash.stderr}`).slice(-8_000)}\nAndroid lifecycle log:\n${redactCliSmokeOutput(`${lifecycle.stdout}${lifecycle.stderr}`).slice(-16_000)}\nAndroid process exits:\n${redactCliSmokeOutput(`${exitInfo.stdout}${exitInfo.stderr}`).slice(-12_000)}\nAndroid activity state:\n${redactCliSmokeOutput(`${activity.stdout}${activity.stderr}`).slice(-8_000)}`,
     );
   }
 };
