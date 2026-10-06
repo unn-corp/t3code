@@ -45,7 +45,7 @@ esac
       { mode: 0o700 },
     );
     const output = NodePath.join(temporary, "output");
-    const result = NodeChildProcess.spawnSync("bash", ["-c", pin], {
+    const result = NodeChildProcess.spawnSync("bash", ["--noprofile", "--norc", "-c", pin], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -122,22 +122,26 @@ exit 99
 `,
             { mode: 0o700 },
           );
-          const result = NodeChildProcess.spawnSync("bash", ["-c", publish], {
-            cwd: temporary,
-            encoding: "utf8",
-            env: {
-              ...process.env,
-              BASH_ENV: "",
-              ENV: "",
-              PATH: `${temporary}${NodePath.delimiter}${process.env.PATH}`,
-              DELETED: deleted,
-              CREATE_EXIT: String(createExit),
-              DRAFT: JSON.stringify(draft),
-              GITHUB_REPOSITORY: "unn-corp/t3code",
-              GITHUB_RUN_ID: "777",
-              COMMIT: commit,
+          const result = NodeChildProcess.spawnSync(
+            "bash",
+            ["--noprofile", "--norc", "-c", publish],
+            {
+              cwd: temporary,
+              encoding: "utf8",
+              env: {
+                ...process.env,
+                BASH_ENV: "",
+                ENV: "",
+                PATH: `${temporary}${NodePath.delimiter}${process.env.PATH}`,
+                DELETED: deleted,
+                CREATE_EXIT: String(createExit),
+                DRAFT: JSON.stringify(draft),
+                GITHUB_REPOSITORY: "unn-corp/t3code",
+                GITHUB_RUN_ID: "777",
+                COMMIT: commit,
+              },
             },
-          });
+          );
           expect(result.status).toBe(1);
           expect(NodeFS.existsSync(deleted)).toBe(
             draft.tag_name === "fork-baseline" && draft.draft && draft.body.includes(":777"),
