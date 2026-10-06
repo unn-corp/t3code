@@ -25,6 +25,7 @@ import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { windowsSystemTar } from "./build-cli-archive.ts";
 import { cliSmokeEnvironment } from "./lib/cli-smoke-environment.ts";
+import { appendCliSmokeOutput } from "./lib/cli-smoke-output.ts";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 export class CliArchiveSmokeError extends Schema.TaggedError<CliArchiveSmokeError>()(
@@ -146,9 +147,20 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
       },
     ),
   );
-  const output = yield* Effect.forkScoped(
-    Effect.all([collect(server.stdout), collect(server.stderr)]),
-  );
+  const captured = { stdout: "", stderr: "" };
+  const capture = <E>(stream: Stream.Stream<Uint8Array, E>, channel: "stdout" | "stderr") =>
+    stream.pipe(
+      Stream.decodeText(),
+      Stream.runForEach((chunk) =>
+        Effect.sync(() => {
+          captured[channel] = appendCliSmokeOutput(captured[channel], chunk);
+        }),
+      ),
+    );
+  const output = yield* Effect.all(
+    [capture(server.stdout, "stdout"), capture(server.stderr, "stderr")],
+    { concurrency: "unbounded" },
+  ).pipe(Effect.forkScoped);
   const httpClient = yield* HttpClient.HttpClient;
   // A request that connects while the server is still initializing can hang,
   // so each probe gets its own deadline, like the SSH readiness probe.
@@ -172,14 +184,11 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   );
   yield* server.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
   yield* server.exitCode.pipe(Effect.timeout(Duration.seconds(10)), Effect.ignore);
-  const [stdout, stderr] = yield* Fiber.join(output).pipe(
-    Effect.timeout(Duration.seconds(5)),
-    Effect.orElseSucceed(() => ["", ""] as const),
-  );
+  yield* Fiber.join(output).pipe(Effect.timeout(Duration.seconds(5)), Effect.ignore);
   if (!ready) {
     return yield* new CliArchiveSmokeError({
       step: "serving from the extracted archive",
-      detail: `no 200 from / within ${readinessSeconds}s\n${stdout}${stderr}`,
+      detail: `no 200 from / within ${readinessSeconds}s\nstdout:\n${captured.stdout}\nstderr:\n${captured.stderr}`,
     });
   }
   yield* Effect.log(`[cli-smoke] ${root}: --version passed and serve answered on ${String(port)}.`);

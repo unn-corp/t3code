@@ -62,7 +62,11 @@ own phone execution. [PreviewView.tsx](../../apps/web/src/components/preview/Pre
 [Manager.ts](../../apps/server/src/preview/Manager.ts),
 [PortPublisher.ts](../../apps/server/src/preview/PortPublisher.ts), and
 [TemporaryShareProxy.ts](../../apps/server/src/preview/TemporaryShareProxy.ts) own host sharing and
-cleanup. The [Android runbook](./android-pwa.md) documents routing and deployment.
+cleanup. [RpcAuthorization.ts](../../apps/server/src/auth/RpcAuthorization.ts) and
+[forkExtraWs.ts](../../apps/server/src/forkExtraWs.ts) share the host admission rules: browser host
+registration checks admission when attached; browser commands, element picking, frame writes, and
+session resume hold work leases until they finish. The [admission tests](../../apps/server/src/auth/RpcAuthorization.maintenance.test.ts)
+cover this observer/work boundary. The [Android runbook](./android-pwa.md) documents routing and deployment.
 
 **Verification and coupling.** [PortPublisher.test.ts](../../apps/server/src/preview/PortPublisher.test.ts)
 and [TemporaryShareProxy.test.ts](../../apps/server/src/preview/TemporaryShareProxy.test.ts) cover

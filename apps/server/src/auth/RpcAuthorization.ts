@@ -16,8 +16,9 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { ForkMaintenanceError, type ForkMaintenanceActionInput } from "@t3tools/contracts";
-import { assertAdmitting, withWork } from "../maintenance/WorkAdmission.ts";
+import { assertAdmitting, MaintenanceWorkHeld, withWork } from "../maintenance/WorkAdmission.ts";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
@@ -342,11 +343,14 @@ const MAINTENANCE_EXEMPT_METHODS: ReadonlySet<string> = new Set([
   WS_METHODS.serverCommitDesktopUpdate,
 ]);
 
-/** Operate-scoped observers whose RPC lifetime is the lifetime of the subscription. */
+/** Operate-scoped state observers and host registrations whose lifetime is the RPC stream. */
 const NON_LEASED_OPERATE_SUBSCRIPTIONS: ReadonlySet<string> = new Set([
   WS_METHODS.subscribeTerminalEvents,
   WS_METHODS.subscribeTerminalMetadata,
+  WS_METHODS.previewAutomationConnect,
+  WS_METHODS.providerAuthSubscribe,
 ]);
+const isMaintenanceWorkHeld = Schema.is(MaintenanceWorkHeld);
 
 /** Whether a method writes outside the orchestrator and so needs device admission. Derived from the scope table, so new methods are covered by default. */
 export const rpcMethodNeedsWorkAdmission = (method: string): boolean =>
@@ -354,33 +358,32 @@ export const rpcMethodNeedsWorkAdmission = (method: string): boolean =>
   !MAINTENANCE_EXEMPT_METHODS.has(method) &&
   !NON_LEASED_OPERATE_SUBSCRIPTIONS.has(method);
 
+/** Applies the method's work lease decision to RPC groups outside the main server middleware. */
+export const withRpcWorkAdmission = <A, E, R>(
+  method: string,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | ForkMaintenanceError, R> => {
+  const maintenanceError = <A2, E2, R2>(
+    admitted: Effect.Effect<A2, E2 | MaintenanceWorkHeld, R2>,
+  ): Effect.Effect<A2, E2 | ForkMaintenanceError, R2> =>
+    Effect.mapError(admitted, (error) =>
+      isMaintenanceWorkHeld(error) ? new ForkMaintenanceError({ reason: error.message }) : error,
+    );
+  if (NON_LEASED_OPERATE_SUBSCRIPTIONS.has(method))
+    return maintenanceError(assertAdmitting.pipe(Effect.andThen(effect)));
+  return rpcMethodNeedsWorkAdmission(method) ? maintenanceError(withWork(effect)) : effect;
+};
+
 /**
- * Authorizes every RPC on one connection against that connection's session scopes, then holds a
- * device work lease for the duration of any method that writes. Streams hold it only until the
- * stream is established, so a long subscription never keeps an update waiting.
+ * Authorizes every RPC on one connection against that connection's session scopes. Mutations and
+ * active flows hold leases for their full operation; passive long-lived observers only check that
+ * admission is open when they attach.
  */
 export const rpcScopeAuthorizationLayer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
     const requiredScope = requiredScopeForRpcMethod(rpc._tag);
     if (!scopes.includes(requiredScope)) return Effect.fail(rpcAuthorizationError(requiredScope));
-    if (NON_LEASED_OPERATE_SUBSCRIPTIONS.has(rpc._tag)) {
-      // These handlers only publish already-produced terminal events/metadata. Their streams
-      // can live for the entire desktop session, so check admission when opening but do not
-      // hold a mutation lease until the client disconnects.
-      return assertAdmitting.pipe(
-        Effect.andThen(effect),
-        Effect.catchTag("MaintenanceWorkHeld", (held) =>
-          Effect.fail(new ForkMaintenanceError({ reason: held.message })),
-        ),
-      );
-    }
-    return rpcMethodNeedsWorkAdmission(rpc._tag)
-      ? withWork(effect).pipe(
-          Effect.catchTag("MaintenanceWorkHeld", (held) =>
-            Effect.fail(new ForkMaintenanceError({ reason: held.message })),
-          ),
-        )
-      : effect;
+    return withRpcWorkAdmission(rpc._tag, effect);
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */

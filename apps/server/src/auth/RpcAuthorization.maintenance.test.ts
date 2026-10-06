@@ -12,6 +12,11 @@ describe("RPC device work admission", () => {
       WS_METHODS.serverUpdateSettings,
       WS_METHODS.projectsWriteFile,
       WS_METHODS.terminalWrite,
+      WS_METHODS.previewInput,
+      WS_METHODS.previewPickElement,
+      WS_METHODS.previewAutomationRespond,
+      WS_METHODS.previewAutomationFocusHost,
+      WS_METHODS.codexSessionsResume,
       WS_METHODS.terminalOpen,
       WS_METHODS.attachmentsCreateUploadUrl,
       WS_METHODS.gitRunStackedAction,
@@ -33,11 +38,24 @@ describe("RPC device work admission", () => {
       WS_METHODS.pullRequestsList,
       WS_METHODS.subscribeTerminalEvents,
       WS_METHODS.subscribeTerminalMetadata,
+      WS_METHODS.previewAutomationConnect,
+      WS_METHODS.providerAuthSubscribe,
       WS_METHODS.subscribeServerConfig,
       WS_METHODS.scheduledTasksList,
       WS_METHODS.serverGetMaintenanceStatus,
     ]) {
       expect(rpcMethodNeedsWorkAdmission(method), method).toBe(false);
+    }
+  });
+
+  it("keeps auth subscriptions that start or receive an OAuth flow under a work lease", () => {
+    for (const method of [
+      WS_METHODS.providerAuthStart,
+      WS_METHODS.chatGptHandoffSubscribe,
+      WS_METHODS.codexAuthCallbackSubscribe,
+      WS_METHODS.providerAuthRespond,
+    ]) {
+      expect(rpcMethodNeedsWorkAdmission(method), method).toBe(true);
     }
   });
 

@@ -1,9 +1,11 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  EnvironmentId,
   AuthTerminalOperateScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  ProviderInstanceId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -162,7 +164,7 @@ describe("RPC scope middleware", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("does not lease pure terminal observers, while terminal writes retain a lease", () =>
+  it.effect("does not lease terminal or provider-auth observers, while writes retain a lease", () =>
     (() => {
       const log: string[] = [];
       let fenced = false;
@@ -189,6 +191,8 @@ describe("RPC scope middleware", () => {
         const subscriptionMethods = [
           WS_METHODS.subscribeTerminalEvents,
           WS_METHODS.subscribeTerminalMetadata,
+          WS_METHODS.previewAutomationConnect,
+          WS_METHODS.providerAuthSubscribe,
           WS_METHODS.terminalWrite,
         ] as const;
         const subscriptionGroup = WsRpcGroup.omit(
@@ -203,6 +207,8 @@ describe("RPC scope middleware", () => {
         );
         const eventSeen = yield* Deferred.make<void>();
         const metadataSeen = yield* Deferred.make<void>();
+        const authSeen = yield* Deferred.make<void>();
+        const hostConnected = yield* Deferred.make<void>();
         const client = yield* RpcTest.makeClient(subscriptionGroup).pipe(
           Effect.provide(
             Layer.mergeAll(
@@ -227,6 +233,28 @@ describe("RPC scope middleware", () => {
                   Stream.never,
                 ),
               ),
+              subscriptionGroup.toLayerHandler(WS_METHODS.providerAuthSubscribe, () =>
+                Stream.concat(
+                  Stream.succeed({
+                    instanceId: ProviderInstanceId.make("codex"),
+                    phase: "idle" as const,
+                    flowId: null,
+                    authorizationUrl: null,
+                    expiresAt: null,
+                    message: null,
+                  }).pipe(Stream.tap(() => Deferred.succeed(authSeen, undefined))),
+                  Stream.never,
+                ),
+              ),
+              subscriptionGroup.toLayerHandler(WS_METHODS.previewAutomationConnect, () =>
+                Stream.concat(
+                  Stream.succeed({
+                    type: "connected" as const,
+                    connectionId: "desktop-connection",
+                  }).pipe(Stream.tap(() => Deferred.succeed(hostConnected, undefined))),
+                  Stream.never,
+                ),
+              ),
               subscriptionGroup.toLayerHandler(WS_METHODS.terminalWrite, () =>
                 Effect.gen(function* () {
                   wrote = true;
@@ -234,7 +262,7 @@ describe("RPC scope middleware", () => {
                   yield* Deferred.await(finishWrite);
                 }),
               ),
-              rpcScopeAuthorizationLayer([AuthTerminalOperateScope]),
+              rpcScopeAuthorizationLayer([AuthTerminalOperateScope, AuthOrchestrationOperateScope]),
             ),
           ),
         );
@@ -245,11 +273,26 @@ describe("RPC scope middleware", () => {
         const metadataFiber = yield* Stream.runDrain(
           client[WS_METHODS.subscribeTerminalMetadata]({}),
         ).pipe(Effect.forkChild);
+        const authFiber = yield* Stream.runDrain(
+          client[WS_METHODS.providerAuthSubscribe]({
+            instanceId: ProviderInstanceId.make("codex"),
+          }),
+        ).pipe(Effect.forkChild);
+        const connectFiber = yield* Stream.runDrain(
+          client[WS_METHODS.previewAutomationConnect]({
+            clientId: "desktop-client",
+            environmentId: EnvironmentId.make("desktop-environment"),
+          }),
+        ).pipe(Effect.forkChild);
         yield* Deferred.await(eventSeen);
         yield* Deferred.await(metadataSeen);
+        yield* Deferred.await(authSeen);
+        yield* Deferred.await(hostConnected);
         expect(rpcMethodNeedsWorkAdmission(WS_METHODS.subscribeTerminalEvents)).toBe(false);
         expect(rpcMethodNeedsWorkAdmission(WS_METHODS.subscribeTerminalMetadata)).toBe(false);
-        expect(log.filter((entry) => entry === "check")).toHaveLength(2);
+        expect(rpcMethodNeedsWorkAdmission(WS_METHODS.providerAuthSubscribe)).toBe(false);
+        expect(rpcMethodNeedsWorkAdmission(WS_METHODS.previewAutomationConnect)).toBe(false);
+        expect(log.filter((entry) => entry === "check")).toHaveLength(4);
         expect(log).not.toContain("acquire");
 
         const terminalWrite = yield* Effect.forkChild(
@@ -262,13 +305,26 @@ describe("RPC scope middleware", () => {
         yield* Deferred.await(writeStarted);
         expect(wrote).toBe(true);
         expect(rpcMethodNeedsWorkAdmission(WS_METHODS.terminalWrite)).toBe(true);
-        expect(log).toEqual(["check", "check", "acquire"]);
+        expect(log).toEqual(["check", "check", "check", "check", "acquire"]);
 
         fenced = true;
         const denied = yield* Stream.runCollect(
           client[WS_METHODS.subscribeTerminalEvents]({}),
         ).pipe(Effect.flip);
         expect(denied).toMatchObject({ _tag: "ForkMaintenanceError" });
+        const deniedAuth = yield* Stream.runCollect(
+          client[WS_METHODS.providerAuthSubscribe]({
+            instanceId: ProviderInstanceId.make("codex"),
+          }),
+        ).pipe(Effect.flip);
+        expect(deniedAuth).toMatchObject({ _tag: "ForkMaintenanceError" });
+        const deniedConnect = yield* Stream.runCollect(
+          client[WS_METHODS.previewAutomationConnect]({
+            clientId: "desktop-client",
+            environmentId: EnvironmentId.make("desktop-environment"),
+          }),
+        ).pipe(Effect.flip);
+        expect(deniedConnect).toMatchObject({ _tag: "ForkMaintenanceError" });
         const deniedWrite = yield* client[WS_METHODS.terminalWrite]({
           threadId: "thread-1",
           terminalId: "default",
@@ -277,9 +333,11 @@ describe("RPC scope middleware", () => {
         expect(deniedWrite).toMatchObject({ _tag: "ForkMaintenanceError" });
         yield* Deferred.succeed(finishWrite, undefined);
         yield* Fiber.join(terminalWrite);
-        expect(log).toEqual(["check", "check", "acquire", "release"]);
+        expect(log).toEqual(["check", "check", "check", "check", "acquire", "release"]);
         yield* Fiber.interrupt(eventFiber);
         yield* Fiber.interrupt(metadataFiber);
+        yield* Fiber.interrupt(authFiber);
+        yield* Fiber.interrupt(connectFiber);
       }).pipe(Effect.provideService(WorkAdmission, admission), Effect.scoped);
     })(),
   );

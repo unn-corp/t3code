@@ -2027,13 +2027,17 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
 export const WsCodexSessionsListRpc = Rpc.make(WS_METHODS.codexSessionsList, {
   payload: CodexSessionsListInput,
   success: CodexSessionsListResult,
-  error: Schema.Union([EnvironmentAuthorizationError]),
+  error: Schema.Union([ForkMaintenanceError, EnvironmentAuthorizationError]),
 });
 
 export const WsCodexSessionsResumeRpc = Rpc.make(WS_METHODS.codexSessionsResume, {
   payload: CodexSessionsResumeInput,
   success: CodexSessionsResumeResult,
-  error: Schema.Union([EnvironmentAuthorizationError, NativeSessionResumeError]),
+  error: Schema.Union([
+    ForkMaintenanceError,
+    EnvironmentAuthorizationError,
+    NativeSessionResumeError,
+  ]),
 });
 
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
@@ -2276,26 +2280,36 @@ const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
 export const WsPreviewAttachRpc = Rpc.make(WS_METHODS.previewAttach, {
   payload: PreviewAttachInput,
   success: PreviewFrameStreamEvent,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+  error: Schema.Union([ForkMaintenanceError, PreviewError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
 /** Host to server. Fire and forget: a dropped frame is always recoverable. */
 export const WsPreviewPublishFrameRpc = Rpc.make(WS_METHODS.previewPublishFrame, {
   payload: PreviewPublishFrameInput,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+  error: Schema.Union([ForkMaintenanceError, PreviewError, EnvironmentAuthorizationError]),
 });
 
 export const WsPreviewInputRpc = Rpc.make(WS_METHODS.previewInput, {
   payload: PreviewInputInput,
-  error: Schema.Union([PreviewError, PreviewAutomationError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    ForkMaintenanceError,
+    PreviewError,
+    PreviewAutomationError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 /** Resolves the element under a point for a viewer with no page to pick in. */
 export const WsPreviewPickElementRpc = Rpc.make(WS_METHODS.previewPickElement, {
   payload: PreviewPickElementInput,
   success: PreviewPickElementResult,
-  error: Schema.Union([PreviewError, PreviewAutomationError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    ForkMaintenanceError,
+    PreviewError,
+    PreviewAutomationError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
@@ -2592,7 +2606,7 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 const WsThreadExportRpc = Rpc.make(WS_METHODS.threadExport, {
   payload: ThreadExportInput,
   success: ThreadExportResult,
-  error: Schema.Union([ThreadExportError, EnvironmentAuthorizationError]),
+  error: Schema.Union([ForkMaintenanceError, ThreadExportError, EnvironmentAuthorizationError]),
 });
 
 export const WsRpcGroup = RpcGroup.make(

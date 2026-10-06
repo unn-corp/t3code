@@ -79,8 +79,11 @@ background service, development servers). Constraints that are easy to get wrong
   error refuses startup and installation fails closed.
 - **Writes are held, not just orchestrator commands.** RPC authorization takes a work lease for every
   method whose scope is not a read scope (derived from the scope table, so a new write is covered by
-  default); the terminal event and metadata subscriptions check admission when opened but do not hold
-  a lease for their long-lived stream. A global HTTP middleware leases every non-GET request, except
+  default); terminal event/metadata, provider-auth-state subscriptions, and preview host registration
+  check admission when opened but do not hold a lease for their long-lived observer stream. Preview
+  input, picking, frame updates and focus changes remain leased as active page work/state changes.
+  ChatGPT handoff and Codex callback subscriptions start or receive OAuth work, so they retain
+  leases while the flow is active. A global HTTP middleware leases every non-GET request, except
   the exact browser trace-ingestion POST: it holds a passive lease while the bounded upload runs, so
   fencing cannot overlap it, without treating diagnostic export as agent activity or restarting the
   idle window. Other uploads and pairing remain active writes. Orchestrator dispatch and provider turn

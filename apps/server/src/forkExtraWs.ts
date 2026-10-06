@@ -1,6 +1,7 @@
 import * as ThreadExport from "./orchestration-v2/ThreadExportService.ts";
 import {
   ForkExtraWsRpcGroup,
+  ForkMaintenanceError,
   PreviewPickedElement,
   WS_METHODS,
   EnvironmentAuthorizationError,
@@ -9,7 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
+import { requiredScopeForRpcMethod, withRpcWorkAdmission } from "./auth/RpcAuthorization.ts";
 import { listNativeSessions, resumeNativeSession } from "./provider/NativeSessionResume.ts";
 import { observeRpcStreamEffect } from "./observability/RpcInstrumentation.ts";
 import { PreviewManager } from "./preview/Manager.ts";
@@ -23,16 +24,16 @@ export const makeForkExtraWsRpcLayer = (session: EnvironmentAuth.AuthenticatedSe
       const authorize = <A, E, R>(
         method: string,
         effect: Effect.Effect<A, E, R>,
-      ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> => {
+      ): Effect.Effect<A, E | EnvironmentAuthorizationError | ForkMaintenanceError, R> => {
         const requiredScope: AuthEnvironmentScope = requiredScopeForRpcMethod(method);
-        return session.scopes.includes(requiredScope)
-          ? effect
-          : Effect.fail(
-              new EnvironmentAuthorizationError({
-                requiredScope,
-                message: `The authenticated token is missing required scope: ${requiredScope}.`,
-              }),
-            );
+        if (!session.scopes.includes(requiredScope))
+          return Effect.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope,
+              message: `The authenticated token is missing required scope: ${requiredScope}.`,
+            }),
+          );
+        return withRpcWorkAdmission(method, effect);
       };
       const exporter = yield* ThreadExport.ThreadExportService.pipe(
         Effect.provide(ThreadExport.layer),
