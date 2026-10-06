@@ -70,6 +70,24 @@ const stepNamed = (job: Job, name: string): Step => {
 };
 
 describe("fork-release.yml structure", () => {
+  it("resolves every Vite+ version file from a checkout present before setup", () => {
+    for (const [name, job] of Object.entries(release.jobs)) {
+      const roots: string[] = [];
+      for (const step of job.steps ?? []) {
+        if (step.uses?.startsWith("actions/checkout")) roots.push(String(step.with?.path ?? "."));
+        if (!step.uses?.startsWith("voidzero-dev/setup-vp")) continue;
+        const file = String(step.with?.["node-version-file"] ?? "");
+        const root = roots.find((entry) => entry === "." || file.startsWith(`${entry}/`));
+        assert.isDefined(root, `${name}: ${file} has no checkout before setup`);
+        const relative = root === "." ? file : file.slice(root!.length + 1);
+        assert.isTrue(
+          NodeFS.existsSync(NodePath.join(REPO, relative)),
+          `${name}: ${file} is absent from its checkout`,
+        );
+      }
+    }
+  });
+
   it("runs nightly daily at 07:23 UTC and stable Sundays at 08:23 UTC", () => {
     const schedule = (release.on.schedule as Array<{ cron: string }>).map((entry) => entry.cron);
     assert.deepStrictEqual(schedule, ["23 7 * * *", "23 8 * * 0"]);

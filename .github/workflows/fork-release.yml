@@ -270,13 +270,9 @@ jobs:
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
-          node-version-file: tooling/package.json
+          node-version-file: source/package.json
           cache: false
           run-install: false
-
-      - name: Install current release tooling and builder
-        working-directory: tooling
-        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts... --filter=@t3tools/web...
 
       - name: Install bundle dependencies
         working-directory: source
