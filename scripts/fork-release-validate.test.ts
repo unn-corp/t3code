@@ -205,7 +205,7 @@ const appImage = (dir: string, withUpdateConfig: boolean, verbose = false) => {
   const file = NodePath.join(dir, "T3-Code-1.0.1-x86_64.AppImage");
   NodeFS.writeFileSync(
     file,
-    `#!/bin/sh\nmkdir -p squashfs-root/resources\ncat > squashfs-root/AppRun <<'SH'\n#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = 1 ] && [ "$1" = --version ] && [ "$#" = 1 ] || exit 2\necho v39.0.0\nSH\nchmod +x squashfs-root/AppRun\n${withUpdateConfig ? "echo provider: github > squashfs-root/resources/app-update.yml\n" : ""}${verbose ? "printf '%2097152s' ''\n" : ""}`,
+    `#!/bin/sh\nmkdir -p squashfs-root/resources\ncat > squashfs-root/t3code <<'SH'\n#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = 1 ] && [ "$1" = --version ] && [ "$#" = 1 ] || exit 2\necho v39.0.0\nSH\nchmod +x squashfs-root/t3code\nprintf '#!/bin/sh\\nexit 2\\n' > squashfs-root/AppRun\nchmod +x squashfs-root/AppRun\n${withUpdateConfig ? "echo provider: github > squashfs-root/resources/app-update.yml\n" : ""}${verbose ? "printf '%2097152s' ''\n" : ""}`,
     { mode: 0o755 },
   );
   return file;

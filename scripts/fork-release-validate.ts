@@ -131,7 +131,7 @@ const serverInvocation = (contentDir: string, home: string) => {
   const entry = NodePath.join(serverArchive, "apps/server/dist/bin.mjs");
   if (NodeFS.existsSync(serverArchive)) {
     Asar.uncache(serverArchive);
-    Asar.statFile(serverArchive, "apps/server/dist/bin.mjs");
+    Asar.statFile(serverArchive, NodePath.join("apps", "server", "dist", "bin.mjs"));
     return {
       executable: windowsDesktopExecutable(contentDir),
       prefix: [entry],
@@ -315,7 +315,9 @@ export const checkLinuxPackages = (assets: PayloadAssets, scratch: string): void
     throw new Error(`The AppImage did not unpack: ${extract.error?.message ?? extract.stderr}`);
   const updateConfig = NodePath.join(extractDir, "squashfs-root/resources/app-update.yml");
   if (!NodeFS.existsSync(updateConfig)) throw new Error("The AppImage carries no app-update.yml.");
-  const launcher = NodePath.join(extractDir, "squashfs-root/AppRun");
+  // AppRun adds GUI sandbox flags when user namespaces are unavailable. The Node runtime probe
+  // must call the bundled executable directly, because Node rejects those Chromium-only flags.
+  const launcher = NodePath.join(extractDir, "squashfs-root/t3code");
   // Exercise the bundled Electron Node runtime without requiring a display or starting a GUI.
   const smoke = run(launcher, ["--version"], {
     cwd: extractDir,
