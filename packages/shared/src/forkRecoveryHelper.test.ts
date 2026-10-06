@@ -278,7 +278,15 @@ async function desktopFixture(
     installer: { path: installerPath, sha256: sha256Hex("target build") },
     previousInstaller: { path: previousPath, sha256: sha256Hex("previous build") },
     installTarget,
-    relaunch: { command: installTarget, args: ["--relaunched"] },
+    relaunch: {
+      command: installTarget,
+      args: ["--relaunched"],
+      environment: {
+        T3CODE_HOME: windowsHome,
+        T3CODE_MAINTENANCE_NAMESPACE: coordinatorDirectory,
+        XDG_CONFIG_HOME: NodePath.join(root, "isolated-client-profile"),
+      },
+    },
     waitForExitMs: 1000,
   };
   const planFile = NodePath.join(handoffDir, "tx-update-install.json.consumed");
@@ -812,6 +820,37 @@ describe("external recovery of the desktop binary (recover --desktop-plan)", () 
             ],
           ];
     const cases: ReadonlyArray<Case> = [
+      [
+        "a legacy plan without launch locations",
+        (d) =>
+          d.desktop!.writePlan({ relaunch: { command: d.desktop!.plan.installTarget, args: [] } }),
+        "did not retain",
+      ],
+      [
+        "a relaunch into another home",
+        (d) =>
+          d.desktop!.writePlan({
+            relaunch: {
+              ...d.desktop!.plan.relaunch,
+              environment: { ...d.desktop!.plan.relaunch.environment!, T3CODE_HOME: d.root },
+            },
+          }),
+        "do not belong",
+      ],
+      [
+        "a relaunch into another coordinator",
+        (d) =>
+          d.desktop!.writePlan({
+            relaunch: {
+              ...d.desktop!.plan.relaunch,
+              environment: {
+                ...d.desktop!.plan.relaunch.environment!,
+                T3CODE_MAINTENANCE_NAMESPACE: d.root,
+              },
+            },
+          }),
+        "do not belong",
+      ],
       ["a revert plan", (d) => d.desktop!.writePlan({ mode: "revert" }), "not an install plan"],
       [
         "another transaction's plan",

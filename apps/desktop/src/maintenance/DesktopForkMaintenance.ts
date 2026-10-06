@@ -226,6 +226,7 @@ export const make = Effect.gen(function* () {
     commit,
     platform,
     packaging: desktopPackaging,
+    relaunchEnvironment: process.env,
     installTarget:
       appImage !== undefined && desktopPackaging === "appimage" ? appImage : process.execPath,
     disabledReason,

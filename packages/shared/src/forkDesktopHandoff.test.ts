@@ -8,6 +8,8 @@ import * as NodePath from "node:path";
 import { CoordinatorStore } from "./forkMaintenanceStore.ts";
 import { newJournal } from "./forkMaintenanceJournal.ts";
 import {
+  applicationRelaunchEnvironment,
+  captureRelaunchEnvironment,
   encodeHandoffPlan,
   HANDOFF_EXIT,
   runDesktopHandoff,
@@ -141,6 +143,83 @@ async function setup(overrides: Partial<HandoffPlan> = {}) {
 }
 
 describe("runDesktopHandoff", () => {
+  it("retains the app's custom homes and profile overrides without recording secrets or inheriting terminal overrides", async () => {
+    const recorded = captureRelaunchEnvironment(
+      {
+        HOME: "/app-user",
+        XDG_CONFIG_HOME: "/app-profile",
+        CODEX_HOME: "/app-provider",
+        T3CODE_PORT: "13883",
+        GITHUB_TOKEN: "secret",
+        NODE_OPTIONS: "--require old-mount.cjs",
+        APPDIR: "/old-mount",
+      },
+      "/custom-t3-home",
+      "/custom-coordinator",
+    );
+    const env = applicationRelaunchEnvironment(
+      {
+        HOME: "/recovery-terminal-user",
+        XDG_CONFIG_HOME: "/terminal-profile",
+        XDG_DATA_HOME: "/terminal-data",
+        T3CODE_HOME: "/wrong-home",
+        T3CODE_MAINTENANCE_NAMESPACE: "/wrong-coordinator",
+        ELECTRON_RUN_AS_NODE: "1",
+        DISPLAY: ":0",
+      },
+      recorded,
+    );
+    expect(recorded).toEqual({
+      HOME: "/app-user",
+      XDG_CONFIG_HOME: "/app-profile",
+      CODEX_HOME: "/app-provider",
+      T3CODE_PORT: "13883",
+      T3CODE_HOME: "/custom-t3-home",
+      T3CODE_MAINTENANCE_NAMESPACE: "/custom-coordinator",
+    });
+    expect(env).toEqual({ ...recorded, DISPLAY: ":0" });
+
+    const fixture = await setup();
+    const bound = {
+      ...recorded,
+      T3CODE_HOME: fixture.root,
+      T3CODE_MAINTENANCE_NAMESPACE: fixture.plan.coordinatorDirectory,
+    };
+    await NodeFSP.writeFile(
+      fixture.file,
+      encodeHandoffPlan({
+        ...fixture.plan,
+        relaunch: { ...fixture.plan.relaunch, environment: bound },
+      }),
+    );
+    let launched: unknown;
+    const io: HandoffIo = {
+      ...fixture.io,
+      startDetached: async (_command, _args, environment) => {
+        launched = environment;
+      },
+    };
+    expect(await runDesktopHandoff(fixture.file, io)).toBe(HANDOFF_EXIT.ok);
+    expect(launched).toEqual(bound);
+  });
+  it("refuses foreign relaunch locations before consuming a plan or replacing the binary", async () => {
+    for (const wrong of ["T3CODE_HOME", "T3CODE_MAINTENANCE_NAMESPACE"] as const) {
+      const fixture = await setup();
+      const environment = {
+        T3CODE_HOME: fixture.root,
+        T3CODE_MAINTENANCE_NAMESPACE: fixture.plan.coordinatorDirectory,
+        [wrong]: fixture.plan.installer.path,
+      };
+      await NodeFSP.writeFile(
+        fixture.file,
+        encodeHandoffPlan({ ...fixture.plan, relaunch: { ...fixture.plan.relaunch, environment } }),
+      );
+      expect(await runDesktopHandoff(fixture.file, fixture.io)).toBe(HANDOFF_EXIT.admissionRefused);
+      expect(await NodeFSP.readFile(fixture.target, "utf8")).toBe("running build");
+      expect((await fixture.coordinator.fenceSnapshot())?.consumedHandoffs ?? []).toEqual([]);
+      expect(fixture.calls).toEqual([]);
+    }
+  });
   it("blocks on the actual AppImage filesystem before consuming a plan or changing its prior binary", async () => {
     const fixture = await setup();
     expect(

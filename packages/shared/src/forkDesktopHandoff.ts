@@ -15,6 +15,61 @@ import * as Schema from "effect/Schema";
 import { capacityShortfalls } from "./forkMaintenanceAdmission.ts";
 import { CoordinatorStore, processCreationIdentity } from "./forkMaintenanceStore.ts";
 
+// Retain only app/data locations, never the full environment (tokens or process-bound loader paths).
+export const RelaunchEnvironment = Schema.Struct({
+  T3CODE_HOME: Schema.String,
+  T3CODE_MAINTENANCE_NAMESPACE: Schema.String,
+  HOME: Schema.optional(Schema.String),
+  USERPROFILE: Schema.optional(Schema.String),
+  APPDATA: Schema.optional(Schema.String),
+  LOCALAPPDATA: Schema.optional(Schema.String),
+  XDG_CONFIG_HOME: Schema.optional(Schema.String),
+  XDG_DATA_HOME: Schema.optional(Schema.String),
+  XDG_CACHE_HOME: Schema.optional(Schema.String),
+  CODEX_HOME: Schema.optional(Schema.String),
+  T3CODE_PORT: Schema.optional(Schema.String),
+});
+export type RelaunchEnvironment = typeof RelaunchEnvironment.Type;
+const LOCATION_KEYS = [
+  "HOME",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "CODEX_HOME",
+  "T3CODE_PORT",
+] as const;
+
+export function captureRelaunchEnvironment(
+  env: Readonly<Record<string, string | undefined>>,
+  home: string,
+  coordinator: string,
+): RelaunchEnvironment {
+  return {
+    ...Object.fromEntries(
+      LOCATION_KEYS.flatMap((key) => (env[key] === undefined ? [] : [[key, env[key]]])),
+    ),
+    T3CODE_HOME: home,
+    T3CODE_MAINTENANCE_NAMESPACE: coordinator,
+  };
+}
+
+export function applicationRelaunchEnvironment(
+  inherited: Readonly<Record<string, string | undefined>>,
+  recorded?: RelaunchEnvironment,
+): Record<string, string | undefined> {
+  const env = { ...inherited };
+  delete env.ELECTRON_RUN_AS_NODE;
+  if (recorded !== undefined) {
+    // An unset override is part of the original launch too: a recovery terminal must not supply it.
+    for (const key of LOCATION_KEYS) delete env[key];
+    Object.assign(env, recorded);
+  }
+  return env;
+}
+
 export const HandoffPlan = Schema.Struct({
   protocol: Schema.Literal(1),
   mode: Schema.Literals(["install", "revert"]),
@@ -29,7 +84,11 @@ export const HandoffPlan = Schema.Struct({
   previousInstaller: Schema.NullOr(Schema.Struct({ path: Schema.String, sha256: Schema.String })),
   /** The AppImage file replaced in place, or the executable relaunched. */
   installTarget: Schema.String,
-  relaunch: Schema.Struct({ command: Schema.String, args: Schema.Array(Schema.String) }),
+  relaunch: Schema.Struct({
+    command: Schema.String,
+    args: Schema.Array(Schema.String),
+    environment: Schema.optional(RelaunchEnvironment),
+  }),
   /** The helper gives up waiting for the owner to exit after this long and changes nothing. */
   waitForExitMs: Schema.Int,
 });
@@ -54,7 +113,11 @@ export interface HandoffIo {
   readonly sleep: (ms: number) => Promise<void>;
   /** Runs a program to completion and returns its exit code; a program that cannot start is code 127. */
   readonly run: (command: string, args: ReadonlyArray<string>) => Promise<number>;
-  readonly startDetached: (command: string, args: ReadonlyArray<string>) => Promise<void>;
+  readonly startDetached: (
+    command: string,
+    args: ReadonlyArray<string>,
+    environment?: RelaunchEnvironment,
+  ) => Promise<void>;
   readonly log: (line: string) => void;
   readonly platform: NodeJS.Platform;
   /** The current user's id, for the plan ownership check (not applicable on Windows). */
@@ -85,10 +148,10 @@ export const defaultHandoffIo = (
       child.once("error", () => resolve(127));
       child.once("exit", (code) => resolve(code ?? 1));
     }),
-  startDetached: (command, args) =>
+  startDetached: (command, args, recorded) =>
     new Promise((resolve, reject) => {
       // Not Electron's node mode and not this helper's environment: the application starts as a user launched it.
-      const { ELECTRON_RUN_AS_NODE: _ignored, ...env } = process.env;
+      const env = applicationRelaunchEnvironment(process.env, recorded);
       const child = NodeChildProcess.spawn(command, [...args], {
         detached: true,
         stdio: "ignore",
@@ -210,6 +273,18 @@ export async function runDesktopHandoff(
   try {
     coordinator = await (io.openCoordinator?.(plan.coordinatorDirectory) ??
       CoordinatorStore.open(plan.coordinatorDirectory));
+    if (plan.relaunch.environment !== undefined) {
+      const journal = await coordinator.readJournal(plan.transactionId);
+      const [home, namespace, expectedNamespace] = await Promise.all([
+        NodeFSP.realpath(plan.relaunch.environment.T3CODE_HOME),
+        NodeFSP.realpath(plan.relaunch.environment.T3CODE_MAINTENANCE_NAMESPACE),
+        NodeFSP.realpath(plan.coordinatorDirectory),
+      ]);
+      if (!journal?.homes.includes(home) || namespace !== expectedNamespace)
+        throw new Error(
+          "Recorded relaunch locations do not belong to this transaction's home and coordinator.",
+        );
+    }
     await coordinator.claimDesktopHandoff(
       plan.transactionId,
       plan.mode,
@@ -260,7 +335,7 @@ export async function runDesktopHandoff(
   // After a failed install the application that was there is started anyway: the desktop's own journal decides what happens next.
   {
     try {
-      await io.startDetached(plan.relaunch.command, plan.relaunch.args);
+      await io.startDetached(plan.relaunch.command, plan.relaunch.args, plan.relaunch.environment);
     } catch (cause) {
       io.log(
         `The application could not be started: ${cause instanceof Error ? cause.message : String(cause)}`,

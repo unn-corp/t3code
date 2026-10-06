@@ -527,6 +527,10 @@ describe("DesktopForkMaintenance", () => {
       OLD.record.manifest!.assets.find((asset) => asset.kind === "desktop")!.sha256,
     );
     expect(plan.installTarget).toBe(INSTALL_TARGET);
+    expect(plan.relaunch.environment).toEqual({
+      T3CODE_HOME: device.home,
+      T3CODE_MAINTENANCE_NAMESPACE: device.coordinator,
+    });
     // oxlint-disable-next-line t3code/no-global-process-runtime -- These tests assert POSIX file modes, which Windows does not report.
     if (process.platform !== "win32")
       expect((await NodeFSP.stat(invocation.args[3]!)).mode & 0o777).toBe(0o600);

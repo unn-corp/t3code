@@ -310,6 +310,15 @@ while admission remains held, and only then launches the previous binary's insta
 Exit zero means the handoff was launched; health verification and durable commit must still finish
 before work is admitted. Restored automation stays held for its separate review and the build is pinned.
 
+New handoff plans retain the original app's data home, coordinator and client/profile location
+overrides. External recovery uses those locations even when launched from a terminal with different
+settings; the plan stores no full environment or credentials. The helper refuses automatic desktop
+relaunch from a legacy plan lacking these locations, before restoring anything. Such plans require
+data-only recovery, a separate installation/restoration of the retained verified prior binary, and
+an explicit launch with its original data home, coordinator and profile settings. Data-only recovery
+does not replace the binary. Keep admission fenced until that prior runtime verifies the restored
+homes. Never substitute the terminal's defaults or another installation.
+
 Both `.json` and `.json.consumed` retained install plans are accepted, but each newly authorized
 handoff mode is usable once within its transaction. A copied plan cannot replace the application
 after that transaction finishes. If launching the handoff fails after restoration, keep the fence

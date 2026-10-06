@@ -67,6 +67,7 @@ import { memberIdFor, readMembers, writeMembers } from "./membership.ts";
 import { executableOf, resolveWslHome, wslExec, type WslCommand } from "./wslTransport.ts";
 import { pruneHandoffPlans, retainedInstallPlan, type SpawnDetached } from "./handoff.ts";
 import { ensurePrivateDirectory } from "./privateDirectory.ts";
+import { captureRelaunchEnvironment } from "@t3tools/shared/forkDesktopHandoff";
 import { createStoreGate, type StoreGate } from "./storeGate.ts";
 
 /** The capability variable the server's MaintenanceHost reads. Kept in step with apps/server/src/maintenance/MaintenanceHost.ts. */
@@ -91,6 +92,8 @@ export interface DesktopMaintenanceInput {
   readonly platform: ForkPlatformKey | null;
   readonly packaging: Exclude<ForkPackaging, "service"> | null;
   readonly installTarget: string;
+  /** Original app/profile location overrides, captured in private plans for external recovery. */
+  readonly relaunchEnvironment?: Readonly<Record<string, string | undefined>>;
   /** A reason this process must not update in-product at all (development build, updates disabled), or null. */
   readonly disabledReason: string | null;
   readonly authorizationRequired: () => string | null;
@@ -680,6 +683,11 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
       authorizeHandoff: (journalId, metadata) =>
         activeStore.recordDesktopHandoffAuthorization(journalId, metadata),
       installTarget: input.installTarget,
+      relaunchEnvironment: captureRelaunchEnvironment(
+        input.relaunchEnvironment ?? {},
+        input.baseDir,
+        directory,
+      ),
       ...(input.spawn === undefined ? {} : { spawn: input.spawn }),
       now,
       sleep,

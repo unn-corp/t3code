@@ -43,6 +43,7 @@ import {
 } from "./handoff.ts";
 import { readInstallerIndex, recordInstaller } from "./installerIndex.ts";
 import type { MaintenancePaths } from "./paths.ts";
+import type { RelaunchEnvironment } from "@t3tools/shared/forkDesktopHandoff";
 import { ensurePrivateDirectory } from "./privateDirectory.ts";
 
 /** What the store records before a helper may replace the application: who may claim, and exactly which bytes. */
@@ -117,6 +118,7 @@ export interface DesktopInstallerInput {
   readonly authorizeHandoff: (journalId: string, metadata: HandoffAuthorization) => Promise<void>;
   /** Executable launched after installation, and for AppImage the file replaced in place. */
   readonly installTarget: string;
+  readonly relaunchEnvironment: RelaunchEnvironment;
   readonly spawn?: SpawnDetached;
   readonly now: () => number;
   readonly sleep: (ms: number) => Promise<void>;
@@ -372,7 +374,11 @@ export function createDesktopInstaller(input: DesktopInstallerInput) {
         installer: { path: installer.path, sha256: installer.sha256 },
         previousInstaller: { path: previous.path, sha256: previous.sha256 },
         installTarget: input.installTarget,
-        relaunch: { command: input.installTarget, args: [] },
+        relaunch: {
+          command: input.installTarget,
+          args: [],
+          environment: input.relaunchEnvironment,
+        },
         waitForExitMs: HANDOFF_EXIT_WAIT_MS,
       };
       // Everything above may throw and abort the transaction unchanged. The helper only waits for this process to exit.
@@ -457,7 +463,11 @@ export function createDesktopInstaller(input: DesktopInstallerInput) {
             previousInstaller:
               installer === null ? null : { path: installer.path, sha256: installer.sha256 },
             installTarget: input.installTarget,
-            relaunch: { command: input.installTarget, args: [] },
+            relaunch: {
+              command: input.installTarget,
+              args: [],
+              environment: input.relaunchEnvironment,
+            },
             waitForExitMs: HANDOFF_EXIT_WAIT_MS,
           },
           ...(input.spawn === undefined ? {} : { spawn: input.spawn }),

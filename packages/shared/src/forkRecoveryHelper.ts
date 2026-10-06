@@ -397,6 +397,23 @@ async function prepareDesktopRecovery(
   ]).catch(() => null);
   if (realpaths === null || realpaths[0] !== realpaths[1])
     refuse("The desktop plan was written for a different coordinator.");
+  const relaunch = plan.relaunch.environment;
+  if (relaunch === undefined)
+    refuse(
+      "This legacy desktop plan did not retain its app/profile locations. Use data-only recovery, separately restore/install the retained verified prior binary, then explicitly launch it with its original home and profile settings; automatic desktop relaunch is unavailable.",
+    );
+  const launchPaths = await Promise.all([
+    NodeFSP.realpath(relaunch.T3CODE_HOME),
+    NodeFSP.realpath(relaunch.T3CODE_MAINTENANCE_NAMESPACE),
+  ]).catch(() => null);
+  if (
+    launchPaths === null ||
+    !source.homes.includes(launchPaths[0]!) ||
+    launchPaths[1] !== realpaths[1]
+  )
+    refuse(
+      "The recorded relaunch locations do not belong to this transaction's home and coordinator.",
+    );
   const { installer, previousInstaller } = plan;
   if (previousInstaller === null)
     refuse("The desktop plan has no previous installer, so the previous build cannot be put back.");
