@@ -12,6 +12,11 @@ on:
         type: choice
         options: [desktop, android, all]
         default: desktop
+      android_api_level:
+        description: "Android Google APIs image for retained-APK diagnostics; does not change release gates"
+        type: choice
+        options: ["34", "36"]
+        default: "34"
 
 permissions:
   contents: read
@@ -128,7 +133,7 @@ jobs:
           FORK_VALIDATION_ANDROID_SERIAL: emulator-5554
           FORK_VALIDATION_ANDROID_TEST_APK: ${{ github.workspace }}/android-instrumentation/updater-instrumentation.apk
         with:
-          api-level: 34
+          api-level: ${{ inputs.android_api_level }}
           arch: x86_64
           target: google_apis
           disable-animations: true
