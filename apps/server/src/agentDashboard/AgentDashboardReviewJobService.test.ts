@@ -8,6 +8,7 @@ import {
   type AgentDashboardAutomationRun,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -20,6 +21,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
 import * as AgentDashboardReviewJobService from "./AgentDashboardReviewJobService.ts";
@@ -418,6 +420,73 @@ const jobServiceLayer = (input: {
   );
 
 describe("AgentDashboardReviewJobService lifecycle", () => {
+  it.effect("acquires with historical reviews before command readiness", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const baseDir = yield* makeTempStateDir();
+        const gate = yield* ServerRuntimeStartup.makeCommandGate;
+        const hiding = yield* Deferred.make<void>();
+        const hidden = yield* Deferred.make<void>();
+        yield* Effect.gen(function* () {
+          const history = yield* AgentDashboardRunHistory.AgentDashboardRunHistory;
+          yield* history.upsert({
+            id: "historical-review",
+            status: "succeeded",
+            trigger: "manual",
+            kind: "repository-review",
+            repository: { projectId: PROJECT_ID },
+            target: "Historical review",
+            threadId: THREAD_ID,
+            jobId: null,
+            model: null,
+            retryCount: 0,
+            findingCount: 0,
+            costUnits: null,
+            error: null,
+            createdAt: reviewResult.startedAt,
+            startedAt: reviewResult.startedAt,
+            updatedAt: reviewResult.startedAt,
+            completedAt: reviewResult.startedAt,
+          });
+        }).pipe(
+          Effect.provide(
+            AgentDashboardRunHistory.layer.pipe(
+              Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const service = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+          expect(yield* service.listRuns).toHaveLength(1);
+          yield* Deferred.await(hiding);
+          expect(yield* Deferred.isDone(hidden)).toBe(false);
+          yield* gate.signalCommandReady;
+          yield* Deferred.await(hidden);
+        }).pipe(
+          Effect.provide(
+            jobServiceLayer({
+              baseDir,
+              runner: {
+                runReview: () => Effect.succeed(reviewResult),
+                runRandomReview: Effect.succeed(reviewResult),
+                hideReviewThread: () =>
+                  Deferred.succeed(hiding, undefined).pipe(
+                    Effect.andThen(
+                      gate.enqueueCommand(Deferred.succeed(hidden, undefined)).pipe(Effect.orDie),
+                    ),
+                    Effect.asVoid,
+                  ),
+              },
+              getThreadDetailById: () => Effect.succeed(Option.none()),
+            }),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.effect("completes a scheduled no-op when no repository is due", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
