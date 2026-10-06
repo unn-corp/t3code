@@ -95,6 +95,11 @@ joined the coordinator. Absence means in-product installation is unavailable, ne
 
 ## The transaction
 
+Recovery discovery must tolerate homes that cannot currently be verified, including the local
+backend before it registers during a cold desktop start. Omit the entire recovery option until all
+its restore points are readable; never return a partial home set or let historical recovery discovery
+abort ordinary startup. Recovery admission still revalidates the exact option and all selected homes.
+
 [`transaction.ts`](../../packages/shared/src/forkMaintenanceTransaction.ts) is a durable, resumable state
 machine over a journal that is fsynced and renamed at every phase. A process that dies mid-update (the
 desktop installs by exiting; the launcher replaces the service child) is resumed by the next process from

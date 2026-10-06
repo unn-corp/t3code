@@ -265,9 +265,15 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
       const homes: ForkRecoveryOption["homes"][number][] = [];
       let complete = true;
       for (const home of journal.homes) {
-        const point = (await installer.restorePoints(home)).find(
-          (candidate) => candidate.id === journal.snapshots[home],
-        );
+        // Cold desktop startup precedes backend registration. A historical home may also be
+        // offline or no longer belong to this install. Omit the whole option until every
+        // point can be verified; listing recovery must not prevent ordinary startup.
+        const points = await installer.restorePoints(home).catch(() => null);
+        if (points === null) {
+          complete = false;
+          break;
+        }
+        const point = points.find((candidate) => candidate.id === journal.snapshots[home]);
         if (point === undefined) {
           complete = false;
           break;

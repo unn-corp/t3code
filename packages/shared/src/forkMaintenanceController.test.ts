@@ -198,6 +198,7 @@ async function harness(options: { channel?: "stable" | "nightly"; autoInstall?: 
     failTrialHome: null as string | null,
     failRestoredHome: null as string | null,
     snapshotFails: false,
+    unreadablePointsHome: null as string | null,
     capacityFails: false,
     stageDigest: null as string | null,
     runtimesAcknowledge: true,
@@ -235,8 +236,10 @@ async function harness(options: { channel?: "stable" | "nightly"; autoInstall?: 
       if (behaviour.capacityFails)
         throw new Error("Not enough free space for restore points on: wsl.");
     },
-    restorePoints: async (home) =>
-      [...points.values()].filter((point) => point.id.includes(NodePath.basename(home))),
+    restorePoints: async (home) => {
+      if (home === behaviour.unreadablePointsHome) throw new Error("Home is unavailable");
+      return [...points.values()].filter((point) => point.id.includes(NodePath.basename(home)));
+    },
     homeLabel: (home) => NodePath.basename(home),
     binaryCompatible: async () => true,
     requiresPairing: async () => false,
@@ -461,6 +464,28 @@ describe("fork maintenance controller", () => {
     ]);
     // Admission is open again once the commit is durable.
     await h.admitting();
+  });
+
+  it("omits the whole recovery option while one home cannot be verified and offers it again when reachable", async () => {
+    const h = await harness();
+    await h.ready();
+    const installed = await h.controller.install(sha("2"));
+    const option = installed.recoveryOptions[0]!;
+    h.behaviour.unreadablePointsHome = option.homes[1]!.id;
+    expect((await h.controller.status()).recoveryOptions).toEqual([]);
+    await expect(
+      h.controller.recover({
+        optionId: option.id,
+        transactionId: option.transactionId,
+        restoreTimestamps: Object.fromEntries(
+          option.homes.map((home) => [home.id, home.restoreTimestamp]),
+        ),
+        acknowledgeDataRestore: true,
+      }),
+    ).rejects.toThrow("no longer exists");
+    expect((await h.controllerStore.status(h.clock.value)).fence).toBeNull();
+    h.behaviour.unreadablePointsHome = null;
+    expect((await h.controller.status()).recoveryOptions).toEqual([option]);
   });
 
   it("fences cohort members right after the local fence, mirrors every journal phase, and releases them before the local fence", async () => {

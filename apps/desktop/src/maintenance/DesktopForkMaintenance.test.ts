@@ -575,6 +575,21 @@ describe("DesktopForkMaintenance", () => {
     expect(rowsOf(device.home)).toEqual(["before the update", "written by the trial"]);
     // The restore point is retained for recovery.
     expect((await next.status()).recoveryOptions[0]?.build.version).toBe("1.0.0");
+    // A normal cold start resumes maintenance before its backend registers. Historical
+    // restore-point lookup must not abort bootstrap just because that cohort is empty.
+    device.killProcess(101);
+    device.killProcess(9002);
+    const restarted = device.makeCore({
+      pid: 102,
+      version: "1.1.0",
+      commit: NEW.record.manifest!.commit,
+    });
+    expect(await restarted.start()).toEqual({ kind: "idle" });
+    expect((await restarted.resumeInterrupted()).currentBuild.artifactSha256).toBe(NEW_DIGEST);
+    expect((await restarted.status()).recoveryOptions).toEqual([]);
+    await device.server(9003, "desktop-server-restarted");
+    expect((await restarted.status()).recoveryOptions[0]?.build.version).toBe("1.0.0");
+    expect(rowsOf(device.home)).toEqual(["before the update", "written by the trial"]);
   });
 
   it("restores every home and puts the previous build back when the trial never becomes healthy", async () => {
