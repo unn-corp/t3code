@@ -114,7 +114,9 @@ the isolated environment before testing snapshot/restore.
 **Fork package diagnostic** takes a failed release's numeric `run_id` and runs current package
 validation against its retained candidate and predecessor. Select `scope: desktop` for clean Linux
 and Windows runners, `android` for the exact APKs and interaction runner on a fresh emulator, or
-`all`. It writes no receipts and cannot publish. Missing Android processes retain bounded, redacted
+`all`. Android uses the same parent CLI imports, child launch, and environment as the release
+receipt runner, with the result kept in memory. It writes no receipts and cannot publish.
+Missing Android processes retain bounded, redacted
 launcher/crash diagnostics before emulator teardown. Use it to correct validation tooling before
 rebuilding.
 Linux AppImage feeds retain electron-builder’s per-file `blockMapSize`. Assembly verifies the embedded
