@@ -151,6 +151,7 @@ import {
   VcsRemoveWorktreeInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
+  WorktreeStorageUsage,
   VcsStatusInput,
   VcsStatusResult,
   VcsStatusStreamEvent,
@@ -636,6 +637,7 @@ export const WS_METHODS = {
   // VCS methods
   vcsPull: "vcs.pull",
   vcsRefreshStatus: "vcs.refreshStatus",
+  vcsWorktreeStorageUsage: "vcs.worktreeStorageUsage",
   vcsListRefs: "vcs.listRefs",
   vcsCreateWorktree: "vcs.createWorktree",
   vcsRemoveWorktree: "vcs.removeWorktree",
@@ -2093,6 +2095,12 @@ const WsVcsPullRpc = Rpc.make(WS_METHODS.vcsPull, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsVcsWorktreeStorageUsageRpc = Rpc.make(WS_METHODS.vcsWorktreeStorageUsage, {
+  payload: VcsStatusInput,
+  success: Schema.NullOr(WorktreeStorageUsage),
+  error: EnvironmentAuthorizationError,
+});
+
 const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
   payload: VcsStatusInput,
   success: VcsStatusResult,
@@ -2785,6 +2793,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsWorktreeSetupCancelRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
+  WsVcsWorktreeStorageUsageRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,

@@ -104,6 +104,12 @@ Repositories with custom smudge filters, external attributes, or sparse-checkout
 use standard checkout, as do custom destinations that cannot share storage with the cache.
 Submodules keep their normal initialization behavior.
 
+The desktop glance rail shows storage for the active thread's worktree, including assets and
+build output. On Btrfs hosts with `btrfs-progs` installed, it separates exclusive data from
+shared data. Other hosts show a labeled allocation estimate (which can count shared data) or
+file size when disk allocation is unavailable. Hover the stat for its path and measurement
+scope. Measurements refresh while the rail is open and can be up to a minute old.
+
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected

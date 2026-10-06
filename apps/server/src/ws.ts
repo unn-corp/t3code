@@ -3416,6 +3416,10 @@ const makeCoreWsRpcLayer = (
               .pipe(Effect.map((cancelled) => ({ cancelled }))),
             { "rpc.aggregate": "vcs" },
           ),
+        [WS_METHODS.vcsWorktreeStorageUsage]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsWorktreeStorageUsage, worktreeStorage.usage(input.cwd), {
+            "rpc.aggregate": "vcs",
+          }),
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRefreshStatus,

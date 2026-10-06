@@ -17,6 +17,7 @@ import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
@@ -280,6 +281,13 @@ export function createVcsEnvironmentAtoms<R, E>(
 
   return {
     listRefs,
+    worktreeStorageUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:worktree-storage",
+      tag: WS_METHODS.vcsWorktreeStorageUsage,
+      staleTimeMs: 60_000,
+      idleTtlMs: 10_000,
+      refreshIntervalMs: 60_000,
+    }),
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
       idleTtlMs: VCS_STATUS_IDLE_TTL_MS,

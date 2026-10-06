@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  resolveGlanceRailStorage,
   resolveGlanceRailGitPosition,
   resolveGlanceRailUsage,
   summarizeGlanceRail,
@@ -126,5 +127,45 @@ describe("resolveGlanceRailUsage", () => {
     [usage({ unavailable: true }), "when usage is unavailable"],
   ])("omits the readout %s", (input, _description) => {
     expect(resolveGlanceRailUsage(input)).toBeNull();
+  });
+});
+
+describe("worktree storage readout", () => {
+  it("distinguishes exclusive data from shared assets", () => {
+    expect(
+      resolveGlanceRailStorage({
+        bytes: 1024,
+        sharedBytes: 2 ** 30,
+        measurement: "exclusive",
+        sampledAt: 0,
+      }),
+    ).toEqual({
+      value: "1 KiB",
+      detail: "Exclusive data · 1 GiB shared",
+    });
+  });
+  it("labels estimates and logical sizes so they cannot imply reflink savings", () => {
+    expect(
+      resolveGlanceRailStorage({
+        bytes: 0,
+        sharedBytes: null,
+        measurement: "allocated",
+        sampledAt: 0,
+      }),
+    ).toEqual({
+      value: "~0 B",
+      detail: "Allocated estimate · may include shared data",
+    });
+    expect(
+      resolveGlanceRailStorage({
+        bytes: 2 ** 20,
+        sharedBytes: null,
+        measurement: "logical",
+        sampledAt: 0,
+      }),
+    ).toEqual({
+      value: "1 MiB",
+      detail: "File size · disk usage unavailable",
+    });
   });
 });

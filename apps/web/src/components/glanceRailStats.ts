@@ -1,4 +1,4 @@
-import type { ServerProviderUsageWindow } from "@t3tools/contracts";
+import type { ServerProviderUsageWindow, WorktreeStorageUsage } from "@t3tools/contracts";
 
 export interface GlanceRailThreadSignal {
   readonly archivedAt: string | null;
@@ -123,4 +123,29 @@ export function resolveGlanceRailGitPosition(
     return { state: "behind", label: `${behind} behind` };
   }
   return { state: "synced", label: "Synced" };
+}
+
+function formatStorageBytes(bytes: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+  const index =
+    bytes > 0 ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1) : 0;
+  return `${(bytes / 1024 ** index).toLocaleString(undefined, { maximumFractionDigits: index === 0 ? 0 : 1 })} ${units[index]}`;
+}
+
+export function resolveGlanceRailStorage(usage: WorktreeStorageUsage): {
+  value: string;
+  detail: string;
+} {
+  const size = formatStorageBytes(usage.bytes);
+  switch (usage.measurement) {
+    case "exclusive":
+      return {
+        value: size,
+        detail: `Exclusive data · ${formatStorageBytes(usage.sharedBytes ?? 0)} shared`,
+      };
+    case "allocated":
+      return { value: `~${size}`, detail: "Allocated estimate · may include shared data" };
+    case "logical":
+      return { value: size, detail: "File size · disk usage unavailable" };
+  }
 }

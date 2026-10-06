@@ -248,7 +248,11 @@ A clean checkout base shares unchanged data across new worktrees. Existing workt
 converted, and engine caches remain separate.
 
 **Ownership.** [WorktreeStorage.ts](../../apps/server/src/vcs/WorktreeStorage.ts) owns filesystem
-probing and the per-repository checkout cache. [GitVcsDriverCore.ts](../../apps/server/src/vcs/GitVcsDriverCore.ts)
+probing, the per-repository checkout cache, and cached disk measurements. The glance rail
+requests active-worktree usage only while open, on the thread's environment. Btrfs uses optional
+unprivileged `btrfs-progs` for exclusive/shared data; other filesystems use labeled allocation
+estimates (Windows uses logical file size). Shared Git objects are outside this measurement.
+[GitVcsDriverCore.ts](../../apps/server/src/vcs/GitVcsDriverCore.ts)
 initializes independent Git indexes and reconciles the base with the requested tree for UI,
 MCP, and background creation paths. The shared client compatibility rule uses the selected
 server's advertised support, never the client device's filesystem.

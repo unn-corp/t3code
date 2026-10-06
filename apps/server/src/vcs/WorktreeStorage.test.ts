@@ -1,3 +1,5 @@
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -30,6 +32,109 @@ const testLayer = GitVcsDriver.layer.pipe(
 );
 
 describe("copy-on-write worktree storage", () => {
+  it.effect(
+    "measures ignored build output without following links or counting hardlinks twice",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const config = yield* ServerConfig.ServerConfig;
+          const storage = yield* WorktreeStorage.make;
+          const root = path.join(config.worktreesDir, "usage");
+          yield* fs.makeDirectory(path.join(root, "build"), { recursive: true });
+          yield* fs.writeFileString(path.join(root, "build", "output"), "A".repeat(65536));
+          yield* fs.makeDirectory(path.join(root, ".git", "objects"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(root, ".git", "objects", "shared"),
+            "B".repeat(1048576),
+          );
+          yield* fs.writeFileString(path.join(config.worktreesDir, "outside"), "B".repeat(1048576));
+          yield* Effect.promise(() =>
+            NodeFSP.link(path.join(root, "build", "output"), path.join(root, "duplicate")),
+          );
+          yield* Effect.promise(() =>
+            NodeFSP.symlink(path.join(config.worktreesDir, "outside"), path.join(root, "external")),
+          );
+          const usage = yield* storage
+            .usage(root)
+            .pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+          expect(usage).not.toBeNull();
+          expect(usage?.measurement).toBe("allocated");
+          expect(usage?.bytes).toBe(65536);
+          expect(usage?.sharedBytes).toBeNull();
+          // A second read is served from the cache, even if files change meanwhile.
+          yield* fs.writeFileString(path.join(root, "new"), "new");
+          expect(yield* storage.usage(root)).toEqual(usage);
+          expect(yield* storage.usage(path.join(root, "missing"))).toBeNull();
+        }).pipe(
+          Effect.provide(configLayer),
+          Effect.provide(NodeServices.layer),
+          Effect.provideService(HostProcessPlatform, "darwin"),
+        ),
+      ),
+  );
+
+  it.effect("reports logical file size when allocation accounting is unavailable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* ServerConfig.ServerConfig;
+        const storage = yield* WorktreeStorage.make;
+        const root = path.join(config.worktreesDir, "usage");
+        yield* fs.makeDirectory(root, { recursive: true });
+        yield* fs.writeFileString(path.join(root, "asset"), "12345");
+        expect(yield* storage.usage(root)).toMatchObject({
+          bytes: 5,
+          measurement: "logical",
+          sharedBytes: null,
+        });
+        expect(yield* storage.usage(path.join(root, "asset"))).toBeNull();
+      }).pipe(
+        Effect.provide(configLayer),
+        Effect.provide(NodeServices.layer),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      ),
+    ),
+  );
+
+  it.effect("separates shared reflink data from exclusive worktree data on Btrfs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* ServerConfig.ServerConfig;
+        const storage = yield* WorktreeStorage.make;
+        const root = path.join(config.worktreesDir, "usage");
+        yield* fs.makeDirectory(root, { recursive: true });
+        if (!(yield* storage.support()).supported) return;
+        const source = path.join(config.worktreesDir, "asset");
+        yield* fs.writeFileString(source, "A".repeat(65536));
+        yield* Effect.promise(() =>
+          NodeFSP.copyFile(
+            source,
+            path.join(root, "asset"),
+            NodeFS.constants.COPYFILE_FICLONE_FORCE,
+          ),
+        );
+        const usage = yield* storage.usage(root);
+        // Platforms without btrfs-progs keep the explicitly labeled estimate.
+        const filesystem = yield* Effect.promise(() => NodeFSP.statfs(root));
+        if (
+          (yield* HostProcessPlatform) === "linux" &&
+          filesystem.type === 0x9123683e &&
+          (yield* fs.exists("/usr/bin/btrfs"))
+        ) {
+          expect(usage?.measurement).toBe("exclusive");
+        }
+        if (usage?.measurement !== "exclusive") return;
+        expect(usage.bytes).toBe(0);
+        expect(usage.sharedBytes).toBeGreaterThanOrEqual(65536);
+      }).pipe(Effect.provide(configLayer), Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.effect("detects an incompatible filesystem even on Linux", () =>
     Effect.scoped(
       Effect.gen(function* () {

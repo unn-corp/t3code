@@ -13,6 +13,7 @@ import {
   ActivityIcon,
   GaugeIcon,
   GitBranchIcon,
+  HardDriveIcon,
   ListFilterIcon,
   MessagesSquareIcon,
   PlusIcon,
@@ -33,11 +34,13 @@ import { vcsEnvironment } from "../state/vcs";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   resolveGlanceRailUsage,
+  resolveGlanceRailStorage,
   resolveGlanceRailGitPosition,
   summarizeGlanceRail,
   type GlanceRailUsage,
   type GlanceRailGitPosition,
 } from "./glanceRailStats";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import { readPullRequestListPreferences } from "./pullRequest/pullRequestListPreferences";
 
 type GlanceRailStatScope = "all" | "project";
@@ -88,6 +91,7 @@ function DockItemContent({
 }
 
 function DockReadout({
+  tooltip,
   detail,
   icon,
   title,
@@ -98,18 +102,29 @@ function DockReadout({
   readonly icon: ReactNode;
   readonly title: string;
   readonly value: number | string;
+  readonly tooltip?: string;
   readonly valueTone?: string;
 }) {
+  const content = (
+    <DockItemContent
+      detail={detail}
+      icon={icon}
+      title={title}
+      value={value}
+      valueTone={valueTone}
+    />
+  );
+  if (tooltip === undefined)
+    return <div className={cn(DOCK_ITEM_CLASS, "cursor-default")}>{content}</div>;
   return (
-    <div className={cn(DOCK_ITEM_CLASS, "cursor-default")}>
-      <DockItemContent
-        detail={detail}
-        icon={icon}
-        title={title}
-        value={value}
-        valueTone={valueTone}
-      />
-    </div>
+    <Tooltip>
+      <TooltipTrigger
+        render={<div className={cn(DOCK_ITEM_CLASS, "cursor-default")} tabIndex={0} />}
+      >
+        {content}
+      </TooltipTrigger>
+      <TooltipPopup side="left">{tooltip}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -166,6 +181,8 @@ const GIT_POSITION_TONE = {
 } as const satisfies Record<GlanceRailGitPosition["state"], string>;
 
 export function GlanceRail() {
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [statScope, setStatScope] = useState<GlanceRailStatScope>("project");
   const activeProjectTarget = useActiveProjectTarget();
   const handleNewThread = useNewThreadHandler();
@@ -227,6 +244,17 @@ export function GlanceRail() {
           input: { cwd: activeProjectTarget.cwd },
         }),
   );
+  const worktreePath = activeThreadShell?.worktreePath ?? null;
+  // Disk scans only run while the drawer is being used, on the selected host.
+  const storageQuery = useEnvironmentQuery(
+    (hovered || focused) && activeProjectTarget !== null && worktreePath !== null
+      ? vcsEnvironment.worktreeStorageUsage({
+          environmentId: activeProjectTarget.environmentId,
+          input: { cwd: worktreePath },
+        })
+      : null,
+  );
+  const storage = storageQuery.data ? resolveGlanceRailStorage(storageQuery.data) : null;
   const gitPosition = gitStatusQuery.data
     ? resolveGlanceRailGitPosition(gitStatusQuery.data)
     : null;
@@ -256,6 +284,12 @@ export function GlanceRail() {
 
   return (
     <aside
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocusCapture={() => setFocused(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+      }}
       aria-label="Quick glance"
       className="group/glance pointer-coarse:hidden fixed right-0 top-1/2 z-40 hidden h-24 w-3 -translate-y-1/2 md:block"
       data-app-sidebar=""
@@ -273,6 +307,32 @@ export function GlanceRail() {
                 title="Main"
                 value={gitPositionLabel}
                 valueTone={gitPositionTone}
+              />
+
+              <DockReadout
+                title="Worktree storage"
+                value={
+                  storage?.value ??
+                  (worktreePath === null
+                    ? "No worktree"
+                    : storageQuery.isPending
+                      ? "Checking"
+                      : "Unavailable")
+                }
+                detail={
+                  storage?.detail ??
+                  (worktreePath === null
+                    ? "Open a thread with a worktree"
+                    : storageQuery.isPending
+                      ? "Active worktree · measuring storage"
+                      : "Active worktree · storage could not be measured")
+                }
+                tooltip={
+                  worktreePath === null
+                    ? "Open a thread with a worktree to see its storage consumption."
+                    : `${worktreePath} · ${storage?.detail ?? "Measurement unavailable"}. Includes assets and build output; excludes the shared Git object store. Data measurements exclude filesystem metadata and can be up to a minute old.`
+                }
+                icon={<HardDriveIcon aria-hidden="true" className="size-5" />}
               />
 
               <div aria-label="Stats scope" className={cn(DOCK_ITEM_CLASS, "cursor-default")}>

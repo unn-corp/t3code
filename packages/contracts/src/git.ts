@@ -119,6 +119,15 @@ export const VcsStatusInput = Schema.Struct({
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 
+// Exclusive data excludes reflink-shared extents; allocated estimates can count them twice.
+export const WorktreeStorageUsage = Schema.Struct({
+  bytes: Schema.Number,
+  measurement: Schema.Literals(["exclusive", "allocated", "logical"]),
+  sharedBytes: Schema.NullOr(Schema.Number),
+  sampledAt: Schema.Number,
+});
+export type WorktreeStorageUsage = typeof WorktreeStorageUsage.Type;
+
 export const VcsPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
 });
