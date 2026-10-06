@@ -50,12 +50,32 @@ const isCode = (cause: unknown, code: string) =>
 /** Restricts a directory to the current user. POSIX modes are set at creation; Windows needs an explicit ACL. */
 export type RestrictAccess = (directory: string) => Promise<void>;
 export const restrictWindowsAcl: RestrictAccess = async (directory) => {
-  const user = process.env.USERNAME;
-  if (user === undefined || user.length === 0)
-    throw new Error("Cannot determine the current Windows user for a private restore point.");
-  await run("icacls.exe", [directory, "/inheritance:r", "/grant:r", `${user}:(OI)(CI)F`], {
-    windowsHide: true,
-  });
+  // Replace the DACL, including explicit grants left on an existing directory. chmod has no
+  // ownership semantics on Windows, and adding a grant would leave other readers authorized.
+  const script = `
+$ErrorActionPreference = 'Stop'
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$acl = New-Object Security.AccessControl.DirectorySecurity
+$acl.SetAccessRuleProtection($true, $false)
+$acl.SetOwner($sid)
+$rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+$acl.AddAccessRule($rule)
+Set-Acl -LiteralPath $env:T3_FORK_PRIVATE_DIRECTORY -AclObject $acl
+`;
+  await run(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ],
+    {
+      windowsHide: true,
+      timeout: 10_000,
+      env: { ...process.env, T3_FORK_PRIVATE_DIRECTORY: directory },
+    },
+  );
 };
 const restrictByPlatform: RestrictAccess = async (directory) => {
   if (process.platform === "win32") await restrictWindowsAcl(directory);

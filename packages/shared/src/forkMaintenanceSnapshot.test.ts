@@ -140,9 +140,10 @@ describe("restore points", () => {
       "conversation-evidence/thread-hash/browser-screenshot-example-test.png",
     );
 
+    // An idle server may remain open during snapshotting; it must exit before replacing its home.
+    h.close();
     await restoreSnapshot(h.root, snapshotId, "tx-evidence", noAcl);
     expect(await NodeFSP.readFile(evidence)).toEqual(original);
-    h.close();
   });
 
   it("detects a tampered byte, a missing file and an extra file", async () => {

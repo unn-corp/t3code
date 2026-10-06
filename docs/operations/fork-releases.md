@@ -104,6 +104,9 @@ this cold-start allowance does not change coordinator activity or ownership dead
 Use **Fork Windows safety diagnostic** on `main` to rerun all three required Windows safety suites
 with individual assertion failures retained for three days. It has read-only permissions, produces
 no eligibility receipts, and does not allocate Android codes or rebuild release payloads.
+**Fork package diagnostic** takes a failed release's numeric `run_id` and runs current package
+validation against its retained candidate and predecessor on clean Linux and Windows runners.
+It writes no receipts and cannot publish. Use it to correct validation tooling before rebuilding.
 Linux AppImage feeds retain electron-builder’s per-file `blockMapSize`. Assembly verifies the embedded
 size trailer, raw-deflated block-map structure, and block ranges as well as the whole payload’s size
 and digest. An absent external AppImage `.blockmap` is allowed when the map is embedded; a malformed

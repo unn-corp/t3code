@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
+import * as NodeChildProcess from "node:child_process";
 import { ForkMaintenanceError, type ForkUpdateStatus } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpRouter } from "effect/unstable/http";
@@ -86,7 +87,20 @@ describe("local operator credential", () => {
     roots.push(root);
     const first = await issueOperatorToken(root);
     expect(first).toMatch(/^[0-9a-f]{64}$/);
-    expect((await NodeFSP.stat(operatorTokenPath(root))).mode & 0o077).toBe(0);
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- Windows permissions are ACLs, not POSIX mode bits.
+    if (process.platform === "win32") {
+      const probe = NodeChildProcess.spawnSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$acl = Get-Acl -LiteralPath $env:T3_TEST_PRIVATE_PATH; $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; if (@($acl.Access | Where-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $sid }).Count -ne 0 -or $acl.Access.Count -eq 0) { exit 3 }",
+        ],
+        { env: { ...process.env, T3_TEST_PRIVATE_PATH: operatorTokenPath(root) } },
+      );
+      expect(probe.status).toBe(0);
+    } else expect((await NodeFSP.stat(operatorTokenPath(root))).mode & 0o077).toBe(0);
     expect(await readOperatorToken(root)).toBe(first);
     const second = await issueOperatorToken(root);
     expect(second).not.toBe(first);

@@ -171,6 +171,9 @@ Recovery is explicit and local; the destructive RPC needs `access:write`, the ex
 restore timestamp, and an acknowledgement that newer data is given up. The CLI additionally requires typing the option
 id again. `t3 maintenance` reaches the running server's one controller through a loopback endpoint authorized by an
 owner-only token file in the home, so it cannot become a second, weaker path.
+Windows protection replaces the maintenance directory's DACL with the current user's SID before
+creating the token; POSIX modes do not protect Windows files. Existing explicit grants are removed
+along with inherited grants. Permission enforcement failures prevent issuing a credential.
 
 The importable recovery service lives in [`forkRecoveryHelper.ts`](../../packages/shared/src/forkRecoveryHelper.ts).
 Only [`forkRecoveryHelperMain.ts`](../../packages/shared/src/forkRecoveryHelperMain.ts) invokes it as an executable.

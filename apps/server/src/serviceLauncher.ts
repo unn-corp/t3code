@@ -358,17 +358,20 @@ export class Launcher {
   #stopping = false;
   #done = false;
   readonly #quiesceOrganizationLaunches: (baseDir: string) => Promise<void>;
+  readonly #runtimeSpawn: typeof runtimeSpawnArguments;
   readonly #completion = Promise.withResolvers<void>();
 
   constructor(
     baseDir: string,
     state: ServiceState,
     quiesceOrganizationLaunches = quiesceOrganizationLaunchBroker,
+    runtimeSpawn = runtimeSpawnArguments,
   ) {
     this.#baseDir = baseDir;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
     this.#quiesceOrganizationLaunches = quiesceOrganizationLaunches;
+    this.#runtimeSpawn = runtimeSpawn;
   }
 
   async run(): Promise<void> {
@@ -516,7 +519,7 @@ export class Launcher {
       capabilities: [SERVICE_LAUNCHER_MAINTENANCE_TRIAL],
       ...(update === undefined ? {} : { update }),
     };
-    const spawnArguments = runtimeSpawnArguments(paths);
+    const spawnArguments = this.#runtimeSpawn(paths);
     // Only the trial child of the update the capability was issued for receives it, and only once.
     const trial =
       role === "trial" &&

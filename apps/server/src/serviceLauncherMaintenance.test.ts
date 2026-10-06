@@ -56,7 +56,8 @@ const writeFakeRuntime = (
   childSource: string,
 ) =>
   Effect.gen(function* () {
-    const entryPath = path.join(versionDir, "t3");
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- The fixture matches the host archive layout.
+    const entryPath = path.join(versionDir, process.platform === "win32" ? "t3.exe" : "t3");
     yield* fs.makeDirectory(versionDir, { recursive: true });
     yield* fs.writeFileString(entryPath, `#!${process.execPath}\n${childSource}`);
     yield* fs.chmod(entryPath, 0o755);
@@ -120,6 +121,8 @@ if (role === "trial") {
             root,
             yield* Effect.promise(() => readServiceState(statePath)),
             async () => {},
+            // A script stand-in needs Node on Windows, which cannot execute POSIX shebangs.
+            ({ entryPath }) => ({ command: process.execPath, args: [entryPath, "serve"] }),
           );
           yield* Effect.promise(() =>
             launcher.run().then(

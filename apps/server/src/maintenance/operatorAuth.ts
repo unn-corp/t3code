@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { restrictWindowsAcl } from "@t3tools/shared/forkMaintenanceSnapshot";
 
 export const OPERATOR_TOKEN_HEADER = "x-t3-operator-token";
 export const OPERATOR_ROUTE_PREFIX = "/api/maintenance/operator/";
@@ -10,13 +11,16 @@ export const operatorTokenPath = (baseDir: string) =>
   NodePath.join(baseDir, "maintenance", "operator-token");
 
 /**
- * The local operator credential: a random token in a 0600 file under the T3 home, replaced on every
+ * The local operator credential: a random token in an owner-only directory/file under the T3 home, replaced on every
  * start and removed on exit. Whoever can read it already owns the home and its data, which is the
  * same authority `t3 pair` and the backup commands assume. It is never accepted from a session.
  */
 export async function issueOperatorToken(baseDir: string): Promise<string> {
   const file = operatorTokenPath(baseDir);
   await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true, mode: 0o700 });
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Filesystem permissions depend on the host OS.
+  if (process.platform === "win32") await restrictWindowsAcl(NodePath.dirname(file));
+  else await NodeFSP.chmod(NodePath.dirname(file), 0o700);
   const token = NodeCrypto.randomBytes(32).toString("hex");
   const temporary = `${file}.${process.pid}.tmp`;
   const handle = await NodeFSP.open(temporary, "w", 0o600);

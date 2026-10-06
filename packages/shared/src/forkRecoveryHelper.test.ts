@@ -81,7 +81,7 @@ interface Behaviour {
 
 /** The distribution answers the way the real CLI would, against its own home and registry. */
 function fakeWsl(
-  distros: Record<string, { store: CoordinatorStore }>,
+  distros: Record<string, { store: CoordinatorStore; home: string; wireHome: string }>,
   behaviour: Behaviour,
   calls: string[],
 ): Exec {
@@ -108,7 +108,7 @@ function fakeWsl(
         return { code: 0, stdout: JSON.stringify({ ok: false, reason: "disk error" }), stderr: "" };
       return {
         code: 0,
-        stdout: `${JSON.stringify(await runHomeOperation(parsed.home, parsed.operation, { store: target.store }))}\n`,
+        stdout: `${JSON.stringify(await runHomeOperation(target.home, parsed.operation, { store: target.store }))}\n`,
         stderr: "",
       };
     }
@@ -117,7 +117,7 @@ function fakeWsl(
       return { code: 2, stdout: JSON.stringify({ ok: false, reason: parsed.error }), stderr: "" };
     return {
       code: 0,
-      stdout: `${JSON.stringify(await runFenceOperation(target.store, parsed, NOW))}\n`,
+      stdout: `${JSON.stringify(await runFenceOperation(target.store, parsed, NOW)).replaceAll(JSON.stringify(target.home), JSON.stringify(target.wireHome))}\n`,
       stderr: "",
     };
   };
@@ -147,11 +147,15 @@ async function device(behaviour: Behaviour = {}, options: { readonly desktop?: b
   const member: WslMember = {
     id: "wsl-ubuntu",
     distro: "Ubuntu",
-    home: ubuntuHome,
+    home: "/home/fixture/ubuntu",
     executable: "/usr/local/bin/t3",
   };
   const calls: string[] = [];
-  const exec = fakeWsl({ Ubuntu: { store: ubuntuStore } }, behaviour, calls);
+  const exec = fakeWsl(
+    { Ubuntu: { store: ubuntuStore, home: ubuntuHome, wireHome: member.home } },
+    behaviour,
+    calls,
+  );
   const wslId = wslHomeId(member);
   const windowsPoint = await createSnapshot(windowsHome, "tx-update");
   const ubuntuPoint = await createSnapshot(ubuntuHome, "tx-update");

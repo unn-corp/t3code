@@ -1303,6 +1303,7 @@ describe("DesktopForkMaintenance", () => {
   });
 
   describe("a Windows home and a WSL distribution update as one cohort", () => {
+    const distributionHome = "/home/fixture/wsl";
     /**
      * A distribution with its own filesystem, registry and runtime. The fake `wsl.exe` runs the shared protocol verbs
      * against them exactly as `t3 maintenance ...` would inside the distribution.
@@ -1348,13 +1349,19 @@ describe("DesktopForkMaintenance", () => {
           result =
             "error" in parsed
               ? { ok: false, reason: parsed.error }
-              : await runHomeOperation(parsed.home, parsed.operation, { store: distro });
+              : await runHomeOperation(wslHome, parsed.operation, { store: distro });
         } else {
           const parsed = parseFenceOperation(rest.slice(1));
           result =
             "error" in parsed
               ? { ok: false, reason: parsed.error }
-              : await runFenceOperation(distro, parsed, device.clock.value);
+              : await runFenceOperation(
+                  distro,
+                  parsed.op === "issue-trial" || parsed.op === "receipt"
+                    ? { ...parsed, home: wslHome }
+                    : parsed,
+                  device.clock.value,
+                );
         }
         return { code: 0, stdout: `${JSON.stringify(result)}\n`, stderr: "" };
       };
@@ -1365,7 +1372,8 @@ describe("DesktopForkMaintenance", () => {
             command: { distroArgs: ["-d", "Ubuntu"], path: "/usr/bin", command: ["/opt/t3"] },
           },
         ],
-        resolveWslHome: async () => wslHome,
+        // The wire carries a Linux path even when this simulated distribution lives on Windows.
+        resolveWslHome: async () => distributionHome,
         exec,
       } satisfies Partial<DesktopMaintenanceInput>;
       return { device, wslHome, distro, overrides, verbs };
@@ -1406,7 +1414,7 @@ describe("DesktopForkMaintenance", () => {
       const [journal] = await store.listJournals();
       // One restore point per home, all taken before the trial began.
       expect(Object.keys(journal!.snapshots).toSorted()).toEqual(
-        [device.home, `wsl:Ubuntu:${wslHome}`].toSorted(),
+        [device.home, `wsl:Ubuntu:${distributionHome}`].toSorted(),
       );
       expect(journal!.phase).toBe("trial");
       // The distribution holds the fence remotely and mirrors the journal.
