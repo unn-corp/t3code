@@ -1,0 +1,62 @@
+name: Fork Windows CLI diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Failed fork release run containing diagnostic-cli-win-x64"
+        required: true
+        type: string
+      expected_version:
+        description: "Exact nightly version in that archive"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  windows_cli:
+    if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout diagnostic tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Install diagnostic dependencies
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Download the failed Windows archive
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUN_ID -notmatch '^[1-9][0-9]*$') { throw 'run_id must be a numeric workflow run ID.' }
+          if ($env:EXPECTED_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*$') { throw 'expected_version must be an exact fork nightly version.' }
+          gh run download $env:RUN_ID --repo $env:GITHUB_REPOSITORY --name diagnostic-cli-win-x64 --dir diagnostic-archive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # A diagnostic result is not a release receipt and cannot make an archive eligible.
+      - name: Exercise the retained archive with current smoke diagnostics
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: node scripts/smoke-cli-archive.ts --archive "diagnostic-archive/t3-$EXPECTED_VERSION-win32-x64.zip" --expect-version "$EXPECTED_VERSION"

@@ -94,7 +94,11 @@ that commit.
 If the Windows CLI archive smoke check fails, the fork retains a `diagnostic-cli-win-x64` workflow
 artifact for one day. Use it to reproduce the failed standalone binary in an isolated fixture;
 it is excluded from release assembly, and the failed check still prevents publication. The artifact
-contains packaged binaries only, with no fixture data or test logs.
+contains packaged binaries only, with no fixture data or test logs. Run **Fork Windows CLI diagnostic**
+on `main` with that failed run’s numeric `run_id` and exact `expected_version` to exercise the same
+archive with current diagnostics on `windows-2025`. This manual job uses read-only repository/actions
+permissions and an isolated home; its result is diagnostic evidence, not a release validation receipt.
+It reserves no Android codes. A corrected candidate still needs the complete release workflow.
 
 ### Hardware commissioning rebuilds
 

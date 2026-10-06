@@ -683,3 +683,22 @@ describe("withdrawal workflow", () => {
     assert.deepStrictEqual(action.options, ["withdraw", "restore"]);
   });
 });
+
+describe("manual Windows CLI diagnostics", () => {
+  const diagnostic = load("fork-cli-diagnostic.yml");
+  it("only re-exercises a retained failure with read-only permissions", () => {
+    assert.deepEqual(Object.keys(diagnostic.on), ["workflow_dispatch"]);
+    assert.deepEqual(diagnostic.permissions, { contents: "read", actions: "read" });
+    const job = diagnostic.jobs.windows_cli!;
+    assert.equal(job["runs-on"], "windows-2025");
+    assert.include(job.if!, "github.ref == 'refs/heads/main'");
+    const download = stepNamed(job, "Download the failed Windows archive");
+    assert.include(download.run!, "--name diagnostic-cli-win-x64");
+    assert.include(download.run!, "--repo $env:GITHUB_REPOSITORY");
+    assert.include(download.run!, "'^[1-9][0-9]*$'");
+    const run = stepNamed(job, "Exercise the retained archive with current smoke diagnostics");
+    assert.include(run.run!, "scripts/smoke-cli-archive.ts");
+    assert.notInclude(jobText(job), "fork-release.ts");
+    assert.notInclude(jobText(job), "secrets.");
+  });
+});
