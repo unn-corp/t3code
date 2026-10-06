@@ -244,11 +244,13 @@ interaction still blocks publication.
   **Never delete reservation tags.** Assembly checks each APK against the uploaded allocation
   receipt. Codes are checked against the 2,147,483,647 maximum.
 - **Recovery APKs.** The manifest retains the primary predecessor plus the newest two eligible exact
-  normal-build identities per channel and a required promotion source, deduplicated by version and
+  normal-build identities per channel, the verified updater baseline, and a required promotion source, deduplicated by version and
   commit. Each is rebuilt with `--kind recovery` and a unique code above the release normal code.
   Extra recovery builds use the current builder against the exact retained source checkout. The
-  finite retained set guarantees recovery for those identities; deeper historical rollback and
-  unpublished baseline upgrades may require manual bootstrap. Every recovery source must itself
+  baseline stays in that set so a phone reverted to it can stage a newer update with an exact-source
+  recovery APK. Retain the verified baseline release while those devices are supported. The finite
+  set guarantees recovery for those identities; deeper historical rollback and unpublished baseline
+  upgrades may require manual bootstrap. Every recovery source must itself
   contain the updater, or the helper refuses to build it.
 - **Build helper contract** (`scripts/build-android-pwa.ts`, owned by the Android developer). Each
   APK is built into its own `--output-dir` and the helper writes `metadata.json` beside it:

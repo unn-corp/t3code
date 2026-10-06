@@ -705,7 +705,7 @@ export const buildPlan = (input: {
   readonly now: Date;
   readonly runNumber: number;
   readonly releases: ReadonlyArray<ReleaseRecord>;
-  /** The verified manual baseline, consulted only when no pipeline release is eligible. */
+  /** Verified manual baseline: the first predecessor and a retained Android recovery source. */
   readonly baseline?: Omit<Predecessor, "baseline"> | null;
   /** Explicit commissioning rebuild. Ordinary runs keep duplicate commit suppression. */
   readonly commission?: boolean;
@@ -823,6 +823,9 @@ export const buildPlan = (input: {
         asset: "",
       });
   }
+  // A phone restored to the updater baseline must still be able to resume in-product updates.
+  // Native staging requires recovery for its exact installed source, even after ordinary releases exist.
+  if (input.baseline) add({ ...input.baseline, channel: null, asset: "" });
   // Stable promotion changes the version identity while keeping the promoted source commit.
   if (outcome.plan.source) {
     const promoted = eligible.find((record) => record.tagName === outcome.plan.source!.tag);

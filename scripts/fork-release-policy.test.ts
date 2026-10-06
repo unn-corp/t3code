@@ -551,6 +551,31 @@ describe("stable promotion", () => {
 });
 
 describe("recovery predecessor", () => {
+  it("keeps the verified baseline recoverable after later nightlies so a reverted phone can resume updates", () => {
+    const baseline = { tag: "fork-baseline", version: "1.0.0", commit: sha("updater-baseline") };
+    const previous = makeRelease({
+      version: "1.0.1-nightly.20261009.1",
+      commit: sha("previous-nightly"),
+    });
+    const outcome = buildPlan({
+      channel: "nightly",
+      commit: sha("next-nightly"),
+      now: NOW,
+      runNumber: 10,
+      releases: [previous],
+      baseline,
+    });
+    assert.equal(outcome.kind, "release");
+    if (outcome.kind !== "release") return;
+    assert.equal(outcome.plan.predecessor.tag, previous.tagName);
+    const fromBaseline = outcome.plan.recoverySources.filter(
+      (source) => source.version === baseline.version && source.commit === baseline.commit,
+    );
+    assert.lengthOf(fromBaseline, 1);
+    assert.equal(fromBaseline[0]!.tag, baseline.tag);
+    assert.equal(fromBaseline[0]!.channel, null);
+    assert.include(fromBaseline[0]!.asset, "from-1.0.0");
+  });
   it("freezes newest two sources per channel plus the promotion source without collapsing same-commit versions", () => {
     const stableOld = makeRelease({
       version: "1.0.0",
