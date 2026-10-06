@@ -22,8 +22,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { windowsSystemTar } from "./build-cli-archive.ts";
+import { cliSmokeEnvironment } from "./lib/cli-smoke-environment.ts";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 export class CliArchiveSmokeError extends Schema.TaggedError<CliArchiveSmokeError>()(
@@ -50,12 +51,13 @@ const runExecutable = Effect.fn("runExecutable")(function* (
   cwd: string,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const platform = yield* HostProcessPlatform;
+  const inherited = yield* HostProcessEnvironment;
+  const path = yield* Path.Path;
   const child = yield* spawner.spawn(
     ChildProcess.make(executable, args, {
       cwd,
-      // Empty PATH: the archive must not reach a system node, and the
-      // launcher context must not leak in from a developer shell.
-      env: { PATH: "", HOME: cwd, USERPROFILE: cwd, TMPDIR: cwd, TEMP: cwd },
+      env: cliSmokeEnvironment({ platform, inherited, home: cwd, scratch: cwd, join: path.join }),
       extendEnv: false,
     }),
   );
@@ -73,6 +75,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
+  const inherited = yield* HostProcessEnvironment;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scratch = yield* fs.makeTempDirectory({ prefix: "t3-cli-smoke-" });
   // Windows can keep t3.exe locked (EBUSY) for a moment after the server
@@ -138,14 +141,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
       ["serve", "--host", "127.0.0.1", "--port", String(port), "--no-browser"],
       {
         cwd: contentDir,
-        env: {
-          PATH: "",
-          HOME: home,
-          USERPROFILE: home,
-          TMPDIR: scratch,
-          TEMP: scratch,
-          T3CODE_HOME: home,
-        },
+        env: cliSmokeEnvironment({ platform, inherited, home, scratch, join: path.join }),
         extendEnv: false,
       },
     ),

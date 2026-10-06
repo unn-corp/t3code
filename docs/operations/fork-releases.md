@@ -97,6 +97,10 @@ that commit.
 both kinds of evidence exist for exactly this candidate. A missing, failing, substituted, or stale
 receipt of either kind makes the check false, and a false check blocks publication.
 
+Archive startup checks use private scratch homes and coordinator namespaces. Windows keeps its
+OS ACL and PowerShell utilities available while excluding developer Node and provider directories
+from the test process's PATH; removing those OS prerequisites prevents safe runtime registration.
+
 **Package validation** (`scripts/fork-release-validate.ts`, receipts bind to the payload digest and
 the predecessor's digest):
 
