@@ -319,7 +319,11 @@ export function createDesktopInstaller(input: DesktopInstallerInput) {
     restorePoints: async (home) => (await storage()).restorePoints(home),
     homeLabel: (home) => {
       const wsl = parseWslHomeId(home);
-      return wsl === null ? "Windows" : `WSL (${wsl.distro})`;
+      return wsl === null
+        ? input.platform === "windows-x64"
+          ? "Windows"
+          : "Linux"
+        : `WSL (${wsl.distro})`;
     },
     // No compatibility proof exists between an older binary and newer data, so a binary-only recovery is never offered.
     binaryCompatible: async () => false,

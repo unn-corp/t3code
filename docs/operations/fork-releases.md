@@ -234,6 +234,9 @@ baselines are never replaced. Draft lookup uses the releases list: GitHub’s ta
 for an unpublished draft. This workflow has no schedule and writes no normal release manifest.
 The first nightly previews 1.0.1 so it outranks the hand-installed 1.0.0 baseline; subsequent stable
 promotion uses that same next-patch floor. A baseline does not satisfy normal release eligibility.
+Pinned release builders supply `APP_BUILD_COMMIT` after source validation and package-version
+alignment; that expected version edit must not label official artifacts as local source changes.
+Desktop package metadata retains the full commit required by updater identity verification.
 
 1. Build the baseline from an updater-equipped commit and keep the same signing key as the phone's
    installed app. Never uninstall to bring a phone onto it.

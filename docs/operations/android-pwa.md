@@ -411,6 +411,13 @@ A launch counts as healthy when the shell calls `markAndroidShellHealthy()` (mou
 update interaction coordinator). Only an actual render signal counts, including pairing and onboarding screens. A page-load timer
 cannot prove a functioning shell.
 
+The staged update's paired recovery and the screen's rollback choices are different sets. The paired
+recovery can have the same source commit as the currently installed baseline while carrying the next
+Android version code; it still makes that forward update installable. Readiness must resolve
+`target.recoverySha256` to its verified cache record and file. Only after the forward build is
+installed can that predecessor be offered as a rollback choice (its source then differs from the
+running build).
+
 ### External recovery when the app cannot open
 
 If neither the app nor its recovery screen works, install a signed recovery APK from outside.

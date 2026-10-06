@@ -133,6 +133,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
       - name: Build JS bundle
         working-directory: source
+        env:
+          # The pinned clean checkout is aligned to the release version before bundling.
+          APP_BUILD_COMMIT: ${{ needs.plan.outputs.commit }}
         run: vp run build:desktop
       - name: Upload JS bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

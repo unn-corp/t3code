@@ -374,6 +374,7 @@ const rowsOf = (home: string) => {
 describe("DesktopForkMaintenance", () => {
   it("starts a fresh stable installation on stable and an existing device on nightly, and persists the choice", async () => {
     const fresh = await makeDevice();
+    await fresh.server(9001, "desktop-server");
     const stable = fresh.makeCore({ pid: 100, version: "1.0.0", commit: commit("1") });
     await stable.start();
     expect((await stable.status()).policy).toEqual({
@@ -381,6 +382,7 @@ describe("DesktopForkMaintenance", () => {
       automaticInstallation: false,
       pinnedBuild: null,
     });
+    expect((await stable.status()).affectedHomes).toEqual([{ id: fresh.home, label: "Linux" }]);
     // A later launch keeps the stored choice even though the database now exists.
     await NodeFSP.mkdir(NodePath.join(fresh.home, "userdata"), { recursive: true });
     const again = fresh.makeCore({

@@ -158,8 +158,8 @@ this fork.
 
 **Implementation and commissioning.** Coordinator services, multi-home transactions, desktop
 and Android controllers, shared UI controls, native recovery, external recovery helpers, and fork
-release workflows are implemented with focused verification. Publishing and production rollout
-remain uncommissioned. The release rehearsal and hardware update/recovery checks must pass
+release workflows are implemented with focused verification. A complete signed manual baseline is
+available; automatic publishing and production rollout remain uncommissioned. The release rehearsal and hardware update/recovery checks must pass
 before enabling automatic publishing. Existing installations need the known-good updater baseline
 and explicit device bootstrap before participating. A successful source test is not a hardware
 installation receipt.
@@ -179,7 +179,9 @@ receipts to the exact candidate commit and payload.
 and [ForkUpdateControls.tsx](../../apps/web/src/components/settings/ForkUpdateControls.tsx) own
 client presentation; the state controller and host controller own requests. Shared presentation
 keeps the phase, blocker details, and failure alert distinct so Settings does not repeat the same
-status or error.
+status or error. Affected local homes use the client’s actual platform name; WSL homes keep
+their separate distribution labels. Packaged updater identity requires the full source commit in
+build metadata, even though the UI abbreviates it for display.
 [HostUpdateSettings.tsx](../../apps/web/src/components/settings/HostUpdateSettings.tsx) presents
 named environments in Connections. [hostUpdateBatcher.ts](../../apps/web/src/state/hostUpdateBatcher.ts)
 serializes distinct replacement targets under their explicit coordinator ID and coalesces aliases

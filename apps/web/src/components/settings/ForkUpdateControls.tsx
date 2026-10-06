@@ -57,7 +57,7 @@ export function ForkUpdateControls({
     <>
       <SettingsRow
         title={device}
-        description={`Installed source: ${status.currentBuild.version} · ${status.currentBuild.commit.slice(0, 12)}${status.currentBuild.installationSequence === undefined ? "" : ` · Installation sequence ${status.currentBuild.installationSequence}`}`}
+        description={`Installed source: ${status.currentBuild.version} · ${status.currentBuild.commit.slice(0, 12) || "unknown"}${status.currentBuild.installationSequence === undefined ? "" : ` · Installation sequence ${status.currentBuild.installationSequence}`}`}
         status={
           <div role="status" aria-live="polite">
             <p>

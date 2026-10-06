@@ -58,6 +58,7 @@ import {
   resolveWindowsServerAsarIgnoreGlobs,
   resourceMonitorExecutableName,
   resolveGitHubPublishConfig,
+  resolveGitCommitHash,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
   resolvePackageManagerUserAgent,
@@ -170,6 +171,31 @@ function iconResizeSpawnerLayer(
     }),
   );
 }
+
+it.effect("embeds the full Git commit hash used by maintenance identity verification", () => {
+  const expected = "abcdef0123456789abcdef0123456789abcdef01";
+  const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+  const spawner = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) => {
+      const child = command as unknown as {
+        readonly command: string;
+        readonly args: ReadonlyArray<string>;
+      };
+      commands.push(child);
+      return Effect.succeed(mockProcess(0, `${expected}\n`));
+    }),
+  );
+  return resolveGitCommitHash("/source").pipe(
+    Effect.provide(spawner),
+    Effect.tap((actual) =>
+      Effect.sync(() => {
+        assert.equal(actual, expected);
+        assert.equal(commands.length, 1);
+      }),
+    ),
+  );
+});
 
 const WINDOWS_PAYLOAD_FIXTURE_VERSION = "1.2.3";
 

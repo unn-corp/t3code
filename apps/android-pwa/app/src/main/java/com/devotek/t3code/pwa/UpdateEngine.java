@@ -72,6 +72,9 @@ final class UpdateEngine {
     private volatile String activity;
     private volatile Candidate available;
     private UpdateEligibility.Installed installedCache;
+    private String pairedRecoveryReadinessCacheKey;
+    private boolean pairedRecoveryReadinessCached;
+    private boolean pairedRecoveryReadinessValue;
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(task -> {
         Thread thread = new Thread(task, "t3-updater-recheck"); thread.setDaemon(true); return thread;
     });
@@ -355,6 +358,63 @@ final class UpdateEngine {
 
     private boolean fileMatches(File file, long bytes) { return file.isFile() && file.length() == bytes; }
 
+    private boolean verifiedFileMatches(File file, String digest, long bytes) {
+        try { ApkVerifier.verifyFile(file, digest, bytes); return true; }
+        catch (ApkVerifier.Failure | IOException invalid) { return false; }
+    }
+
+    private static File pairedRecoveryFile(UpdateState state, File recoveryDirectory) throws IOException {
+        if (state == null || state.target == null) return null;
+        String digest = state.target.recoverySha256;
+        if (digest == null || !digest.matches("[a-f0-9]{64}")) return null;
+        UpdateState.Recovery recovery = state.recovery(digest);
+        if (recovery == null || !digest.equals(recovery.sha256) || recovery.bytes <= 0
+                || !(digest + ".apk").equals(recovery.file)) return null;
+        File directory = recoveryDirectory.getCanonicalFile();
+        File apk = new File(directory, recovery.file).getCanonicalFile();
+        return directory.equals(apk.getParentFile()) && apk.isFile() && apk.length() == recovery.bytes ? apk : null;
+    }
+
+    private static String pairedRecoveryReadinessKey(UpdateState state, File recoveryDirectory) {
+        try {
+            File apk = pairedRecoveryFile(state, recoveryDirectory);
+            if (apk == null) return null;
+            UpdateState.Recovery recovery = state.recovery(state.target.recoverySha256);
+            return state.target.recoverySha256 + "\n" + recovery.sha256 + "\n" + recovery.bytes + "\n"
+                + apk.getPath() + "\n" + apk.length() + "\n" + apk.lastModified();
+        } catch (IOException | RuntimeException unavailable) { return null; }
+    }
+
+    /** Readiness for installing a staged normal build means its own paired recovery is cached. */
+    static boolean pairedRecoveryReady(UpdateState state, File recoveryDirectory) {
+        try {
+            File apk = pairedRecoveryFile(state, recoveryDirectory);
+            return apk != null && ApkVerifier.sha256(apk).equals(state.target.recoverySha256);
+        } catch (IOException | RuntimeException unavailable) { return false; }
+    }
+
+    private synchronized boolean pairedRecoveryReadyCached(UpdateState state) {
+        String key = pairedRecoveryReadinessKey(state, recoveryDir);
+        if (key == null) {
+            pairedRecoveryReadinessCacheKey = null;
+            pairedRecoveryReadinessCached = false;
+            return false;
+        }
+        if (pairedRecoveryReadinessCached && key.equals(pairedRecoveryReadinessCacheKey))
+            return pairedRecoveryReadinessValue;
+        boolean ready = pairedRecoveryReady(state, recoveryDir);
+        String after = pairedRecoveryReadinessKey(state, recoveryDir);
+        if (key.equals(after)) {
+            pairedRecoveryReadinessCacheKey = key;
+            pairedRecoveryReadinessCached = true;
+            pairedRecoveryReadinessValue = ready;
+            return ready;
+        }
+        pairedRecoveryReadinessCacheKey = null;
+        pairedRecoveryReadinessCached = false;
+        return false;
+    }
+
     /** Downloads and verifies recovery first, so a staged normal build always has its way back. */
     private void stageFiles(Candidate chosen, UpdateEligibility.Installed installed) throws IOException, UpdateException {
         ReleaseManifest manifest = chosen.decision.manifest;
@@ -362,7 +422,7 @@ final class UpdateEngine {
         ReleaseManifest.Asset normalAsset = manifest.asset(manifest.normal.asset), recoveryAsset = manifest.asset(manifest.recovery.asset);
         UpdateState state = store.snapshot();
         UpdateState.Recovery cached = state.recovery(recoveryAsset.sha256);
-        if (cached == null || !fileMatches(new File(recoveryDir, cached.file), recoveryAsset.bytes)) {
+        if (cached == null || !verifiedFileMatches(new File(recoveryDir, cached.file), recoveryAsset.sha256, recoveryAsset.bytes)) {
             File file = fetchVerified(release, recoveryAsset, manifest.recovery, true, installed, recoveryDir);
             UpdateState.Recovery entry = new UpdateState.Recovery();
             entry.sha256 = recoveryAsset.sha256; entry.version = manifest.recovery.sourceVersion; entry.commit = manifest.recovery.sourceCommit;
@@ -372,7 +432,8 @@ final class UpdateEngine {
         }
         UpdateState.Target existing = state.target;
         boolean normalStaged = existing != null && existing.versionCode == manifest.normal.versionCode && existing.sha256.equals(normalAsset.sha256)
-            && existing.manifestSha256.equals(chosen.manifestSha256) && fileMatches(new File(apkDir, existing.file), normalAsset.bytes);
+            && existing.manifestSha256.equals(chosen.manifestSha256)
+            && verifiedFileMatches(new File(apkDir, existing.file), normalAsset.sha256, normalAsset.bytes);
         File apk = normalStaged ? new File(apkDir, existing.file) : fetchVerified(release, normalAsset, manifest.normal, false, installed, apkDir);
         UpdateState.Target target = new UpdateState.Target();
         target.tag = release.tag; target.version = manifest.normal.sourceVersion; target.commit = manifest.normal.sourceCommit;
@@ -438,7 +499,7 @@ final class UpdateEngine {
         input.confirmationAvailable = UpdateNotifications.confirmationAvailable(app);
         input.installPermission = Build.VERSION.SDK_INT < 26 || app.getPackageManager().canRequestPackageInstalls();
         boolean rollback = state.intent != null && "rollback".equals(state.intent.kind);
-        input.recoveryReady = rollback || (state.target != null && state.recovery(state.target.recoverySha256) != null);
+        input.recoveryReady = rollback || pairedRecoveryReadyCached(state);
         return input;
     }
 
@@ -837,7 +898,7 @@ final class UpdateEngine {
                 .put("policy", new JSONObject().put("channel", state.channel == null ? defaultChannel() : state.channel)
                     .put("automaticInstallation", state.automatic && !state.recoveredFromCorruption).put("pin", pin == null ? JSONObject.NULL : pin))
                 .put("target", target == null ? JSONObject.NULL : target).put("blockers", blockerJson)
-                .put("recovery", new JSONObject().put("ready", cached.length() > 0).put("cached", cached))
+                .put("recovery", new JSONObject().put("ready", pairedRecoveryReadyCached(state)).put("cached", cached))
                 .put("installPermission", Build.VERSION.SDK_INT < 26 || app.getPackageManager().canRequestPackageInstalls() ? "granted" : "needed")
                 .put("silentInstall", silentInstall())
                 .put("lastCheckedAt", state.lastCheckedAt > 0 ? Iso8601.format(state.lastCheckedAt) : JSONObject.NULL)

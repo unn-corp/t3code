@@ -15,6 +15,7 @@ import { processCreationIdentity } from "@t3tools/shared/forkMaintenanceStore";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -53,6 +54,10 @@ const TICK_INTERVAL = Duration.seconds(5);
 const RELEASES_PER_CHECK = 12;
 
 const isMaintenanceError = Schema.is(ForkMaintenanceError);
+const AppPackageMetadata = Schema.Struct({
+  t3codeCommitHash: Schema.optional(Schema.Unknown),
+});
+const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 const toMaintenanceError = (cause: unknown) =>
   isMaintenanceError(cause)
     ? cause
@@ -98,22 +103,25 @@ export class DesktopForkMaintenance extends Context.Service<
   }
 >()("@t3tools/desktop/maintenance/DesktopForkMaintenance") {}
 
-const readCommit = async (
+export const readCommit = (
   packageJsonPath: string,
   override: string | undefined,
-): Promise<string | null> => {
-  if (override !== undefined && /^[0-9a-f]{40}$/i.test(override)) return override.toLowerCase();
-  try {
-    const parsed = JSON.parse(await NodeFSP.readFile(packageJsonPath, "utf8")) as {
-      t3codeCommitHash?: unknown;
-    };
-    return typeof parsed.t3codeCommitHash === "string" &&
-      /^[0-9a-f]{40}$/i.test(parsed.t3codeCommitHash)
-      ? parsed.t3codeCommitHash.toLowerCase()
-      : null;
-  } catch {
-    return null;
-  }
+  readFileString: FileSystem.FileSystem["readFileString"],
+): Effect.Effect<string | null> => {
+  if (override !== undefined && /^[0-9a-f]{40}$/i.test(override))
+    return Effect.succeed(override.toLowerCase());
+  return readFileString(packageJsonPath).pipe(
+    // Use Effect's filesystem provider here: Electron's asar-aware reads must be used
+    // for resources/app.asar/package.json in packaged builds.
+    Effect.flatMap((raw) => decodeAppPackageMetadata(raw)),
+    Effect.map((parsed) => {
+      return typeof parsed.t3codeCommitHash === "string" &&
+        /^[0-9a-f]{40}$/i.test(parsed.t3codeCommitHash)
+        ? parsed.t3codeCommitHash.toLowerCase()
+        : null;
+    }),
+    Effect.orElseSucceed(() => null),
+  );
 };
 const exists = async (target: string) =>
   NodeFSP.access(target).then(
@@ -130,6 +138,7 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const settings = yield* DesktopAppSettings.DesktopAppSettings;
+  const fileSystem = yield* FileSystem.FileSystem;
   const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
   const bridge = yield* DesktopMaintenanceBridge;
   const context = yield* Effect.context<never>();
@@ -161,11 +170,10 @@ export const make = Effect.gen(function* () {
       : config.disableAutoUpdate
         ? "Updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting."
         : null;
-  const commit = yield* Effect.promise(() =>
-    readCommit(
-      environment.path.join(environment.appRoot, "package.json"),
-      Option.getOrUndefined(environment.commitHashOverride),
-    ),
+  const commit = yield* readCommit(
+    environment.path.join(environment.appRoot, "package.json"),
+    Option.getOrUndefined(environment.commitHashOverride),
+    fileSystem.readFileString,
   );
 
   const statusChanges = yield* PubSub.sliding<ForkUpdateStatus>(16);

@@ -6,7 +6,7 @@ export function ClientBuildIdentity() {
   return (
     <span>
       This fork’s client · Source {status?.currentBuild.version ?? APP_VERSION} · Commit{" "}
-      {status?.currentBuild.commit ?? APP_BUILD_IDENTITY.commit ?? "unknown"}
+      {status?.currentBuild.commit || APP_BUILD_IDENTITY.commit || "unknown"}
       {isAndroidPwa && status?.currentBuild.installationSequence !== undefined
         ? ` · Android installation sequence ${status.currentBuild.installationSequence}`
         : ""}

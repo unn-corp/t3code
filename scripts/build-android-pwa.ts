@@ -116,6 +116,7 @@ NodeChildProcess.execFileSync("vp", ["build", "--outDir", webAssets, "--emptyOut
     ...process.env,
     VITE_ANDROID_PWA: "1",
     APP_VERSION: plan.versionName,
+    APP_BUILD_COMMIT: plan.sourceCommit === "unknown" ? "" : plan.sourceCommit,
     T3CODE_WEB_SOURCEMAP: "0",
   },
 });

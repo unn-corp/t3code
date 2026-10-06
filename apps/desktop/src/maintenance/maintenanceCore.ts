@@ -366,7 +366,7 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
     const homes: CohortHome[] = [
       ...local.map((home) => ({
         id: home,
-        label: "Windows",
+        label: input.platform === "windows-x64" ? "Windows" : "Linux",
         control: createLocalHomeControl(home, store!),
       })),
       ...(await Promise.all(
