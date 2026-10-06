@@ -222,6 +222,19 @@ describe("tool output", () => {
       singleSignerDigest(`${ranged.replace(SIGNER.toUpperCase(), "b".repeat(64))}\r\n`),
     ).toThrow(/found 2/);
   });
+  it("accepts the SDK scheme-labelled format and requires one certificate across schemes", () => {
+    const schemeRecords = [
+      `V2 Signer: certificate SHA-256 digest: ${SIGNER}`,
+      `V3 Signer: certificate SHA-256 digest: ${SIGNER.toUpperCase()}`,
+    ].join("\r\n");
+    expect(singleSignerDigest(`${schemeRecords}\r\n`)).toBe(SIGNER);
+    expect(() =>
+      singleSignerDigest(schemeRecords.replace(SIGNER.toUpperCase(), "b".repeat(64))),
+    ).toThrow(/found 2/);
+    expect(() => singleSignerDigest(`V9 Signer: certificate SHA-256 digest: ${SIGNER}`)).toThrow(
+      /Unrecognized/,
+    );
+  });
   it("rejects malformed certificate records instead of ignoring them", () => {
     expect(() =>
       singleSignerDigest("Signer #1 certificate SHA-256 digest: not-a-certificate\r\n"),

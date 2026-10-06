@@ -196,7 +196,7 @@ export const singleSignerDigest = (output: string): string => {
   for (const line of output.split(/\r?\n/)) {
     if (!line.includes("certificate SHA-256 digest:")) continue;
     const match =
-      /^[ \t]*Signer(?: #\d+ \(minSdkVersion=\d+, maxSdkVersion=\d+\)| #\d+| \(minSdkVersion=\d+, maxSdkVersion=\d+\)) certificate SHA-256 digest: ([0-9a-fA-F]{64})[ \t]*$/.exec(
+      /^[ \t]*(?:(?:V1|V2|V3|V3\.0|V3\.1|V4) Signer:|Signer(?: #\d+ \(minSdkVersion=\d+, maxSdkVersion=\d+\)| #\d+| \(minSdkVersion=\d+, maxSdkVersion=\d+\))) certificate SHA-256 digest: ([0-9a-fA-F]{64})[ \t]*$/.exec(
         line,
       );
     if (!match)

@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { ForkUpdateStatus } from "@t3tools/contracts";
 import { ForkUpdateController } from "./forkUpdates";
-import { recoveryFingerprint, forkStatusDescription } from "../components/forkUpdatePresentation";
+import {
+  recoveryFingerprint,
+  forkStatusDescription,
+  forkStatusDetail,
+} from "../components/forkUpdatePresentation";
 const build = {
   version: "1.0.0",
   commit: "a".repeat(40),
@@ -20,6 +24,15 @@ const waiting: ForkUpdateStatus = {
   automationReviewRequired: false,
 };
 describe("fork update UI controller", () => {
+  it("keeps blocker detail while phases and alerts are displayed separately", () => {
+    expect(forkStatusDetail(waiting)).toContain("Development terminal command");
+    const idle = { ...waiting, phase: "idle" as const, blockers: [] };
+    expect(forkStatusDetail(idle)).toBeNull();
+    const failure = { ...idle, phase: "failed" as const, lastError: "Installer permission denied" };
+    expect(forkStatusDetail(failure)).toBeNull();
+    expect(forkStatusDescription(failure)).toBe("Installer permission denied");
+  });
+
   it("preserves real waiting state without treating a request as installed", async () => {
     const controller = new ForkUpdateController({
       status: async () => waiting,

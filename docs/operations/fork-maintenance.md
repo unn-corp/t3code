@@ -177,7 +177,9 @@ receipts to the exact candidate commit and payload.
 
 **UI maintenance.** [AppUpdateSettings.tsx](../../apps/web/src/components/settings/AppUpdateSettings.tsx)
 and [ForkUpdateControls.tsx](../../apps/web/src/components/settings/ForkUpdateControls.tsx) own
-client presentation; the state controller and host controller own requests.
+client presentation; the state controller and host controller own requests. Shared presentation
+keeps the phase, blocker details, and failure alert distinct so Settings does not repeat the same
+status or error.
 [HostUpdateSettings.tsx](../../apps/web/src/components/settings/HostUpdateSettings.tsx) presents
 named environments in Connections. [hostUpdateBatcher.ts](../../apps/web/src/state/hostUpdateBatcher.ts)
 serializes distinct replacement targets under their explicit coordinator ID and coalesces aliases

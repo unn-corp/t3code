@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import type { EnvironmentId, ForkRecoveryOption } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { ForkUpdateController, useForkUpdates } from "../../state/forkUpdates";
-import { forkPhaseLabels, forkStatusDescription } from "../forkUpdatePresentation";
+import { forkPhaseLabels, forkStatusDetail } from "../forkUpdatePresentation";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -52,6 +52,7 @@ export function ForkUpdateControls({
   const working = ["checking", "downloading", "installing", "verifying", "recovery"].includes(
     status.phase,
   );
+  const detail = forkStatusDetail(status);
   return (
     <>
       <SettingsRow
@@ -63,7 +64,7 @@ export function ForkUpdateControls({
               {forkPhaseLabels[status.phase]}
               {status.targetBuild ? ` · ${status.targetBuild.version}` : ""}
             </p>
-            <p className="whitespace-normal break-words">{forkStatusDescription(status)}</p>
+            {detail ? <p className="whitespace-normal break-words">{detail}</p> : null}
             {status.lastError ? (
               <p role="alert" className="text-destructive">
                 {status.lastError}
