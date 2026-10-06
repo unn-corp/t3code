@@ -311,6 +311,49 @@ describe("explicit Windows/WSL membership", () => {
     ).toBe("unknown-participant");
   });
 
+  it("does not turn a legacy WSL idle report into current activity proof", async () => {
+    const c = await cohort();
+    await c.windowsStore.register(
+      {
+        id: "desktop",
+        label: "Desktop",
+        kind: "desktop",
+        homes: [c.windowsHome],
+        updateTarget: true,
+      },
+      0,
+    );
+    await c.windowsStore.confirmBootstrap();
+    await c.windowsStore.observe("desktop", [], 0);
+    await c.windowsStore.observe("desktop", [], 600_000);
+    await observeWslMembers({
+      store: c.windowsStore,
+      parentId: "desktop",
+      members: [
+        {
+          member: c.ubuntu,
+          fence: {
+            run: async () => ({
+              ok: true,
+              value: { bootstrapped: true, participants: [{ id: "legacy" }], blockers: [] },
+            }),
+          },
+        },
+      ],
+      now: 600_000,
+    });
+    expect((await c.windowsStore.status(600_000)).blockers).toContainEqual(
+      expect.objectContaining({
+        participantId: c.ubuntu.id,
+        reason: "unknown-participant",
+        label: expect.stringContaining("current process activity census"),
+      }),
+    );
+    await expect(c.windowsStore.freeze("legacy", 600_000)).rejects.toThrow(
+      "current process activity census",
+    );
+  });
+
   it("lets a member's five-minute idle window elapse across repeated observation passes, so a Windows+WSL update can become installable", async () => {
     const c = await cohort();
     await c.windowsStore.register(

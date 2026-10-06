@@ -61,9 +61,22 @@ describe("environment maintenance access", () => {
       coordinatorId: "fixture",
       participantId: "fixture",
       admission: true,
+      activityProtocol: 2,
       recovery: true,
     };
     expect(supportsEnvironmentUpdate({ serverSelfUpdate: "respawn", forkMaintenance })).toBe(true);
+    const { activityProtocol: _, ...legacyCapability } = forkMaintenance;
+    for (const capability of [
+      legacyCapability,
+      { ...forkMaintenance, activityProtocol: 1 },
+      { ...forkMaintenance, activityProtocol: 3 },
+    ])
+      expect(
+        supportsEnvironmentUpdate({
+          serverSelfUpdate: "respawn",
+          forkMaintenance: capability,
+        }),
+      ).toBe(false);
     expect(supportsEnvironmentUpdate({ serverSelfUpdate: "desktop-managed" })).toBe(false);
     expect(
       supportsEnvironmentUpdate({

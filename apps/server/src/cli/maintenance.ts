@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off globalDate:off preferSchemaOverJson:off
 import * as Console from "effect/Console";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -13,7 +14,11 @@ import {
   parseHomeOperation,
   runHomeOperation,
 } from "@t3tools/shared/forkMaintenanceHomeOperations";
-import { CoordinatorStore, coordinatorDirectory } from "@t3tools/shared/forkMaintenanceStore";
+import {
+  CoordinatorStore,
+  coordinatorDirectory,
+  ORPHAN_ATTESTATION_CONFIRMATION,
+} from "@t3tools/shared/forkMaintenanceStore";
 import { main as recoveryHelperMain } from "@t3tools/shared/forkRecoveryHelper";
 import {
   callOperator,
@@ -184,6 +189,87 @@ const repairLockCommand = Command.make("repair-lock", {}).pipe(
     }),
   ),
 );
+const orphanListCommand = Command.make("orphans", { json: jsonFlag }).pipe(
+  Command.withDescription(
+    "List exact exited participant owners and recorded children for offline operator verification.",
+  ),
+  Command.withHandler(({ json }) =>
+    Effect.gen(function* () {
+      const store = yield* Effect.tryPromise({
+        try: () =>
+          CoordinatorStore.open(coordinatorDirectory(process.env.T3CODE_MAINTENANCE_NAMESPACE)),
+        catch: (cause) => new MaintenanceCoordinatorOpenError({ reason: String(cause) }),
+      });
+      const now = yield* Clock.currentTimeMillis;
+      const status = yield* Effect.tryPromise({
+        try: () => store.status(now),
+        catch: (cause) =>
+          new MaintenanceCliError({
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+      const result = {
+        bootstrapped: status.bootstrapped,
+        fence: status.fence,
+        blockers: status.blockers,
+        participants: status.participants.map((participant) => ({
+          id: participant.id,
+          label: participant.label,
+          owner: participant.owner,
+          orphaned: participant.orphaned,
+          descendants: participant.descendants,
+          blockers: participant.blockers,
+        })),
+      };
+      if (json) yield* Console.log(JSON.stringify(result, null, 2));
+      else if (result.participants.filter((participant) => participant.orphaned).length === 0)
+        yield* Console.log("No orphaned runtimes are recorded.");
+      else
+        yield* Effect.forEach(
+          result.participants.filter((participant) => participant.orphaned),
+          (participant) =>
+            Console.log(
+              `${participant.id} (${participant.label}): owner PID ${participant.owner.pid} started ${participant.owner.started}; ${participant.descendants.length} recorded child process(es). Use --json for identities.`,
+            ),
+          { discard: true },
+        );
+    }),
+  ),
+);
+const attestOrphanCommand = Command.make("attest-orphan", {
+  participant: Flag.String("participant"),
+  ownerPid: Flag.Int("owner-pid"),
+  ownerStarted: Flag.String("owner-started"),
+  confirm: Flag.String("confirm").pipe(
+    Flag.withDescription(`Type exactly: ${ORPHAN_ATTESTATION_CONFIRMATION}`),
+  ),
+}).pipe(
+  Command.withDescription(
+    "Offline-only: clear one exact exited orphan after all runtimes and recorded children are proven gone and you checked for unrecorded work.",
+  ),
+  Command.withHandler(({ participant, ownerPid, ownerStarted, confirm }) =>
+    Effect.gen(function* () {
+      const store = yield* Effect.tryPromise({
+        try: () =>
+          CoordinatorStore.open(coordinatorDirectory(process.env.T3CODE_MAINTENANCE_NAMESPACE)),
+        catch: (cause) => new MaintenanceCoordinatorOpenError({ reason: String(cause) }),
+      });
+      yield* Effect.tryPromise({
+        try: () =>
+          store.attestOrphanResolved({
+            participantId: participant,
+            owner: { pid: ownerPid, started: ownerStarted },
+            confirmation: confirm,
+          }),
+        catch: (cause) =>
+          new MaintenanceCliError({
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+      yield* Console.log(`Cleared the exact orphan record ${participant}.`);
+    }),
+  ),
+);
 class MaintenanceCoordinatorOpenError extends Schema.TaggedError<MaintenanceCoordinatorOpenError>()(
   "MaintenanceCoordinatorOpenError",
   { reason: Schema.String },
@@ -215,6 +301,8 @@ export const maintenanceCommand = Command.make("maintenance").pipe(
     policyCommand,
     recoverCommand,
     repairLockCommand,
+    orphanListCommand,
+    attestOrphanCommand,
   ]),
 );
 

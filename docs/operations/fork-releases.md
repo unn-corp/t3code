@@ -246,6 +246,16 @@ an installed-build record. Prove desktop in-product update and recovery between 
 The baseline remains immutable and is still the recorded predecessor for package validation and
 the first Android recovery APK. Its presence alone does not commission automatic delivery.
 
+Registered participants must attest activity protocol 2. An older standalone/development runtime
+can block a newer desktop even when its old status reports idle. Let all its work finish, verify
+process termination, then update and restart that runtime manually; it never updates its own binary
+automatically. A Windows parent verifies this marker in every WSL status response before relaying
+idle state. Missing markers are bootstrap blockers, not permission to use legacy admission.
+Failed or incomplete process reads preserve prior children. If the owner exits with unresolved
+activity, the coordinator retains that uncertainty; a replacement runtime's own process census is
+insufficient to clear it. Investigate the recorded owner and children before any external stopped-work
+installation. Never remove leases or registry records just to make an update proceed.
+
 1. Build the baseline from an updater-equipped commit and keep the same signing key as the phone's
    installed app. Never uninstall to bring a phone onto it.
 2. Pack and prove it (needs the Android SDK build tools):

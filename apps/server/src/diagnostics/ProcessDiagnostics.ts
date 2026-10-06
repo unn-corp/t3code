@@ -57,9 +57,24 @@ function canSignalCategory(category: ResourceTelemetryProcessCategory): boolean 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("makeProcessDiagnostics")(function* () {
   const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
-  const refreshedTelemetry = telemetry.refresh.pipe(Effect.catch(() => telemetry.latest));
+  const refreshErrorMessage = (cause: unknown) => {
+    const detail =
+      typeof cause === "object" && cause !== null && "cause" in cause ? cause.cause : cause;
+    return detail instanceof Error ? detail.message : "Native process refresh failed.";
+  };
+  const refreshedTelemetry = telemetry.refresh.pipe(
+    Effect.map((snapshot) => ({ snapshot, refreshError: Option.none<string>() })),
+    Effect.catch((cause) =>
+      telemetry.latest.pipe(
+        Effect.map((snapshot) => ({
+          snapshot,
+          refreshError: Option.some(refreshErrorMessage(cause)),
+        })),
+      ),
+    ),
+  );
   const read: ProcessDiagnostics["Service"]["read"] = refreshedTelemetry.pipe(
-    Effect.map((snapshot) => {
+    Effect.map(({ snapshot, refreshError }) => {
       const processes = snapshot.processes
         .filter((entry) => canSignalCategory(entry.category))
         .map((entry): ServerProcessDiagnosticsEntry => ({
@@ -75,6 +90,16 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
           depth: Math.max(0, entry.depth - 1),
           childPids: entry.childPids,
         }));
+      const censusErrors = [
+        ...Option.toArray(snapshot.health.native.lastError),
+        ...Option.toArray(refreshError),
+        ...(snapshot.health.native.status !== "healthy"
+          ? [`Native process census is ${snapshot.health.native.status}.`]
+          : []),
+        ...(snapshot.health.inaccessibleProcessCount > 0
+          ? [`${snapshot.health.inaccessibleProcessCount} owned process(es) could not be read.`]
+          : []),
+      ];
       return {
         serverPid: process.pid,
         readAt: snapshot.readAt,
@@ -82,7 +107,10 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
         totalRssBytes: processes.reduce((total, entry) => total + entry.rssBytes, 0),
         totalCpuPercent: processes.reduce((total, entry) => total + entry.cpuPercent, 0),
         processes,
-        error: Option.map(snapshot.health.native.lastError, (message) => ({ message })),
+        error:
+          censusErrors.length === 0
+            ? Option.none()
+            : Option.some({ message: censusErrors.join(" ").slice(0, 500) }),
       };
     }),
   );

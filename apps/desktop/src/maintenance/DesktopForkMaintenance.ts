@@ -11,7 +11,10 @@ import {
 } from "@t3tools/contracts";
 import { detectForkPackaging, forkPlatformKey } from "@t3tools/shared/forkMaintenance";
 import { listForkReleases, type FetchLike } from "@t3tools/shared/forkMaintenanceFeed";
-import { processCreationIdentity } from "@t3tools/shared/forkMaintenanceStore";
+import {
+  processCreationIdentity,
+  UNKNOWN_PROCESS_IDENTITY,
+} from "@t3tools/shared/forkMaintenanceStore";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -270,7 +273,7 @@ export const make = Effect.gen(function* () {
       for (const instance of instances) {
         const pid = Option.getOrNull((await runPromise(instance.snapshot)).activePid);
         if (pid === null) continue;
-        const started = await processCreationIdentity(pid).catch(() => null);
+        const started = await processCreationIdentity(pid).catch(() => UNKNOWN_PROCESS_IDENTITY);
         if (started !== null) found.push({ pid, started, label: "T3 Code backend" });
       }
       return found;

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -13,6 +14,7 @@ import {
   type HandoffIo,
   type HandoffPlan,
 } from "./forkDesktopHandoff.ts";
+import { restrictWindowsAcl } from "./forkMaintenanceSnapshot.ts";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -24,9 +26,39 @@ afterEach(async () => {
 });
 const sha = (bytes: string) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
+async function expectPrivateWindowsDirectory(directory: string) {
+  const encodedPath = Buffer.from(directory, "utf16le").toString("base64");
+  const script = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encodedPath}')); $user=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $entries=@((Get-Acl -LiteralPath $target).Access | ForEach-Object { [PSCustomObject]@{ sid=$_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value; type=$_.AccessControlType.ToString(); rights=$_.FileSystemRights.ToString(); inherited=$_.IsInherited } }); [PSCustomObject]@{ userSid=$user; entries=$entries } | ConvertTo-Json -Compress -Depth 3`;
+  const output = NodeChildProcess.execFileSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    { encoding: "utf8", windowsHide: true },
+  );
+  const acl = JSON.parse(output) as {
+    userSid: string;
+    entries: Array<{ sid: string; type: string; rights: string; inherited: boolean }>;
+  };
+  expect(
+    acl.entries.some(
+      (entry) =>
+        entry.sid === acl.userSid &&
+        entry.type === "Allow" &&
+        entry.rights.includes("FullControl") &&
+        !entry.inherited,
+    ),
+  ).toBe(true);
+  const broadPrincipals = new Set(["S-1-1-0", "S-1-5-11", "S-1-5-32-545"]);
+  expect(
+    acl.entries.filter((entry) => entry.type === "Allow" && broadPrincipals.has(entry.sid)),
+  ).toEqual([]);
+}
+
 async function setup(overrides: Partial<HandoffPlan> = {}) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-handoff-"));
   directories.push(root);
+  // Match the private parent directory production uses before writing its handoff plan.
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- The fixture must exercise the real Windows ACL path on Windows CI.
+  if (process.platform === "win32") await restrictWindowsAcl(root);
   const installer = NodePath.join(root, "target.AppImage");
   const previous = NodePath.join(root, "previous.AppImage");
   const target = NodePath.join(root, "T3-Code.AppImage");
@@ -223,12 +255,21 @@ describe("runDesktopHandoff", () => {
     expect(await NodeFSP.readFile(fixture.target, "utf8")).toBe("running build");
   });
 
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- These tests assert POSIX file modes and ownership, which Windows does not report.
-  it.skipIf(process.platform === "win32")("refuses a plan other users can read", async () => {
+  // The production writer stores the plan in this exact kind of private directory. POSIX
+  // protects the plan mode; Windows protects its parent with an explicit current-user ACL.
+  it("enforces plan privacy using the host platform's file protection", async () => {
     const fixture = await setup();
-    await NodeFSP.chmod(fixture.file, 0o644);
-    expect(await runDesktopHandoff(fixture.file, fixture.io)).toBe(HANDOFF_EXIT.badPlan);
-    expect(fixture.calls).toEqual([]);
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- This test intentionally selects the real host's file protection mechanism.
+    if (process.platform === "win32") {
+      await expectPrivateWindowsDirectory(fixture.root);
+      expect(await runDesktopHandoff(fixture.file, fixture.io)).toBe(HANDOFF_EXIT.ok);
+      expect(fixture.calls.map(({ kind }) => kind)).toEqual(["start"]);
+      expect((await NodeFSP.stat(`${fixture.file}.consumed`)).isFile()).toBe(true);
+    } else {
+      await NodeFSP.chmod(fixture.file, 0o644);
+      expect(await runDesktopHandoff(fixture.file, fixture.io)).toBe(HANDOFF_EXIT.badPlan);
+      expect(fixture.calls).toEqual([]);
+    }
   });
 
   it("refuses a malformed plan", async () => {

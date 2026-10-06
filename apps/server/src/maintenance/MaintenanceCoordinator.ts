@@ -19,7 +19,10 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProcessDiagnostics from "../diagnostics/ProcessDiagnostics.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
-import { processCreationIdentity } from "@t3tools/shared/forkMaintenanceStore";
+import {
+  processCreationIdentity,
+  UNKNOWN_PROCESS_IDENTITY,
+} from "@t3tools/shared/forkMaintenanceStore";
 import {
   acquireMaintenanceHost,
   describeCapability,
@@ -56,17 +59,37 @@ export { describeCapability };
 /** OS creation identity for each descendant, so a reused PID is never mistaken for the original process. */
 const identifyDescendants = async (
   descendants: ReadonlyArray<{ pid: number; started: string; label: string }>,
-) => {
+): Promise<{
+  descendants: Array<{ pid: number; started: string; label: string }>;
+  complete: boolean;
+}> => {
   const identified = await Promise.all(
-    descendants.map(async (entry) => ({
-      pid: entry.pid,
-      started: await processCreationIdentity(entry.pid).catch(() => null),
-      label: entry.label.slice(0, 120),
-    })),
+    descendants.map(async (entry) => {
+      try {
+        return {
+          pid: entry.pid,
+          started: await processCreationIdentity(entry.pid),
+          label: entry.label.slice(0, 120),
+          unreadable: false,
+        };
+      } catch {
+        return {
+          pid: entry.pid,
+          started: UNKNOWN_PROCESS_IDENTITY,
+          label: entry.label.slice(0, 120),
+          unreadable: true,
+        };
+      }
+    }),
   );
-  return identified.flatMap((entry) =>
-    entry.started === null ? [] : [{ pid: entry.pid, started: entry.started, label: entry.label }],
-  );
+  return {
+    descendants: identified.flatMap((entry) =>
+      entry.started === null
+        ? []
+        : [{ pid: entry.pid, started: entry.started, label: entry.label }],
+    ),
+    complete: identified.every((entry) => !entry.unreadable),
+  };
 };
 
 const CAP = 20;
@@ -185,20 +208,31 @@ export const collectActivity = (participantId: string) =>
     });
     // Processes this runtime started (provider CLIs, terminals, background commands). If the runtime
     // exits first, the coordinator keeps blocking until these are verified gone.
-    const descendants: Array<{ pid: number; started: string; label: string }> = [];
-    yield* guard(
-      "Process",
-      diagnostics.read,
-      (snapshot) =>
-        void snapshot.processes.slice(0, 200).forEach((entry) =>
-          descendants.push({
-            pid: entry.pid,
-            started: String(entry.startTimeMs),
-            label: entry.command,
-          }),
-        ),
+    const processReadStartedAt = yield* Clock.currentTimeMillis;
+    const processSnapshot = yield* diagnostics.read.pipe(
+      Effect.map(Option.some),
+      Effect.catchCause(() => Effect.succeed(Option.none())),
     );
-    return { blockers, descendants };
+    if (Option.isNone(processSnapshot)) {
+      blockers.push(unknown("Process"));
+      return { blockers, descendants: [], descendantsKnown: false };
+    }
+    const snapshot = processSnapshot.value;
+    const descendants = snapshot.processes.map((entry) => ({
+      pid: entry.pid,
+      started: String(entry.startTimeMs),
+      label: entry.command,
+    }));
+    const processReadAt = DateTime.toEpochMillis(snapshot.readAt);
+    if (
+      Option.isSome(snapshot.error) ||
+      processReadAt < processReadStartedAt ||
+      snapshot.processCount !== snapshot.processes.length
+    ) {
+      blockers.push(unknown("Process"));
+      return { blockers, descendants, descendantsKnown: false };
+    }
+    return { blockers, descendants, descendantsKnown: true };
   });
 
 /** First metadata snapshot is the full list of terminals; the subscription is released at once. */
@@ -234,18 +268,36 @@ const make = Effect.gen(function* () {
     const observe = Effect.gen(function* () {
       const timestamp = yield* Clock.currentTimeMillis;
       // A trial runtime is judged by its health receipt; its own start-up work is not agent activity.
-      const activity =
+      const activity: {
+        blockers: ForkActivityBlocker[];
+        descendants: Array<{ pid: number; started: string; label: string }>;
+        descendantsKnown: boolean;
+      } =
         host.trial !== null || host.successorOf !== null
-          ? { blockers: [], descendants: [] }
+          ? { blockers: [], descendants: [], descendantsKnown: true }
           : yield* collectActivity(host.participantId);
-      const descendants = yield* Effect.tryPromise({
+      const identified = yield* Effect.tryPromise({
         try: () => identifyDescendants(activity.descendants),
         catch: () =>
           new MaintenanceCoordinatorError({ operation: "process identity", cause: "unreadable" }),
-      }).pipe(Effect.orElseSucceed(() => []));
+      }).pipe(Effect.orElseSucceed(() => ({ descendants: [], complete: false })));
+      if (!identified.complete)
+        activity.blockers.push({
+          participantId: host.participantId,
+          reason: "unknown-participant",
+          label: "Process identity could not be verified.",
+        });
       yield* Effect.tryPromise({
         try: () =>
-          host.store.observe(host.participantId, activity.blockers, timestamp, descendants),
+          host.store.observe(
+            host.participantId,
+            activity.blockers,
+            timestamp,
+            identified.descendants,
+            {
+              descendantsKnown: activity.descendantsKnown && identified.complete,
+            },
+          ),
         catch: (cause) =>
           new MaintenanceCoordinatorError({ operation: "activity observation", cause }),
       });

@@ -1,3 +1,4 @@
+import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import {
   AuthOrchestrationOperateScope,
   type AuthSessionState,
@@ -27,7 +28,7 @@ export function supportsEnvironmentUpdate(
   >,
 ) {
   return (
-    capabilities.forkMaintenance?.admission === true &&
+    supportsForkMaintenanceAdmission(capabilities.forkMaintenance) &&
     capabilities.serverSelfUpdate !== undefined &&
     (capabilities.serverSelfUpdate !== "desktop-managed" || capabilities.desktopAppUpdate === true)
   );

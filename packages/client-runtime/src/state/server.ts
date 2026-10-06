@@ -1,4 +1,5 @@
 import {
+  supportsForkMaintenanceAdmission,
   type EnvironmentId,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -90,6 +91,15 @@ export const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) 
     Atom.withLabel(`environment-data:server:update-state:${environmentId}`),
   ),
 );
+
+export class ServerUpdateMaintenanceRequiredError extends Schema.TaggedError<ServerUpdateMaintenanceRequiredError>()(
+  "ServerUpdateMaintenanceRequiredError",
+  { environmentId: Schema.String },
+) {
+  override get message(): string {
+    return "This host needs manual bootstrap to the current device-maintenance build.";
+  }
+}
 
 export class ServerUpdateResumeTimeoutError extends Schema.TaggedError<ServerUpdateResumeTimeoutError>()(
   "ServerUpdateResumeTimeoutError",
@@ -730,6 +740,14 @@ export function createServerEnvironmentAtoms<R, E>(
           target,
           Effect.gen(function* () {
             const currentConfig = atomRegistry.get(configValueAtom(target.environmentId));
+            if (
+              !supportsForkMaintenanceAdmission(
+                currentConfig?.environment.capabilities.forkMaintenance,
+              )
+            )
+              return yield* new ServerUpdateMaintenanceRequiredError({
+                environmentId: target.environmentId,
+              });
             fromVersion = currentConfig?.environment.serverVersion ?? targetVersion;
             atomRegistry.set(stateAtom, {
               status: "running",

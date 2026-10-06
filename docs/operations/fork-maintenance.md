@@ -147,6 +147,39 @@ incorporated equivalent behavior before retaining compatibility patches.
 
 ## Updates and recovery
 
+### Resolve an unknown orphan after offline verification
+
+An orphan created by an incomplete process census can remain blocked even when no child PID was
+recorded. Use this procedure only for recovery from an already stopped runtime, never to stop live
+agent work to make an update proceed. When their work has finished, exit every T3 client and
+server on the device, then inspect the local coordinator records:
+
+```sh
+t3 maintenance orphans --json
+```
+
+Check the recorded owner identities, every listed child, and any active transaction fence. Also inspect
+the host process list and verify there is no unrecorded T3, provider, terminal, or agent work. The
+attestation command rechecks that the exact owner and every registered runtime owner have exited, that
+known children are gone, and that no transaction fence is active. It removes only the named orphan.
+An unknown-identity child PID must be absent; a reused or still-running PID is refused. A stale owner
+identity, missing confirmation, unreadable process identity, or any live runtime is refused.
+
+Copy `id`, `owner.pid`, and `owner.started` for the exact orphan from the JSON output, then type the
+required acknowledgment exactly:
+
+```sh
+t3 maintenance attest-orphan \
+  --participant 'PARTICIPANT_ID' \
+  --owner-pid OWNER_PID \
+  --owner-started 'OWNER_CREATION_IDENTITY' \
+  --confirm 'I checked for unrecorded processes'
+```
+
+This command never terminates a process or removes a transaction fence. If work is still active, wait
+for it to finish. If process identity cannot be read, keep the device blocked and resolve the host
+problem before retrying.
+
 **Ownership.** Additive wire contracts live in
 [maintenance.ts](../../packages/contracts/src/maintenance.ts). Host ownership, activity admission,
 and durable transaction boundaries live in [maintenance](../../apps/server/src/maintenance).

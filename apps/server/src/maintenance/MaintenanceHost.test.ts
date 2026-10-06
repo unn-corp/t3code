@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off
+import { FORK_ACTIVITY_PROTOCOL, supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeFSP from "node:fs/promises";
@@ -10,6 +11,7 @@ import { createSnapshot } from "@t3tools/shared/forkMaintenanceSnapshot";
 import { CoordinatorStore } from "@t3tools/shared/forkMaintenanceStore";
 import {
   acquireMaintenanceHost,
+  describeCapability,
   participantKindFor,
   resetMaintenanceHostsForTests,
   MAINTENANCE_TRIAL_ENV,
@@ -136,7 +138,12 @@ describe("maintenance host and start gate", () => {
       successorOf: null,
     });
     const store = await CoordinatorStore.open(d.namespace);
-    expect((await store.status(Date.now())).participants[0]?.homes).toEqual([d.canonical]);
+    const participant = (await store.status(Date.now())).participants[0];
+    expect(participant?.homes).toEqual([d.canonical]);
+    const capability = describeCapability(host, false);
+    expect(supportsForkMaintenanceAdmission(capability)).toBe(true);
+    expect(capability?.activityProtocol).toBe(FORK_ACTIVITY_PROTOCOL);
+    expect(participant?.activityProtocol).toBe(capability?.activityProtocol);
   });
 
   it("is one host per process and home, so the descriptor, the gate and the work lease agree", async () => {

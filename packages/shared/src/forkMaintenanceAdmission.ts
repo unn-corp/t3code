@@ -1,7 +1,8 @@
-import type { ForkActivityBlocker } from "@t3tools/contracts";
+import { FORK_ACTIVITY_PROTOCOL, type ForkActivityBlocker } from "@t3tools/contracts";
 
 export const AGENT_IDLE_WINDOW_MS = 5 * 60 * 1000;
 export const PARTICIPANT_MAX_AGE_MS = 30_000;
+export const CURRENT_ACTIVITY_PROTOCOL = FORK_ACTIVITY_PROTOCOL;
 
 export type MaintenanceParticipantKind =
   | "desktop"
@@ -37,6 +38,8 @@ export interface MaintenanceParticipant {
   /** The owner exited but descendants still run, so the registration is kept as a blocking tombstone. */
   readonly orphaned: boolean;
   readonly blockers: ReadonlyArray<ForkActivityBlocker>;
+  /** Census semantics used by this runtime; absent markers are legacy and cannot attest idle. */
+  readonly activityProtocol?: number;
 }
 
 /** Process ownership is verified separately; a stale heartbeat is never proof of exit. */
@@ -55,8 +58,21 @@ export function participantBlockers(
     ];
   }
   return participants.flatMap((participant) => {
-    if (participant.orphaned) {
+    if (participant.activityProtocol !== CURRENT_ACTIVITY_PROTOCOL)
       return [
+        {
+          participantId: participant.id,
+          reason: "unknown-participant" as const,
+          label: `${participant.label} does not provide the current process activity census.`,
+        },
+      ];
+    if (participant.orphaned) {
+      const uncertainty = participant.blockers.filter(
+        (blocker) => blocker.reason === "unknown-participant",
+      );
+      if (participant.descendants.length === 0) return [...uncertainty];
+      return [
+        ...uncertainty,
         {
           participantId: participant.id,
           reason: "commands" as const,

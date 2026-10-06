@@ -1,4 +1,8 @@
-import { type EnvironmentId, type ServerSelfUpdateInput } from "@t3tools/contracts";
+import {
+  supportsForkMaintenanceAdmission,
+  type EnvironmentId,
+  type ServerSelfUpdateInput,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -43,10 +47,9 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     );
     return yield* new OutdatedHostUpdateError({
       environmentId,
-      message:
-        descriptor.capabilities.forkMaintenance === undefined
-          ? `Update T3 Code on ${descriptor.label} manually. It predates device maintenance, so this app cannot check that no agent is running there or reverse a failed update, and it will not install over it.`
-          : `Update T3 Code on ${descriptor.label} from App updates, which checks activity and keeps a restore point.`,
+      message: !supportsForkMaintenanceAdmission(descriptor.capabilities.forkMaintenance)
+        ? `Update T3 Code on ${descriptor.label} manually. It predates device maintenance, so this app cannot check that no agent is running there or reverse a failed update, and it will not install over it.`
+        : `Update T3 Code on ${descriptor.label} from App updates, which checks activity and keeps a restore point.`,
     });
   },
 );

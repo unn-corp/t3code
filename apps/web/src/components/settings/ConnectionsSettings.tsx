@@ -1,3 +1,4 @@
+import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import { ComposerHostMaintenanceStatus } from "../chat/ComposerHostMaintenanceStatus";
 import { HostUpdateSettings } from "./HostUpdateSettings";
 import {
@@ -1638,10 +1639,9 @@ function SavedBackendListRow({
             <ComposerHostMaintenanceStatus
               environmentId={environmentId}
               label={environment.label}
-              supported={
-                environment.serverConfig?.environment.capabilities.forkMaintenance?.admission ===
-                true
-              }
+              supported={supportsForkMaintenanceAdmission(
+                environment.serverConfig?.environment.capabilities.forkMaintenance,
+              )}
             />
           ) : null}
           {serverUpdateState.status !== "idle" ? (
@@ -1659,8 +1659,9 @@ function SavedBackendListRow({
               label={environment.label}
               supported={
                 isConnected &&
-                environment.serverConfig?.environment.capabilities.forkMaintenance?.admission ===
-                  true
+                supportsForkMaintenanceAdmission(
+                  environment.serverConfig?.environment.capabilities.forkMaintenance,
+                )
               }
             />
           ) : null}
@@ -3870,9 +3871,9 @@ export function ConnectionsSettings() {
           <HostUpdateSettings
             environmentId={primaryEnvironmentId}
             label={primaryEnvironment?.label ?? "This machine"}
-            supported={
-              primaryServerConfig.environment.capabilities.forkMaintenance?.admission === true
-            }
+            supported={supportsForkMaintenanceAdmission(
+              primaryServerConfig.environment.capabilities.forkMaintenance,
+            )}
           />
         </SettingsSection>
       ) : null}

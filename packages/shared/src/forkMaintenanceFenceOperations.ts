@@ -52,6 +52,7 @@ export async function runFenceOperation(
             blockers: status.blockers,
             participants: status.participants.map((participant) => ({
               id: participant.id,
+              activityProtocol: participant.activityProtocol,
               label: participant.label,
               kind: participant.kind,
               homes: participant.homes,

@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/no-global-process-runtime -- native release fixtures use the current host runtime and packaging */
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off — the controller is exercised against a real registry, journals and restore points.
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
@@ -16,6 +17,7 @@ import {
   runHomeOperation,
 } from "@t3tools/shared/forkMaintenanceHomeOperations";
 import { CoordinatorStore } from "@t3tools/shared/forkMaintenanceStore";
+import { CURRENT_ACTIVITY_PROTOCOL } from "@t3tools/shared/forkMaintenanceAdmission";
 
 import { readVerifiedArtifact } from "./artifactCache.ts";
 import { HandoffPlan } from "./handoff.ts";
@@ -35,9 +37,17 @@ const MINUTE = 60_000;
 const HANDOFF_NEVER_MS = 120_000;
 const decodePlan = Schema.decodeUnknownSync(Schema.fromJsonString(HandoffPlan));
 
-// A stand-in "Node" the recovery cache can prove: it only has to print the helper protocol line, as the real runtime does.
-const NODE_STUB = "#!/bin/sh\necho recovery-helper-protocol=1\n";
-const HELPER_STUB = "// stub helper\n";
+// Windows needs an actual PE executable. POSIX uses a tiny executable fixture to keep this controller suite light;
+// the independent helper suite proves restoration with the real cached runtime on both platforms.
+const WINDOWS = process.platform === "win32";
+const PLATFORM = WINDOWS ? "windows-x64" : "linux-x64";
+const NODE_BYTES = WINDOWS
+  ? await NodeFSP.readFile(process.execPath)
+  : Buffer.from("#!/bin/sh\necho recovery-helper-protocol=1\n");
+const HELPER_BYTES = Buffer.from('console.log("recovery-helper-protocol=1");\n');
+const installerName = (version: string) =>
+  WINDOWS ? `T3-Code-${version}-x64.exe` : `T3-Code-${version}-x86_64.AppImage`;
+const INSTALL_TARGET = WINDOWS ? "C:\\Apps\\T3 Code\\T3 Code.exe" : "/Apps/T3-Code.AppImage";
 
 interface Payload {
   readonly name: string;
@@ -53,21 +63,25 @@ function releaseOf(
   const channel = version.includes("nightly") ? "nightly" : "stable";
   const sourceCommit = commit(String(id));
   const payloads: Payload[] = [
-    { name: `T3-Code-${version}-x86_64.AppImage`, bytes: installer, kind: "desktop" },
+    { name: installerName(version), bytes: installer, kind: "desktop" },
     {
-      name: "t3-recovery-helper-linux-x64.mjs",
-      bytes: Buffer.from(HELPER_STUB),
+      name: `t3-recovery-helper-${PLATFORM}.mjs`,
+      bytes: HELPER_BYTES,
       kind: "recovery-helper",
     },
-    { name: "t3-recovery-node-linux-x64", bytes: Buffer.from(NODE_STUB), kind: "recovery-helper" },
+    {
+      name: `t3-recovery-node-${PLATFORM}${WINDOWS ? ".exe" : ""}`,
+      bytes: NODE_BYTES,
+      kind: "recovery-helper",
+    },
   ];
-  const assets = [
-    ...payloads.map((payload) => ({
+  const assets: ForkReleaseManifest["assets"] = [
+    ...payloads.map((payload): ForkReleaseManifest["assets"][number] => ({
       name: payload.name,
       sha256: sha(payload.bytes),
       bytes: payload.bytes.length,
       kind: payload.kind,
-      platform: "linux-x64" as const,
+      platform: PLATFORM,
     })),
     {
       name: `t3-${version}.apk`,
@@ -277,9 +291,9 @@ async function makeDevice() {
       baseDir: home,
       version: options.version,
       commit: options.commit,
-      platform: "linux-x64",
-      packaging: "appimage",
-      installTarget: "/Apps/T3-Code.AppImage",
+      platform: PLATFORM,
+      packaging: WINDOWS ? "nsis" : "appimage",
+      installTarget: INSTALL_TARGET,
       disabledReason: null,
       authorizationRequired: () => null,
       feed: feedFor([OLD.record, NEW.record]),
@@ -382,7 +396,9 @@ describe("DesktopForkMaintenance", () => {
       automaticInstallation: false,
       pinnedBuild: null,
     });
-    expect((await stable.status()).affectedHomes).toEqual([{ id: fresh.home, label: "Linux" }]);
+    expect((await stable.status()).affectedHomes).toEqual([
+      { id: fresh.home, label: WINDOWS ? "Windows" : "Linux" },
+    ]);
     // A later launch keeps the stored choice even though the database now exists.
     await NodeFSP.mkdir(NodePath.join(fresh.home, "userdata"), { recursive: true });
     const again = fresh.makeCore({
@@ -447,7 +463,7 @@ describe("DesktopForkMaintenance", () => {
   it("stages nothing when a payload does not match the digest the release records", async () => {
     const device = await makeDevice();
     await device.server(9001, "desktop-server");
-    device.tamper.add("T3-Code-1.1.0-x86_64.AppImage");
+    device.tamper.add(installerName("1.1.0"));
     const core = device.makeCore({ pid: 100, version: "1.0.0", commit: commit("1") });
     await core.start();
     const status = await core.check();
@@ -510,7 +526,7 @@ describe("DesktopForkMaintenance", () => {
     expect(plan.previousInstaller?.sha256).toBe(
       OLD.record.manifest!.assets.find((asset) => asset.kind === "desktop")!.sha256,
     );
-    expect(plan.installTarget).toBe("/Apps/T3-Code.AppImage");
+    expect(plan.installTarget).toBe(INSTALL_TARGET);
     // oxlint-disable-next-line t3code/no-global-process-runtime -- These tests assert POSIX file modes, which Windows does not report.
     if (process.platform !== "win32")
       expect((await NodeFSP.stat(invocation.args[3]!)).mode & 0o777).toBe(0o600);
@@ -683,10 +699,55 @@ describe("DesktopForkMaintenance", () => {
     expect(device.handoffs).toEqual([]);
   });
 
+  it("preserves backend ownership and uncertainty when desktop child reads fail before it exits", async () => {
+    const device = await makeDevice();
+    await device.server(9001, "desktop-server");
+    device.startProcess(4500);
+    let unreadable = false;
+    const core = device.makeCore({
+      pid: 100,
+      version: "1.0.0",
+      commit: commit("1"),
+      overrides: {
+        descendants: async () => {
+          if (unreadable) throw new Error("Process census unavailable");
+          return [{ pid: 4500, started: device.table.get(4500)!, label: "Backend" }];
+        },
+      },
+    });
+    await core.start();
+    await core.runAction({ action: "confirm-bootstrap" });
+    await core.observe();
+    unreadable = true;
+    await core.observe();
+    const store = await CoordinatorStore.open(device.coordinator, device.identity, 9001);
+    const desktop = (await store.status(device.clock.value)).participants.find(
+      (p) => p.label === "T3 Code desktop",
+    )!;
+    expect(desktop.descendants).toEqual([
+      { pid: 4500, started: device.table.get(4500)!, label: "Backend" },
+    ]);
+    expect(desktop.blockers).toContainEqual(
+      expect.objectContaining({ reason: "unknown-participant" }),
+    );
+    device.killProcess(100);
+    expect(
+      (await store.status(device.clock.value)).participants.find((p) => p.id === desktop.id)
+        ?.orphaned,
+    ).toBe(true);
+    device.killProcess(4500);
+    expect(
+      (await store.status(device.clock.value)).participants.find((p) => p.id === desktop.id)
+        ?.blockers,
+    ).toContainEqual(expect.objectContaining({ reason: "unknown-participant" }));
+    await expect(store.freeze("unknown-desktop", device.clock.value)).rejects.toThrow();
+  });
+
   it("registers a confirmed WSL member as a child of the desktop and relays the distribution's own activity as blockers", async () => {
     const device = await makeDevice();
     await device.server(9001, "desktop-server");
     const calls: string[][] = [];
+    let remoteActivityProtocol: number | undefined = CURRENT_ACTIVITY_PROTOCOL;
     const reply = (value: unknown) => ({
       code: 0,
       stdout: `${JSON.stringify({ ok: true, value })}\n`,
@@ -715,7 +776,7 @@ describe("DesktopForkMaintenance", () => {
             return reply({
               bootstrapped: true,
               fence: null,
-              participants: [{ id: "server" }],
+              participants: [{ id: "server", activityProtocol: remoteActivityProtocol }],
               blockers: [
                 { participantId: "x", reason: "active-agents", label: "Agent running in WSL." },
               ],
@@ -747,6 +808,15 @@ describe("DesktopForkMaintenance", () => {
     expect(wsl?.homes).toEqual(["wsl:Ubuntu:/home/u/.t3"]);
     expect(wsl?.parentId).toMatch(/^desktop-/);
     expect(status.blockers.some((blocker) => blocker.label === "Agent running in WSL.")).toBe(true);
+    remoteActivityProtocol = undefined;
+    await core.observe();
+    expect((await store.status(device.clock.value)).blockers).toContainEqual(
+      expect.objectContaining({
+        participantId: wsl!.id,
+        reason: "unknown-participant",
+        label: expect.stringContaining("current process activity census"),
+      }),
+    );
     // Activity participants and affected homes stay separate: the cohort is Windows plus the confirmed member.
     expect((await core.status()).affectedHomes?.map((entry) => entry.id)).toEqual([
       device.home,

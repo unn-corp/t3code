@@ -8,7 +8,11 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import * as Schema from "effect/Schema";
 import { ForkActivityBlocker } from "@t3tools/contracts/maintenance";
-import { participantBlockers, type MaintenanceParticipant } from "./forkMaintenanceAdmission.ts";
+import {
+  CURRENT_ACTIVITY_PROTOCOL,
+  participantBlockers,
+  type MaintenanceParticipant,
+} from "./forkMaintenanceAdmission.ts";
 import { restrictWindowsAcl } from "./forkMaintenanceSnapshot.ts";
 import { decodeJournal, MaintenanceJournal, RELEASABLE_PHASES } from "./forkMaintenanceJournal.ts";
 
@@ -31,6 +35,7 @@ const Participant = Schema.Struct({
   ),
   orphaned: Schema.Boolean,
   blockers: Schema.Array(ForkActivityBlocker),
+  activityProtocol: Schema.optionalKey(Schema.Int),
 });
 const Fence = Schema.Struct({
   transactionId: Schema.String,
@@ -67,6 +72,11 @@ const isCode = (cause: unknown, code: string) =>
   typeof cause === "object" && cause !== null && "code" in cause && cause.code === code;
 
 export type ProcessIdentity = (pid: number) => Promise<string | null>;
+/** Stored identity marker for a process whose PID was visible but whose creation identity was unreadable. */
+export const UNKNOWN_PROCESS_IDENTITY = "unknown-process-identity";
+export const ORPHAN_ATTESTATION_CONFIRMATION = "I checked for unrecorded processes";
+const ORPHANED_ACTIVITY_UNVERIFIED =
+  "A previous runtime's process activity could not be verified; operator verification is required.";
 
 /** OS creation identity prevents PID reuse from clearing a live registration. */
 export async function processCreationIdentity(
@@ -133,7 +143,6 @@ export function coordinatorDirectory(namespace = process.env.T3CODE_MAINTENANCE_
     : NodePath.resolve(namespace);
 }
 
-const MAX_DESCENDANTS = 200;
 const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
 const safeName = (value: string) => {
   if (!/^[a-zA-Z0-9._-]+$/.test(value) || value.startsWith("."))
@@ -386,16 +395,49 @@ export class CoordinatorStore {
         continue;
       }
       const survivors: MaintenanceParticipant["descendants"][number][] = [];
-      for (const descendant of participant.descendants)
-        if ((await this.identity(descendant.pid)) === descendant.started)
+      for (const descendant of participant.descendants) {
+        try {
+          const current = await this.identity(descendant.pid);
+          if (descendant.started === UNKNOWN_PROCESS_IDENTITY) {
+            if (current !== null) survivors.push({ ...descendant, started: current });
+          } else if (current === descendant.started) survivors.push(descendant);
+        } catch {
+          // An unreadable identity is not evidence that an orphaned child exited.
           survivors.push(descendant);
+        }
+      }
       if (survivors.length === 0) {
+        const unknownActivity = participant.blockers.filter(
+          (blocker) => blocker.reason === "unknown-participant",
+        );
+        if (unknownActivity.length > 0) {
+          kept.push({
+            ...participant,
+            orphaned: true,
+            descendants: [],
+            blockers: unknownActivity,
+          });
+          if (!participant.orphaned || participant.descendants.length > 0) changed = true;
+          continue;
+        }
         changed = true;
         continue;
       }
-      if (!participant.orphaned || survivors.length !== participant.descendants.length)
+      const uncertainty = participant.blockers.filter(
+        (blocker) => blocker.reason === "unknown-participant",
+      );
+      if (
+        !participant.orphaned ||
+        survivors.length !== participant.descendants.length ||
+        uncertainty.length !== participant.blockers.length
+      )
         changed = true;
-      kept.push({ ...participant, orphaned: true, descendants: survivors, blockers: [] });
+      kept.push({
+        ...participant,
+        orphaned: true,
+        descendants: survivors,
+        blockers: uncertainty,
+      });
     }
     return { kept, changed };
   }
@@ -502,17 +544,30 @@ export class CoordinatorStore {
         idleSince: sameRegistration ? existing.idleSince : null,
         frozenFor: sameRegistration ? existing.frozenFor : null,
         trialFor,
-        descendants: sameRegistration ? existing.descendants : [],
+        descendants:
+          sameRegistration ||
+          (existing !== undefined && JSON.stringify(existing.homes) === JSON.stringify(homes))
+            ? existing.descendants
+            : [],
         orphaned: false,
         blockers: sameRegistration
           ? existing.blockers
           : [
+              ...(existing?.orphaned === true
+                ? existing.blockers
+                    .filter((blocker) => blocker.reason === "unknown-participant")
+                    .map((blocker) => ({
+                      ...blocker,
+                      label: ORPHANED_ACTIVITY_UNVERIFIED,
+                    }))
+                : []),
               {
                 participantId: input.id,
                 reason: "unknown-participant",
                 label: "Activity has not been verified.",
               },
             ],
+        activityProtocol: CURRENT_ACTIVITY_PROTOCOL,
       };
       await this.save({
         ...registry,
@@ -538,6 +593,68 @@ export class CoordinatorStore {
     });
   }
   /**
+   * Offline operator resolution for an exact orphan record. The confirmation covers work which a
+   * failed census could not record; no runtime, known child, or transaction may still be live.
+   */
+  async attestOrphanResolved(input: {
+    readonly participantId: string;
+    readonly owner: { readonly pid: number; readonly started: string };
+    readonly confirmation: string;
+  }): Promise<void> {
+    if (input.confirmation !== ORPHAN_ATTESTATION_CONFIRMATION)
+      throw new Error(`Type exactly: ${ORPHAN_ATTESTATION_CONFIRMATION}.`);
+    const participantId = safeName(input.participantId);
+    await this.locked(async (registry) => {
+      if (!registry.bootstrapped)
+        throw new Error("Confirm device bootstrap before resolving an orphan.");
+      if (registry.fence !== null)
+        throw new Error("A transaction fence is active; resolve its recovery first.");
+      for (const name of await NodeFSP.readdir(NodePath.join(this.directory, "journals"))) {
+        if (!name.endsWith(".json") || name.startsWith(".")) continue;
+        const journal = decodeJournal(
+          JSON.parse(
+            await NodeFSP.readFile(NodePath.join(this.directory, "journals", name), "utf8"),
+          ),
+        );
+        if (!RELEASABLE_PHASES.has(journal.phase))
+          throw new Error(`Transaction ${journal.id} still needs recovery.`);
+      }
+      const target = registry.participants.find((participant) => participant.id === participantId);
+      if (
+        target === undefined ||
+        target.owner.pid !== input.owner.pid ||
+        target.owner.started !== input.owner.started
+      )
+        throw new Error("The participant owner changed; read the orphan list and retry.");
+      if (!target.orphaned)
+        throw new Error("Only an exited orphan record can be resolved by operator attestation.");
+
+      for (const participant of registry.participants) {
+        if ((await this.identity(participant.owner.pid)) === participant.owner.started)
+          throw new Error(`${participant.label} is still running.`);
+      }
+      if ((await this.liveLeases()).length > 0)
+        throw new Error(
+          "A work lease is active or unreadable; resolve it before clearing an orphan.",
+        );
+      for (const descendant of target.descendants) {
+        const current = await this.identity(descendant.pid);
+        if (
+          current !== null &&
+          (descendant.started === UNKNOWN_PROCESS_IDENTITY || current === descendant.started)
+        )
+          throw new Error(`Recorded child PID ${descendant.pid} is still running.`);
+      }
+
+      await this.save({
+        ...registry,
+        participants: registry.participants.filter(
+          (participant) => participant.id !== participantId,
+        ),
+      });
+    });
+  }
+  /**
    * Records one observation. `alreadyIdleFor` is for a control-channel child whose activity comes from a registry that has itself
    * already enforced the idle window (its aggregate blockers were empty): the child is then idle for at least that long, not
    * starting a second window on top of the first.
@@ -547,7 +664,7 @@ export class CoordinatorStore {
     blockers: ReadonlyArray<typeof ForkActivityBlocker.Type>,
     now: number,
     descendants: ReadonlyArray<MaintenanceParticipant["descendants"][number]> = [],
-    options: { readonly alreadyIdleFor?: number } = {},
+    options: { readonly alreadyIdleFor?: number; readonly descendantsKnown?: boolean } = {},
   ): Promise<void> {
     await this.locked(async (registry) => {
       const participant = registry.participants.find((entry) => entry.id === id);
@@ -566,17 +683,62 @@ export class CoordinatorStore {
             },
           ]
         : blockers;
+      const unresolvedPriorActivity = participant.blockers.filter(
+        (blocker) => blocker.label === ORPHANED_ACTIVITY_UNVERIFIED,
+      );
+      const observedBlockers = [...actual, ...unresolvedPriorActivity];
+      const inheritedDescendants: MaintenanceParticipant["descendants"][number][] = [];
+      if (options.descendantsKnown !== false) {
+        for (const descendant of participant.descendants) {
+          try {
+            const current = await this.identity(descendant.pid);
+            if (descendant.started === UNKNOWN_PROCESS_IDENTITY) {
+              if (current !== null) inheritedDescendants.push({ ...descendant, started: current });
+            } else if (current === descendant.started) inheritedDescendants.push(descendant);
+          } catch {
+            inheritedDescendants.push(descendant);
+          }
+        }
+      }
+      const unreportedInherited = inheritedDescendants.filter(
+        (entry) =>
+          !descendants.some(
+            (candidate) => candidate.pid === entry.pid && candidate.started === entry.started,
+          ),
+      );
+      if (unreportedInherited.length > 0)
+        observedBlockers.push({
+          participantId: id,
+          reason: "commands",
+          label: `${unreportedInherited.length} process(es) started by a previous runtime are still running.`,
+        });
       const next: MaintenanceParticipant = {
         ...participant,
+        activityProtocol: CURRENT_ACTIVITY_PROTOCOL,
         observedAt: now,
-        blockers: actual,
-        descendants: descendants.slice(0, MAX_DESCENDANTS),
+        blockers: observedBlockers,
+        descendants: (() => {
+          const previous =
+            options.descendantsKnown === false ? participant.descendants : inheritedDescendants;
+          const byPid = new Map(previous.map((entry) => [entry.pid, entry]));
+          for (const candidate of descendants) {
+            const existing = byPid.get(candidate.pid);
+            if (
+              candidate.started === UNKNOWN_PROCESS_IDENTITY &&
+              existing !== undefined &&
+              existing.started !== UNKNOWN_PROCESS_IDENTITY
+            )
+              continue;
+            byPid.set(candidate.pid, candidate);
+          }
+          return [...byPid.values()];
+        })(),
         idleSince:
-          actual.length === 0
+          observedBlockers.length === 0
             ? (participant.idleSince ?? now - (options.alreadyIdleFor ?? 0))
             : null,
         // The acknowledgement is only meaningful for a fence that existed when activity was observed idle.
-        frozenFor: actual.length === 0 ? (registry.fence?.transactionId ?? null) : null,
+        frozenFor: observedBlockers.length === 0 ? (registry.fence?.transactionId ?? null) : null,
       };
       await this.save({
         ...registry,

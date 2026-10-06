@@ -27,6 +27,7 @@ const capability = {
   coordinatorId: "device",
   participantId: "service",
   admission: true,
+  activityProtocol: 2,
   recovery: true,
 };
 const build = {

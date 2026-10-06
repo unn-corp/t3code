@@ -1,3 +1,4 @@
+import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import { hostForkUpdateController, requestHostUpdates } from "../state/hostForkUpdates";
 import { forkStatusDescription } from "./forkUpdatePresentation";
 import type {
@@ -101,7 +102,7 @@ export function ServerUpdatesAction({
   const [isPending, setIsPending] = useState(false);
   const eligible = targets.filter(
     (target) =>
-      target.forkMaintenance?.admission === true &&
+      supportsForkMaintenanceAdmission(target.forkMaintenance) &&
       target.selfUpdate !== null &&
       (target.selfUpdate !== "desktop-managed" || target.desktopAppUpdate),
   );
@@ -191,7 +192,7 @@ export function ServerUpdateAction({
 }: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
   const update = useServerUpdate();
   if (
-    !forkMaintenance?.admission ||
+    !supportsForkMaintenanceAdmission(forkMaintenance) ||
     selfUpdate === null ||
     (selfUpdate === "desktop-managed" && !desktopAppUpdate)
   ) {

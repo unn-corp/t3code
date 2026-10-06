@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { TerminalSummary } from "@t3tools/contracts";
@@ -35,7 +37,36 @@ interface Sources {
     readonly startTimeMs: number;
     readonly command: string;
   }>;
+  readonly processError?: string;
+  readonly staleProcessRead?: boolean;
 }
+const processRead = (sources: Sources) =>
+  Clock.currentTimeMillis.pipe(
+    Effect.map((now) => {
+      const processes = (sources.processes ?? []).map((entry) => ({
+        ...entry,
+        ppid: 1,
+        pgid: Option.none(),
+        status: "Running",
+        cpuPercent: 0,
+        rssBytes: 1,
+        elapsed: "0:01",
+        depth: 1,
+        childPids: [],
+      }));
+      return {
+        serverPid: 1,
+        readAt: DateTime.makeUnsafe(now - (sources.staleProcessRead ? 60_000 : 0)),
+        processCount: processes.length,
+        totalRssBytes: processes.length,
+        totalCpuPercent: 0,
+        processes,
+        error: sources.processError
+          ? Option.some({ message: sources.processError })
+          : Option.none(),
+      };
+    }),
+  );
 const layer = (sources: Sources = {}) =>
   Layer.mergeAll(
     ProjectionStore.layerMemory,
@@ -54,7 +85,7 @@ const layer = (sources: Sources = {}) =>
       stream: Stream.make(sources.clones ?? []),
     } as never),
     Layer.succeed(ProcessDiagnostics.ProcessDiagnostics, {
-      read: Effect.succeed({ processes: sources.processes ?? [] }),
+      read: processRead(sources),
     } as never),
   ).pipe(Layer.provideMerge(SqlitePersistenceMemory));
 
@@ -64,6 +95,7 @@ describe("device activity sources", () => {
       expect(yield* collectActivity("participant").pipe(Effect.provide(layer()))).toEqual({
         blockers: [],
         descendants: [],
+        descendantsKnown: true,
       });
     }),
   );
@@ -121,7 +153,44 @@ describe("device activity sources", () => {
         expect(result.descendants).toEqual([
           { pid: 4242, started: "1", label: "codex app-server" },
         ]);
+        expect(result.descendantsKnown).toBe(true);
       }),
+  );
+
+  it.effect("treats a stale or incomplete process census as unknown activity", () =>
+    Effect.gen(function* () {
+      for (const sources of [
+        {
+          processError: "refresh failed",
+          processes: [{ pid: 4242, startTimeMs: 1, command: "codex" }],
+        },
+        { staleProcessRead: true, processes: [{ pid: 4242, startTimeMs: 1, command: "codex" }] },
+      ]) {
+        const result = yield* collectActivity("participant").pipe(Effect.provide(layer(sources)));
+        expect(result.blockers).toContainEqual(
+          expect.objectContaining({
+            reason: "unknown-participant",
+            label: expect.stringContaining("Process"),
+          }),
+        );
+        expect(result.descendantsKnown).toBe(false);
+      }
+    }),
+  );
+
+  it.effect("does not truncate a complete process census after 200 descendants", () =>
+    Effect.gen(function* () {
+      const processes = Array.from({ length: 240 }, (_, index) => ({
+        pid: 5000 + index,
+        startTimeMs: index + 1,
+        command: `worker-${index}`,
+      }));
+      const result = yield* collectActivity("participant").pipe(
+        Effect.provide(layer({ processes })),
+      );
+      expect(result.descendants).toHaveLength(240);
+      expect(result.descendants[239]?.pid).toBe(5239);
+    }),
   );
 
   it.effect(

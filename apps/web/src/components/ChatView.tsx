@@ -1,3 +1,4 @@
+import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import { ComposerHostMaintenanceStatus } from "./chat/ComposerHostMaintenanceStatus";
 import { elementContextToPreviewAnnotation } from "../lib/elementContext";
 import { type WorktreeSetupSnapshot } from "@t3tools/contracts";
@@ -11314,10 +11315,9 @@ export default function ChatView(props: ChatViewProps) {
                           <ComposerHostMaintenanceStatus
                             environmentId={serverUpdateEnvironmentId}
                             label={versionMismatchServerLabel}
-                            supported={
-                              serverConfig?.environment.capabilities.forkMaintenance?.admission ===
-                              true
-                            }
+                            supported={supportsForkMaintenanceAdmission(
+                              serverConfig?.environment.capabilities.forkMaintenance,
+                            )}
                           />
                         ) : null}
                         <div

@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import {
   CoordinatorStore,
+  ORPHAN_ATTESTATION_CONFIRMATION,
+  UNKNOWN_PROCESS_IDENTITY,
   processCreationIdentity,
   UnsupportedPlatformError,
 } from "./forkMaintenanceStore.ts";
@@ -36,6 +38,38 @@ async function fixture(entries: Record<number, string> = { 100: "boot:1", 200: "
     return value;
   };
   return { directory, processes, open, home, coordinator: NodePath.join(directory, "coordinator") };
+}
+async function recordUnknownRuntime(
+  f: Awaited<ReturnType<typeof fixture>>,
+  input: { readonly id: string; readonly pid: number },
+) {
+  const store = await f.open(input.pid);
+  const home = await f.home(`home-${input.id}`);
+  await store.register(
+    {
+      id: input.id,
+      label: input.id,
+      kind: "desktop",
+      homes: [home],
+      updateTarget: true,
+    },
+    0,
+  );
+  await store.confirmBootstrap();
+  await store.observe(
+    input.id,
+    [
+      {
+        participantId: input.id,
+        reason: "unknown-participant",
+        label: "Process census could not be read.",
+      },
+    ],
+    0,
+    [],
+    { descendantsKnown: false },
+  );
+  return { store, home, owner: store.owner };
 }
 const journalAt = (phase: "committed" | "trial" | "aborted") => ({
   ...newJournal({
@@ -188,9 +222,15 @@ describe("host coordinator", () => {
       },
       0,
     );
+    await first.confirmBootstrap();
     f.processes.table.set(200, "boot:2-after-reuse");
     const observer = await f.open(100);
-    expect((await observer.status(0)).participants).toEqual([]);
+    expect((await observer.status(0)).blockers).toContainEqual(
+      expect.objectContaining({
+        reason: "unknown-participant",
+        label: expect.stringContaining("Activity has not been verified"),
+      }),
+    );
   });
 
   it("rejects a second live runtime on the same data home but allows its replacement after exit", async () => {
@@ -308,7 +348,7 @@ describe("host coordinator", () => {
     await other.register(input, 60_000);
     expect((await other.status(60_000)).participants[0]).toMatchObject({
       idleSince: null,
-      descendants: [],
+      descendants: [{ pid: 4242, started: "x", label: "codex" }],
       blockers: [{ reason: "unknown-participant" }],
     });
   });
@@ -474,6 +514,348 @@ describe("host coordinator", () => {
     expect((await observer.status(600_000)).blockers[0]?.participantId).toBe("coordinator");
   });
 
+  it("preserves every descendant and the last known set across an incomplete census", async () => {
+    const entries: Record<number, string> = { 100: "boot:1", 200: "boot:2" };
+    for (let index = 0; index < 240; index++) entries[10_000 + index] = `boot:${index}`;
+    entries[20_000] = "boot:new-child";
+    const f = await fixture(entries);
+    const runtime = await f.open(200);
+    await runtime.register(
+      {
+        id: "desktop",
+        label: "Desktop server",
+        kind: "desktop",
+        homes: [await f.home("h")],
+        updateTarget: true,
+      },
+      0,
+    );
+    await runtime.confirmBootstrap();
+    const descendants = Array.from({ length: 240 }, (_, index) => ({
+      pid: 10_000 + index,
+      started: `boot:${index}`,
+      label: `child-${index}`,
+    }));
+    await runtime.observe("desktop", [], 0, descendants);
+    expect((await runtime.status(0)).participants[0]?.descendants).toHaveLength(240);
+    await runtime.observe(
+      "desktop",
+      [
+        {
+          participantId: "desktop",
+          reason: "unknown-participant",
+          label: "Process activity could not be read.",
+        },
+      ],
+      1,
+      [{ pid: 20_000, started: "boot:new-child", label: "new child" }],
+      { descendantsKnown: false },
+    );
+    expect((await runtime.status(1)).participants[0]?.descendants).toHaveLength(241);
+    const observer = await f.open(100);
+    f.processes.table.delete(200);
+    expect((await observer.status(2)).blockers).toContainEqual(
+      expect.objectContaining({
+        participantId: "desktop",
+        reason: "commands",
+        label: expect.stringContaining("241 processes started by Desktop server"),
+      }),
+    );
+  });
+
+  it("keeps an orphaned unknown-identity child until it can be verified gone", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-maintenance-test-"));
+    directories.push(directory);
+    let unreadable = true;
+    let parentAlive = true;
+    const identity = async (pid: number) => {
+      if (pid === 4242 && unreadable) throw new Error("temporarily unreadable");
+      if (pid === 4242) return "boot:child";
+      if (pid === 100) return "boot:1";
+      if (pid === 200) return parentAlive ? "boot:2" : null;
+      return null;
+    };
+    const home = NodePath.join(directory, "home");
+    await NodeFSP.mkdir(home);
+    const runtime = await CoordinatorStore.open(
+      NodePath.join(directory, "coordinator"),
+      identity,
+      200,
+    );
+    await runtime.register(
+      {
+        id: "desktop",
+        label: "Desktop server",
+        kind: "desktop",
+        homes: [home],
+        updateTarget: true,
+      },
+      0,
+    );
+    await runtime.confirmBootstrap();
+    await runtime.observe("desktop", [], 0, [
+      { pid: 4242, started: "unknown-process-identity", label: "child" },
+    ]);
+    const observer = await CoordinatorStore.open(
+      NodePath.join(directory, "coordinator"),
+      identity,
+      100,
+    );
+    parentAlive = false;
+    expect((await observer.status(1)).blockers).toContainEqual(
+      expect.objectContaining({ reason: "commands" }),
+    );
+    unreadable = false;
+    expect((await observer.status(2)).blockers).toContainEqual(
+      expect.objectContaining({
+        reason: "commands",
+        label: expect.stringContaining("A process started by Desktop server"),
+      }),
+    );
+    const state = await observer.status(2);
+    expect(state.participants[0]?.descendants[0]?.started).toBe("boot:child");
+  });
+
+  it("keeps an unknown-activity tombstone after its owner exits without a known child PID", async () => {
+    const f = await fixture({ 100: "boot:1", 200: "boot:2", 300: "boot:3" });
+    const runtime = await f.open(200);
+    const home = await f.home("h");
+    await runtime.register(
+      {
+        id: "desktop",
+        label: "Desktop server",
+        kind: "desktop",
+        homes: [home],
+        updateTarget: true,
+      },
+      0,
+    );
+    await runtime.confirmBootstrap();
+    await runtime.observe(
+      "desktop",
+      [
+        {
+          participantId: "desktop",
+          reason: "unknown-participant",
+          label: "Process activity could not be read.",
+        },
+      ],
+      0,
+      [],
+      { descendantsKnown: false },
+    );
+    const observer = await f.open(100);
+    f.processes.table.delete(200);
+    expect((await observer.status(1)).blockers).toContainEqual(
+      expect.objectContaining({
+        participantId: "desktop",
+        reason: "unknown-participant",
+      }),
+    );
+    await expect(observer.freeze("tx", 600_000)).rejects.toThrow("could not be read");
+    const replacement = await f.open(300);
+    await replacement.register(
+      {
+        id: "desktop",
+        label: "Desktop server",
+        kind: "desktop",
+        homes: [home],
+        updateTarget: true,
+      },
+      2,
+    );
+    await replacement.observe("desktop", [], 3, [], { descendantsKnown: true });
+    expect((await replacement.status(3)).blockers).toContainEqual(
+      expect.objectContaining({
+        participantId: "desktop",
+        reason: "unknown-participant",
+        label: expect.stringContaining("operator verification is required"),
+      }),
+    );
+  });
+
+  it("retains an old owner's live child when a replacement runtime observes a different root", async () => {
+    const f = await fixture({ 100: "boot:1", 200: "boot:2", 300: "boot:3", 4242: "boot:child" });
+    const home = await f.home("h");
+    const runtime = await f.open(200);
+    await runtime.register(
+      { id: "desktop", label: "Desktop", kind: "desktop", homes: [home], updateTarget: true },
+      0,
+    );
+    await runtime.confirmBootstrap();
+    await runtime.observe("desktop", [], 0, [
+      { pid: 4242, started: "boot:child", label: "surviving child" },
+    ]);
+    const replacement = await f.open(300);
+    f.processes.table.delete(200);
+    await replacement.register(
+      { id: "desktop", label: "Desktop", kind: "desktop", homes: [home], updateTarget: true },
+      1,
+    );
+    await replacement.observe("desktop", [], 2, []);
+    expect((await replacement.status(2)).blockers).toContainEqual(
+      expect.objectContaining({
+        reason: "commands",
+        label: expect.stringContaining("started by a previous runtime"),
+      }),
+    );
+  });
+
+  it("clears only the exact orphan after an explicit offline attestation", async () => {
+    const f = await fixture({ 100: "boot:1", 200: "boot:2", 300: "boot:3" });
+    const target = await recordUnknownRuntime(f, { id: "desktop-a", pid: 200 });
+    await recordUnknownRuntime(f, { id: "desktop-b", pid: 300 });
+    f.processes.table.delete(200);
+    f.processes.table.delete(300);
+    const operator = await f.open(100);
+    expect((await operator.status(1)).participants.filter((entry) => entry.orphaned)).toHaveLength(
+      2,
+    );
+
+    await expect(
+      operator.attestOrphanResolved({
+        participantId: "desktop-a",
+        owner: { ...target.owner, started: "stale-owner" },
+        confirmation: ORPHAN_ATTESTATION_CONFIRMATION,
+      }),
+    ).rejects.toThrow("owner changed");
+    await expect(
+      operator.attestOrphanResolved({
+        participantId: "desktop-a",
+        owner: target.owner,
+        confirmation: "yes",
+      }),
+    ).rejects.toThrow("Type exactly");
+    await operator.attestOrphanResolved({
+      participantId: "desktop-a",
+      owner: target.owner,
+      confirmation: ORPHAN_ATTESTATION_CONFIRMATION,
+    });
+    expect((await operator.status(2)).participants.map((entry) => entry.id)).toEqual(["desktop-b"]);
+  });
+
+  it("refuses orphan attestation while any registered runtime owner remains live", async () => {
+    const f = await fixture({ 100: "boot:1", 200: "boot:2", 300: "boot:3" });
+    const target = await recordUnknownRuntime(f, { id: "desktop", pid: 200 });
+    await recordUnknownRuntime(f, { id: "service", pid: 300 });
+    f.processes.table.delete(200);
+    const operator = await f.open(100);
+    await operator.status(1);
+    await expect(
+      operator.attestOrphanResolved({
+        participantId: "desktop",
+        owner: target.owner,
+        confirmation: ORPHAN_ATTESTATION_CONFIRMATION,
+      }),
+    ).rejects.toThrow("service is still running");
+  });
+
+  it("refuses orphan attestation while the recorded child or transaction fence is live", async () => {
+    const f = await fixture({ 100: "boot:1", 200: "boot:2", 4242: "boot:child" });
+    const target = await recordUnknownRuntime(f, { id: "desktop", pid: 200 });
+    await target.store.observe("desktop", [], 1, [
+      { pid: 4242, started: "boot:child", label: "provider" },
+    ]);
+    f.processes.table.delete(200);
+    const operator = await f.open(100);
+    await operator.status(2);
+    await expect(
+      operator.attestOrphanResolved({
+        participantId: "desktop",
+        owner: target.owner,
+        confirmation: ORPHAN_ATTESTATION_CONFIRMATION,
+      }),
+    ).rejects.toThrow("Recorded child PID 4242 is still running");
+    f.processes.table.set(4242, "boot:reused");
+    await operator.attestOrphanResolved({
+      participantId: "desktop",
+      owner: target.owner,
+      confirmation: ORPHAN_ATTESTATION_CONFIRMATION,
+    });
+
+    // A separate clean registry lets the test hold a valid fence, then create an unknown orphan while fenced.
+    const fenced = await fixture({ 100: "boot:1", 200: "boot:2" });
+    const runtime = await fenced.open(100);
+    const home = await fenced.home("fenced-home");
+    await runtime.register(
+      { id: "desktop", label: "Desktop", kind: "desktop", homes: [home], updateTarget: true },
+      0,
+    );
+    await runtime.confirmBootstrap();
+    await runtime.observe("desktop", [], 0);
+    await runtime.observe("desktop", [], 600_000);
+    await runtime.freeze("active-tx", 600_000);
+    const owner = runtime.owner;
+    await runtime.observe(
+      "desktop",
+      [{ participantId: "desktop", reason: "unknown-participant", label: "Unknown census." }],
+      600_001,
+      [],
+      { descendantsKnown: false },
+    );
+    fenced.processes.table.delete(100);
+    const recoveryOperator = await fenced.open(200);
+    await recoveryOperator.status(600_002);
+    await expect(
+      recoveryOperator.attestOrphanResolved({
+        participantId: "desktop",
+        owner,
+        confirmation: ORPHAN_ATTESTATION_CONFIRMATION,
+      }),
+    ).rejects.toThrow("transaction fence is active");
+  });
+
+  it("requires an unknown-identity child PID to be absent before orphan attestation", async () => {
+    const f = await fixture({ 100: "boot:1", 200: "boot:2", 4242: "boot:child" });
+    const target = await recordUnknownRuntime(f, { id: "desktop", pid: 200 });
+    await target.store.observe(
+      "desktop",
+      [
+        {
+          participantId: "desktop",
+          reason: "unknown-participant",
+          label: "Process identity unreadable.",
+        },
+      ],
+      1,
+      [{ pid: 4242, started: UNKNOWN_PROCESS_IDENTITY, label: "unknown child" }],
+      { descendantsKnown: false },
+    );
+    f.processes.table.delete(200);
+    const operator = await f.open(100);
+    await operator.status(2);
+    await expect(
+      operator.attestOrphanResolved({
+        participantId: "desktop",
+        owner: target.owner,
+        confirmation: ORPHAN_ATTESTATION_CONFIRMATION,
+      }),
+    ).rejects.toThrow("Recorded child PID 4242 is still running");
+    f.processes.table.delete(4242);
+    await operator.attestOrphanResolved({
+      participantId: "desktop",
+      owner: target.owner,
+      confirmation: ORPHAN_ATTESTATION_CONFIRMATION,
+    });
+    expect((await operator.status(3)).participants).toEqual([]);
+  });
+
+  it("refuses orphan attestation while a durable transaction still needs recovery", async () => {
+    const f = await fixture({ 100: "boot:1", 200: "boot:2" });
+    const target = await recordUnknownRuntime(f, { id: "desktop", pid: 200 });
+    await target.store.writeJournal(journalAt("trial"));
+    f.processes.table.delete(200);
+    const operator = await f.open(100);
+    await operator.status(1);
+    await expect(
+      operator.attestOrphanResolved({
+        participantId: "desktop",
+        owner: target.owner,
+        confirmation: ORPHAN_ATTESTATION_CONFIRMATION,
+      }),
+    ).rejects.toThrow("still needs recovery");
+  });
+
   it("reports a single surviving descendant and keeps blocking after the registry is rewritten", async () => {
     const f = await fixture({ 100: "boot:1", 200: "boot:2", 4242: "boot:term" });
     const runtime = await f.open(200);
@@ -593,6 +975,7 @@ describe("host coordinator", () => {
       },
       0,
     );
+    await store.confirmBootstrap();
     await store.observe("wsl", [], 0);
     expect(
       (await store.status(0)).participants.map((participant) => participant.id).sort(),
@@ -600,7 +983,9 @@ describe("host coordinator", () => {
     const other = await f.open(200);
     await expect(other.observe("wsl", [], 0)).rejects.toThrow("Unregistered participant");
     f.processes.table.delete(100);
-    expect((await other.status(0)).participants).toEqual([]);
+    expect((await other.status(0)).blockers).toContainEqual(
+      expect.objectContaining({ reason: "unknown-participant" }),
+    );
   });
 });
 

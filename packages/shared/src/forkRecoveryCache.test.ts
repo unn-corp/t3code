@@ -6,6 +6,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import type { ForkReleaseManifest } from "@t3tools/contracts";
+import type { ForkPlatformKey } from "./forkMaintenance.ts";
 import {
   installRecoveryHelper,
   readRecoveryCommand,
@@ -20,7 +21,7 @@ afterEach(async () => {
   );
 });
 const digest = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
-const sha = (seed: string) => seed.repeat(64).slice(0, 64);
+const HOST_PLATFORM: ForkPlatformKey = process.platform === "win32" ? "windows-x64" : "linux-x64";
 
 /** A real Node runtime (this one) stands in for the runner-copied binary, so the self-test truly runs. */
 let nodeBytes: Uint8Array | undefined;
@@ -43,25 +44,24 @@ function manifest(version: string, helper: Uint8Array, node: Uint8Array): ForkRe
     ...base,
     assets: [
       {
-        name: "t3-recovery-helper-linux-x64.mjs",
+        name:
+          HOST_PLATFORM === "windows-x64"
+            ? "t3-recovery-helper-windows-x64.mjs"
+            : "t3-recovery-helper-linux-x64.mjs",
         sha256: digest(helper),
         bytes: helper.length,
         kind: "recovery-helper",
-        platform: "linux-x64",
+        platform: HOST_PLATFORM,
       },
       {
-        name: "t3-recovery-node-linux-x64",
+        name:
+          HOST_PLATFORM === "windows-x64"
+            ? "t3-recovery-node-windows-x64.exe"
+            : "t3-recovery-node-linux-x64",
         sha256: digest(node),
         bytes: node.length,
         kind: "recovery-helper",
-        platform: "linux-x64",
-      },
-      {
-        name: "t3-recovery-helper-windows-x64.mjs",
-        sha256: sha("9"),
-        bytes: 1,
-        kind: "recovery-helper",
-        platform: "windows-x64",
+        platform: HOST_PLATFORM,
       },
     ],
   } as unknown as ForkReleaseManifest;
@@ -74,7 +74,7 @@ const cacheDir = async () => {
 const serve = (helper: Uint8Array, node: Uint8Array) => async (name: string) =>
   name.endsWith(".mjs") ? helper : node;
 
-describe.skipIf(process.platform !== "linux")("recovery helper cache", () => {
+describe("recovery helper cache", () => {
   it("stores the verified helper and its own Node runtime owner-only, outside the app, and proves them with an empty PATH", async () => {
     const dir = await cacheDir();
     const node = await realNode();
@@ -82,15 +82,17 @@ describe.skipIf(process.platform !== "linux")("recovery helper cache", () => {
     const command = await installRecoveryHelper({
       cacheDir: dir,
       manifest: manifest("1.0.1", helper, node),
-      platform: "linux-x64",
+      platform: HOST_PLATFORM,
       fetchAsset: serve(helper, node),
     });
     expect(NodePath.isAbsolute(command.nodePath) && NodePath.isAbsolute(command.helperPath)).toBe(
       true,
     );
-    expect((await NodeFSP.stat(command.nodePath)).mode & 0o777).toBe(0o700);
-    expect((await NodeFSP.stat(command.helperPath)).mode & 0o777).toBe(0o600);
-    expect((await NodeFSP.stat(dir)).mode & 0o077).toBe(0);
+    if (process.platform !== "win32") {
+      expect((await NodeFSP.stat(command.nodePath)).mode & 0o777).toBe(0o700);
+      expect((await NodeFSP.stat(command.helperPath)).mode & 0o777).toBe(0o600);
+      expect((await NodeFSP.stat(dir)).mode & 0o077).toBe(0);
+    }
     expect(await recoveryReady(dir)).toBe(true);
     expect(recoveryInvocation(command, ["recover", "--home", "/h"])).toEqual({
       command: command.nodePath,
@@ -104,7 +106,7 @@ describe.skipIf(process.platform !== "linux")("recovery helper cache", () => {
     const good = await installRecoveryHelper({
       cacheDir: dir,
       manifest: manifest("1.0.1", helperScript(), node),
-      platform: "linux-x64",
+      platform: HOST_PLATFORM,
       fetchAsset: serve(helperScript(), node),
     });
     const tampered = new TextEncoder().encode("console.log('evil')");
@@ -112,7 +114,7 @@ describe.skipIf(process.platform !== "linux")("recovery helper cache", () => {
       installRecoveryHelper({
         cacheDir: dir,
         manifest: manifest("1.0.2", helperScript(), node),
-        platform: "linux-x64",
+        platform: HOST_PLATFORM,
         fetchAsset: serve(tampered, node),
       }),
     ).rejects.toThrow("does not match the digest");
@@ -128,7 +130,7 @@ describe.skipIf(process.platform !== "linux")("recovery helper cache", () => {
       installRecoveryHelper({
         cacheDir: dir,
         manifest: manifest("1.0.1", wrong, node),
-        platform: "linux-x64",
+        platform: HOST_PLATFORM,
         fetchAsset: serve(wrong, node),
       }),
     ).rejects.toThrow("did not report the helper protocol");
@@ -142,13 +144,14 @@ describe.skipIf(process.platform !== "linux")("recovery helper cache", () => {
     const command = await installRecoveryHelper({
       cacheDir: dir,
       manifest: manifest("1.0.1", helper, node),
-      platform: "linux-x64",
+      platform: HOST_PLATFORM,
       fetchAsset: serve(helper, node),
     });
-    await NodeFSP.chmod(command.nodePath, 0o600);
-    await expect(readRecoveryCommand(dir)).rejects.toThrow("not executable");
-    await NodeFSP.chmod(command.nodePath, 0o700);
-    await NodeFSP.chmod(command.helperPath, 0o600);
+    if (process.platform !== "win32") {
+      await NodeFSP.chmod(command.nodePath, 0o600);
+      await expect(readRecoveryCommand(dir)).rejects.toThrow("not executable");
+      await NodeFSP.chmod(command.nodePath, 0o700);
+    }
     await NodeFSP.appendFile(command.helperPath, "\n// changed");
     await expect(readRecoveryCommand(dir)).rejects.toThrow("recorded digests");
     expect(await recoveryReady(dir)).toBe(false);
@@ -166,14 +169,14 @@ describe.skipIf(process.platform !== "linux")("recovery helper cache", () => {
     await installRecoveryHelper({
       cacheDir: dir,
       manifest: manifest("1.0.1", a, node),
-      platform: "linux-x64",
+      platform: HOST_PLATFORM,
       fetchAsset: counting(a),
     });
     const first = downloads;
     await installRecoveryHelper({
       cacheDir: dir,
       manifest: manifest("1.0.1", a, node),
-      platform: "linux-x64",
+      platform: HOST_PLATFORM,
       fetchAsset: counting(a),
     });
     expect(downloads).toBe(first);
@@ -184,7 +187,7 @@ describe.skipIf(process.platform !== "linux")("recovery helper cache", () => {
       await installRecoveryHelper({
         cacheDir: dir,
         manifest: manifest(version, helper, node),
-        platform: "linux-x64",
+        platform: HOST_PLATFORM,
         fetchAsset: counting(helper),
       });
       await new Promise((resolve) => setTimeout(resolve, 15));
@@ -207,7 +210,7 @@ describe.skipIf(process.platform !== "linux")("recovery helper cache", () => {
       installRecoveryHelper({
         cacheDir: dir,
         manifest: incomplete,
-        platform: "linux-x64",
+        platform: HOST_PLATFORM,
         fetchAsset: serve(helper, node),
       }),
     ).rejects.toThrow("no unambiguous recovery helper");

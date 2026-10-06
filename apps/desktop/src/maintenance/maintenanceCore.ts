@@ -35,6 +35,7 @@ import {
   CoordinatorStore,
   coordinatorDirectory,
   processCreationIdentity,
+  UNKNOWN_PROCESS_IDENTITY,
   type ProcessIdentity,
   type TrialCapability,
 } from "@t3tools/shared/forkMaintenanceStore";
@@ -53,6 +54,7 @@ import {
   createRunnerFenceControl,
   createRunnerHomeControl,
   observeWslMembers,
+  wslActivityIsCurrent,
   parseWslHomeId,
   wslHomeId,
   type CohortHome,
@@ -510,9 +512,19 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
     }
     const blockers: ForkActivityBlocker[] = [];
     let descendants: Awaited<ReturnType<DesktopMaintenanceInput["descendants"]>> = [];
+    let descendantsKnown = true;
     try {
       descendants = await input.descendants();
+      if (descendants.some((entry) => entry.started === UNKNOWN_PROCESS_IDENTITY)) {
+        descendantsKnown = false;
+        blockers.push({
+          participantId,
+          reason: "unknown-participant",
+          label: "The desktop's child process identity could not be verified.",
+        });
+      }
     } catch {
+      descendantsKnown = false;
       blockers.push({
         participantId,
         reason: "unknown-participant",
@@ -534,7 +546,7 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
         label: "The device's registered desktops could not be read.",
       });
     }
-    await store.observe(participantId, blockers, now(), descendants);
+    await store.observe(participantId, blockers, now(), descendants, { descendantsKnown });
   };
 
   /** The distribution's own registry is the source of activity; an unreachable one, or one with nothing registered, is never idle. */
@@ -565,15 +577,23 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
                 label: `${member.distro} has no registered T3 runtime.`,
               },
             ]
-          : !status.bootstrapped
+          : !wslActivityIsCurrent(status.participants)
             ? [
                 {
                   participantId: member.id,
-                  reason: "bootstrap",
-                  label: `${member.distro} has not confirmed its installations.`,
+                  reason: "unknown-participant",
+                  label: `${member.distro} needs a runtime with the current process activity census.`,
                 },
               ]
-            : status.blockers.map((blocker) => ({ ...blocker, participantId: member.id }));
+            : !status.bootstrapped
+              ? [
+                  {
+                    participantId: member.id,
+                    reason: "bootstrap",
+                    label: `${member.distro} has not confirmed its installations.`,
+                  },
+                ]
+              : status.blockers.map((blocker) => ({ ...blocker, participantId: member.id }));
     }
     await store.observe(member.id, blockers, now(), []);
   };

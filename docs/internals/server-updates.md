@@ -29,10 +29,24 @@ background service, development servers). Constraints that are easy to get wrong
   on a timeout (`t3 maintenance repair-lock` removes one whose owner is proven exited).
 - **Processes a runtime started outlive it as blockers.** Terminals, provider CLIs and background
   commands are reported with the runtime's observations; if the runtime exits first, its registration
-  is kept as an orphan tombstone until each is verified gone.
+  is kept as an orphan tombstone until each is verified gone. The complete owned-process census is
+  retained without a count cap. A stale, failed, partial or unreadable census is unknown activity and
+  cannot erase the last known descendants. If an observed child PID cannot be tied to a creation
+  identity, an unknown-identity tombstone remains until a later OS check proves the PID gone or
+  resolves it to a concrete creation identity. If the old runtime exited while its census was unknown
+  and no child PID was recorded, a replacement's census of its own process tree cannot prove the old
+  tree empty; the device remains blocked until the offline `t3 maintenance attest-orphan` procedure
+  verifies the exact exited owner and every recorded child, and an operator confirms unrecorded work
+  was checked. That command refuses a live runtime or transaction fence and removes only the named
+  orphan; it never terminates work.
 - **Unknown is never idle.** Every activity source is required in the composition (projection runtime
   set, delegated and subagent deliveries, organization work, Architect requests, terminals, repository
   clones, descendants), and one that cannot be read blocks as `unknown-participant`.
+  Host capabilities and registry attestations also carry an activity-census protocol marker. New clients
+  require the current marker before sending installation, policy, or recovery requests; older host
+  capabilities remain readable but receive manual-bootstrap guidance. A participant written by an older
+  runtime without the marker blocks admission until that runtime exits or rejoins with current census
+  semantics; a legacy writer may erase markers while it is running, which safely blocks the device.
 - **Idle means five stopped minutes** for every participant, then the fence is taken and every
   participant must re-observe it (`frozenFor`) before the transaction starts. Held queues are not
   activity and are never cleared.

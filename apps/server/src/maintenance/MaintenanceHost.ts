@@ -1,6 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off processEnv:off — the host registry is a process-wide filesystem resource.
 import * as NodeCrypto from "node:crypto";
-import { FORK_MAINTENANCE_PROTOCOL, type ForkMaintenanceCapability } from "@t3tools/contracts";
+import {
+  FORK_ACTIVITY_PROTOCOL,
+  FORK_MAINTENANCE_PROTOCOL,
+  type ForkMaintenanceCapability,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { IN_FLIGHT_PHASES } from "@t3tools/shared/forkMaintenanceJournal";
@@ -90,6 +94,7 @@ export const describeCapability = (
         coordinatorId: host.coordinatorId,
         participantId: host.participantId,
         admission: true,
+        activityProtocol: FORK_ACTIVITY_PROTOCOL,
         recovery,
       }
     : undefined;

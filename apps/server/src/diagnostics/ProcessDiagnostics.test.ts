@@ -17,6 +17,7 @@ import * as ProcessDiagnostics from "./ProcessDiagnostics.ts";
 
 function makeNativeSnapshot(
   processes: ResourceMonitorSnapshotEvent["processes"],
+  inaccessibleProcessCount = 0,
 ): ResourceMonitorSnapshotEvent {
   return {
     version: 3,
@@ -26,7 +27,7 @@ function makeNativeSnapshot(
     collectionDurationMicros: 250,
     scannedProcessCount: processes.length,
     retainedProcessCount: processes.length,
-    inaccessibleProcessCount: 0,
+    inaccessibleProcessCount,
     processes,
   };
 }
@@ -34,11 +35,12 @@ function makeNativeSnapshot(
 function makeTelemetryLayer(
   snapshot: ResourceMonitorSnapshotEvent,
   desktopSnapshot?: DesktopHostTelemetrySnapshot,
+  nativeStatus: "healthy" | "degraded" | "unavailable" = "healthy",
 ) {
   const nativeLayer = NativeTelemetryClient.layerTest({
     sampleNow: Effect.succeed({ generation: 0, snapshot }),
     health: Effect.succeed({
-      status: "healthy",
+      status: nativeStatus,
       hello: Option.none(),
       lastSampleAt: Option.some(DateTime.makeUnsafe(snapshot.sampledAtUnixMs)),
       lastError: Option.none(),
@@ -110,7 +112,59 @@ describe("ProcessDiagnostics", () => {
       expect(diagnostics.processes[0]?.startTimeMs).toBe(2_000);
       expect(diagnostics.processes[0]?.cpuPercent).toBe(1.5);
       expect(diagnostics.processes[0]?.rssBytes).toBe(2_048);
+      expect(Option.isNone(diagnostics.error)).toBe(true);
     }),
+  );
+
+  it.effect(
+    "marks failed refreshes, partial native censuses and unhealthy samplers as unknown",
+    () =>
+      Effect.gen(function* () {
+        const sample = makeNativeSnapshot([], 1);
+        const baseLayer = makeTelemetryLayer(sample);
+        const cached = yield* Effect.service(ResourceTelemetry.ResourceTelemetry).pipe(
+          Effect.flatMap((telemetry) => telemetry.latest),
+          Effect.provide(baseLayer),
+        );
+        const fallbackTelemetry = Layer.succeed(
+          ResourceTelemetry.ResourceTelemetry,
+          ResourceTelemetry.ResourceTelemetry.of({
+            latest: Effect.succeed(cached),
+            changes: Stream.empty,
+            subscribe: Effect.die("unused"),
+            readHistory: () => Effect.die("unused"),
+            refresh: Effect.fail(
+              new ResourceTelemetry.ResourceTelemetryRefreshFailed({
+                operation: "refresh",
+                cause: new Error("collector unavailable"),
+              }),
+            ),
+            validateProcessIdentity: () => Effect.die("unused"),
+            retry: Effect.die("unused"),
+          }),
+        );
+        const fallback = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
+          Effect.flatMap((diagnostics) => diagnostics.read),
+          Effect.provide(ProcessDiagnostics.layer.pipe(Layer.provide(fallbackTelemetry))),
+        );
+        expect(Option.getOrThrow(fallback.error).message).toContain("collector unavailable");
+
+        const partial = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
+          Effect.flatMap((diagnostics) => diagnostics.read),
+          Effect.provide(ProcessDiagnostics.layer.pipe(Layer.provide(makeTelemetryLayer(sample)))),
+        );
+        expect(Option.getOrThrow(partial.error).message).toContain("could not be read");
+
+        const unavailable = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
+          Effect.flatMap((diagnostics) => diagnostics.read),
+          Effect.provide(
+            ProcessDiagnostics.layer.pipe(
+              Layer.provide(makeTelemetryLayer(makeNativeSnapshot([]), undefined, "unavailable")),
+            ),
+          ),
+        );
+        expect(Option.getOrThrow(unavailable.error).message).toContain("unavailable");
+      }),
   );
 
   it.effect("rejects stale process identities before signaling", () =>

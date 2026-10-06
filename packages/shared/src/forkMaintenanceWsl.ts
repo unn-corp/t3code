@@ -10,7 +10,7 @@
  * \\wsl$ paths from Windows.
  */
 import * as Schema from "effect/Schema";
-import { AGENT_IDLE_WINDOW_MS } from "./forkMaintenanceAdmission.ts";
+import { AGENT_IDLE_WINDOW_MS, CURRENT_ACTIVITY_PROTOCOL } from "./forkMaintenanceAdmission.ts";
 import {
   runFenceOperation,
   type FenceOperation,
@@ -43,6 +43,18 @@ export const WslMembership = Schema.Struct({
 });
 export type WslMembership = typeof WslMembership.Type;
 export const decodeWslMembership = Schema.decodeUnknownSync(WslMembership);
+
+/** A parent cannot upgrade the safety attestation of an older distribution by relaying it. */
+export const wslActivityIsCurrent = (participants: unknown): boolean =>
+  Array.isArray(participants) &&
+  participants.length > 0 &&
+  participants.every(
+    (participant: unknown) =>
+      typeof participant === "object" &&
+      participant !== null &&
+      "activityProtocol" in participant &&
+      participant.activityProtocol === CURRENT_ACTIVITY_PROTOCOL,
+  );
 
 /** The home identifier a member contributes to a journal. Distinct from any Windows path. */
 export const wslHomeId = (member: Pick<WslMember, "distro" | "home">) =>
@@ -488,15 +500,23 @@ export async function observeWslMembers(input: {
               label: `${member.distro} has no registered T3 runtime.`,
             },
           ]
-        : !status.bootstrapped
+        : !wslActivityIsCurrent(status.participants)
           ? [
               {
                 participantId: member.id,
-                reason: "bootstrap" as const,
-                label: `${member.distro} has not confirmed its installations.`,
+                reason: "unknown-participant" as const,
+                label: `${member.distro} needs a runtime with the current process activity census.`,
               },
             ]
-          : status.blockers.map((blocker) => ({ ...blocker, participantId: member.id }));
+          : !status.bootstrapped
+            ? [
+                {
+                  participantId: member.id,
+                  reason: "bootstrap" as const,
+                  label: `${member.distro} has not confirmed its installations.`,
+                },
+              ]
+            : status.blockers.map((blocker) => ({ ...blocker, participantId: member.id }));
     // An empty aggregate from the distribution already includes its own five-minute idle window.
     await input.store.observe(
       member.id,

@@ -89,6 +89,16 @@ describe("updateOutdatedHost", () => {
             desktopAppUpdate: true,
           },
           { repositoryIdentity: true },
+          {
+            repositoryIdentity: true,
+            forkMaintenance: {
+              protocol: 1 as const,
+              coordinatorId: "old-census",
+              participantId: "p",
+              admission: true,
+              recovery: true,
+            },
+          },
         ]) {
           const { error } = yield* refuse(capabilities);
           expect(error).toMatchObject({
@@ -113,6 +123,7 @@ describe("updateOutdatedHost", () => {
             coordinatorId: "c",
             participantId: "p",
             admission: true,
+            activityProtocol: 2,
             recovery: true,
           },
         });

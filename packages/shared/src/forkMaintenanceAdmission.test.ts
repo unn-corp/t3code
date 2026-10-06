@@ -20,9 +20,23 @@ const participant = (overrides: Partial<MaintenanceParticipant> = {}): Maintenan
   descendants: [],
   orphaned: false,
   blockers: [],
+  activityProtocol: 2,
   ...overrides,
 });
 describe("device admission", () => {
+  it("does not trust a legacy participant's idle attestation", () => {
+    const legacy = { ...participant() };
+    delete (legacy as { activityProtocol?: number }).activityProtocol;
+    const future = participant({ activityProtocol: 3 });
+    for (const entry of [legacy, future])
+      expect(participantBlockers([entry], 600_000)).toEqual([
+        expect.objectContaining({
+          participantId: "p1",
+          reason: "unknown-participant",
+          label: expect.stringContaining("current process activity census"),
+        }),
+      ]);
+  });
   it("requires explicit participants and fresh observations even after a long idle window", () => {
     expect(participantBlockers([], 600_000)[0]?.reason).toBe("bootstrap");
     expect(participantBlockers([participant({ observedAt: 500_000 })], 600_000)[0]?.reason).toBe(

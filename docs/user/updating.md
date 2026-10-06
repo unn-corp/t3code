@@ -14,7 +14,7 @@ Choose Stable or Nightly, enable automatic installation, check/download, inspect
 waiting reasons, install a verified build, or pin the current build. Existing
 fork devices are bootstrapped onto Nightly; fresh stable installers use Stable. For a
 bootstrap blocker, choose **Review installations**, verify every known fork desktop,
-service, standalone, and development installation for this OS user uses the baseline
+service, standalone, and development installation for this OS user runs a compatible fork build
 and is registered, then confirm the review. Unknown activity and missing capabilities
 continue to block installation.
 **Settings → General → About** shows the client identity and links to App updates.
@@ -50,6 +50,10 @@ connected WSL runtimes. Work includes child/delegated agents, compaction,
 approval waits, provider background tasks, tools, commands, and cancellation
 still awaiting termination. A quiet conversation or completed parent is not
 proof that work stopped. Unknown participants block installation.
+An older registered runtime can also block because it lacks the current process
+activity checks. Let its work finish before upgrading it manually. Standalone and
+development servers require that manual step; confirming the installation review
+does not upgrade their safety checks.
 An additional desktop instance using a different data home blocks desktop replacement;
 close that instance after its work stops. Managed services remain activity participants,
 but desktop replacement does not restore their databases.

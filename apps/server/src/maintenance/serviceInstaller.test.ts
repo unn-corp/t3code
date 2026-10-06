@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import * as NodeSqlite from "node:sqlite";
 import type { ForkReleaseManifest } from "@t3tools/contracts";
+import type { ForkPlatformKey } from "@t3tools/shared/forkMaintenance";
 import {
   createForkMaintenanceController,
   deriveBuildIdentity,
@@ -28,6 +29,7 @@ afterEach(async () => {
 const digest = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 const sha = (seed: string) => seed.repeat(64).slice(0, 64);
 const commit = (seed: string) => seed.repeat(40).slice(0, 40);
+const HOST_PLATFORM: ForkPlatformKey = process.platform === "win32" ? "windows-x64" : "linux-x64";
 
 let nodeBytes: Uint8Array | undefined;
 const realNode = async () => (nodeBytes ??= await NodeFSP.readFile(process.execPath));
@@ -38,25 +40,31 @@ async function releaseWithRecovery(version: string): Promise<ForkReleaseRecord> 
   const node = await realNode();
   const assets = [
     {
-      name: `t3-${version}-linux-x64.tar.gz`,
+      name: `t3-${version}-${HOST_PLATFORM}.tar.gz`,
       sha256: sha("2"),
       bytes: archiveBytes,
       kind: "server" as const,
-      platform: "linux-x64" as const,
+      platform: HOST_PLATFORM,
     },
     {
-      name: "t3-recovery-helper-linux-x64.mjs",
+      name:
+        HOST_PLATFORM === "windows-x64"
+          ? "t3-recovery-helper-windows-x64.mjs"
+          : "t3-recovery-helper-linux-x64.mjs",
       sha256: digest(helperBytes),
       bytes: helperBytes.length,
       kind: "recovery-helper" as const,
-      platform: "linux-x64" as const,
+      platform: HOST_PLATFORM,
     },
     {
-      name: "t3-recovery-node-linux-x64",
+      name:
+        HOST_PLATFORM === "windows-x64"
+          ? "t3-recovery-node-windows-x64.exe"
+          : "t3-recovery-node-linux-x64",
       sha256: digest(node),
       bytes: node.length,
       kind: "recovery-helper" as const,
-      platform: "linux-x64" as const,
+      platform: HOST_PLATFORM,
     },
     {
       name: `t3-${version}.apk`,
@@ -151,7 +159,7 @@ async function device() {
   const input: ServiceInstallerInput = {
     home: canonical,
     store,
-    platform: "linux-x64",
+    platform: HOST_PLATFORM,
     currentBuild: deriveBuildIdentity({
       version: "1.0.0",
       commit: commit("1"),
@@ -175,7 +183,7 @@ async function device() {
   return { root, canonical, store, clock, events, runtimes, input };
 }
 
-describe.skipIf(process.platform !== "linux")("launcher-managed service installer", () => {
+describe("launcher-managed service installer", () => {
   it("is unavailable, with the reason, on an unsupported platform, an old launcher, or without a retained runtime", async () => {
     const d = await device();
     expect(
@@ -206,10 +214,11 @@ describe.skipIf(process.platform !== "linux")("launcher-managed service installe
     expect(await installer.recoveryReady({ record: release, manifest: release.manifest! })).toBe(
       true,
     );
-    expect(
-      (await NodeFSP.stat(NodePath.join(d.root, "coordinator", "recovery", "current.json"))).mode &
-        0o077,
-    ).toBe(0);
+    if (process.platform !== "win32")
+      expect(
+        (await NodeFSP.stat(NodePath.join(d.root, "coordinator", "recovery", "current.json")))
+          .mode & 0o077,
+      ).toBe(0);
   });
 
   it("refuses a release with no unambiguous server archive", async () => {

@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 /** Additive fork protocol. Absence means manual bootstrap, never legacy installation. */
 export const FORK_MAINTENANCE_PROTOCOL = 1;
+export const FORK_ACTIVITY_PROTOCOL = 2;
 export const ForkUpdateChannel = Schema.Literals(["stable", "nightly"]);
 export type ForkUpdateChannel = typeof ForkUpdateChannel.Type;
 export const ForkUpdatePhase = Schema.Literals([
@@ -48,9 +49,15 @@ export const ForkMaintenanceCapability = Schema.Struct({
   coordinatorId: Schema.String,
   participantId: Schema.String,
   admission: Schema.Boolean,
+  activityProtocol: Schema.optionalKey(Schema.Int),
   recovery: Schema.Boolean,
 });
 export type ForkMaintenanceCapability = typeof ForkMaintenanceCapability.Type;
+/** Older hosts can be inspected, but cannot safely receive installation or recovery requests. */
+export const supportsForkMaintenanceAdmission = (
+  capability: ForkMaintenanceCapability | undefined,
+): boolean =>
+  capability?.admission === true && capability.activityProtocol === FORK_ACTIVITY_PROTOCOL;
 export const ForkUpdatePolicy = Schema.Struct({
   channel: ForkUpdateChannel,
   automaticInstallation: Schema.Boolean,

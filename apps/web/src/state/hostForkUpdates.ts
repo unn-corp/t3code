@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { WS_METHODS } from "@t3tools/contracts";
+import { supportsForkMaintenanceAdmission, WS_METHODS } from "@t3tools/contracts";
 import {
   createEnvironmentRpcCommand,
   runAtomCommand,
@@ -9,6 +9,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { ForkUpdateController } from "./forkUpdates";
 import { createHostUpdateBatcher } from "./hostUpdateBatcher";
+import { environmentServerConfigsAtom } from "./server";
 
 const commands = {
   status: createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -42,9 +43,16 @@ export function hostForkUpdateController(environmentId: EnvironmentId): ForkUpda
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     return result.value;
   };
+  const requireAdmission = () => {
+    const capability = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
+      ?.environment.capabilities.forkMaintenance;
+    if (!supportsForkMaintenanceAdmission(capability))
+      throw new Error("This host needs manual bootstrap to the current device-maintenance build.");
+  };
   const controller = new ForkUpdateController({
     status,
     policy: async (input) => {
+      requireAdmission();
       const result = await runAtomCommand(
         appAtomRegistry,
         commands.policy,
@@ -55,6 +63,7 @@ export function hostForkUpdateController(environmentId: EnvironmentId): ForkUpda
       return result.value;
     },
     action: async (input) => {
+      requireAdmission();
       const result = await runAtomCommand(
         appAtomRegistry,
         commands.action,
@@ -65,6 +74,7 @@ export function hostForkUpdateController(environmentId: EnvironmentId): ForkUpda
       return result.value;
     },
     recover: async (input) => {
+      requireAdmission();
       const result = await runAtomCommand(
         appAtomRegistry,
         commands.recovery,

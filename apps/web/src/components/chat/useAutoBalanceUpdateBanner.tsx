@@ -1,3 +1,4 @@
+import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { Atom } from "effect/unstable/reactivity";
@@ -74,7 +75,9 @@ export function useAutoBalanceUpdateBanner(
         targetVersion: state.status === "idle" ? mismatch!.clientVersion : state.targetVersion,
         connected: environment.connection.phase === "connected",
         remoteUpdate:
-          environment.serverConfig?.environment.capabilities.forkMaintenance?.admission === true &&
+          supportsForkMaintenanceAdmission(
+            environment.serverConfig?.environment.capabilities.forkMaintenance,
+          ) &&
           selfUpdate !== null &&
           (selfUpdate !== "desktop-managed" || desktopAppUpdate),
         state,
@@ -116,7 +119,9 @@ export function useAutoBalanceUpdateBanner(
                 <ComposerHostMaintenanceStatus
                   environmentId={machine.environmentId}
                   label={machine.serverLabel}
-                  supported={machine.forkMaintenance?.admission === true && machine.connected}
+                  supported={
+                    supportsForkMaintenanceAdmission(machine.forkMaintenance) && machine.connected
+                  }
                 />
                 {machine.state.status !== "idle" ? (
                   <ServerUpdateProgress state={machine.state} />
