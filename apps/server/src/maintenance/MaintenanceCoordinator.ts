@@ -190,15 +190,13 @@ export const collectActivity = (participantId: string) =>
       "Process",
       diagnostics.read,
       (snapshot) =>
-        void snapshot.processes
-          .slice(0, 200)
-          .forEach((entry) =>
-            descendants.push({
-              pid: entry.pid,
-              started: String(entry.startTimeMs),
-              label: entry.command,
-            }),
-          ),
+        void snapshot.processes.slice(0, 200).forEach((entry) =>
+          descendants.push({
+            pid: entry.pid,
+            started: String(entry.startTimeMs),
+            label: entry.command,
+          }),
+        ),
     );
     return { blockers, descendants };
   });
@@ -304,6 +302,17 @@ export const workAdmissionFor = (host: MaintenanceHost) => ({
       ? Effect.succeed(() => Effect.void)
       : Effect.tryPromise({
           try: () => host.store.beginWork(host.participantId),
+          catch: (cause) => new MaintenanceWorkHeld({ cause }),
+        }).pipe(
+          Effect.map(
+            (release) => () => Effect.promise(release).pipe(Effect.catchCause(() => Effect.void)),
+          ),
+        ),
+  acquirePassive:
+    host.mode !== "active"
+      ? Effect.succeed(() => Effect.void)
+      : Effect.tryPromise({
+          try: () => host.store.beginPassiveWork(host.participantId),
           catch: (cause) => new MaintenanceWorkHeld({ cause }),
         }).pipe(
           Effect.map(

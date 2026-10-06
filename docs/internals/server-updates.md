@@ -45,9 +45,12 @@ background service, development servers). Constraints that are easy to get wrong
   without breaking use.
 - **Writes are held, not just orchestrator commands.** RPC authorization takes a work lease for every
   method whose scope is not a read scope (derived from the scope table, so a new write is covered by
-  default); a global HTTP middleware does the same for every non-GET request (uploads, pairing); the
-  orchestrator dispatch and provider turn start hold leases too. Streams hold admission only until
-  they are established. Maintenance methods are exempt so a fenced device can be observed and recovered.
+  default); the terminal event and metadata subscriptions check admission when opened but do not hold
+  a lease for their long-lived stream. A global HTTP middleware leases every non-GET request, except
+  the exact browser trace-ingestion POST: it holds a passive lease while the bounded upload runs, so
+  fencing cannot overlap it, without treating diagnostic export as agent activity or restarting the
+  idle window. Other uploads and pairing remain active writes. Orchestrator dispatch and provider turn
+  start hold leases too. Maintenance methods are exempt so a fenced device can be observed and recovered.
 
 The capability (`forkMaintenance` on the environment descriptor) is advertised only by a runtime that
 joined the coordinator. Absence means in-product installation is unavailable, never a legacy install.

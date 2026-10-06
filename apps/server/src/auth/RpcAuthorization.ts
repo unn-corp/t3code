@@ -17,7 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { ForkMaintenanceError, type ForkMaintenanceActionInput } from "@t3tools/contracts";
-import { withWork } from "../maintenance/WorkAdmission.ts";
+import { assertAdmitting, withWork } from "../maintenance/WorkAdmission.ts";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
@@ -341,9 +341,17 @@ const MAINTENANCE_EXEMPT_METHODS: ReadonlySet<string> = new Set([
   WS_METHODS.serverCommitDesktopUpdate,
 ]);
 
+/** Operate-scoped observers whose RPC lifetime is the lifetime of the subscription. */
+const NON_LEASED_OPERATE_SUBSCRIPTIONS: ReadonlySet<string> = new Set([
+  WS_METHODS.subscribeTerminalEvents,
+  WS_METHODS.subscribeTerminalMetadata,
+]);
+
 /** Whether a method writes outside the orchestrator and so needs device admission. Derived from the scope table, so new methods are covered by default. */
 export const rpcMethodNeedsWorkAdmission = (method: string): boolean =>
-  !READ_SCOPES.has(requiredScopeForRpcMethod(method)) && !MAINTENANCE_EXEMPT_METHODS.has(method);
+  !READ_SCOPES.has(requiredScopeForRpcMethod(method)) &&
+  !MAINTENANCE_EXEMPT_METHODS.has(method) &&
+  !NON_LEASED_OPERATE_SUBSCRIPTIONS.has(method);
 
 /**
  * Authorizes every RPC on one connection against that connection's session scopes, then holds a
@@ -354,6 +362,17 @@ export const rpcScopeAuthorizationLayer = (scopes: ReadonlyArray<AuthEnvironment
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc }) => {
     const requiredScope = requiredScopeForRpcMethod(rpc._tag);
     if (!scopes.includes(requiredScope)) return Effect.fail(rpcAuthorizationError(requiredScope));
+    if (NON_LEASED_OPERATE_SUBSCRIPTIONS.has(rpc._tag)) {
+      // These handlers only publish already-produced terminal events/metadata. Their streams
+      // can live for the entire desktop session, so check admission when opening but do not
+      // hold a mutation lease until the client disconnects.
+      return assertAdmitting.pipe(
+        Effect.andThen(effect),
+        Effect.catchTag("MaintenanceWorkHeld", (held) =>
+          Effect.fail(new ForkMaintenanceError({ reason: held.message })),
+        ),
+      );
+    }
     return rpcMethodNeedsWorkAdmission(rpc._tag)
       ? withWork(effect).pipe(
           Effect.catchTag("MaintenanceWorkHeld", (held) =>

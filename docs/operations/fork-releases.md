@@ -238,6 +238,14 @@ Pinned release builders supply `APP_BUILD_COMMIT` after source validation and pa
 alignment; that expected version edit must not label official artifacts as local source changes.
 Desktop package metadata retains the full commit required by updater identity verification.
 
+The published `fork-baseline` desktop packages predate that full-commit metadata fix and cannot
+cache their previous installer through the normal release feed. Their terminal subscriptions also
+prevent the idle window from completing. Bootstrap those desktops manually onto the first eligible
+nightly after all local work has stopped; do not remove leases, alter the idle clock, or manufacture
+an installed-build record. Prove desktop in-product update and recovery between eligible nightlies.
+The baseline remains immutable and is still the recorded predecessor for package validation and
+the first Android recovery APK. Its presence alone does not commission automatic delivery.
+
 1. Build the baseline from an updater-equipped commit and keep the same signing key as the phone's
    installed app. Never uninstall to bring a phone onto it.
 2. Pack and prove it (needs the Android SDK build tools):

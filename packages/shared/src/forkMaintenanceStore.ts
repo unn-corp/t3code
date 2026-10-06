@@ -313,24 +313,45 @@ export class CoordinatorStore {
   }
 
   private async leases(): Promise<
-    ReadonlyArray<{ readonly name: string; readonly participantId: string; readonly owner: Owner }>
+    ReadonlyArray<{
+      readonly name: string;
+      readonly participantId: string;
+      readonly owner: Owner;
+      readonly passive: boolean;
+    }>
   > {
-    const result: Array<{ name: string; participantId: string; owner: Owner }> = [];
+    const result: Array<{
+      name: string;
+      participantId: string;
+      owner: Owner;
+      passive: boolean;
+    }> = [];
     for (const name of await NodeFSP.readdir(this.directory)) {
+      // Keep the work-* filename understood by older coordinators; only new readers interpret
+      // the additive passive marker as non-agent activity.
       const match = /^work-(.+)-[0-9a-f-]{36}$/.exec(name);
       if (match === null) continue;
       let owner: Owner;
+      let passive = false;
       try {
-        owner = decodeOwner(
-          JSON.parse(await NodeFSP.readFile(NodePath.join(this.directory, name), "utf8")),
+        const raw: unknown = JSON.parse(
+          await NodeFSP.readFile(NodePath.join(this.directory, name), "utf8"),
         );
+        owner = decodeOwner(raw);
+        passive =
+          typeof raw === "object" && raw !== null && "passive" in raw && raw.passive === true;
       } catch (cause) {
         // Unreadable lease: treat as a live local operation rather than guessing it ended.
         if (isCode(cause, "ENOENT")) continue;
-        result.push({ name, participantId: match[1]!, owner: { pid: 0, started: "" } });
+        result.push({
+          name,
+          participantId: match[1]!,
+          owner: { pid: 0, started: "" },
+          passive: false,
+        });
         continue;
       }
-      result.push({ name, participantId: match[1]!, owner });
+      result.push({ name, participantId: match[1]!, owner, passive });
     }
     return result;
   }
@@ -532,7 +553,9 @@ export class CoordinatorStore {
       const participant = registry.participants.find((entry) => entry.id === id);
       if (participant === undefined || !this.owns(participant.owner))
         throw new Error("Unregistered participant.");
-      const hasWork = (await this.liveLeases()).some((lease) => lease.participantId === id);
+      const hasWork = (await this.liveLeases()).some(
+        (lease) => lease.participantId === id && !lease.passive,
+      );
       const actual = hasWork
         ? [
             ...blockers,
@@ -562,6 +585,13 @@ export class CoordinatorStore {
     });
   }
   async beginWork(id: string): Promise<() => Promise<void>> {
+    return this.beginLease(id, false);
+  }
+  /** A short diagnostic write blocks the fence while active but does not restart the agent idle window. */
+  async beginPassiveWork(id: string): Promise<() => Promise<void>> {
+    return this.beginLease(id, true);
+  }
+  private async beginLease(id: string, passive: boolean): Promise<() => Promise<void>> {
     const name = `work-${safeName(id)}-${NodeCrypto.randomUUID()}`;
     await this.locked(async (registry) => {
       if (registry.fence !== null)
@@ -571,12 +601,17 @@ export class CoordinatorStore {
       const participant = registry.participants.find((entry) => entry.id === id);
       if (participant === undefined || !this.owns(participant.owner))
         throw new Error("Unregistered work owner.");
-      await this.atomicWrite(NodePath.join(this.directory, name), this.owner);
+      await this.atomicWrite(
+        NodePath.join(this.directory, name),
+        passive ? { ...this.owner, passive: true } : this.owner,
+      );
       await this.save({
         ...registry,
-        participants: registry.participants.map((entry) =>
-          entry.id === id ? { ...entry, idleSince: null } : entry,
-        ),
+        participants: passive
+          ? registry.participants
+          : registry.participants.map((entry) =>
+              entry.id === id ? { ...entry, idleSince: null } : entry,
+            ),
       });
     });
     return async () => {

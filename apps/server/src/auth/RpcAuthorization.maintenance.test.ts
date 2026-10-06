@@ -31,6 +31,8 @@ describe("RPC device work admission", () => {
       WS_METHODS.serverGetSettings,
       WS_METHODS.projectsReadFile,
       WS_METHODS.pullRequestsList,
+      WS_METHODS.subscribeTerminalEvents,
+      WS_METHODS.subscribeTerminalMetadata,
       WS_METHODS.subscribeServerConfig,
       WS_METHODS.scheduledTasksList,
       WS_METHODS.serverGetMaintenanceStatus,

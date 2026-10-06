@@ -106,6 +106,45 @@ describe("host coordinator", () => {
     await expect(store.freeze("duplicate", 900_000)).rejects.toThrow("Another device transaction");
   });
 
+  it("keeps a passive diagnostic write inside the fence without resetting observed agent idleness", async () => {
+    const f = await fixture();
+    const store = await f.open(100);
+    await store.register(
+      {
+        id: "desktop",
+        label: "Desktop",
+        kind: "desktop",
+        homes: [await f.home("h")],
+        updateTarget: true,
+      },
+      0,
+    );
+    await store.confirmBootstrap();
+    await idle(store, "desktop");
+
+    const release = await store.beginPassiveWork("desktop");
+    const leaseName = (await NodeFSP.readdir(f.coordinator)).find((name) =>
+      name.startsWith("work-desktop-"),
+    );
+    expect(leaseName).toBeDefined();
+    expect(
+      JSON.parse(await NodeFSP.readFile(NodePath.join(f.coordinator, leaseName!), "utf8")),
+    ).toMatchObject({
+      pid: 100,
+      started: "boot:1",
+      passive: true,
+    });
+    await store.observe("desktop", [], 600_001);
+    const participant = (await store.status(600_001)).participants[0]!;
+    expect(participant.blockers).toEqual([]);
+    expect(participant.idleSince).toBe(0);
+    await expect(store.freeze("tx", 600_001)).rejects.toThrow("Local operations");
+
+    await release();
+    await store.freeze("tx", 600_001);
+    await expect(store.beginPassiveWork("desktop")).rejects.toThrow("holds new work");
+  });
+
   it("clears a work lease whose process exited so a crash cannot block updates forever", async () => {
     const f = await fixture();
     const crashing = await f.open(200);

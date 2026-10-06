@@ -102,6 +102,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/maintenance/restartGate.test.ts",
       "src/maintenance/serviceInstaller.test.ts",
       "src/serviceLauncherMaintenance.test.ts",
+      "src/auth/RpcAuthorization.test.ts",
       "src/auth/RpcAuthorization.maintenance.test.ts",
     ],
     timeoutMinutes: 30,
@@ -129,6 +130,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/updates/remoteUpdateFlow.test.ts",
       "src/updates/updateChannels.test.ts",
       "src/updates/updateMachine.test.ts",
+      "src/maintenance/DesktopForkMaintenance.identity.test.ts",
     ],
     timeoutMinutes: 30,
   },
@@ -152,6 +154,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       pwa("UpdateEligibilityTest"),
       pwa("UpdateReconcilerTest"),
       pwa("UpdateStoreTest"),
+      pwa("UpdateEngineRecoveryReadinessTest"),
     ],
     prepare: {
       workdir: "apps/web",

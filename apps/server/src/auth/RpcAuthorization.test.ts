@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthTerminalOperateScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   WS_METHODS,
@@ -8,13 +9,18 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/unstable/rpc/RpcTest";
+import { MaintenanceWorkHeld, WorkAdmission } from "../maintenance/WorkAdmission.ts";
 
 import {
   RPC_REQUIRED_SCOPES,
   requiredScopeForRpcMethod,
   requiredScopeForDeviceList,
+  rpcMethodNeedsWorkAdmission,
   rpcScopeAuthorizationLayer,
 } from "./RpcAuthorization.ts";
 
@@ -154,5 +160,127 @@ describe("RPC scope middleware", () => {
       });
       expect(handled).toEqual([]);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not lease pure terminal observers, while terminal writes retain a lease", () =>
+    (() => {
+      const log: string[] = [];
+      let fenced = false;
+      let wrote = false;
+      const admission = {
+        acquire: Effect.suspend(() =>
+          fenced
+            ? Effect.fail(new MaintenanceWorkHeld({ cause: "fenced" }))
+            : Effect.sync(() => {
+                log.push("acquire");
+                return () => Effect.sync(() => void log.push("release"));
+              }),
+        ),
+        acquirePassive: Effect.succeed(() => Effect.void),
+        check: Effect.suspend(() =>
+          fenced
+            ? Effect.fail(new MaintenanceWorkHeld({ cause: "fenced" }))
+            : Effect.sync(() => void log.push("check")),
+        ),
+      };
+      return Effect.gen(function* () {
+        const writeStarted = yield* Deferred.make<void>();
+        const finishWrite = yield* Deferred.make<void>();
+        const subscriptionMethods = [
+          WS_METHODS.subscribeTerminalEvents,
+          WS_METHODS.subscribeTerminalMetadata,
+          WS_METHODS.terminalWrite,
+        ] as const;
+        const subscriptionGroup = WsRpcGroup.omit(
+          ...[...WsRpcGroup.requests.keys()].filter(
+            (
+              tag,
+            ): tag is Exclude<
+              keyof typeof RPC_REQUIRED_SCOPES,
+              (typeof subscriptionMethods)[number]
+            > => !(subscriptionMethods as ReadonlyArray<string>).includes(tag),
+          ),
+        );
+        const eventSeen = yield* Deferred.make<void>();
+        const metadataSeen = yield* Deferred.make<void>();
+        const client = yield* RpcTest.makeClient(subscriptionGroup).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              subscriptionGroup.toLayerHandler(WS_METHODS.subscribeTerminalEvents, () =>
+                Stream.concat(
+                  Stream.succeed({
+                    type: "output" as const,
+                    threadId: "thread-1",
+                    terminalId: "default",
+                    data: "ready",
+                  }).pipe(Stream.tap(() => Deferred.succeed(eventSeen, undefined))),
+                  Stream.never,
+                ),
+              ),
+              subscriptionGroup.toLayerHandler(WS_METHODS.subscribeTerminalMetadata, () =>
+                Stream.concat(
+                  Stream.succeed({
+                    type: "remove" as const,
+                    threadId: "thread-1",
+                    terminalId: "default",
+                  }).pipe(Stream.tap(() => Deferred.succeed(metadataSeen, undefined))),
+                  Stream.never,
+                ),
+              ),
+              subscriptionGroup.toLayerHandler(WS_METHODS.terminalWrite, () =>
+                Effect.gen(function* () {
+                  wrote = true;
+                  yield* Deferred.succeed(writeStarted, undefined);
+                  yield* Deferred.await(finishWrite);
+                }),
+              ),
+              rpcScopeAuthorizationLayer([AuthTerminalOperateScope]),
+            ),
+          ),
+        );
+
+        const eventFiber = yield* Stream.runDrain(
+          client[WS_METHODS.subscribeTerminalEvents]({}),
+        ).pipe(Effect.forkChild);
+        const metadataFiber = yield* Stream.runDrain(
+          client[WS_METHODS.subscribeTerminalMetadata]({}),
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(eventSeen);
+        yield* Deferred.await(metadataSeen);
+        expect(rpcMethodNeedsWorkAdmission(WS_METHODS.subscribeTerminalEvents)).toBe(false);
+        expect(rpcMethodNeedsWorkAdmission(WS_METHODS.subscribeTerminalMetadata)).toBe(false);
+        expect(log.filter((entry) => entry === "check")).toHaveLength(2);
+        expect(log).not.toContain("acquire");
+
+        const terminalWrite = yield* Effect.forkChild(
+          client[WS_METHODS.terminalWrite]({
+            threadId: "thread-1",
+            terminalId: "default",
+            data: "echo hello\n",
+          }),
+        );
+        yield* Deferred.await(writeStarted);
+        expect(wrote).toBe(true);
+        expect(rpcMethodNeedsWorkAdmission(WS_METHODS.terminalWrite)).toBe(true);
+        expect(log).toEqual(["check", "check", "acquire"]);
+
+        fenced = true;
+        const denied = yield* Stream.runCollect(
+          client[WS_METHODS.subscribeTerminalEvents]({}),
+        ).pipe(Effect.flip);
+        expect(denied).toMatchObject({ _tag: "ForkMaintenanceError" });
+        const deniedWrite = yield* client[WS_METHODS.terminalWrite]({
+          threadId: "thread-1",
+          terminalId: "default",
+          data: "echo blocked\n",
+        }).pipe(Effect.flip);
+        expect(deniedWrite).toMatchObject({ _tag: "ForkMaintenanceError" });
+        yield* Deferred.succeed(finishWrite, undefined);
+        yield* Fiber.join(terminalWrite);
+        expect(log).toEqual(["check", "check", "acquire", "release"]);
+        yield* Fiber.interrupt(eventFiber);
+        yield* Fiber.interrupt(metadataFiber);
+      }).pipe(Effect.provideService(WorkAdmission, admission), Effect.scoped);
+    })(),
   );
 });

@@ -227,7 +227,11 @@ import * as RunFinalizationService from "./orchestration-v2/RunFinalizationServi
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import * as MaintenanceCoordinator from "./maintenance/MaintenanceCoordinator.ts";
 import * as MaintenanceService from "./maintenance/MaintenanceService.ts";
-import { withWork } from "./maintenance/WorkAdmission.ts";
+import {
+  isPassiveDiagnosticWrite,
+  withPassiveWork,
+  withWork,
+} from "./maintenance/WorkAdmission.ts";
 import { operatorRouteLayer } from "./maintenance/MaintenanceOperatorHttp.ts";
 import { OPERATOR_ROUTE_PREFIX } from "./maintenance/operatorAuth.ts";
 import {
@@ -700,7 +704,10 @@ const maintenanceAdmissionLayer = HttpRouter.middleware(
         return yield* httpEffect;
       // The operator door is how a transaction is observed and recovered; it must not queue behind its own fence.
       if (request.url.startsWith(OPERATOR_ROUTE_PREFIX)) return yield* httpEffect;
-      return yield* withWork(httpEffect).pipe(
+      const admitted = isPassiveDiagnosticWrite(request.method, request.url)
+        ? withPassiveWork(httpEffect)
+        : withWork(httpEffect);
+      return yield* admitted.pipe(
         Effect.catchTag("MaintenanceWorkHeld", (held) =>
           Effect.succeed(
             HttpServerResponse.text(held.message, {

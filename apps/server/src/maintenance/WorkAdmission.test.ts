@@ -1,7 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { assertAdmitting, MaintenanceWorkHeld, WorkAdmission, withWork } from "./WorkAdmission.ts";
+import {
+  assertAdmitting,
+  isPassiveDiagnosticWrite,
+  MaintenanceWorkHeld,
+  WorkAdmission,
+  withPassiveWork,
+  withWork,
+} from "./WorkAdmission.ts";
 
 const admission = (log: string[], held = false) => ({
   acquire: held
@@ -13,9 +20,23 @@ const admission = (log: string[], held = false) => ({
   check: held
     ? Effect.fail(new MaintenanceWorkHeld({ cause: "fenced" }))
     : Effect.sync(() => void log.push("check")),
+  acquirePassive: held
+    ? Effect.fail(new MaintenanceWorkHeld({ cause: "fenced" }))
+    : Effect.sync(() => {
+        log.push("acquire-passive");
+        return () => Effect.sync(() => void log.push("release-passive"));
+      }),
 });
 
 describe("work admission", () => {
+  it("classifies only the exact browser trace ingestion POST as passive", () => {
+    expect(isPassiveDiagnosticWrite("POST", "/api/observability/v1/traces")).toBe(true);
+    expect(isPassiveDiagnosticWrite("POST", "/api/observability/v1/traces?batch=1")).toBe(true);
+    expect(isPassiveDiagnosticWrite("GET", "/api/observability/v1/traces")).toBe(false);
+    expect(isPassiveDiagnosticWrite("POST", "/api/observability/v1/traces/other")).toBe(false);
+    expect(isPassiveDiagnosticWrite("POST", "/api/attachments/upload")).toBe(false);
+  });
+
   it.effect(
     "holds a lease around the work and releases it whether the work succeeds, fails or is interrupted",
     () =>
@@ -69,6 +90,28 @@ describe("work admission", () => {
           Effect.flip,
         ))._tag,
       ).toBe("MaintenanceWorkHeld");
+    }),
+  );
+
+  it.effect("holds a passive fence-blocking lease without treating it as agent work", () =>
+    Effect.gen(function* () {
+      const log: string[] = [];
+      yield* withPassiveWork(Effect.sync(() => void log.push("diagnostic"))).pipe(
+        Effect.provideService(WorkAdmission, admission(log)),
+      );
+      expect(log).toEqual(["acquire-passive", "diagnostic", "release-passive"]);
+    }),
+  );
+
+  it.effect("refuses passive diagnostic writes after the fence is raised", () =>
+    Effect.gen(function* () {
+      const log: string[] = [];
+      const exit = yield* withPassiveWork(Effect.sync(() => void log.push("diagnostic"))).pipe(
+        Effect.provideService(WorkAdmission, admission(log, true)),
+        Effect.flip,
+      );
+      expect(exit._tag).toBe("MaintenanceWorkHeld");
+      expect(log).toEqual([]);
     }),
   );
 
