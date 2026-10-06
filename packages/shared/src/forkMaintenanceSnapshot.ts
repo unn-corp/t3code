@@ -52,15 +52,17 @@ export type RestrictAccess = (directory: string) => Promise<void>;
 export const restrictWindowsAcl: RestrictAccess = async (directory) => {
   // Replace the DACL, including explicit grants left on an existing directory. chmod has no
   // ownership semantics on Windows, and adding a grant would leave other readers authorized.
+  // Use Windows PowerShell's .NET Framework ACL API directly. Cmdlet auto-loading can stall
+  // on first use under the helper's empty private USERPROFILE, even with -NoProfile.
   const script = `
 $ErrorActionPreference = 'Stop'
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$acl = New-Object Security.AccessControl.DirectorySecurity
+$acl = [Security.AccessControl.DirectorySecurity]::new()
 $acl.SetAccessRuleProtection($true, $false)
 $acl.SetOwner($sid)
-$rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+$rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit', [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
 $acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $env:T3_FORK_PRIVATE_DIRECTORY -AclObject $acl
+[IO.Directory]::SetAccessControl($env:T3_FORK_PRIVATE_DIRECTORY, $acl)
 `;
   await run(
     "powershell.exe",

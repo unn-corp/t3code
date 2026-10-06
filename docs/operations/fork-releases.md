@@ -107,6 +107,8 @@ snapshot/restore proof. Select `scope: helper` to diagnose just that proof. It h
 permissions, produces no eligibility receipts, and does not allocate Android codes or rebuild
 application payloads. Windows directory ACL setup has a bounded 30-second cold-start allowance;
 failure still blocks startup or snapshot creation and does not loosen activity/ownership checks.
+ACL setup uses the Windows PowerShell .NET API directly so cold private profiles do not depend on
+cmdlet-module discovery.
 **Fork package diagnostic** takes a failed release's numeric `run_id` and runs current package
 validation against its retained candidate and predecessor on clean Linux and Windows runners.
 It writes no receipts and cannot publish. Use it to correct validation tooling before rebuilding.
