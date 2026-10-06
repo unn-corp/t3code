@@ -72,7 +72,9 @@ Set-Acl -LiteralPath $env:T3_FORK_PRIVATE_DIRECTORY -AclObject $acl
     ],
     {
       windowsHide: true,
-      timeout: 10_000,
+      // Cold Windows runners may take more than ten seconds to start PowerShell. This is
+      // filesystem authorization setup, separate from process-owner and activity deadlines.
+      timeout: 30_000,
       env: { ...process.env, T3_FORK_PRIVATE_DIRECTORY: directory },
     },
   );

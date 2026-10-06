@@ -13,7 +13,7 @@ export interface RecoveryProofPaths {
 
 /**
  * Keep recovery proof processes away from developer tools and private data while
- * retaining only the Windows account and system locations needed by icacls.
+ * retaining only the Windows account and system locations needed by OS ACL tools.
  */
 export function recoveryProofEnvironment(input: {
   readonly platform: "linux-x64" | "windows-x64";

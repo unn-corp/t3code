@@ -335,6 +335,21 @@ describe("external recovery helper", () => {
     expect(await main(["--self-test"], c.io)).toBe(0);
   });
 
+  it("closes its live database and cleans the fixture when snapshot creation fails", async () => {
+    const c = capture();
+    const failure = new Error("Private snapshot authorization failed");
+    let fixture = "";
+    await expect(
+      runSelfTest(c.io, async (home) => {
+        fixture = home;
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+    expect(fixture).not.toBe("");
+    await expect(NodeFSP.stat(fixture)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(c.out).toEqual([]);
+  });
+
   it("offers a committed update as a cohort with every home's exact restore cutoff", async () => {
     const d = await device();
     const options = await listRecoveryOptions(d.context);

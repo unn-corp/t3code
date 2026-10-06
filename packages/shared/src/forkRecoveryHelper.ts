@@ -111,20 +111,28 @@ const flagsOf = (args: ReadonlyArray<string>) => {
 };
 
 /** Snapshot, change, restore, verify, against a throwaway home. Uses the coordinator's real restore path. */
-export async function runSelfTest(io: HelperIo = processIo): Promise<void> {
+export async function runSelfTest(
+  io: HelperIo = processIo,
+  snapshot: typeof createSnapshot = createSnapshot,
+): Promise<void> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-recovery-self-test-"));
   try {
     const state = NodePath.join(root, "userdata");
     await NodeFSP.mkdir(NodePath.join(state, "secrets"), { recursive: true });
     const database = new NodeSqlite.DatabaseSync(NodePath.join(state, "statev2.sqlite"));
-    database.exec(
-      "PRAGMA journal_mode = WAL; CREATE TABLE messages (text TEXT); INSERT INTO messages VALUES ('before')",
-    );
-    await NodeFSP.writeFile(NodePath.join(state, "secrets", "pairing"), "device-credential");
-    await NodeFSP.writeFile(NodePath.join(state, "settings.json"), '{"theme":"dark"}');
-    const id = await createSnapshot(root, "self-test");
-    database.exec("INSERT INTO messages VALUES ('after the update')");
-    database.close();
+    let id: string;
+    try {
+      database.exec(
+        "PRAGMA journal_mode = WAL; CREATE TABLE messages (text TEXT); INSERT INTO messages VALUES ('before')",
+      );
+      await NodeFSP.writeFile(NodePath.join(state, "secrets", "pairing"), "device-credential");
+      await NodeFSP.writeFile(NodePath.join(state, "settings.json"), '{"theme":"dark"}');
+      id = await snapshot(root, "self-test");
+      database.exec("INSERT INTO messages VALUES ('after the update')");
+    } finally {
+      // A failed snapshot must close SQLite too, or Windows cleanup masks the original error.
+      database.close();
+    }
     await NodeFSP.writeFile(NodePath.join(state, "settings.json"), '{"theme":"changed"}');
     await NodeFSP.rm(NodePath.join(state, "secrets", "pairing"));
     await verifySnapshot(root, id);
