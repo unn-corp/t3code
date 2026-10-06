@@ -32,11 +32,13 @@ function admit(overrides: Record<string, string> = {}) {
     NodeFS.writeFileSync(
       NodePath.join(temporary, "gh"),
       `#!/bin/bash
-case "$2" in
+args=("$@")
+if [[ "$2" == --paginate ]]; then args=("$1" "\${3}" "\${@:4}"); fi
+case "\${args[1]}" in
   */compare/*) printf '%s\\n' "$COMPARE" ;;
   */git/ref/tags/fork-baseline) [[ -n "$BASELINE_OWNER" ]] || exit 1; printf '%s\\n' "$BASELINE_OWNER" ;;
   */git/ref/*) printf '%s\\n' "$OWNER" ;;
-  */releases/tags/*) exit "$EXISTS" ;;
+  */releases) [[ "$EXISTS" != 0 ]] || echo 123 ;;
   *) exit 99 ;;
 esac
 `,
@@ -47,6 +49,8 @@ esac
       encoding: "utf8",
       env: {
         ...process.env,
+        BASH_ENV: "",
+        ENV: "",
         PATH: `${temporary}${NodePath.delimiter}${process.env.PATH}`,
         COMMIT: commit,
         CODE: "29853800",
@@ -76,9 +80,30 @@ describe("manual baseline admission", () => {
         (step) => step.name === "Publish complete manual baseline",
       )!.run!;
       for (const draft of [
-        { draft: true, body: "<!-- t3-fork-baseline-run:777 -->", id: 123 },
-        { draft: false, body: "<!-- t3-fork-baseline-run:777 -->", id: 123 },
-        { draft: true, body: "<!-- t3-fork-baseline-run:888 -->", id: 123 },
+        {
+          tag_name: "fork-baseline",
+          draft: true,
+          body: "<!-- t3-fork-baseline-run:777 -->",
+          id: 123,
+        },
+        {
+          tag_name: "fork-baseline",
+          draft: false,
+          body: "<!-- t3-fork-baseline-run:777 -->",
+          id: 123,
+        },
+        {
+          tag_name: "fork-baseline",
+          draft: true,
+          body: "<!-- t3-fork-baseline-run:888 -->",
+          id: 123,
+        },
+        {
+          tag_name: "other-release",
+          draft: true,
+          body: "<!-- t3-fork-baseline-run:777 -->",
+          id: 123,
+        },
       ]) {
         const temporary = NodeFS.mkdtempSync(
           NodePath.join(NodeOS.tmpdir(), "t3-baseline-cleanup-"),
@@ -90,7 +115,7 @@ describe("manual baseline admission", () => {
             `#!/bin/bash
 if [[ "$1" == api && "$2" == --method ]]; then printf '%s' "$5" > "$DELETED"; exit 0; fi
 if [[ "$1" == api && "$2" == */immutable-releases ]]; then echo true; exit 0; fi
-if [[ "$1" == api && "$2" == */releases/tags/* ]]; then printf '%s' "$DRAFT" | jq -r "$4"; exit $?; fi
+if [[ "$1" == api && "$2" == --paginate && "$3" == */releases ]]; then printf '[%s]' "$DRAFT" | jq -r "$5"; exit $?; fi
 if [[ "$1" == release && "$2" == create ]]; then exit "$CREATE_EXIT"; fi
 if [[ "$1" == release && "$2" == download ]]; then exit 1; fi
 exit 99
@@ -102,6 +127,8 @@ exit 99
             encoding: "utf8",
             env: {
               ...process.env,
+              BASH_ENV: "",
+              ENV: "",
               PATH: `${temporary}${NodePath.delimiter}${process.env.PATH}`,
               DELETED: deleted,
               CREATE_EXIT: String(createExit),
@@ -112,7 +139,9 @@ exit 99
             },
           });
           expect(result.status).toBe(1);
-          expect(NodeFS.existsSync(deleted)).toBe(draft.draft && draft.body.includes(":777"));
+          expect(NodeFS.existsSync(deleted)).toBe(
+            draft.tag_name === "fork-baseline" && draft.draft && draft.body.includes(":777"),
+          );
         } finally {
           NodeFS.rmSync(temporary, { recursive: true, force: true });
         }

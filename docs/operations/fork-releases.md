@@ -230,7 +230,8 @@ already on `main` and a `fork-android-code-N` reservation owned by that commit. 
 desktop packaging and Android verification as the release workflow. Publication is optional;
 when requested it verifies a complete draft and downloads it back before publishing the
 `fork-baseline` prerelease. A failed run removes only its own unpublished draft; published
-baselines are never replaced. This workflow has no schedule and writes no normal release manifest.
+baselines are never replaced. Draft lookup uses the releases list: GitHub’s tag endpoint can return 404
+for an unpublished draft. This workflow has no schedule and writes no normal release manifest.
 The first nightly previews 1.0.1 so it outranks the hand-installed 1.0.0 baseline; subsequent stable
 promotion uses that same next-patch floor. A baseline does not satisfy normal release eligibility.
 
