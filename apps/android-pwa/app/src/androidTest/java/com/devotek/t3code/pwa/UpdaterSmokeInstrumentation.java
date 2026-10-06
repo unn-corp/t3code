@@ -72,7 +72,16 @@ public final class UpdaterSmokeInstrumentation extends Instrumentation {
             };
             application.registerActivityLifecycleCallbacks(lifecycle);
             try {
-                runOnMainSync(() -> shell.openSettings(UpdateNotifications.settings(shell)));
+                Intent settings = UpdateNotifications.settings(shell);
+                String settingsPackage = settings.resolveActivity(getTargetContext().getPackageManager()).getPackageName();
+                // Our main thread being idle does not mean Android Settings has taken focus yet.
+                // Sending Back before its window appears can close T3 instead of returning from Settings.
+                android.view.accessibility.AccessibilityEvent opened = getUiAutomation().executeAndWaitForEvent(
+                    () -> runOnMainSync(() -> shell.openSettings(settings)),
+                    event -> event.getEventType() == android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                        && settingsPackage.contentEquals(event.getPackageName() == null ? "" : event.getPackageName()),
+                    10_000);
+                opened.recycle();
                 waitForIdleSync();
                 require(engine.snapshot().nativeOperations.stream().anyMatch(key -> key.startsWith("settings:")), "Android Settings did not persist its operation hold");
                 try (android.os.ParcelFileDescriptor back = getUiAutomation().executeShellCommand("input keyevent 4")) {

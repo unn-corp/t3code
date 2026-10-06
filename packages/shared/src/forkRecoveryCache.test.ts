@@ -1,8 +1,12 @@
 /* oxlint-disable t3code/no-global-process-runtime -- node-only filesystem coordinator: the host platform is the point */
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+// oxlint-disable-next-line t3code/namespace-node-imports -- fault injection needs the mutable builtin default, not its immutable ESM namespace
+import MutableFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import type { ForkReleaseManifest } from "@t3tools/contracts";
@@ -17,6 +21,8 @@ import { recoveryProofEnvironment } from "./forkRecoveryProofEnvironment.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
+  NodeModule.syncBuiltinESMExports();
   await Promise.all(
     roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -101,6 +107,60 @@ const serve = (helper: Uint8Array, node: Uint8Array) => async (name: string) =>
   name.endsWith(".mjs") ? helper : node;
 
 describe("recovery helper cache", () => {
+  it("retries a briefly locked replacement directory and still proves the installed runtime", async () => {
+    const dir = await cacheDir();
+    const node = await realNode();
+    const helper = helperScript();
+    const remove = NodeFSP.rm;
+    let locks = 2;
+    vi.spyOn(MutableFSP, "rm").mockImplementation(async (path, options) => {
+      if (path === NodePath.join(dir, "1.0.1") && locks-- > 0)
+        throw Object.assign(new Error("Executable is briefly locked"), { code: "EBUSY" });
+      return remove(path, options);
+    });
+    NodeModule.syncBuiltinESMExports();
+    await installRecoveryHelper({
+      cacheDir: dir,
+      manifest: manifest("1.0.1", helper, node),
+      platform: HOST_PLATFORM,
+      fetchAsset: serve(helper, node),
+    });
+    expect(locks).toBe(-1);
+    expect(await recoveryReady(dir)).toBe(true);
+  });
+
+  it("keeps the original proof failure when staging cleanup stays locked, without admitting the build", async () => {
+    const dir = await cacheDir();
+    const node = await realNode();
+    const helper = helperScript("wrong-protocol");
+    const remove = NodeFSP.rm;
+    const cleanupError = Object.assign(new Error("Staging executable stays locked"), {
+      code: "EPERM",
+    });
+    let cleanupAttempts = 0;
+    vi.spyOn(MutableFSP, "rm").mockImplementation(async (path, options) => {
+      if (String(path).startsWith(NodePath.join(dir, ".staging-"))) {
+        cleanupAttempts++;
+        throw cleanupError;
+      }
+      return remove(path, options);
+    });
+    NodeModule.syncBuiltinESMExports();
+    const result = await installRecoveryHelper({
+      cacheDir: dir,
+      manifest: manifest("1.0.1", helper, node),
+      platform: HOST_PLATFORM,
+      fetchAsset: serve(helper, node),
+    }).catch((cause: unknown) => cause);
+    expect(result).toBeInstanceOf(AggregateError);
+    const failure = result as AggregateError;
+    expect(failure.cause).toBeInstanceOf(Error);
+    expect((failure.cause as Error).message).toContain("did not report the helper protocol");
+    expect(failure.errors).toEqual([failure.cause, cleanupError]);
+    expect(cleanupAttempts).toBe(5);
+    expect(await recoveryReady(dir)).toBe(false);
+  });
+
   it("builds a Windows proof environment with ACL prerequisites and no inherited developer or secret paths", () => {
     const env = recoveryProofEnvironment({
       platform: "windows-x64",

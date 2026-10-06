@@ -540,7 +540,9 @@ const adb = (args: string[]) => {
     throw new Error(
       "Android release validation requires an explicitly selected isolated emulator.",
     );
-  return run(program, ["-s", serial, ...args]);
+  // A disconnected emulator can leave an install waiting indefinitely in ADB. Fail the gate
+  // instead of retaining a command until the enclosing CI job times out.
+  return run(program, ["-s", serial, ...args], { timeout: 180_000 });
 };
 
 const installedPackage = (): InstalledPackage => {
@@ -563,6 +565,7 @@ export const launchAndConfirm = async (
     "shell",
     "am",
     "start",
+    "-S",
     "-W",
     "-a",
     "android.intent.action.MAIN",
@@ -571,8 +574,9 @@ export const launchAndConfirm = async (
     "-n",
     `${FORK_ANDROID_PACKAGE}/.MainActivity`,
   ]);
-  // Monkey's single random event can navigate away immediately after launch. Ask Android to
-  // start this exact launcher instead, and require its acknowledgement before checking survival.
+  // Replacements can leave a warm task from the old APK. This disposable, stopped-work fixture
+  // needs a fresh process loading the installed bytes, followed by the full survival check.
+  // Do not use randomized Monkey input, which can navigate away immediately after launch.
   if (start.status !== 0 || !/^Status: ok\s*$/m.test(start.stdout))
     throw new Error(
       `The app did not launch: ${redactCliSmokeOutput(`${start.stdout}${start.stderr}`)}`,

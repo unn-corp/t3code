@@ -12,6 +12,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeUtil from "node:util";
 import * as Schema from "effect/Schema";
 import type { ForkReleaseManifest } from "@t3tools/contracts";
@@ -39,6 +40,34 @@ const decodeCommand = Schema.decodeUnknownSync(Command);
 const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 const isCode = (cause: unknown, code: string) =>
   typeof cause === "object" && cause !== null && "code" in cause && cause.code === code;
+
+async function removeTree(directory: string) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await NodeFSP.rm(directory, { recursive: true, force: true, maxRetries: 0 });
+      return;
+    } catch (cause) {
+      // Windows can keep a just-exited executable locked briefly. Retry only transient sharing
+      // violations; a persistent lock remains a real cleanup failure.
+      if (!isCode(cause, "EBUSY") && !isCode(cause, "EPERM")) throw cause;
+      if (attempt === 4) throw cause;
+      await NodeTimersPromises.setTimeout(50 * (attempt + 1));
+    }
+  }
+}
+
+async function cleanupAfterFailure(directory: string, originalCause: unknown): Promise<never> {
+  try {
+    await removeTree(directory);
+  } catch (cleanupCause) {
+    // Keep both failures without mutating a possibly frozen provider/OS error.
+    // oxlint-disable-next-line preserve-caught-error -- the proof is the primary cause; cleanup is retained in errors
+    throw new AggregateError([originalCause, cleanupCause], "Recovery proof and cleanup failed.", {
+      cause: originalCause,
+    });
+  }
+  throw originalCause;
+}
 
 async function privateDirectory(directory: string) {
   await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -101,9 +130,10 @@ export async function selfTestRecoveryCommand(
     });
     if (!stdout.includes(RECOVERY_HELPER_PROTOCOL_LINE))
       throw new Error("The cached recovery runtime did not report the helper protocol.");
-  } finally {
-    await NodeFSP.rm(root, { recursive: true, force: true });
+  } catch (cause) {
+    return cleanupAfterFailure(root, cause);
   }
+  await removeTree(root);
 }
 
 /**
@@ -152,11 +182,10 @@ export async function installRecoveryHelper(input: {
       nodePath: NodePath.join(stagingDir, assets.node.name),
       helperPath: NodePath.join(stagingDir, assets.helper.name),
     });
-    await NodeFSP.rm(versionDir, { recursive: true, force: true });
+    await removeTree(versionDir);
     await NodeFSP.rename(stagingDir, versionDir);
   } catch (cause) {
-    await NodeFSP.rm(stagingDir, { recursive: true, force: true });
-    throw cause;
+    return cleanupAfterFailure(stagingDir, cause);
   }
   const command: RecoveryCommand = {
     protocol: 1,

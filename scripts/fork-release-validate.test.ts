@@ -410,6 +410,7 @@ describe("native Android interaction receipt", () => {
       "shell",
       "am",
       "start",
+      "-S",
       "-W",
       "-a",
       "android.intent.action.MAIN",

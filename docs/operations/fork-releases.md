@@ -205,8 +205,10 @@ process-death/reboot recovery. Drive the live update and recovery on
 real hardware during [commissioning](#commissioning), and keep adding coordinator integration tests
 to the `coordinator` suite's required list as they land.
 
-APK startup validation explicitly launches `MainActivity` with Activity Manager and requires its
-successful acknowledgement and a surviving app process eight seconds later. It injects no random
+APK startup validation cold-starts `MainActivity` with Activity Manager in the disposable emulator,
+so it loads the installed APK rather than reusing a warm task from its predecessor. It requires its
+successful acknowledgement and a surviving app process eight seconds later. ADB commands have a
+three-minute deadline so a disconnected emulator fails the gate instead of leaving it waiting. It injects no random
 input. A missing process fails the check and retains bounded, redacted crash and system lifecycle
 logs, process-exit information, and activity state to distinguish application crashes from Android
 stopping or failing to start a task.
@@ -250,6 +252,9 @@ ships its matching Node runtime: `t3-recovery-node-linux-x64` or
 manifest. The installer retains its platform's pair in owner-only recovery storage outside the
 application directory and records the absolute runtime/helper paths in its recovery command.
 Recovery does not require a system Node install or a working Electron installation.
+Brief Windows executable locks during cache cleanup receive bounded retries. Persistent locks
+still block staging; if the proof also failed, diagnostics retain both failures with the proof
+as the cause. Cleanup must never replace the original failure or make an unproven helper current.
 
 The builder copies the Node 24-or-newer x64 runtime from the matching platform runner, bundles
 all helper dependencies, and runs `--self-test` with that copied runtime from a neutral directory.

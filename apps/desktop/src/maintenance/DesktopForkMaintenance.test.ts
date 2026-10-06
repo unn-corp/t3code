@@ -1205,9 +1205,12 @@ describe("DesktopForkMaintenance", () => {
       expect((await core.status()).blockers.map((blocker) => blocker.participantId)).toContain(
         "managed-service",
       );
-      await expect(core.install(NEW_DIGEST)).rejects.toMatchObject({
-        reason: expect.stringContaining("blocked"),
-      });
+      const installError = await core.install(NEW_DIGEST).then(
+        () => null,
+        (cause: unknown) => cause,
+      );
+      expect(installError).toBeInstanceOf(Error);
+      expect((installError as { reason?: unknown }).reason).toContain("blocked");
       service.blockers.length = 0;
       await device.quiesce();
 
