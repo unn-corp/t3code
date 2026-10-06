@@ -110,7 +110,7 @@ describe("assembling a candidate", () => {
     assert.isFalse(NodeFS.existsSync(`${outDir}.json`));
   });
 
-  it("verifies and publishes every frozen recovery source with unique higher codes", () => {
+  it("verifies every frozen recovery source when multiple APKs share the extras directory", () => {
     const inputDir = NodePath.join(root, "input");
     const tree = writeFixtureTree(inputDir);
     const extraVersion = "1.0.0";
@@ -131,6 +131,22 @@ describe("assembling a candidate", () => {
     NodeFS.mkdirSync(extraDir, { recursive: true });
     NodeFS.writeFileSync(NodePath.join(extraDir, extraAsset), extraBytes);
     NodeFS.writeFileSync(NodePath.join(extraDir, "metadata-1.json"), JSON.stringify(extra));
+    const secondVersion = "0.9.0";
+    const secondCommit = sha("retained-baseline");
+    const secondAsset = `t3-code-android-recovery-${tree.plan.version}-from-${secondVersion}-${secondCommit.slice(0, 12)}.apk`;
+    const secondBytes = Buffer.from("second-extra-recovery-apk");
+    NodeFS.writeFileSync(NodePath.join(extraDir, secondAsset), secondBytes);
+    NodeFS.writeFileSync(
+      NodePath.join(extraDir, "metadata-2.json"),
+      JSON.stringify({
+        ...extra,
+        asset: secondAsset,
+        versionCode: extra.versionCode + 1,
+        sourceVersion: secondVersion,
+        sourceCommit: secondCommit,
+        apkSha256: sha256Bytes(secondBytes),
+      }),
+    );
     const plan = {
       ...tree.plan,
       recoverySources: [
@@ -142,6 +158,13 @@ describe("assembling a candidate", () => {
           channel: "stable" as const,
           asset: extraAsset,
         },
+        {
+          tag: "fork-baseline",
+          version: secondVersion,
+          commit: secondCommit,
+          channel: null,
+          asset: secondAsset,
+        },
       ],
     };
     const outDir = NodePath.join(root, "candidate-with-recoveries");
@@ -152,8 +175,22 @@ describe("assembling a candidate", () => {
       result.record!.assets.map((asset) => asset.name),
       extraAsset,
     );
-    assert.equal(result.record!.android.recoveries.length, 2);
+    assert.include(
+      result.record!.assets.map((asset) => asset.name),
+      secondAsset,
+    );
+    assert.equal(result.record!.android.recoveries.length, 3);
     assert.equal(result.record!.android.recoveries[1]?.sourceVersion, extraVersion);
+    assert.equal(result.record!.android.recoveries[2]?.sourceVersion, secondVersion);
+
+    // Sharing a directory must not permit APKs outside the frozen recovery matrix.
+    NodeFS.writeFileSync(NodePath.join(extraDir, "unlisted-recovery.apk"), "unlisted");
+    const unlisted = assembleCandidate({ plan, inputDir, outDir });
+    assert.isNull(unlisted.record);
+    assert.include(
+      unlisted.problems,
+      "android-recovery-extras/unlisted-recovery.apk: unexpected asset.",
+    );
   });
 
   it("rejects a code allocation receipt from a different pinned plan", () => {

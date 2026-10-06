@@ -252,6 +252,9 @@ interaction still blocks publication.
   set guarantees recovery for those identities; deeper historical rollback and unpublished baseline
   upgrades may require manual bootstrap. Every recovery source must itself
   contain the updater, or the helper refuses to build it.
+  Actions merges additional recovery APKs into `android-recovery-extras`; assembly checks that
+  shared directory against the complete frozen source matrix. Every planned APK remains required,
+  and an APK outside that matrix blocks publication.
 - **Build helper contract** (`scripts/build-android-pwa.ts`, owned by the Android developer). Each
   APK is built into its own `--output-dir` and the helper writes `metadata.json` beside it:
   `format 1`, `packageName`, `versionName`, `versionCode`, `sourceCommit`, `signerSha256`,

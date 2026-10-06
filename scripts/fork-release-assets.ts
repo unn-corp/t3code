@@ -401,12 +401,21 @@ export const discoverCandidateAssets = (input: DiscoveryInput): Discovery => {
       new Set([ANDROID_METADATA_FILE]),
     );
   } else {
+    // Actions merges every additional recovery into one directory. Claim that
+    // directory once against its complete matrix, or each expected APK makes
+    // the other expected APKs look like unexpected payloads.
+    const directories = new Map<string, string[]>();
     for (const recovery of input.androidRecoveries) {
+      const files = directories.get(recovery.directory) ?? [];
+      files.push(recovery.asset);
+      directories.set(recovery.directory, files);
+    }
+    for (const [directory, files] of directories) {
       claim(
-        recovery.directory,
-        [{ file: recovery.asset, kind: "android-recovery", platform: "android" }],
+        directory,
+        files.map((file) => ({ file, kind: "android-recovery", platform: "android" })),
         new Set(
-          listFiles(NodePath.join(input.inputDir, recovery.directory)).filter((file) =>
+          listFiles(NodePath.join(input.inputDir, directory)).filter((file) =>
             file.startsWith("metadata"),
           ),
         ),
