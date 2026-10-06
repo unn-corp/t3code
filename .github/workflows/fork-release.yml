@@ -1005,7 +1005,9 @@ jobs:
         if: matrix.target == 'android'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
-          api-level: 34
+          # Two API 34 validation attempts lost the client when Google's font provider died.
+          # Use the validated Android 16 image; keep every interaction and survival gate.
+          api-level: 36
           arch: x86_64
           target: google_apis
           disable-animations: true

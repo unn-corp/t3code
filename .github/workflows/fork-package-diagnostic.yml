@@ -16,7 +16,7 @@ on:
         description: "Android Google APIs image for retained-APK diagnostics; does not change release gates"
         type: choice
         options: ["34", "36"]
-        default: "34"
+        default: "36"
 
 permissions:
   contents: read

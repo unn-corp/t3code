@@ -114,7 +114,7 @@ the isolated environment before testing snapshot/restore.
 **Fork package diagnostic** takes a failed release's numeric `run_id` and runs current package
 validation against its retained candidate and predecessor. Select `scope: desktop` for clean Linux
 and Windows runners, `android` for the exact APKs and interaction runner on a fresh emulator, or
-`all`. `android_api_level` selects the Android 14 (34, default) or Android 16 (36) Google APIs image
+`all`. `android_api_level` selects the Android 14 (34) or Android 16 (36, default) Google APIs image
 to distinguish an image-specific platform failure from an APK failure. Each selection still requires
 all interaction checks and the full startup-survival check; an Android dependency dying is a failure,
 not an accepted application launch. This diagnostic selection does not change the release workflow's
@@ -217,6 +217,14 @@ three-minute deadline so a disconnected emulator fails the gate instead of leavi
 injects no random input. A missing process fails the check and retains bounded, redacted crash and
 system lifecycle logs, process-exit information, and activity state to distinguish application crashes from Android
 stopping or failing to start a task.
+
+Release package validation uses the Android 16 (API 36) Google APIs image. In two validation attempts
+on the previous Android 14 image, Android killed the WebView client after Google's font-provider
+process died; no app exception was recorded. The Android 16 image passed all retained-APK install,
+interaction, update, and recovery checks before adoption. This does not establish a general Android
+14 defect. Selecting this image does not waive process-survival checks or change
+the APK's supported Android versions. Older images remain available through the read-only
+diagnostic workflow; emulator results do not replace real-phone commissioning.
 
 The Settings interaction waits for the resolved Settings package to have input focus before sending
 Back; a window-state event alone is insufficient. A failed return reports the focused package and
