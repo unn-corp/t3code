@@ -1,0 +1,68 @@
+name: Fork Windows safety diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [coordinator, host-runtime, desktop-updater]
+    steps:
+      - name: Checkout diagnostic source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install diagnostic dependencies
+        run: vp install
+
+      # These runs diagnose the exact mandatory suites; they never produce release receipts.
+      - name: Run safety suite with retained failure details
+        shell: bash
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          node --input-type=module <<'JS'
+          import { SUITES } from './scripts/fork-release-suites.ts';
+          import { mkdirSync } from 'node:fs';
+          import { resolve } from 'node:path';
+          import { spawnSync } from 'node:child_process';
+          const spec = SUITES[process.env.SUITE];
+          if (!spec?.targets.includes('windows-x64')) throw new Error('Unsupported diagnostic suite');
+          mkdirSync('diagnostics', { recursive: true });
+          const report = resolve('diagnostics', `${spec.id}.json`);
+          const [program, ...args] = spec.command.map(arg => arg.replaceAll('<OUT>', report));
+          const result = spawnSync(program, [...args, '--reporter=default', ...spec.required], {
+            cwd: spec.workdir, stdio: 'inherit', shell: process.platform === 'win32',
+            timeout: spec.timeoutMinutes * 60_000,
+          });
+          process.exit(result.status ?? 1);
+          JS
+
+      - name: Retain diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-safety-diagnostic-${{ matrix.suite }}
+          path: diagnostics/*.json
+          if-no-files-found: error
+          retention-days: 3
