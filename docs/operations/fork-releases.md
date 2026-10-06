@@ -108,7 +108,9 @@ permissions, produces no eligibility receipts, and does not allocate Android cod
 application payloads. Windows directory ACL setup has a bounded 30-second cold-start allowance;
 failure still blocks startup or snapshot creation and does not loosen activity/ownership checks.
 ACL setup uses the Windows PowerShell .NET API directly so cold private profiles do not depend on
-cmdlet-module discovery.
+cmdlet-module discovery. The process-owner probe does the same while retaining its 10-second
+activity-read deadline. The helper proof also registers and verifies its real process owner under
+the isolated environment before testing snapshot/restore.
 **Fork package diagnostic** takes a failed release's numeric `run_id` and runs current package
 validation against its retained candidate and predecessor on clean Linux and Windows runners.
 It writes no receipts and cannot publish. Use it to correct validation tooling before rebuilding.

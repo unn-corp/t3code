@@ -254,8 +254,13 @@ async function processCreationIdentitiesWithTimeout(
       "$ErrorActionPreference='Stop';",
       `$ids=@(${batch.ids.join(",")});`,
       "foreach($id in $ids){",
-      "try{$p=Get-Process -Id $id -ErrorAction Stop; try{$ticks=$p.StartTime.ToUniversalTime().Ticks; Write-Output ($id.ToString()+[char]9+'P'+[char]9+$ticks.ToString())}catch{Write-Output ($id.ToString()+[char]9+'U')}}",
-      "catch{if($_.CategoryInfo.Category -eq 'ObjectNotFound'){Write-Output ($id.ToString()+[char]9+'A')}else{Write-Output ($id.ToString()+[char]9+'U')}}",
+      // Direct .NET APIs avoid first-use cmdlet discovery in a private USERPROFILE. Only
+      // GetProcessById's verified not-found error means absent; denied StartTime stays unknown.
+      "$p=$null;",
+      "try{",
+      "try{$p=[Diagnostics.Process]::GetProcessById($id)}catch{$cause=$_.Exception.GetBaseException();if($cause -is [ArgumentException]){[Console]::WriteLine($id.ToString()+[char]9+'A')}else{[Console]::WriteLine($id.ToString()+[char]9+'U')};continue}",
+      "try{$ticks=$p.StartTime.ToUniversalTime().Ticks;[Console]::WriteLine($id.ToString()+[char]9+'P'+[char]9+$ticks.ToString())}catch{[Console]::WriteLine($id.ToString()+[char]9+'U')}",
+      "}finally{if($null -ne $p){$p.Dispose()}}",
       "}",
     ].join("");
     try {

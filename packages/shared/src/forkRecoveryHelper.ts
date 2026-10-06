@@ -117,6 +117,23 @@ export async function runSelfTest(
 ): Promise<void> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-recovery-self-test-"));
   try {
+    // Prove real process ownership too: private Windows profiles must work before any
+    // restoration can be admitted, with the ordinary ownership deadline unchanged.
+    const coordinator = await CoordinatorStore.open(NodePath.join(root, "coordinator"));
+    await coordinator.register(
+      {
+        id: "self-test",
+        label: "Recovery proof",
+        kind: "standalone",
+        homes: [root],
+        updateTarget: false,
+      },
+      Date.now(),
+    );
+    if (
+      !(await coordinator.status(Date.now())).participants.some((entry) => entry.id === "self-test")
+    )
+      throw new Error("Recovery proof could not verify its process owner.");
     const state = NodePath.join(root, "userdata");
     await NodeFSP.mkdir(NodePath.join(state, "secrets"), { recursive: true });
     const database = new NodeSqlite.DatabaseSync(NodePath.join(state, "statev2.sqlite"));

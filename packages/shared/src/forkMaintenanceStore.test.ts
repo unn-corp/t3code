@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
+import * as NodeChildProcess from "node:child_process";
 import {
   CoordinatorStore,
   ORPHAN_ATTESTATION_CONFIRMATION,
@@ -1085,6 +1086,15 @@ describe("host coordinator", () => {
 });
 
 describe("process identity", () => {
+  it("distinguishes a real live owner from an exited child on the host OS", async () => {
+    // Exercise the actual host process probe using a child captured at launch.
+    const child = NodeChildProcess.spawnSync(process.execPath, ["-e", ""], { timeout: 30_000 });
+    expect(child.status).toBe(0);
+    const [live, exited] = await processCreationIdentities([process.pid, child.pid]);
+    expect(live).toMatchObject({ kind: "present", identity: expect.any(String) });
+    expect(exited).toEqual({ kind: "absent" });
+  });
+
   it("reads the darwin start time and treats ps exit 1 as exited", async () => {
     const run = (async () => ({ stdout: "Mon Oct  5 07:23:00 2026\n", stderr: "" })) as never;
     expect(await processCreationIdentity(42, "darwin", run)).toBe("Mon Oct  5 07:23:00 2026");
