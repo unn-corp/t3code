@@ -10,7 +10,7 @@
 // a fixture home.
 //
 // Entry contract (owned by the coordinator, enforced here and in its required test file):
-//   packages/shared/src/forkRecoveryHelper.ts
+//   packages/shared/src/forkRecoveryHelperMain.ts (which imports forkRecoveryHelper.ts)
 //   `node <bundle> --self-test`  snapshots a temporary home, changes it, restores the snapshot with
 //   the coordinator's real restoreSnapshot, verifies the result, prints
 //   `recovery-helper-protocol=1`, and exits 0. Any other outcome exits non-zero.
@@ -20,7 +20,7 @@ import * as NodePath from "node:path";
 import type { HelperAssetSpec } from "./fork-release-assets.ts";
 
 export const RECOVERY_HELPER_PACKAGE = "packages/shared";
-export const RECOVERY_HELPER_ENTRY = "src/forkRecoveryHelper.ts";
+export const RECOVERY_HELPER_ENTRY = "src/forkRecoveryHelperMain.ts";
 export const RECOVERY_HELPER_PROTOCOL = 1;
 
 /** A device caches the helper AND its verified Node runtime outside the replaced application. */

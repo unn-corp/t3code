@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeURL from "node:url";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import * as NodeSqlite from "node:sqlite";
@@ -42,6 +44,30 @@ const capture = () => {
   const io: HelperIo = { out: (line) => void out.push(line), err: (line) => void err.push(line) };
   return { io, out, err };
 };
+
+describe("importable recovery helper", () => {
+  it("does not treat a normal CLI --version import as the standalone helper executable", () => {
+    const helperPath = NodeURL.fileURLToPath(new URL("./forkRecoveryHelper.ts", import.meta.url));
+    // Match the old bundled self-execution condition: process.argv[1] names this module even though
+    // it is being imported as a dependency of the normal CLI bundle.
+    const source = `
+      import { pathToFileURL } from "node:url";
+      const helper = ${JSON.stringify(helperPath)};
+      process.argv = [process.execPath, helper, "--version"];
+      await import(pathToFileURL(helper));
+      console.log("normal-cli-survived");
+    `;
+    const result = NodeChildProcess.spawnSync(
+      process.execPath,
+      ["--input-type=module", "-e", source],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("normal-cli-survived");
+    expect(result.stdout).not.toContain("recovery-helper-protocol=");
+    expect(result.stderr).toBe("");
+  });
+});
 
 const NOW = 600_000;
 // oxlint-disable-next-line t3code/no-global-process-runtime -- The plan ownership rules differ by host OS; tests run on the host.

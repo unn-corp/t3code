@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalConsole:off processEnv:off globalTimers:off
 /**
  * The external recovery helper: the part of recovery that works when the application directory
- * has been replaced or is broken. Release tooling bundles this one module (every dependency
- * inlined) into `t3-recovery-helper-<platform>.mjs`; a device caches it OUTSIDE the app directory
+ * has been replaced or is broken. Release tooling bundles this implementation through the dedicated
+ * `forkRecoveryHelperMain.ts` entry (every dependency inlined) into `t3-recovery-helper-<platform>.mjs`; a device caches it OUTSIDE the app directory
  * together with its own Node runtime (`t3-recovery-node-<platform>`), so recovery needs neither a
  * system Node nor the main app. `print-runtime` shows the exact cached command.
  *
@@ -41,7 +41,6 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 import * as NodeSqlite from "node:sqlite";
 import { newJournal, type MaintenanceJournal } from "./forkMaintenanceJournal.ts";
 import {
@@ -854,18 +853,4 @@ export async function main(argv: ReadonlyArray<string>, io: HelperIo = processIo
     io.err(cause instanceof Error ? cause.message : String(cause));
     return 1;
   }
-}
-
-// Run only when executed directly (the bundled asset), never when imported by tests or the app.
-if (
-  process.argv[1] !== undefined &&
-  import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href
-) {
-  main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
-    (cause) => {
-      console.error(cause instanceof Error ? cause.message : String(cause));
-      process.exit(1);
-    },
-  );
 }

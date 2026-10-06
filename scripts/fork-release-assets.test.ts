@@ -93,6 +93,18 @@ describe("Android APK verification", () => {
     assert.throws(() => parseApksignerCerts(""), /exactly one/);
   });
 
+  it("accepts SDK-ranged records for the same pinned certificate and rejects mixed certificates", () => {
+    const ranged = [
+      `Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: ${SIGNER}`,
+      `Signer (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: ${SIGNER.toUpperCase()}`,
+    ].join("\r\n");
+    assert.equal(parseApksignerCerts(`${ranged}\r\n`), SIGNER);
+    assert.throws(
+      () => parseApksignerCerts(ranged.replace(SIGNER.toUpperCase(), "b".repeat(64))),
+      /found 2/,
+    );
+  });
+
   const facts: AndroidFacts = {
     packageName: FORK_ANDROID_PACKAGE,
     versionCode: 29_853_679,

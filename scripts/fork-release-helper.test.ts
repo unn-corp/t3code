@@ -59,7 +59,7 @@ describe("building the recovery helper from the coordinator", () => {
       outDir: out(),
     });
     assert.equal(problems.length, 1);
-    assert.include(problems[0], "packages/shared/src/forkRecoveryHelper.ts");
+    assert.include(problems[0], "packages/shared/src/forkRecoveryHelperMain.ts");
     assert.include(problems[0], "no release can be published");
   });
 

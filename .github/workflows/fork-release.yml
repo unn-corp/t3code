@@ -4,9 +4,9 @@ name: Fork release
 # release.yml, which publishes upstream's npm, web, relay, AUR, and announcement targets and is
 # guarded off in this fork. Nothing here publishes anywhere but this repository's GitHub releases.
 #
-# Gate: scheduled runs do nothing, and manual runs never publish, until the repository variable
-# FORK_RELEASES_ENABLED is "true". Enable it only after the baseline proof in
-# docs/operations/fork-releases.md (Baseline, then Commissioning) has passed.
+# Gate: scheduled publication waits for FORK_RELEASES_ENABLED="true" and the hardware proof in
+# docs/operations/fork-releases.md. An explicit manual commissioning run may publish one complete,
+# validated candidate before that gate opens so devices can exercise their real trusted feed.
 #
 # Pipeline: plan (pin commit, version, tag, predecessor) -> reserve Android codes -> build desktop,
 # server archives, APKs, recovery helper -> assemble and verify -> validate install/update/recovery
@@ -34,6 +34,12 @@ on:
         type: string
       publish:
         description: "Create and publish the release. Off by default: a rehearsal builds and validates everything but publishes nothing."
+        required: false
+        default: false
+        type: boolean
+
+      commission:
+        description: "Publish a fully validated nightly for hardware commissioning while scheduled publishing remains disabled. Requires publish=true."
         required: false
         default: false
         type: boolean
@@ -100,6 +106,7 @@ jobs:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_COMMIT: ${{ inputs.commit }}
           INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_COMMISSION: ${{ inputs.commission }}
           ENABLED: ${{ vars.FORK_RELEASES_ENABLED }}
         run: |
           set -euo pipefail
@@ -110,8 +117,13 @@ jobs:
             channel="$INPUT_CHANNEL"
             publish="${INPUT_PUBLISH:-false}"
           fi
-          # Publication is gated on the commissioning variable, whatever the trigger asked for.
-          [[ "$ENABLED" == "true" ]] || publish=false
+          # Only an explicit manual nightly may enter the real feed before hardware commissioning.
+          # This changes publication admission only; every artifact and safety receipt is still required.
+          if [[ "$ENABLED" != "true" ]]; then
+            if [[ "$EVENT" != "workflow_dispatch" || "$channel" != "nightly" || "${INPUT_COMMISSION:-false}" != "true" ]]; then
+              publish=false
+            fi
+          fi
           if [[ "$channel" == "stable" && -n "$INPUT_COMMIT" ]]; then
             echo "A stable release promotes a nightly; it takes no commit input." >&2
             exit 1

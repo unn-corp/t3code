@@ -208,9 +208,24 @@ describe("tool output", () => {
     expect(() => singleSignerDigest("")).toThrow(/found 0/);
     expect(() =>
       singleSignerDigest(
-        `Signer #1 certificate SHA-256 digest: ${SIGNER}\nSigner #2 certificate SHA-256 digest: ${SIGNER}\n`,
+        `Signer #1 certificate SHA-256 digest: ${SIGNER}\nSigner #2 certificate SHA-256 digest: ${"b".repeat(64)}\n`,
       ),
     ).toThrow(/found 2/);
+  });
+  it("accepts repeated SDK-ranged records only when they identify the same certificate", () => {
+    const ranged = [
+      `Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: ${SIGNER.toUpperCase()}`,
+      `Signer (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: ${SIGNER}`,
+    ].join("\r\n");
+    expect(singleSignerDigest(`${ranged}\r\n`)).toBe(SIGNER);
+    expect(() =>
+      singleSignerDigest(`${ranged.replace(SIGNER.toUpperCase(), "b".repeat(64))}\r\n`),
+    ).toThrow(/found 2/);
+  });
+  it("rejects malformed certificate records instead of ignoring them", () => {
+    expect(() =>
+      singleSignerDigest("Signer #1 certificate SHA-256 digest: not-a-certificate\r\n"),
+    ).toThrow(/Unrecognized/);
   });
   const badging =
     "package: name='com.devotek.t3code.pwa' versionCode='29853700' versionName='1.0.1' platformBuildVersionName='16'\nsdkVersion:'24'\n";

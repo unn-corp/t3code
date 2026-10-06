@@ -27,6 +27,7 @@ import {
   FORK_MANIFEST_ASSET,
   type ForkChannel,
 } from "./fork-release-policy.ts";
+import { singleSignerDigest } from "./lib/android-pwa-config.ts";
 
 export type AssetKind = ForkReleaseManifest["assets"][number]["kind"];
 export type AssetPlatform = ForkReleaseManifest["assets"][number]["platform"];
@@ -95,15 +96,7 @@ export const parseAaptBadging = (output: string): AndroidFacts => {
 };
 
 /** Reads `apksigner verify --print-certs`; a release must carry exactly one signer. */
-export const parseApksignerCerts = (output: string): string => {
-  const digests = [
-    ...output.matchAll(/^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$/gm),
-  ];
-  if (digests.length !== 1) {
-    throw new Error(`Expected exactly one APK signer, found ${digests.length}.`);
-  }
-  return digests[0]![1]!.toLowerCase();
-};
+export const parseApksignerCerts = singleSignerDigest;
 
 /**
  * Sidecar the Android build helper writes beside each APK. It is a claim, never proof: every

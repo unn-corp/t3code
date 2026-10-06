@@ -69,50 +69,56 @@ esac
   }
 }
 describe("manual baseline admission", () => {
-  it("cleans up only this run's unpublished draft after a failed roundtrip", () => {
-    const publish = workflow.jobs.baseline.steps.find(
-      (step) => step.name === "Publish complete manual baseline",
-    )!.run!;
-    for (const draft of [
-      { draft: true, body: "<!-- t3-fork-baseline-run:777 -->", id: 123 },
-      { draft: false, body: "<!-- t3-fork-baseline-run:777 -->", id: 123 },
-      { draft: true, body: "<!-- t3-fork-baseline-run:888 -->", id: 123 },
-    ]) {
-      const temporary = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-baseline-cleanup-"));
-      try {
-        const deleted = NodePath.join(temporary, "deleted");
-        NodeFS.writeFileSync(
-          NodePath.join(temporary, "gh"),
-          `#!/bin/bash
+  it.each([0, 1])(
+    "cleans up only this run's draft after create exits %s or roundtrip fails",
+    (createExit) => {
+      const publish = workflow.jobs.baseline.steps.find(
+        (step) => step.name === "Publish complete manual baseline",
+      )!.run!;
+      for (const draft of [
+        { draft: true, body: "<!-- t3-fork-baseline-run:777 -->", id: 123 },
+        { draft: false, body: "<!-- t3-fork-baseline-run:777 -->", id: 123 },
+        { draft: true, body: "<!-- t3-fork-baseline-run:888 -->", id: 123 },
+      ]) {
+        const temporary = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "t3-baseline-cleanup-"),
+        );
+        try {
+          const deleted = NodePath.join(temporary, "deleted");
+          NodeFS.writeFileSync(
+            NodePath.join(temporary, "gh"),
+            `#!/bin/bash
 if [[ "$1" == api && "$2" == --method ]]; then printf '%s' "$5" > "$DELETED"; exit 0; fi
 if [[ "$1" == api && "$2" == */immutable-releases ]]; then echo true; exit 0; fi
 if [[ "$1" == api && "$2" == */releases/tags/* ]]; then printf '%s' "$DRAFT" | jq -r "$4"; exit $?; fi
-if [[ "$1" == release && "$2" == create ]]; then exit 0; fi
+if [[ "$1" == release && "$2" == create ]]; then exit "$CREATE_EXIT"; fi
 if [[ "$1" == release && "$2" == download ]]; then exit 1; fi
 exit 99
 `,
-          { mode: 0o700 },
-        );
-        const result = NodeChildProcess.spawnSync("bash", ["-c", publish], {
-          cwd: temporary,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            PATH: `${temporary}${NodePath.delimiter}${process.env.PATH}`,
-            DELETED: deleted,
-            DRAFT: JSON.stringify(draft),
-            GITHUB_REPOSITORY: "unn-corp/t3code",
-            GITHUB_RUN_ID: "777",
-            COMMIT: commit,
-          },
-        });
-        expect(result.status).toBe(1);
-        expect(NodeFS.existsSync(deleted)).toBe(draft.draft && draft.body.includes(":777"));
-      } finally {
-        NodeFS.rmSync(temporary, { recursive: true, force: true });
+            { mode: 0o700 },
+          );
+          const result = NodeChildProcess.spawnSync("bash", ["-c", publish], {
+            cwd: temporary,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${temporary}${NodePath.delimiter}${process.env.PATH}`,
+              DELETED: deleted,
+              CREATE_EXIT: String(createExit),
+              DRAFT: JSON.stringify(draft),
+              GITHUB_REPOSITORY: "unn-corp/t3code",
+              GITHUB_RUN_ID: "777",
+              COMMIT: commit,
+            },
+          });
+          expect(result.status).toBe(1);
+          expect(NodeFS.existsSync(deleted)).toBe(draft.draft && draft.body.includes(":777"));
+        } finally {
+          NodeFS.rmSync(temporary, { recursive: true, force: true });
+        }
       }
-    }
-  });
+    },
+  );
   it("pins only an on-main commit with its reserved code", () => {
     expect(admit()).toEqual({
       code: 0,

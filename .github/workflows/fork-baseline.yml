@@ -257,6 +257,12 @@ jobs:
           set -euo pipefail
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          # Older pinned baseline helpers choose the newest installed build-tools. Limit this
+          # disposable runner to the verified SDK version rather than inheriting image previews.
+          for directory in "$ANDROID_HOME"/build-tools/*; do
+            version="${directory##*/}"
+            [[ "$version" == "36.0.0" ]] || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --uninstall "build-tools;$version"
+          done
       - name: Install web dependencies
         run: |-
           cd source
@@ -296,6 +302,17 @@ jobs:
             --source-commit "$COMMIT" \
             --asset-name "t3-code-android-$VERSION.apk" \
             --output-dir "$RUNNER_TEMP/android/normal"
+      - name: Diagnose APK verification failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          apk=source/apps/android-pwa/app/build/outputs/apk/release/app-release.apk
+          if [[ -f "$apk" ]]; then
+            for directory in "$ANDROID_HOME"/build-tools/*; do
+              echo "Installed build-tools: ${directory##*/}"
+            done
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk"
+          fi
       - name: Verify normal APK
         working-directory: tooling
         run: |
@@ -383,7 +400,7 @@ jobs:
           retention-days: 14
       - name: Publish complete manual baseline
         if: ${{ inputs.publish }}
-        run: >-
+        run: |
           set -euo pipefail
 
           created=false
@@ -412,10 +429,11 @@ jobs:
 
           printf '\n<!-- t3-fork-baseline-run:%s -->\n' "$GITHUB_RUN_ID" >> baseline-notes.txt
 
+          # The server may create a draft even when the CLI loses the response.
+          created=true
+
           gh release create fork-baseline baseline/* --target "$COMMIT" --draft --prerelease --title "Fork
           updater baseline 1.0.0" --notes-file baseline-notes.txt
-
-          created=true
 
           gh release download fork-baseline --dir baseline-roundtrip
 

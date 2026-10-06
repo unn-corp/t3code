@@ -190,14 +190,23 @@ export const androidBuildMetadata = (input: {
   };
 };
 
-/** `apksigner verify --print-certs` output must name exactly one signer. */
+/** `apksigner verify --print-certs` must identify one pinned signing certificate. */
 export const singleSignerDigest = (output: string): string => {
-  const digests = [
-    ...output.matchAll(/^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$/gm),
-  ];
-  if (digests.length !== 1)
-    throw new Error(`Expected exactly one APK signer, found ${digests.length}.`);
-  return digests[0]![1]!.toLowerCase();
+  const digests: string[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.includes("certificate SHA-256 digest:")) continue;
+    const match =
+      /^[ \t]*Signer(?: #\d+ \(minSdkVersion=\d+, maxSdkVersion=\d+\)| #\d+| \(minSdkVersion=\d+, maxSdkVersion=\d+\)) certificate SHA-256 digest: ([0-9a-fA-F]{64})[ \t]*$/.exec(
+        line,
+      );
+    if (!match)
+      throw new Error(`Unrecognized apksigner certificate SHA-256 output: ${line.slice(0, 180)}`);
+    digests.push(match[1]!.toLowerCase());
+  }
+  const identities = [...new Set(digests)];
+  if (identities.length !== 1)
+    throw new Error(`Expected exactly one APK signer certificate, found ${identities.length}.`);
+  return identities[0]!;
 };
 
 export interface AaptFacts {

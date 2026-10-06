@@ -6,10 +6,11 @@ announcement targets and is guarded off in this fork. The fork pipeline publishe
 releases in this repository. Device behavior (what an installation does with a release) is in the
 [maintenance guide](./fork-maintenance.md) and the user [updating guide](../user/updating.md).
 
-**Status.** The workflow, scripts, and tests are implemented. Nothing publishes until the
-repository variable `FORK_RELEASES_ENABLED` is `true`, and that must wait for the
-[baseline](#baseline) and the [commissioning checklist](#commissioning) below. Required coordinator, updater, retained-runtime, and recovery-helper checks must all pass;
-missing or failed safety evidence blocks every release.
+**Status.** The workflow, scripts, and tests are implemented. Scheduled publication waits for
+`FORK_RELEASES_ENABLED=true`, the [baseline](#baseline), and the [commissioning checklist](#commissioning).
+An explicit manual nightly with both `publish=true` and `commission=true` can publish a candidate for
+hardware verification while schedules stay disabled. Required coordinator, updater, retained-runtime,
+and recovery-helper checks still must all pass; missing or failed safety evidence blocks every release.
 
 ## What a release is
 
@@ -158,7 +159,7 @@ to the `coordinator` suite's required list as they land.
 
 ## Recovery helper
 
-The release builder bundles `packages/shared/src/forkRecoveryHelper.ts` as
+The release builder bundles `packages/shared/src/forkRecoveryHelperMain.ts` as
 `t3-recovery-helper-linux-x64.mjs` and `t3-recovery-helper-windows-x64.mjs`. Each platform also
 ships its matching Node runtime: `t3-recovery-node-linux-x64` or
 `t3-recovery-node-windows-x64.exe`. These four assets carry recorded digests and sizes in the
@@ -276,9 +277,13 @@ Do these in order. Each is outside the repository.
    builds and validates everything, writes `fork-release.json`, and publishes nothing; it also does not
    claim any Android code. Download the `fork-release-final` artifact and read the receipts. Repeat for
    `stable` once an eligible nightly exists.
-6. **Hardware pass.** Install the rehearsal candidate on a real desktop and the phone through the
-   in-product controls, with agents running, once for update and once for recovery. This is the proof
-   no automated check here provides.
+6. **Hardware pass.** Manually run `nightly` with both `publish=true` and `commission=true` to
+   publish a complete, validated candidate to the trusted GitHub feed. A rehearsal artifact or draft
+   cannot be installed through the in-product updater. Keep `FORK_RELEASES_ENABLED` unset or false.
+   On real Windows/Linux desktops, verify that active registered agents defer installation; let work
+   finish normally before updating. On the phone, verify the foreground and local-operation guards.
+   Exercise both in-product update and native/external recovery, preserving connections and data.
+   This is the proof no automated check here provides.
 7. Set `FORK_RELEASES_ENABLED` to `true`. Scheduled runs then publish, and a manual run publishes only
    with the `publish` input. Withdraw any bad release (below) and keep the variable unset to stop
    automatic publication.
@@ -286,7 +291,9 @@ Do these in order. Each is outside the repository.
 ## Operating
 
 **Manual run.** Actions, Fork release, Run workflow, from `main`. `commit` (nightly only) must be on
-`main`. `publish` defaults to off.
+`main`. `publish` defaults to off. Before automatic publishing is commissioned, only an explicit
+nightly with both `publish=true` and `commission=true` may publish. This does not skip validation or
+enable scheduled runs; stable publication still requires the commissioned gate.
 
 **Withdraw or restore.** Actions, Fork release withdrawal, with the version and a reason. Withdrawing
 rewrites only the release notes (a marker line) so devices and installers stop offering it; the tag,

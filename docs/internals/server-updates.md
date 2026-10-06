@@ -127,7 +127,12 @@ restore timestamp, and an acknowledgement that newer data is given up. The CLI a
 id again. `t3 maintenance` reaches the running server's one controller through a loopback endpoint authorized by an
 owner-only token file in the home, so it cannot become a second, weaker path.
 
-When the application is broken, the external helper ([`forkRecoveryHelper.ts`](../../packages/shared/src/forkRecoveryHelper.ts)),
+The importable recovery service lives in [`forkRecoveryHelper.ts`](../../packages/shared/src/forkRecoveryHelper.ts).
+Only [`forkRecoveryHelperMain.ts`](../../packages/shared/src/forkRecoveryHelperMain.ts) invokes it as an executable.
+Keep process exit and command dispatch in that separate entry: inlined `import.meta.url` guards can
+otherwise run the helper when the bundled server imports its maintenance service.
+
+When the application is broken, the external helper,
 cached outside the app directory with its own Node runtime ([`forkRecoveryCache.ts`](../../packages/shared/src/forkRecoveryCache.ts):
 digest-checked, owner-only, executable, and self-tested from a neutral directory with an empty `PATH`), runs the same services:
 cohort-wide admission and the five-minute idle window, a check that no runtime (a live trial owner included) or orphaned process

@@ -194,6 +194,7 @@ describe("fork-release.yml gating", () => {
           INPUT_COMMIT: "",
           INPUT_CHANNEL: "",
           INPUT_PUBLISH: "",
+          INPUT_COMMISSION: "",
           SCHEDULE: "",
           ...env,
           GITHUB_OUTPUT: output,
@@ -242,6 +243,29 @@ describe("fork-release.yml gating", () => {
     );
     assert.equal(bash({ ...base, INPUT_PUBLISH: "true", ENABLED: "true" }).outputs.publish, "true");
   });
+
+  it.skipIf(!hasBash)(
+    "allows explicit manual nightly commissioning without enabling schedules",
+    () => {
+      const base = {
+        EVENT: "workflow_dispatch",
+        INPUT_CHANNEL: "nightly",
+        INPUT_PUBLISH: "true",
+        INPUT_COMMISSION: "true",
+        ENABLED: "false",
+      };
+      const manual = bash(base);
+      assert.equal(manual.status, 0);
+      assert.equal(manual.outputs.publish, "true");
+      assert.equal(bash({ ...base, INPUT_PUBLISH: "false" }).outputs.publish, "false");
+      assert.equal(bash({ ...base, INPUT_CHANNEL: "stable" }).outputs.publish, "false");
+      assert.equal(
+        bash({ ...base, EVENT: "schedule", SCHEDULE: "23 7 * * *" }).outputs.publish,
+        "false",
+      );
+      assert.equal(bash({ ...base, EVENT: "push" }).outputs.publish, "false");
+    },
+  );
 
   it.skipIf(!hasBash)("rejects a commit input on a stable run", () => {
     const result = bash({
