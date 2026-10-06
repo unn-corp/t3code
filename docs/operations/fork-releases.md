@@ -101,6 +101,9 @@ permissions and an isolated home; its result is diagnostic evidence, not a relea
 The smoke probe requires an actual HTTP 200 within 90 seconds on a clean Windows runner or 30 seconds
 on Linux. It reports startup elapsed time and redacts pairing credentials from failed startup output;
 this cold-start allowance does not change coordinator activity or ownership deadlines.
+Use **Fork Windows safety diagnostic** on `main` to rerun all three required Windows safety suites
+with individual assertion failures retained for three days. It has read-only permissions, produces
+no eligibility receipts, and does not allocate Android codes or rebuild release payloads.
 Linux AppImage feeds retain electron-builder’s per-file `blockMapSize`. Assembly verifies the embedded
 size trailer, raw-deflated block-map structure, and block ranges as well as the whole payload’s size
 and digest. An absent external AppImage `.blockmap` is allowed when the map is embedded; a malformed
@@ -142,6 +145,13 @@ receipt of either kind makes the check false, and a false check blocks publicati
 Archive startup checks use private scratch homes and coordinator namespaces. Windows keeps its
 OS ACL and PowerShell utilities available while excluding developer Node and provider directories
 from the test process's PATH; removing those OS prerequisites prevents safe runtime registration.
+Package validation uses the same isolated environment and startup deadlines. Linux validation
+installs the desktop's required runtime libraries and probes AppImage's bundled Electron Node
+runtime explicitly, without needing a display. Windows installers target the check's scratch
+directory; package versions come from the installed `app.asar`, rather than another installation.
+The immutable baseline has no Windows server archive: its verified NSIS payload's actual bundled
+Electron and `server.asar` start the predecessor data home before replacement and after snapshot
+restoration. Subsequent ordinary predecessors require their Windows server archive.
 
 **Package validation** (`scripts/fork-release-validate.ts`, receipts bind to the payload digest and
 the predecessor's digest):

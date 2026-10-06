@@ -975,6 +975,12 @@ jobs:
           name: fork-release-predecessor
           path: predecessor
 
+      - name: Install Linux desktop runtime dependencies
+        if: matrix.target == 'linux-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnotify4 libsecret-1-0 libgtk-3-0 libnss3 libgbm1 libasound2t64
+
       - name: Run validations
         if: matrix.target != 'android'
         shell: bash

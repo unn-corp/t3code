@@ -8,6 +8,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { redactCliSmokeOutput } from "./lib/cli-smoke-output.ts";
 import type { ForkChannel } from "./fork-release-policy.ts";
 
 export const VALIDATION_CHECKS = ["install", "update", "recovery"] as const;
@@ -325,6 +326,7 @@ interface VitestReport {
     readonly assertionResults?: ReadonlyArray<{
       readonly status: string;
       readonly fullName?: string;
+      readonly failureMessages?: ReadonlyArray<string>;
     }>;
   }>;
 }
@@ -352,6 +354,13 @@ export const parseVitestReport = (
       problems.push(
         `${name}: ${notPassed.length} test(s) did not pass (${[...new Set(notPassed.map((a) => a.status))].join(", ")}).`,
       );
+      for (const assertion of notPassed.slice(0, 10)) {
+        const detail = [
+          assertion.fullName ?? "unnamed test",
+          ...(assertion.failureMessages ?? []),
+        ].join("\n");
+        problems.push(redactCliSmokeOutput(detail).slice(0, 4000));
+      }
     }
     files.push({ name, tests: assertions.length });
   }

@@ -17,8 +17,12 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Effect from "effect/Effect";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Asar from "@electron/asar";
 import type { CandidateRecord } from "./fork-release.ts";
 import { FORK_ANDROID_PACKAGE } from "./fork-release-contract.ts";
+import { parseBaselineManifest, verifyBaselinePayload } from "./fork-release-baseline.ts";
+import { cliSmokeEnvironment } from "./lib/cli-smoke-environment.ts";
+import { appendCliSmokeOutput, redactCliSmokeOutput } from "./lib/cli-smoke-output.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Asset lookup
@@ -109,20 +113,37 @@ export const extractServerArchive = (archive: string, destination: string): stri
 const executableIn = (contentDir: string) =>
   NodePath.join(contentDir, HOST_PLATFORM === "win32" ? "t3.exe" : "t3");
 
-const serverEnv = (home: string): NodeJS.ProcessEnv => ({
-  PATH: HOST_PLATFORM === "win32" ? (process.env.PATH ?? "") : "",
-  ...(HOST_PLATFORM === "win32" ? { SystemRoot: process.env.SystemRoot ?? "C:\\Windows" } : {}),
-  HOME: home,
-  USERPROFILE: home,
-  TMPDIR: NodeOS.tmpdir(),
-  TEMP: NodeOS.tmpdir(),
-  T3CODE_HOME: home,
-});
+const serverEnv = (home: string): NodeJS.ProcessEnv => {
+  const scratch = NodePath.join(NodePath.dirname(home), "runtime-scratch");
+  NodeFS.mkdirSync(scratch, { recursive: true });
+  return cliSmokeEnvironment({
+    platform: HOST_PLATFORM,
+    home,
+    scratch,
+    inherited: process.env,
+    join: NodePath.join,
+  });
+};
+
+const serverInvocation = (contentDir: string, home: string) => {
+  const serverArchive = NodePath.join(contentDir, "resources/server.asar");
+  const entry = NodePath.join(serverArchive, "apps/server/dist/bin.mjs");
+  if (NodeFS.existsSync(serverArchive)) {
+    Asar.statFile(serverArchive, "apps/server/dist/bin.mjs");
+    return {
+      executable: windowsDesktopExecutable(contentDir),
+      prefix: [entry],
+      env: { ...serverEnv(home), ELECTRON_RUN_AS_NODE: "1" },
+    };
+  }
+  return { executable: executableIn(contentDir), prefix: [], env: serverEnv(home) };
+};
 
 export const reportedVersion = (contentDir: string, home: string): string => {
-  const result = run(executableIn(contentDir), ["--version"], {
+  const invocation = serverInvocation(contentDir, home);
+  const result = run(invocation.executable, [...invocation.prefix, "--version"], {
     cwd: contentDir,
-    env: serverEnv(home),
+    env: invocation.env,
   });
   if (result.status !== 0) throw new Error(`--version exited ${result.status}: ${result.stderr}`);
   return result.stdout.trim();
@@ -132,19 +153,25 @@ export const reportedVersion = (contentDir: string, home: string): string => {
 export const serveOnce = async (contentDir: string, home: string): Promise<string> => {
   NodeFS.mkdirSync(home, { recursive: true });
   const port = await freePort();
+  const invocation = serverInvocation(contentDir, home);
   const child = NodeChildProcess.spawn(
-    executableIn(contentDir),
-    ["serve", "--host", "127.0.0.1", "--port", String(port), "--no-browser"],
-    { cwd: contentDir, env: serverEnv(home), stdio: ["ignore", "pipe", "pipe"] },
+    invocation.executable,
+    [...invocation.prefix, "serve", "--host", "127.0.0.1", "--port", String(port), "--no-browser"],
+    { cwd: contentDir, env: invocation.env, stdio: ["ignore", "pipe", "pipe"] },
   );
   let log = "";
-  child.stdout.on("data", (chunk: Buffer) => (log += chunk.toString()));
-  child.stderr.on("data", (chunk: Buffer) => (log += chunk.toString()));
+  child.stdout.on("data", (chunk: Buffer) => (log = appendCliSmokeOutput(log, chunk.toString())));
+  child.stderr.on("data", (chunk: Buffer) => (log = appendCliSmokeOutput(log, chunk.toString())));
+  let launchError: Error | undefined;
+  child.once("error", (error) => {
+    launchError = error;
+  });
   const exited = new Promise<number | null>((resolve) =>
-    child.once("exit", (code) => resolve(code)),
+    child.once("exit", (code) => resolve(code)).once("error", () => resolve(null)),
   );
   let ready = false;
-  const deadline = Date.now() + 45_000;
+  const timeoutMs = HOST_PLATFORM === "win32" ? 90_000 : 30_000;
+  const deadline = Date.now() + timeoutMs;
   while (!ready && Date.now() < deadline) {
     const early = await Promise.race([exited, sleep(250).then(() => "waiting" as const)]);
     if (early !== "waiting") break;
@@ -155,18 +182,27 @@ export const serveOnce = async (contentDir: string, home: string): Promise<strin
   child.kill("SIGTERM");
   await Promise.race([exited, sleep(10_000)]);
   if (child.exitCode === null) child.kill("SIGKILL");
-  if (!ready) throw new Error(`serve did not answer 200 within 45s.\n${log.slice(-2000)}`);
-  return log;
+  if (launchError) throw new Error(`serve could not launch: ${launchError.message}`);
+  if (!ready)
+    throw new Error(
+      `serve did not answer 200 within ${timeoutMs / 1000}s.\n${redactCliSmokeOutput(log)}`,
+    );
+  return redactCliSmokeOutput(log);
 };
 
 const MARKER = "fork-release-marker.txt";
 
 export interface ServerArchives {
-  readonly previous: string;
+  readonly previous: string | { readonly windowsInstaller: string };
   readonly next: string;
   readonly previousVersion: string;
   readonly nextVersion: string;
 }
+
+const installServerPredecessor = (payload: ServerArchives["previous"], destination: string) =>
+  typeof payload === "string"
+    ? extractServerArchive(payload, destination)
+    : installWindowsPayload(payload.windowsInstaller, destination).directory;
 
 /** A fresh install of one archive: the binary reports its version and serves from a clean home. */
 export const serverInstall = async (
@@ -186,7 +222,7 @@ export const serverInstall = async (
 export const serverUpdate = async (archives: ServerArchives, scratch: string): Promise<void> => {
   const installRoot = NodePath.join(scratch, "install");
   const home = NodePath.join(scratch, "home");
-  const old = extractServerArchive(archives.previous, installRoot);
+  const old = installServerPredecessor(archives.previous, installRoot);
   if (!reportedVersion(old, home).includes(archives.previousVersion))
     throw new Error("The predecessor reports the wrong version.");
   await serveOnce(old, home);
@@ -221,7 +257,7 @@ export const serverRecovery = async (
   const installRoot = NodePath.join(scratch, "install");
   const home = NodePath.join(scratch, "home");
   const snapshot = NodePath.join(scratch, "home-snapshot");
-  const old = extractServerArchive(archives.previous, installRoot);
+  const old = installServerPredecessor(archives.previous, installRoot);
   await serveOnce(old, home);
   NodeFS.mkdirSync(NodePath.join(home, "userdata"), { recursive: true });
   NodeFS.writeFileSync(NodePath.join(home, "userdata", MARKER), "before update\n");
@@ -234,7 +270,7 @@ export const serverRecovery = async (
     "must not survive recovery\n",
   );
 
-  const rolledBack = extractServerArchive(archives.previous, installRoot);
+  const rolledBack = installServerPredecessor(archives.previous, installRoot);
   let acceptsUpdatedHome = true;
   try {
     await serveOnce(rolledBack, home);
@@ -273,7 +309,12 @@ export const checkLinuxPackages = (assets: PayloadAssets, scratch: string): void
   const updateConfig = NodePath.join(extractDir, "squashfs-root/resources/app-update.yml");
   if (!NodeFS.existsSync(updateConfig)) throw new Error("The AppImage carries no app-update.yml.");
   const launcher = NodePath.join(extractDir, "squashfs-root/AppRun");
-  const smoke = run(launcher, ["--no-sandbox", "--version"], { cwd: extractDir });
+  // Exercise the bundled Electron Node runtime without requiring a display or starting a GUI.
+  const smoke = run(launcher, ["--version"], {
+    cwd: extractDir,
+    env: { ...process.env, APPIMAGE: "", APPDIR: "", ELECTRON_RUN_AS_NODE: "1" },
+    timeout: 30_000,
+  });
   if (smoke.status !== 0 || !/^v\d+\.\d+\.\d+/m.test(smoke.stdout))
     throw new Error(`The extracted AppImage runtime cannot start: ${smoke.stderr}`);
 };
@@ -423,28 +464,36 @@ export const debRecovery = (
 // Windows
 // ---------------------------------------------------------------------------------------------
 
-const powershell = (script: string) =>
-  run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+const windowsDesktopExecutable = (directory: string): string => {
+  const matches = NodeFS.readdirSync(directory).filter(
+    (name) => /^T3.*\.exe$/i.test(name) && !/uninstall/i.test(name),
+  );
+  if (matches.length !== 1)
+    throw new Error("The isolated Windows installation has no unique T3 executable.");
+  return NodePath.join(directory, matches[0]!);
+};
 
-/** Silently installs an NSIS installer and returns the installed product version. */
-export const installWindowsInstaller = (installer: string): string => {
-  const install = run(installer, ["/S"]);
+/** Install only into this check's private directory; never discover another installation by name. */
+const installWindowsPayload = (installer: string, directory: string) => {
+  NodeFS.mkdirSync(directory, { recursive: true });
+  const install = run(installer, ["/S", `/D=${directory}`], { timeout: 120_000 });
   if (install.status !== 0)
     throw new Error(`${NodePath.basename(installer)} exited ${install.status}: ${install.stderr}`);
-  const probe = powershell(
-    [
-      "$roots = @($env:LOCALAPPDATA + '\\Programs', $env:ProgramFiles, ${env:ProgramFiles(x86)})",
-      "$exe = $roots | Where-Object { Test-Path $_ } | ForEach-Object { Get-ChildItem -Path $_ -Directory -Filter 'T3*' -ErrorAction SilentlyContinue } |",
-      "  ForEach-Object { Get-ChildItem -Path $_.FullName -Filter 'T3*.exe' -File -ErrorAction SilentlyContinue } |",
-      "  Where-Object { $_.Name -notmatch 'Uninstall' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1",
-      "if (-not $exe) { exit 3 }",
-      "$exe.VersionInfo.ProductVersion",
-    ].join("\n"),
-  );
-  if (probe.status !== 0)
-    throw new Error("No installed T3 executable was found after the silent install.");
-  return probe.stdout.trim();
+  windowsDesktopExecutable(directory);
+  const resources = NodePath.join(directory, "resources");
+  for (const required of ["app-update.yml", "server.asar", "app.asar"])
+    if (!NodeFS.existsSync(NodePath.join(resources, required)))
+      throw new Error(`The installed desktop is missing ${required}.`);
+  const metadata = JSON.parse(
+    Asar.extractFile(NodePath.join(resources, "app.asar"), "package.json").toString(),
+  ) as { version?: string };
+  if (!metadata.version) throw new Error("The installed desktop has no package version.");
+  return { directory, version: metadata.version };
 };
+
+/** Silently installs an NSIS installer and returns its exact packaged source version. */
+export const installWindowsInstaller = (installer: string, directory: string): string =>
+  installWindowsPayload(installer, directory).version;
 
 // ---------------------------------------------------------------------------------------------
 // Android
@@ -660,12 +709,14 @@ const readRecord = (candidateDir: string): CandidateRecord =>
 
 const versionOfPredecessor = (dir: string): string => {
   const names = NodeFS.readdirSync(dir);
-  const baseline = names.includes("fork-baseline.json")
-    ? (JSON.parse(NodeFS.readFileSync(NodePath.join(dir, "fork-baseline.json"), "utf8")) as {
-        version: string;
-      })
-    : null;
-  if (baseline) return baseline.version;
+  if (names.includes("fork-baseline.json")) {
+    const baseline = parseBaselineManifest(
+      JSON.parse(NodeFS.readFileSync(NodePath.join(dir, "fork-baseline.json"), "utf8")),
+    );
+    const problems = verifyBaselinePayload(dir, baseline);
+    if (problems.length) throw new Error(`Invalid baseline predecessor: ${problems.join(" ")}`);
+    return baseline.version;
+  }
   const manifest = JSON.parse(
     NodeFS.readFileSync(NodePath.join(dir, "fork-release.json"), "utf8"),
   ) as { version: string };
@@ -701,14 +752,29 @@ export const validate = async (env: NodeJS.ProcessEnv): Promise<string> => {
         } else {
           const installed = installWindowsInstaller(
             need(candidate.windowsInstaller, "installer", "the candidate"),
+            NodePath.join(scratch, "desktop"),
           );
-          if (!installed.startsWith(coreOf(record.version)))
+          if (installed !== record.version)
             throw new Error(`The installer installed ${installed}, expected ${record.version}.`);
         }
         return `${target} install passed`;
       }
       const archives: ServerArchives = {
-        previous: archiveOf(predecessor!),
+        // The immutable updater baseline predates Windows SEA packaging. Exercise its real
+        // installed Electron/server.asar pair instead; ordinary releases still require an archive.
+        previous:
+          target === "windows-x64" &&
+          predecessor!.windowsServer === null &&
+          predecessorDir &&
+          NodeFS.existsSync(NodePath.join(predecessorDir, "fork-baseline.json"))
+            ? {
+                windowsInstaller: need(
+                  predecessor!.windowsInstaller,
+                  "baseline installer",
+                  "the predecessor",
+                ),
+              }
+            : archiveOf(predecessor!),
         next: archiveOf(candidate),
         previousVersion,
         nextVersion: record.version,
@@ -718,12 +784,16 @@ export const validate = async (env: NodeJS.ProcessEnv): Promise<string> => {
           check === "update" ? predecessor!.windowsInstaller : candidate.windowsInstaller;
         const second =
           check === "update" ? candidate.windowsInstaller : predecessor!.windowsInstaller;
-        const expectedCore = coreOf(check === "update" ? record.version : previousVersion);
-        installWindowsInstaller(need(first, "installer", "the first build"));
-        const installed = installWindowsInstaller(need(second, "installer", "the second build"));
-        if (!installed.startsWith(expectedCore))
+        const expected = check === "update" ? record.version : previousVersion;
+        const directory = NodePath.join(scratch, "desktop");
+        installWindowsInstaller(need(first, "installer", "the first build"), directory);
+        const installed = installWindowsInstaller(
+          need(second, "installer", "the second build"),
+          directory,
+        );
+        if (installed !== expected)
           throw new Error(
-            `After ${check} the installer reports ${installed}, expected ${expectedCore}.`,
+            `After ${check} the installer reports ${installed}, expected ${expected}.`,
           );
       }
       const debVersions = { next: record.version, previous: previousVersion };

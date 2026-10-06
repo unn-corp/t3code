@@ -140,6 +140,33 @@ describe("result parsing", () => {
     assert.include(result.problems[0], "no tests ran");
   });
 
+  it("retains bounded failing test details while redacting pairing credentials", () => {
+    const parsed = parseVitestReport(
+      {
+        testResults: [
+          {
+            name: "/fixture/src/a.test.ts",
+            assertionResults: [
+              {
+                status: "failed",
+                fullName: "restores the selected snapshot",
+                failureMessages: [
+                  "AssertionError: expected restored data\nToken: private-fixture-token\n" +
+                    "x".repeat(5000),
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      ["src/a.test.ts"],
+    );
+    assert.include(parsed.problems[1], "restores the selected snapshot");
+    assert.include(parsed.problems[1], "expected restored data");
+    assert.notInclude(parsed.problems.join("\n"), "private-fixture-token");
+    assert.isAtMost(parsed.problems[1]!.length, 4000);
+  });
+
   const xml = (tests: number, failures = 0, errors = 0, skipped = 0) =>
     `<?xml version="1.0"?><testsuite name="x" tests="${tests}" skipped="${skipped}" failures="${failures}" errors="${errors}"></testsuite>`;
 

@@ -45,6 +45,9 @@ const fs = require("fs"), path = require("path"), http = require("http");
 const [command, ...args] = process.argv.slice(2);
 if (command === "--version") { console.log(${JSON.stringify(version)}); process.exit(0); }
 const home = process.env.T3CODE_HOME;
+if (!process.env.T3CODE_MAINTENANCE_NAMESPACE?.startsWith(path.dirname(home) + path.sep)) {
+  console.error("validation must isolate its coordinator"); process.exit(2);
+}
 const data = path.join(home, "userdata");
 if (${JSON.stringify(behavior)} === "wipes-home") fs.rmSync(data, { recursive: true, force: true });
 if (fs.existsSync(path.join(data, "migrated-by-newer"))) { console.error("database is newer than this build"); process.exit(1); }
@@ -202,7 +205,7 @@ const appImage = (dir: string, withUpdateConfig: boolean) => {
   const file = NodePath.join(dir, "T3-Code-1.0.1-x86_64.AppImage");
   NodeFS.writeFileSync(
     file,
-    `#!/bin/sh\nmkdir -p squashfs-root/resources\nprintf '#!/bin/sh\\necho v39.0.0\\n' > squashfs-root/AppRun\nchmod +x squashfs-root/AppRun\n${withUpdateConfig ? "echo provider: github > squashfs-root/resources/app-update.yml\n" : ""}`,
+    `#!/bin/sh\nmkdir -p squashfs-root/resources\ncat > squashfs-root/AppRun <<'SH'\n#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = 1 ] && [ "$1" = --version ] && [ "$#" = 1 ] || exit 2\necho v39.0.0\nSH\nchmod +x squashfs-root/AppRun\n${withUpdateConfig ? "echo provider: github > squashfs-root/resources/app-update.yml\n" : ""}`,
     { mode: 0o755 },
   );
   return file;
