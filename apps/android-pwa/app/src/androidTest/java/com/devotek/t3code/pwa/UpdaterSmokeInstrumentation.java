@@ -1,11 +1,15 @@
 package com.devotek.t3code.pwa;
 
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 import android.webkit.WebView;
 import java.lang.reflect.Field;
 import java.util.concurrent.CountDownLatch;
@@ -74,12 +78,16 @@ public final class UpdaterSmokeInstrumentation extends Instrumentation {
             try {
                 Intent settings = UpdateNotifications.settings(shell);
                 String settingsPackage = settings.resolveActivity(getTargetContext().getPackageManager()).getPackageName();
+                AccessibilityServiceInfo automation = getUiAutomation().getServiceInfo();
+                automation.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+                getUiAutomation().setServiceInfo(automation);
                 // Our main thread being idle does not mean Android Settings has taken focus yet.
-                // Sending Back before its window appears can close T3 instead of returning from Settings.
-                android.view.accessibility.AccessibilityEvent opened = getUiAutomation().executeAndWaitForEvent(
+                // A window-state event can precede input focus; Back must reach the Settings window.
+                AccessibilityEvent opened = getUiAutomation().executeAndWaitForEvent(
                     () -> runOnMainSync(() -> shell.openSettings(settings)),
-                    event -> event.getEventType() == android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                        && settingsPackage.contentEquals(event.getPackageName() == null ? "" : event.getPackageName()),
+                    event -> (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                        || event.getEventType() == AccessibilityEvent.TYPE_WINDOWS_CHANGED)
+                        && focusedWindowPackage().equals(settingsPackage),
                     10_000);
                 opened.recycle();
                 waitForIdleSync();
@@ -87,7 +95,8 @@ public final class UpdaterSmokeInstrumentation extends Instrumentation {
                 try (android.os.ParcelFileDescriptor back = getUiAutomation().executeShellCommand("input keyevent 4")) {
                     new java.io.FileInputStream(back.getFileDescriptor()).readAllBytes();
                 }
-                require(returned.await(10, TimeUnit.SECONDS), "Android Settings did not return to the app");
+                require(returned.await(10, TimeUnit.SECONDS), "Android Settings did not return to the app; focused package="
+                    + focusedWindowPackage() + "; shell visible=" + MainActivity.visible);
                 require(engine.snapshot().nativeOperations.isEmpty(), "Matching Settings result failed to release its hold");
             } finally { application.unregisterActivityLifecycleCallbacks(lifecycle); }
             checkSlowNavigation((MainActivity) activity);
@@ -132,6 +141,19 @@ public final class UpdaterSmokeInstrumentation extends Instrumentation {
             }
         }
         finish(result, receipt);
+    }
+    private String focusedWindowPackage() {
+        String focused = "none";
+        for (AccessibilityWindowInfo window : getUiAutomation().getWindows()) {
+            try {
+                if (!window.isFocused()) continue;
+                AccessibilityNodeInfo root = window.getRoot();
+                if (root == null) continue;
+                try { focused = root.getPackageName() == null ? "unknown" : root.getPackageName().toString(); }
+                finally { root.recycle(); }
+            } finally { window.recycle(); }
+        }
+        return focused;
     }
     private void checkSlowNavigation(MainActivity activity) throws Exception {
         CountDownLatch requested = new CountDownLatch(1), release = new CountDownLatch(1), finished = new CountDownLatch(1);
