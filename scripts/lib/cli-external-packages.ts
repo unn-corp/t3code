@@ -125,7 +125,8 @@ export function findInlinedExternalPackages(source: string): {
   readonly inlinedPackages: ReadonlyArray<string>;
 } {
   // Rolldown marks each inlined module with a `//#region <path>` comment.
-  const regionPattern = /\/\/#region\s+(\S+)/g;
+  // Module paths can include spaces when dependencies live in another checkout.
+  const regionPattern = /\/\/#region[ \t]+([^\r\n]+)/g;
   const packagePattern = /node_modules\/((?:@[^/\s]+\/)?[^/\s]+)\//g;
 
   let regionCount = 0;

@@ -272,6 +272,19 @@ var x = 1;
     assert.deepStrictEqual(result.inlinedPackages, ["effect"]);
   });
 
+  it("scans dependencies whose parent directories contain spaces", () => {
+    const dependencyRoot = "../../Code Bases/T3 fork/node_modules/.pnpm";
+    const result = findInlinedExternalPackages(
+      region(`${dependencyRoot}/effect@4.0.0/node_modules/effect/dist/index.js`) +
+        region(
+          `${dependencyRoot}/node-gyp-build-optional-packages@5.2.2/node_modules/node-gyp-build-optional-packages/index.js`,
+        ),
+    );
+    assert.strictEqual(result.regionCount, 2);
+    assert.deepStrictEqual(result.inlinedPackages, ["effect", "node-gyp-build-optional-packages"]);
+    assert.deepStrictEqual(result.inlined, ["node-gyp-build-optional-packages"]);
+  });
+
   it("reports no regions when the marker format is absent", () => {
     const result = findInlinedExternalPackages("var x = 1; // node_modules/node-pty/lib.js");
     assert.strictEqual(result.regionCount, 0);
