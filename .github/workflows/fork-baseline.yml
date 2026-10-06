@@ -1,0 +1,424 @@
+# Manual commissioning only. No schedule and no normal release manifest.
+# See docs/operations/fork-releases.md before publishing or installing.
+name: Fork manual updater baseline
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full updater-equipped commit already on main
+        required: true
+        type: string
+      android_version_code:
+        description: Code reserved by fork-android-code-N for that commit
+        required: true
+        type: string
+      publish:
+        description: Publish the complete verified manual baseline; never enters normal feeds
+        type: boolean
+        default: false
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+  queue: max
+permissions:
+  contents: read
+jobs:
+  plan:
+    name: Pin manual baseline
+    if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      skip: ${{ steps.pin.outputs.skip }}
+      version: ${{ steps.pin.outputs.version }}
+      commit: ${{ steps.pin.outputs.commit }}
+      channel: stable
+      normal_code: ${{ steps.pin.outputs.normal_code }}
+    steps:
+      - name: Checkout tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          sparse-checkout: |-
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - name: Validate pin and reserved installation code
+        id: pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ inputs.commit }}
+          CODE: ${{ inputs.android_version_code }}
+        run: >-
+          set -euo pipefail
+
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "A full pinned commit is required" >&2; exit 1; }
+
+          [[ "$CODE" =~ ^[1-9][0-9]*$ ]] && (( CODE > 29853678 && CODE < 2147483647 )) || { echo "A reserved
+          installation code above the old baseline is required" >&2; exit 1; }
+
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$COMMIT" --jq .status)"
+
+          [[ "$status" == "behind" || "$status" == "identical" ]] || { echo "The commit is not on main" >&2;
+          exit 1; }
+
+          owner="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/fork-android-code-$CODE" --jq .object.sha)"
+
+          [[ "$owner" == "$COMMIT" ]] || { echo "The installation code is not reserved for this source" >&2;
+          exit 1; }
+
+          if prior="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/fork-baseline" --jq .object.sha
+          2>/dev/null)"; then
+            [[ "$prior" == "$COMMIT" ]] || { echo "The retained baseline tag belongs to another source" >&2; exit 1; }
+          fi
+
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/fork-baseline" >/dev/null 2>&1; then echo "The
+          baseline already exists; never replace it" >&2; exit 1; fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+          echo "version=1.0.0" >> "$GITHUB_OUTPUT"
+
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+
+          echo "normal_code=$CODE" >> "$GITHUB_OUTPUT"
+  build_bundle:
+    name: Build JS bundle
+    needs:
+      - plan
+    if: needs.plan.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout pinned source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          path: source
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Confirm source is the pinned commit
+        working-directory: source
+        env:
+          EXPECTED: ${{ needs.plan.outputs.commit }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED" ]] || { echo "source is not at $EXPECTED" >&2; exit 1; }
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: source/package.json
+          cache: false
+          run-install: false
+      - name: Install bundle dependencies
+        working-directory: source
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop...
+          --filter=@t3tools/scripts...
+      - name: Align package versions to release version
+        working-directory: source
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: node scripts/update-release-package-versions.ts "$VERSION"
+      - uses: ./source/.github/actions/setup-apt-mirrors
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+      - name: Build JS bundle
+        working-directory: source
+        run: vp run build:desktop
+      - name: Upload JS bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: js-bundle
+          path: |
+            source/apps/server/dist
+            source/apps/desktop/dist-electron
+          if-no-files-found: error
+          retention-days: 1
+  desktop_linux_x64:
+    name: Desktop Linux x64
+    needs:
+      - plan
+      - build_bundle
+    if: needs.plan.outputs.skip == 'false'
+    uses: ./.github/workflows/release-desktop.yml
+    permissions:
+      actions: read
+      contents: read
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      ref: ${{ needs.plan.outputs.commit }}
+      release_channel: ${{ needs.plan.outputs.channel }}
+      relay_client_tracing: false
+      label: Linux x64
+      runner: ubuntu-24.04
+      platform: linux
+      target: AppImage
+      arch: x64
+      rust_target: x86_64-unknown-linux-gnu
+      resource_key: linux-x64
+      cli_archive: true
+  desktop_win_x64:
+    name: Desktop Windows x64
+    needs:
+      - plan
+      - build_bundle
+    if: needs.plan.outputs.skip == 'false'
+    uses: ./.github/workflows/release-desktop.yml
+    permissions:
+      actions: read
+      contents: read
+    secrets:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+      AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+      AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      ref: ${{ needs.plan.outputs.commit }}
+      release_channel: ${{ needs.plan.outputs.channel }}
+      relay_client_tracing: false
+      label: Windows x64
+      runner: windows-2025
+      platform: win
+      target: nsis
+      arch: x64
+      rust_target: x86_64-pc-windows-msvc
+      resource_key: win32-x64
+      cli_archive: true
+  android:
+    name: Signed baseline APK
+    needs:
+      - plan
+    if: needs.plan.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      COMMIT: ${{ needs.plan.outputs.commit }}
+      NORMAL_CODE: ${{ needs.plan.outputs.normal_code }}
+      SIGNER_SHA256: ${{ vars.FORK_ANDROID_SIGNER_SHA256 }}
+      KEY_ALIAS: ${{ vars.FORK_ANDROID_KEY_ALIAS || 't3-pwa' }}
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: tooling/package.json
+          cache: false
+          run-install: false
+      - name: Install release tooling dependencies
+        working-directory: tooling
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+      - name: Checkout pinned source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          path: source
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Confirm source is the pinned commit
+        working-directory: source
+        env:
+          EXPECTED: ${{ needs.plan.outputs.commit }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED" ]] || { echo "source is not at $EXPECTED" >&2; exit 1; }
+      - name: Setup JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android SDK packages
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+      - name: Install web dependencies
+        run: |-
+          cd source
+          vp install --filter=@t3tools/web... --filter=@t3tools/scripts...
+      - name: Install signing material
+        env:
+          KEYSTORE_BASE64: ${{ secrets.FORK_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.FORK_ANDROID_KEYSTORE_PASSWORD }}
+        run: >
+          set -euo pipefail
+
+          [[ -n "$KEYSTORE_BASE64" && -n "$KEYSTORE_PASSWORD" ]] || { echo "Android signing secrets are
+          required." >&2; exit 1; }
+
+          [[ "$SIGNER_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "FORK_ANDROID_SIGNER_SHA256 must pin the
+          release certificate." >&2; exit 1; }
+
+          umask 077
+
+          mkdir -p "$RUNNER_TEMP/android-signing"
+
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-signing/release.jks"
+
+          printf '%s' "$KEYSTORE_PASSWORD" > "$RUNNER_TEMP/android-signing/password"
+      - name: Build normal APK
+        working-directory: source
+        run: |
+          set -euo pipefail
+          node scripts/build-android-pwa.ts \
+            --kind normal \
+            --keystore "$RUNNER_TEMP/android-signing/release.jks" \
+            --password-file "$RUNNER_TEMP/android-signing/password" \
+            --key-alias "$KEY_ALIAS" \
+            --expect-signer "$SIGNER_SHA256" \
+            --version-name "$VERSION" \
+            --version-code "$NORMAL_CODE" \
+            --source-commit "$COMMIT" \
+            --asset-name "t3-code-android-$VERSION.apk" \
+            --output-dir "$RUNNER_TEMP/android/normal"
+      - name: Verify normal APK
+        working-directory: tooling
+        run: |
+          set -euo pipefail
+          node scripts/fork-release.ts android-verify \
+            --role normal \
+            --apk "$RUNNER_TEMP/android/normal/t3-code-android-$VERSION.apk" \
+            --metadata "$RUNNER_TEMP/android/normal/metadata.json" \
+            --release-version "$VERSION" --source-version "$VERSION" \
+            --code "$NORMAL_CODE" --commit "$COMMIT" \
+            --pinned-signer "$SIGNER_SHA256" \
+            --out android-normal
+      - name: Remove signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/android-signing"
+      - name: Upload normal APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: android-normal
+          path: tooling/android-normal/*
+          if-no-files-found: error
+  baseline:
+    name: Verify and publish manual baseline
+    needs:
+      - plan
+      - desktop_linux_x64
+      - desktop_win_x64
+      - android
+    if: needs.plan.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      COMMIT: ${{ needs.plan.outputs.commit }}
+      GH_TOKEN: ${{ github.token }}
+      SIGNER: ${{ vars.FORK_ANDROID_SIGNER_SHA256 }}
+    steps:
+      - name: Checkout tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          sparse-checkout: |-
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: package.json
+          run-install: false
+      - name: Install verification dependencies
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+      - name: Setup JDK
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android verification tools
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;36.0.0"'
+      - name: Download baseline artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          path: inputs
+      - name: Pack and verify every baseline payload
+        run: >-
+          set -euo pipefail
+
+          node scripts/fork-release.ts baseline-pack --version 1.0.0 --commit "$COMMIT" --windows-installer
+          inputs/desktop-win-x64/T3-Code-1.0.0-x64.exe --linux-appimage
+          inputs/desktop-linux-x64/T3-Code-1.0.0-x86_64.AppImage --linux-deb
+          inputs/desktop-linux-x64/T3-Code-1.0.0-amd64.deb --linux-server
+          inputs/cli-linux-x64/t3-1.0.0-linux-x64.tar.gz --apk inputs/android-normal/t3-code-android-1.0.0.apk
+          --pinned-signer "$SIGNER" --out baseline
+
+          node scripts/fork-release.ts baseline-verify --input baseline --pinned-signer "$SIGNER"
+      - name: Upload proven baseline
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fork-baseline-verified
+          path: |-
+            baseline/
+            baseline.proof.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish complete manual baseline
+        if: ${{ inputs.publish }}
+        run: >-
+          set -euo pipefail
+
+          created=false
+
+          cleanup() {
+            result=$?
+            if [[ "$result" != 0 && "$created" == true ]]; then
+              # Delete only this run's still-unpublished draft, never a release somebody published.
+              draft="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/fork-baseline" --jq 'select(.draft == true) | select(.body | contains("t3-fork-baseline-run:'"$GITHUB_RUN_ID"'")) | .id' 2>/dev/null || true)"
+              if [[ "$draft" =~ ^[0-9]+$ ]]; then gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$draft" || true; fi
+            fi
+            exit "$result"
+          }
+
+          trap cleanup EXIT
+
+          gh api "repos/$GITHUB_REPOSITORY/immutable-releases" --jq .enabled | grep -qx true
+
+          cat > baseline-notes.txt <<'NOTES'
+
+          Updater-equipped manual baseline. This is excluded from normal Stable/Nightly feeds. Install only
+          after all local work stops. Android uses in-place installation with the existing signing key; never
+          uninstall or clear storage. This baseline has no pre-updater recovery predecessor.
+
+          NOTES
+
+          printf '\n<!-- t3-fork-baseline-run:%s -->\n' "$GITHUB_RUN_ID" >> baseline-notes.txt
+
+          gh release create fork-baseline baseline/* --target "$COMMIT" --draft --prerelease --title "Fork
+          updater baseline 1.0.0" --notes-file baseline-notes.txt
+
+          created=true
+
+          gh release download fork-baseline --dir baseline-roundtrip
+
+          node scripts/fork-release.ts baseline-verify --input baseline-roundtrip --pinned-signer "$SIGNER"
+
+          gh release edit fork-baseline --draft=false

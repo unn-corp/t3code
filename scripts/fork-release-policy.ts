@@ -256,9 +256,18 @@ const everyVersionUsed = (all: ReadonlyArray<ReleaseRecord>): string[] =>
  * Stable versions start at 1.0.0 and then take the next patch. Drafts and withdrawn releases
  * still consume their version, so a number is never published twice.
  */
-export const nextStableVersion = (all: ReadonlyArray<ReleaseRecord>): string => {
+export const nextStableVersion = (
+  all: ReadonlyArray<ReleaseRecord>,
+  baselineVersion?: string,
+): string => {
   let highest: ForkVersion | null = null;
-  for (const raw of everyVersionUsed(all)) {
+  const baselineFloor =
+    baselineVersion &&
+    parseForkVersion(baselineVersion)?.channel === "stable" &&
+    compareForkVersions(baselineVersion, FORK_FIRST_STABLE_VERSION) >= 0
+      ? [baselineVersion]
+      : [];
+  for (const raw of [...everyVersionUsed(all), ...baselineFloor]) {
     const parsed = parseForkVersion(raw);
     if (parsed?.channel !== "stable") continue;
     if (!highest || compareForkVersions(parsed.raw, highest.raw) > 0) highest = parsed;
@@ -272,12 +281,13 @@ export const nightlyVersionFor = (
   all: ReadonlyArray<ReleaseRecord>,
   date: Date,
   runNumber: number,
+  baselineVersion?: string,
 ): string => {
   if (!Number.isInteger(runNumber) || runNumber < 1) {
     throw new Error("A nightly version needs a positive workflow run number.");
   }
   const day = date.toISOString().slice(0, 10).replaceAll("-", "");
-  return `${nextStableVersion(all)}-nightly.${day}.${runNumber}`;
+  return `${nextStableVersion(all, baselineVersion)}-nightly.${day}.${runNumber}`;
 };
 
 export interface Predecessor {
@@ -335,6 +345,7 @@ export const planNightly = (input: {
   readonly now: Date;
   readonly runNumber: number;
   readonly releases: ReadonlyArray<ReleaseRecord>;
+  readonly baselineVersion?: string;
 }): PlanOutcome<ReleasePlan> => {
   assertFullSha(input.commit);
   const sameCommit = input.releases.find(
@@ -346,7 +357,12 @@ export const planNightly = (input: {
       reason: `Commit ${input.commit} already has nightly ${sameCommit.tagName}.`,
     };
   }
-  const version = nightlyVersionFor(input.releases, input.now, input.runNumber);
+  const version = nightlyVersionFor(
+    input.releases,
+    input.now,
+    input.runNumber,
+    input.baselineVersion,
+  );
   return {
     kind: "release",
     plan: {
@@ -408,6 +424,7 @@ export const selectStableSource = (input: {
 export const planStable = (input: {
   readonly now: Date;
   readonly releases: ReadonlyArray<ReleaseRecord>;
+  readonly baselineVersion?: string;
 }): PlanOutcome<ReleasePlan> => {
   const source = selectStableSource(input);
   if (!source) {
@@ -416,7 +433,7 @@ export const planStable = (input: {
       reason: "No eligible nightly has completed every required check at least 24 hours ago.",
     };
   }
-  const version = nextStableVersion(input.releases);
+  const version = nextStableVersion(input.releases, input.baselineVersion);
   return {
     kind: "release",
     plan: {
@@ -515,9 +532,14 @@ export const buildPlan = (input: {
       now: input.now,
       runNumber: input.runNumber,
       releases: input.releases,
+      ...(input.baseline ? { baselineVersion: input.baseline.version } : {}),
     });
   } else {
-    outcome = planStable({ now: input.now, releases: input.releases });
+    outcome = planStable({
+      now: input.now,
+      releases: input.releases,
+      ...(input.baseline ? { baselineVersion: input.baseline.version } : {}),
+    });
   }
   if (outcome.kind === "skip") return outcome;
 

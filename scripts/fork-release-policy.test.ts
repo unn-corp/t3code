@@ -367,6 +367,38 @@ describe("stable promotion", () => {
 });
 
 describe("recovery predecessor", () => {
+  it("allocates above a hand-installed stable baseline for nightly and stable promotion", () => {
+    const baseline = { tag: "fork-baseline", version: "1.0.0", commit: sha("baseline") };
+    const nightlyPlan = buildPlan({
+      channel: "nightly",
+      commit: sha("tip"),
+      now: NOW,
+      runNumber: 1,
+      releases: [],
+      baseline,
+    });
+    assert.equal(nightlyPlan.kind, "release");
+    if (nightlyPlan.kind === "release") {
+      assert.equal(nightlyPlan.plan.version, "1.0.1-nightly.20261011.1");
+      assert.isAbove(compareForkVersions(nightlyPlan.plan.version, baseline.version), 0);
+      assert.isTrue(nightlyPlan.plan.predecessor.baseline);
+    }
+    const nightly = makeRelease({
+      version: "1.0.1-nightly.20261009.1",
+      commit: sha("tip"),
+      releasedAt: new Date(NOW.getTime() - 30 * 3600_000).toISOString(),
+    });
+    const stablePlan = buildPlan({
+      channel: "stable",
+      now: NOW,
+      runNumber: 2,
+      releases: [nightly],
+      baseline,
+    });
+    assert.equal(stablePlan.kind, "release");
+    if (stablePlan.kind === "release") assert.equal(stablePlan.plan.version, "1.0.1");
+    assert.equal(nextStableVersion([], "0.0.45"), "1.0.0");
+  });
   it("picks the newest eligible release built from a different commit", () => {
     const commit = sha("candidate");
     const older = makeRelease({ version: "1.0.0" });

@@ -223,6 +223,16 @@ from or recover to unless it is recorded. The baseline is published as a release
 the baseline APK under canonical names. It is used as the predecessor only until a pipeline release is
 eligible.
 
+The manual **Fork manual updater baseline** workflow in `.github/workflows/fork-baseline.yml`
+builds the complete 1.0.0 baseline on GitHub-hosted Linux/Windows runners. Pin a full commit
+already on `main` and a `fork-android-code-N` reservation owned by that commit. It uses the same
+desktop packaging and Android verification as the release workflow. Publication is optional;
+when requested it verifies a complete draft and downloads it back before publishing the
+`fork-baseline` prerelease. A failed run removes only its own unpublished draft; published
+baselines are never replaced. This workflow has no schedule and writes no normal release manifest.
+The first nightly previews 1.0.1 so it outranks the hand-installed 1.0.0 baseline; subsequent stable
+promotion uses that same next-patch floor. A baseline does not satisfy normal release eligibility.
+
 1. Build the baseline from an updater-equipped commit and keep the same signing key as the phone's
    installed app. Never uninstall to bring a phone onto it.
 2. Pack and prove it (needs the Android SDK build tools):
