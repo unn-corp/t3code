@@ -33,8 +33,68 @@ const decodeConsumeRateLimitResetCreditParams = Schema.decodeUnknownEffect(
 const decodeConsumeRateLimitResetCreditResponse = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_RESPONSES["account/rateLimitResetCredit/consume"],
 );
+const decodeThreadResumeResponse = Schema.decodeUnknownEffect(
+  CodexRpc.CLIENT_REQUEST_RESPONSES["thread/resume"],
+);
+const decodeItemStartedNotification = Schema.decodeUnknownEffect(
+  CodexRpc.SERVER_NOTIFICATION_PARAMS["item/started"],
+);
+const decodeItemCompletedNotification = Schema.decodeUnknownEffect(
+  CodexRpc.SERVER_NOTIFICATION_PARAMS["item/completed"],
+);
+
+const subAgentActivities = (["started", "interacted", "interrupted", "completed"] as const).map(
+  (kind) => ({
+    type: "subAgentActivity" as const,
+    id: `activity-${kind}`,
+    agentThreadId: "child-thread",
+    agentPath: "/root/child",
+    kind,
+  }),
+);
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
+  it.effect("resumes history containing completed and earlier subagent activity kinds", () =>
+    Effect.gen(function* () {
+      const response = {
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        cwd: "/tmp/project",
+        model: "test-model",
+        modelProvider: "openai",
+        sandbox: { type: "readOnly" },
+        thread: {
+          id: "parent-thread",
+          sessionId: "parent-session",
+          cliVersion: "0.153.3",
+          createdAt: 1,
+          updatedAt: 2,
+          cwd: "/tmp/project",
+          ephemeral: false,
+          modelProvider: "openai",
+          preview: "Subagent work",
+          source: "appServer",
+          status: { type: "idle" },
+          turns: [{ id: "turn-1", status: "completed", items: subAgentActivities }],
+        },
+      } as const;
+
+      assert.deepEqual(yield* decodeThreadResumeResponse(response), response);
+    }),
+  );
+
+  it.effect("decodes completed and earlier subagent activity kinds in item notifications", () =>
+    Effect.gen(function* () {
+      for (const item of subAgentActivities) {
+        const notification = { threadId: "parent-thread", turnId: "turn-1", item };
+        const started = { ...notification, startedAtMs: 1 };
+        const completed = { ...notification, completedAtMs: 2 };
+        assert.deepEqual(yield* decodeItemStartedNotification(started), started);
+        assert.deepEqual(yield* decodeItemCompletedNotification(completed), completed);
+      }
+    }),
+  );
+
   it.effect("maps account usage responses to the upstream token usage schema", () =>
     Effect.gen(function* () {
       assert.strictEqual(

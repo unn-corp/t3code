@@ -16,6 +16,7 @@ import {
   checkedRoot,
   fileError,
   validateDestination,
+  normalizeCheckoutDestination,
   restrictedGit,
   installCheckout,
 } from "./TeamGit.ts";
@@ -923,7 +924,8 @@ export const makeLocalTeamProjects = (
           };
         }
         if (input.action === "open" || input.action === "create") {
-          const destinationIdentity = yield* fileIO(() => validateDestination(input.destination));
+          const destination = normalizeCheckoutDestination(input.destination);
+          const destinationIdentity = yield* fileIO(() => validateDestination(destination));
           return yield* Effect.scoped(
             transferCredential((credential) =>
               Effect.gen(function* () {
@@ -951,7 +953,7 @@ export const makeLocalTeamProjects = (
                   if (config.role !== "owner") return yield* localTeamError("access");
                   const temp = yield* fileIO(() =>
                     NodeFSP.mkdtemp(
-                      NodePath.join(NodePath.dirname(input.destination), ".t3-team-transfer-"),
+                      NodePath.join(NodePath.dirname(destination), ".t3-team-transfer-"),
                     ),
                   );
                   yield* Effect.acquireUseRelease(
@@ -970,7 +972,7 @@ export const makeLocalTeamProjects = (
                         yield* uploadRepository(connection, checkout, null);
                         yield* connection.config;
                         yield* fileIO(() =>
-                          installCheckout(checkout, input.destination, destinationIdentity),
+                          installCheckout(checkout, destination, destinationIdentity),
                         );
                       }),
                     (directory) =>
@@ -988,22 +990,22 @@ export const makeLocalTeamProjects = (
                         }),
                     ),
                   );
-                } else yield* openCheckout(connection, input.destination);
+                } else yield* openCheckout(connection, destination);
                 const projectId = ProjectId.make(NodeCrypto.randomUUID());
                 yield* engine.dispatch({
                   type: "project.create",
                   commandId: CommandId.make(NodeCrypto.randomUUID()),
                   projectId,
                   title:
-                    input.action === "create" ? input.name : NodePath.basename(input.destination),
-                  workspaceRoot: input.destination,
+                    input.action === "create" ? input.name : NodePath.basename(destination),
+                  workspaceRoot: destination,
                   createdAt: DateTime.formatIso(yield* DateTime.now),
                 });
                 const row = yield* store.create({
                   projectId,
                   sharedProjectId,
-                  workspaceRoot: input.destination,
-                  canonicalRoot: yield* fs.realPath(input.destination),
+                  workspaceRoot: destination,
+                  canonicalRoot: yield* fs.realPath(destination),
                   credential,
                   role: config.role,
                 });

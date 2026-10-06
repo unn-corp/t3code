@@ -576,9 +576,17 @@ export async function verifyBundle(
   validateSharedTree(files);
   return files;
 }
+export function normalizeCheckoutDestination(destination: string) {
+  // A folder picker may retain directory separators. Do not resolve dot segments:
+  // resolving them lexically could change which path a symlink would traverse.
+  return destination.replace(/\/+$/, "") || (destination.startsWith("/") ? "/" : "");
+}
 export async function validateDestination(destination: string) {
   if (!NodePath.isAbsolute(destination) || NodePath.resolve(destination) !== destination)
-    throw fileError("destination");
+    throw fileError(
+      "destination",
+      "Choose a local project folder using Browse, or enter a full absolute path without a trailing slash, '.' or '..' segments.",
+    );
   const parent = NodePath.dirname(destination);
   await checkedRoot(parent);
   const stat = await NodeFSP.lstat(destination).catch((error: NodeJS.ErrnoException) => {
