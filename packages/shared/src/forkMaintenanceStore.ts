@@ -461,8 +461,16 @@ export class CoordinatorStore {
       try {
         text = await this.readLockFile(lockPath);
       } catch (readCause) {
-        // The holder released between our failed link and this read: the lock is simply gone, so contend again.
-        if (isCode(readCause, "ENOENT") && attempt < 100) return this.locked(run, attempt + 1);
+        // Windows can report EPERM/EACCES while an unlinked file is pending deletion. Retry only
+        // the read race, bounded like live-owner contention; persistent permission failures still
+        // block, and no unreadable lock is ever stolen or treated as proof of an idle device.
+        if (
+          ["ENOENT", "EPERM", "EACCES"].some((code) => isCode(readCause, code)) &&
+          attempt < 100
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return this.locked(run, attempt + 1);
+        }
         throw readCause;
       }
       // Lock files are published whole (hard-linked from a complete candidate), so content that does not decode is

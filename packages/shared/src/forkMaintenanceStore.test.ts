@@ -383,20 +383,36 @@ describe("host coordinator", () => {
     expect(results.filter((result) => result.status === "rejected")).toEqual([]);
     // And the pathological interleaving, forced: the lock disappears exactly when it is read.
     const lockPath = NodePath.join(f.coordinator, "registry.lock");
-    await NodeFSP.writeFile(lockPath, JSON.stringify(a.owner));
-    let vanished = false;
     const target = b as unknown as { readLockFile: (file: string) => Promise<string> };
     const original = target.readLockFile.bind(b);
-    target.readLockFile = async (file) => {
-      if (!vanished) {
-        vanished = true;
-        await NodeFSP.unlink(lockPath);
-        throw Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
-      }
-      return original(file);
+    for (const code of ["ENOENT", "EPERM", "EACCES"]) {
+      await NodeFSP.writeFile(lockPath, JSON.stringify(a.owner));
+      let vanished = false;
+      target.readLockFile = async (file) => {
+        if (!vanished) {
+          vanished = true;
+          await NodeFSP.unlink(lockPath);
+          throw Object.assign(new Error(`${code}: deleted lock`), { code });
+        }
+        return original(file);
+      };
+      expect((await b.status(0)).participants).toHaveLength(1);
+      expect(vanished).toBe(true);
+    }
+  });
+
+  it("blocks on a persistently denied lock without stealing or modifying it", async () => {
+    const f = await fixture();
+    const store = await f.open(100);
+    const lockPath = NodePath.join(f.coordinator, "registry.lock");
+    const record = JSON.stringify(store.owner);
+    await NodeFSP.writeFile(lockPath, record);
+    const target = store as unknown as { readLockFile: (file: string) => Promise<string> };
+    target.readLockFile = async () => {
+      throw Object.assign(new Error("denied lock"), { code: "EPERM" });
     };
-    expect((await b.status(0)).participants).toHaveLength(1);
-    expect(vanished).toBe(true);
+    await expect(store.status(0)).rejects.toThrow("denied lock");
+    expect(await NodeFSP.readFile(lockPath, "utf8")).toBe(record);
   });
 
   it("keeps observed activity when the same owner registers the same runtime again, but a new owner starts unknown", async () => {
