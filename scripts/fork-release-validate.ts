@@ -552,8 +552,14 @@ const installedPackage = (): InstalledPackage => {
 const adbInstall = (apk: string) => adb(["install", "-r", apk]);
 
 /** Starts the app and confirms its process stays alive, so a crash on launch fails the check. */
-export const launchAndConfirm = async (): Promise<void> => {
-  const start = adb([
+export const launchAndConfirm = async (
+  ports: {
+    readonly runAdb?: typeof adb;
+    readonly wait?: (milliseconds: number) => Promise<unknown>;
+  } = {},
+): Promise<void> => {
+  const runAdb = ports.runAdb ?? adb;
+  const start = runAdb([
     "shell",
     "monkey",
     "-p",
@@ -563,10 +569,16 @@ export const launchAndConfirm = async (): Promise<void> => {
     "1",
   ]);
   if (start.status !== 0) throw new Error(`The app did not launch: ${start.stderr}`);
-  await sleep(8_000);
-  const pid = adb(["shell", "pidof", FORK_ANDROID_PACKAGE]);
-  if (pid.status !== 0 || pid.stdout.trim() === "")
-    throw new Error("The app process was not running after launch.");
+  await (ports.wait ?? sleep)(8_000);
+  const pid = runAdb(["shell", "pidof", FORK_ANDROID_PACKAGE]);
+  if (pid.status !== 0 || pid.stdout.trim() === "") {
+    // The selected device is always a throwaway emulator. Retain the crash before the runner
+    // tears it down, without exposing credentials that an exception message might contain.
+    const crash = runAdb(["logcat", "-d", "-b", "crash", "-t", "80"]);
+    throw new Error(
+      `The app process was not running after launch.\nLauncher:\n${redactCliSmokeOutput(`${start.stdout}${start.stderr}`).slice(-4_000)}\nAndroid crash log:\n${redactCliSmokeOutput(`${crash.stdout}${crash.stderr}`).slice(-8_000)}`,
+    );
+  }
 };
 
 const mustInstall = (apk: string) => {

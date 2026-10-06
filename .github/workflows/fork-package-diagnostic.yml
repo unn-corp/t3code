@@ -7,6 +7,11 @@ on:
         description: "Fork release run containing candidate and predecessor artifacts"
         required: true
         type: string
+      scope:
+        description: "Diagnose desktop packages, Android packages, or both"
+        type: choice
+        options: [desktop, android, all]
+        default: desktop
 
 permissions:
   contents: read
@@ -14,7 +19,7 @@ permissions:
 
 jobs:
   package:
-    if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main'
+    if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main' && inputs.scope != 'android'
     strategy:
       fail-fast: false
       matrix:
@@ -72,3 +77,59 @@ jobs:
             FORK_RELEASE_CHECK="$check" node scripts/fork-release-validate.ts || failed=1
           done
           exit "$failed"
+
+  android:
+    if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main' && inputs.scope != 'desktop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout diagnostic tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install diagnostic dependencies
+        run: vp install --filter=@t3tools/scripts... --filter=@t3tools/contracts...
+
+      - name: Download retained Android validation payloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          [[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]] || exit 2
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name fork-release-candidate
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name fork-release-predecessor --dir predecessor
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name android-updater-instrumentation --dir android-instrumentation
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Uses the exact APKs and interaction runner from the failed run. No eligibility receipts.
+      - name: Diagnose Android install update and recovery
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          FORK_RELEASE_TARGET: android
+          FORK_RELEASE_CANDIDATE_DIR: candidate
+          FORK_RELEASE_PREDECESSOR_DIR: predecessor
+          FORK_VALIDATION_ANDROID_SERIAL: emulator-5554
+          FORK_VALIDATION_ANDROID_TEST_APK: ${{ github.workspace }}/android-instrumentation/updater-instrumentation.apk
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: for check in install update recovery; do FORK_RELEASE_CHECK="$check" node scripts/fork-release-validate.ts || exit 1; done

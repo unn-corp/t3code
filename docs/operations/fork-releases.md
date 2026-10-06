@@ -112,8 +112,11 @@ cmdlet-module discovery. The process-owner probe does the same while retaining i
 activity-read deadline. The helper proof also registers and verifies its real process owner under
 the isolated environment before testing snapshot/restore.
 **Fork package diagnostic** takes a failed release's numeric `run_id` and runs current package
-validation against its retained candidate and predecessor on clean Linux and Windows runners.
-It writes no receipts and cannot publish. Use it to correct validation tooling before rebuilding.
+validation against its retained candidate and predecessor. Select `scope: desktop` for clean Linux
+and Windows runners, `android` for the exact APKs and interaction runner on a fresh emulator, or
+`all`. It writes no receipts and cannot publish. Missing Android processes retain bounded, redacted
+launcher/crash diagnostics before emulator teardown. Use it to correct validation tooling before
+rebuilding.
 Linux AppImage feeds retain electron-builder’s per-file `blockMapSize`. Assembly verifies the embedded
 size trailer, raw-deflated block-map structure, and block ranges as well as the whole payload’s size
 and digest. An absent external AppImage `.blockmap` is allowed when the map is embedded; a malformed

@@ -18,6 +18,12 @@ export const redactCliSmokeOutput = (output: string): string =>
     .map((line) =>
       /(?:Token|Pairing URL|Connection string):/i.test(line)
         ? "[pairing details redacted]"
-        : line.replace(/https?:\/\/\S+/g, "[URL redacted]"),
+        : /\b(?:authorization|cookie|set-cookie|password|secret|access[_-]?token|api[_-]?key)\s*[:=]/i.test(
+              line,
+            )
+          ? "[credentials redacted]"
+          : line
+              .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
+              .replace(/https?:\/\/\S+/g, "[URL redacted]"),
     )
     .join("\n");
