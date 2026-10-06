@@ -561,22 +561,31 @@ export const launchAndConfirm = async (
   const runAdb = ports.runAdb ?? adb;
   const start = runAdb([
     "shell",
-    "monkey",
-    "-p",
-    FORK_ANDROID_PACKAGE,
+    "am",
+    "start",
+    "-W",
+    "-a",
+    "android.intent.action.MAIN",
     "-c",
     "android.intent.category.LAUNCHER",
-    "1",
+    "-n",
+    `${FORK_ANDROID_PACKAGE}/.MainActivity`,
   ]);
-  if (start.status !== 0) throw new Error(`The app did not launch: ${start.stderr}`);
+  // Monkey's single random event can navigate away immediately after launch. Ask Android to
+  // start this exact launcher instead, and require its acknowledgement before checking survival.
+  if (start.status !== 0 || !/^Status: ok\s*$/m.test(start.stdout))
+    throw new Error(
+      `The app did not launch: ${redactCliSmokeOutput(`${start.stdout}${start.stderr}`)}`,
+    );
   await (ports.wait ?? sleep)(8_000);
   const pid = runAdb(["shell", "pidof", FORK_ANDROID_PACKAGE]);
   if (pid.status !== 0 || pid.stdout.trim() === "") {
     // The selected device is always a throwaway emulator. Retain the crash before the runner
     // tears it down, without exposing credentials that an exception message might contain.
     const crash = runAdb(["logcat", "-d", "-b", "crash", "-t", "80"]);
+    const lifecycle = runAdb(["logcat", "-d", "-b", "system", "-t", "80"]);
     throw new Error(
-      `The app process was not running after launch.\nLauncher:\n${redactCliSmokeOutput(`${start.stdout}${start.stderr}`).slice(-4_000)}\nAndroid crash log:\n${redactCliSmokeOutput(`${crash.stdout}${crash.stderr}`).slice(-8_000)}`,
+      `The app process was not running after launch.\nLauncher:\n${redactCliSmokeOutput(`${start.stdout}${start.stderr}`).slice(-4_000)}\nAndroid crash log:\n${redactCliSmokeOutput(`${crash.stdout}${crash.stderr}`).slice(-8_000)}\nAndroid lifecycle log:\n${redactCliSmokeOutput(`${lifecycle.stdout}${lifecycle.stderr}`).slice(-8_000)}`,
     );
   }
 };

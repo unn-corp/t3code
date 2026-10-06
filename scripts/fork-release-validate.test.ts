@@ -377,16 +377,19 @@ describe("Debian package", () => {
 describe("native Android interaction receipt", () => {
   it("fails a missing app process and retains redacted Android crash diagnostics", async () => {
     const commands: string[][] = [];
+    let survivalWindow = 0;
     const message = await fail(
       launchAndConfirm({
-        wait: async () => {},
+        wait: async (milliseconds) => {
+          survivalWindow = milliseconds;
+        },
         runAdb: (args) => {
           commands.push([...args]);
           const stdout =
             args[0] === "logcat"
               ? "FATAL EXCEPTION: main\nInvalid recovery state\nAuthorization: Bearer private-fixture-token\n"
-              : args[1] === "monkey"
-                ? "Events injected: 1\n"
+              : args[1] === "am"
+                ? "Status: ok\n"
                 : "";
           return {
             stdout,
@@ -402,7 +405,43 @@ describe("native Android interaction receipt", () => {
     assert.include(message, "app process was not running");
     assert.include(message, "Invalid recovery state");
     assert.notInclude(message, "private-fixture-token");
-    assert.deepEqual(commands.at(-1), ["logcat", "-d", "-b", "crash", "-t", "80"]);
+    assert.equal(survivalWindow, 8_000);
+    assert.deepEqual(commands[0], [
+      "shell",
+      "am",
+      "start",
+      "-W",
+      "-a",
+      "android.intent.action.MAIN",
+      "-c",
+      "android.intent.category.LAUNCHER",
+      "-n",
+      "com.devotek.t3code.pwa/.MainActivity",
+    ]);
+    assert.deepEqual(commands.at(-2), ["logcat", "-d", "-b", "crash", "-t", "80"]);
+    assert.deepEqual(commands.at(-1), ["logcat", "-d", "-b", "system", "-t", "80"]);
+  });
+
+  it("rejects an unsuccessful Activity Manager result before accepting a surviving process", async () => {
+    let calls = 0;
+    const message = await fail(
+      launchAndConfirm({
+        wait: async () => {},
+        runAdb: () => {
+          calls++;
+          return {
+            stdout: "Error: Activity class does not exist\n",
+            stderr: "",
+            status: 0,
+            signal: null,
+            pid: 1,
+            output: ["", "", ""],
+          };
+        },
+      }),
+    );
+    assert.include(message, "did not launch");
+    assert.equal(calls, 1);
   });
 
   it("requires every observable updater scenario and a successful instrumentation result", () => {

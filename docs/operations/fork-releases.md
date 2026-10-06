@@ -205,6 +205,11 @@ process-death/reboot recovery. Drive the live update and recovery on
 real hardware during [commissioning](#commissioning), and keep adding coordinator integration tests
 to the `coordinator` suite's required list as they land.
 
+APK startup validation explicitly launches `MainActivity` with Activity Manager and requires its
+successful acknowledgement and a surviving app process eight seconds later. It injects no random
+input. A missing process fails the check and retains bounded, redacted crash and system lifecycle
+logs to distinguish application crashes from Android stopping or failing to start a task.
+
 ## Android
 
 - **Identity.** Package `com.devotek.t3code.pwa`, one signing key. `FORK_ANDROID_SIGNER_SHA256` pins
