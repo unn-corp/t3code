@@ -95,12 +95,17 @@ function fakeWsl(
       const parsed = parseHomeOperation(rest);
       if ("error" in parsed)
         return { code: 2, stdout: JSON.stringify({ ok: false, reason: parsed.error }), stderr: "" };
-      if (parsed.operation.op === "capacity" && behaviour.failCapacityIn === distro)
+      if (parsed.operation.op === "requirement" && behaviour.failCapacityIn === distro)
         return {
           code: 0,
           stdout: JSON.stringify({
-            ok: false,
-            reason: "Not enough free space for restore points on: home.",
+            ok: true,
+            value: {
+              filesystem: target.home,
+              deviceId: "fixture-wsl-disk",
+              requiredAdditionalBytes: 1024 ** 3,
+              availableBytes: 2.5 * 1024 ** 3,
+            },
           }),
           stderr: "",
         };
