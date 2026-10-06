@@ -53,6 +53,10 @@ download the latest recovery build. A requested recovery build also waits for th
 the app, then replaces it in place and keeps your connections; it does not uninstall anything. If even that screen will not open, ask your fork maintainer for the
 signed recovery APK and install it over the existing app.
 
+Recovery installs older source with a higher Android installation code. **Resume** allows future
+updates; returning to a normal build requires a later release with an even higher installation
+code. The normal APK you rolled back from cannot replace its recovery APK.
+
 The interface is bundled inside the APK, so updating a host's website does not update the phone's
 interface. Some features also require an updated fork server on each connected host.
 

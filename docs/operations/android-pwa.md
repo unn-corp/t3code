@@ -394,6 +394,10 @@ Cancelling a request defers automatic installation for a day.
 A rollback pins the build it installs. **Resume** is the only thing that clears a pin, including a
 pin whose install Android cancelled. A pinned device does not update. The pin records the held
 build's digest, which is what the shared policy exposes as `pinnedBuild`.
+After recovery, clearing the pin does not make the preceding normal APK installable: its code is
+lower than the recovery APK. Commissioning that returns the phone to normal delivery therefore
+needs a later eligible release whose normal code exceeds every published recovery code. Never
+reuse the old normal APK or uninstall to work around Android’s monotonic installation code.
 
 ### Recovery
 
