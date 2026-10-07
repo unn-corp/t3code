@@ -1234,7 +1234,7 @@ jobs:
       - name: Create draft release
         id: draft
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.FORK_RELEASE_PUBLISH_TOKEN || github.token }}
         run: >
           node scripts/fork-release.ts draft
           --plan fork-release-plan.json
@@ -1243,7 +1243,7 @@ jobs:
 
       - name: Verify the draft and publish
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.FORK_RELEASE_PUBLISH_TOKEN || github.token }}
           RELEASE_ID: ${{ steps.draft.outputs.release_id }}
         run: node scripts/fork-release.ts publish --plan fork-release-plan.json --release-id "$RELEASE_ID" --scratch verify-draft
 

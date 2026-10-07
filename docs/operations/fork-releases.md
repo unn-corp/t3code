@@ -452,7 +452,23 @@ Do these in order. Each is outside the repository.
    | `FORK_ANDROID_SIGNER_SHA256`                                     | variable | pinned release certificate     |
    | `FORK_ANDROID_KEY_ALIAS`                                         | variable | optional, defaults to `t3-pwa` |
    | `AZURE_*` Trusted Signing set                                    | secret   | optional Windows signing       |
+   | `FORK_RELEASE_PUBLISH_TOKEN`                                     | secret   | publish and withdrawal jobs    |
    | `FORK_RELEASES_ENABLED`                                          | variable | leave unset until step 6       |
+
+   The publisher credential must be scoped to this repository with **Contents: write** and
+   **Workflows: write**. GitHub requires workflow permission when a pinned older commit's workflow
+   files differ from the current default branch, including stable promotion and a nightly built
+   while `main` advances. The built-in `GITHUB_TOKEN` cannot receive that permission; without the
+   secret, those publication attempts fail safely. Prefer a dedicated publisher credential rather
+   than copying a maintainer's general login token into CI. See GitHub's
+   [release API permission rules](https://docs.github.com/en/rest/releases/releases#create-a-release).
+   Configure and rehearse this credential before enabling scheduled delivery.
+
+   For manual commissioning, an authorized local operator may download the exact
+   `fork-release-final` artifact and run the same `draft` and `publish` commands with their existing
+   local credential. Keep the pinned plan, verify every manifest check and payload, and retain the
+   failed CI permission result separately. This does not turn a failed workflow into a passing run
+   or authorize changing its source, receipts, assets, or tag.
 
 2. Turn on **immutable releases** in repository settings so published assets and tags cannot be
    replaced even by a mistake.
