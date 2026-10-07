@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Reads and writes generated brand assets at the Node build boundary.
 
 import * as NodeFSP from "node:fs/promises";
+import * as NodeUtil from "node:util";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import sharp from "sharp";
@@ -180,7 +181,19 @@ for (const [target, contents] of outputs) {
   const destination = new URL(target, repositoryRoot);
   if (check) {
     const actual = await NodeFSP.readFile(destination).catch(() => null);
-    if (!actual?.equals(contents)) stale.push(target);
+    // The repository formatter expands JSON objects; that must not mark unchanged artwork stale.
+    let matches = actual?.equals(contents) ?? false;
+    if (!matches && actual && target.endsWith(".json")) {
+      try {
+        matches = NodeUtil.isDeepStrictEqual(
+          JSON.parse(actual.toString("utf8")),
+          JSON.parse(contents.toString("utf8")),
+        );
+      } catch {
+        matches = false;
+      }
+    }
+    if (!matches) stale.push(target);
   } else {
     await NodeFSP.mkdir(new URL(".", destination), { recursive: true });
     await NodeFSP.writeFile(destination, contents);
