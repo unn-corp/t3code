@@ -143,6 +143,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/updates/updateMachine.test.ts",
       "src/maintenance/DesktopForkMaintenance.identity.test.ts",
       "src/maintenance/maintenancePolling.test.ts",
+      "src/notifications/ClientVisibility.test.ts",
     ],
     timeoutMinutes: 30,
   },
@@ -158,6 +159,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
     results: "vitest",
     required: [
       "src/state/forkUpdates.test.ts",
+      "src/lib/backgroundActivityReporter.test.ts",
       "src/state/hostForkUpdates.test.ts",
       "src/state/hostUpdateBatcher.test.ts",
       "src/components/settings/UpdateRecoveryDialog.test.tsx",
@@ -193,6 +195,9 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       pwa("UpdateStoreTest"),
       pwa("UpdateEngineRecoveryReadinessTest"),
       pwa("VersionLabelsTest"),
+      pwa("NetworkNotificationPresenceTest"),
+      pwa("PhoneAlertQueueTest"),
+      pwa("ThreadAlertStateTest"),
     ],
     prepare: {
       workdir: "apps/web",

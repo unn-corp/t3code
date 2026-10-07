@@ -265,11 +265,37 @@ to `orchestration.subscribeShell`. It compares persisted thread state to generat
 it does not start provider work. This path uses direct network connections, not FCM or Web Push.
 Cloud DPoP authorization is not copied into this native transport.
 
+The same socket subscribes to `subscribeBackgroundPolicy`; `NetworkNotificationPresence` combines
+visible activity leases from every enabled paired environment. These leases use server-relative
+expiry and Android monotonic time, with a 45-second maximum. Focus and recent input are deliberately
+ignored. During initial connection, alerts wait up to 45 seconds for all hosts; removed, archived,
+answered, expired, or superseded events are discarded. Suppressed events never replay on minimize.
+`PhoneAlertQueueTest` covers these waiting and consumption boundaries.
+
+Desktop `ClientVisibility` reports real window visibility and observes lock/suspend, Windows session
+display power, and Linux DPMS/screensaver APIs through the existing web activity reporter. Missing
+screen APIs conservatively leave visible windows awake; browser PWAs cannot reliably distinguish
+all display-off states. Presence only spans environments paired to both the visible client and this
+phone; unrelated hosts are not discovered through Tailscale. Mixed older clients may keep a visible
+lease until expiry or report screen sleep imprecisely. The phone checks native activity visibility,
+interactive display state, and keyguard, including its recovery activity and unfocused split-screen
+windows. This suppression applies to automatic agent alerts, not updater confirmations or Send test.
+
 The service uses Android's foreground-service notification to remain connected while the shell
 is closed or the phone is locked. Tailscale and the host must remain reachable. Android power
 saving can delay connections; force-stop prevents delivery until the app opens again, and the
 app must be opened once after reboot. Historical completions are not replayed on first activation.
 See the [notification setup](../user/android-fork.md#notifications) for the phone's settings.
+
+### Shell insets and folded layouts
+
+`MainActivity` applies system bars, display cutouts, and the keyboard to the native container.
+It forwards those handled inset types as zero to WebView, while continuing to dispatch each inset
+change. Forwarding the original values causes modern WebView to apply the same spacing again through
+CSS safe areas and visual viewport resizing, separating flow breadcrumbs from fixed branding and
+buttons. Do not return `CONSUMED`: WebView still needs notifications when the keyboard hides or the
+phone folds. See [Android's WebView inset guidance](https://developer.android.com/develop/ui/views/layout/webapps/understand-window-insets).
+Verify header alignment, composer reachability, and keyboard open/close on cover and inner screens.
 
 ### Phone browser and temporary shares
 

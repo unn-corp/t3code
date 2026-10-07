@@ -84,10 +84,11 @@ export function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs:
   );
 }
 
-function createActivityReport(
+export function createActivityReport(
   environmentId: EnvironmentId,
   lastInteractionAtMs: number,
   observedAtMs: number,
+  visible = document.visibilityState === "visible",
 ): ClientActivityReportInput {
   const scopes = [...BASELINE_SCOPES];
   for (const entry of retainedScopes.values()) {
@@ -99,10 +100,10 @@ function createActivityReport(
     environmentId,
     clientId: getClientId(),
     clientKind: resolveClientKind(),
-    visible: document.visibilityState === "visible",
+    visible,
     focused: document.hasFocus(),
     recentlyInteracted: wasRecentlyInteracted(lastInteractionAtMs, observedAtMs),
-    appState: document.visibilityState === "visible" ? "active" : "background",
+    appState: visible ? "active" : "background",
     scopes,
     ttlMs: LEASE_TTL_MS,
     observedAt: DateTime.makeUnsafe(observedAtMs),
@@ -194,6 +195,14 @@ export const backgroundActivityReporterLayer = Layer.effectDiscard(
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
+      const visible = yield* Effect.tryPromise(async () =>
+        window.desktopBridge?.getNotificationVisibility
+          ? await window.desktopBridge.getNotificationVisibility()
+          : document.visibilityState === "visible",
+      ).pipe(
+        Effect.timeout("2 seconds"),
+        Effect.orElseSucceed(() => document.visibilityState === "visible"),
+      );
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -203,13 +212,17 @@ export const backgroundActivityReporterLayer = Layer.effectDiscard(
               environmentId,
               request(
                 WS_METHODS.serverReportClientActivity,
-                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs),
+                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs, visible),
               ),
             )
             .pipe(Effect.ignore),
         { concurrency: "unbounded", discard: true },
       );
     }).pipe(Effect.withSpan("web.backgroundActivity.report"));
+    yield* Effect.acquireRelease(
+      Effect.sync(() => window.desktopBridge?.onNotificationVisibilityChange?.(requestReport)),
+      (unsubscribe) => Effect.sync(() => unsubscribe?.()),
+    );
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {

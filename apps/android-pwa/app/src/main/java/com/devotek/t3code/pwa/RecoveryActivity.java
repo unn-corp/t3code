@@ -29,6 +29,7 @@ import org.json.JSONObject;
 public final class RecoveryActivity extends Activity {
     static final String BYPASS = "t3.recovery.bypass";
     static volatile boolean visible;
+    static volatile boolean shown;
     private final ExecutorService worker = Executors.newSingleThreadExecutor(task -> new Thread(task, "t3-recovery"));
     private final Runnable refresher = () -> runOnUiThread(this::render);
     private UpdateEngine engine;
@@ -58,6 +59,8 @@ public final class RecoveryActivity extends Activity {
         NativeSettings.returned(this, code);
     }
 
+    @Override protected void onStart() { super.onStart(); shown = true; }
+    @Override protected void onStop() { shown = false; super.onStop(); }
     @Override protected void onResume() { super.onResume(); visible = true; engine.foreground(true); engine.addListener(refresher); render(); }
     @Override protected void onPause() { visible = false; engine.foreground(false); engine.removeListener(refresher); super.onPause(); }
     @Override protected void onDestroy() { worker.shutdown(); super.onDestroy(); }

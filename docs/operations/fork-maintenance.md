@@ -50,16 +50,26 @@ signing identity prevents normal in-place replacement.
 
 **Behavior and entry.** Settings → General → Android notifications controls system notifications
 and background host connections. The APK maintains authenticated host WebSockets through a native
-foreground service; it does not use upstream cloud push delivery.
+foreground service; it does not use upstream cloud push delivery. Automatic alerts are suppressed
+while any client on a mutually paired environment remains visible on an awake display. Focus and
+input inactivity do not release suppression. Hidden/minimized/sleeping clients do; consumed alerts
+do not replay later. Updater confirmations and explicit Send test remain available.
 
 **Ownership.** [NativeNotifications.java](../../apps/android-pwa/app/src/main/java/com/devotek/t3code/pwa/NativeNotifications.java),
 [AgentNotificationService.java](../../apps/android-pwa/app/src/main/java/com/devotek/t3code/pwa/AgentNotificationService.java),
 and [NotificationCredentials.java](../../apps/android-pwa/app/src/main/java/com/devotek/t3code/pwa/NotificationCredentials.java)
 own permission, alert lifecycle, and encrypted credentials. The
-[Android notification runbook](./android-notifications.md) covers operational limits.
+[Android notification runbook](./android-pwa.md#background-alerts) covers operational limits.
 
 **Verification and coupling.** Test completion/input/failure while locked, notification tap to the
 correct environment/thread, denied permission, lost connectivity, and duplicate suppression.
+[NetworkNotificationPresenceTest](../../apps/android-pwa/app/src/test/java/com/devotek/t3code/pwa/NetworkNotificationPresenceTest.java),
+[PhoneAlertQueueTest](../../apps/android-pwa/app/src/test/java/com/devotek/t3code/pwa/PhoneAlertQueueTest.java),
+and [ClientVisibility.test.ts](../../apps/desktop/src/notifications/ClientVisibility.test.ts) cover
+cross-host lease expiry, reconnect waiting, stale alerts, unfocused visible windows, and native
+Windows display notifications. Desktop `ClientVisibility`, web `backgroundActivityReporter`, and
+native `NetworkNotificationPresence` own the suppression boundary. Verify minimize/restore and
+screen sleep on each OS; missing Linux display APIs and browser PWAs retain conservative visibility.
 Host ticket/subscription changes affect the service. Android force-stop and system restrictions
 can require reopening the app; preserve encrypted credentials when updating native storage.
 
@@ -128,6 +138,10 @@ sidebar without width jumps, drafts across collapse, reduced motion, screen read
 fold/unfold resize. Upstream composer/sidebar refactors can incorporate equivalent fixes; compare
 actual behavior before reapplying a patch. Shared web changes ship in desktop/PWA and only reach
 Android after rebuilding its bundle.
+
+The APK native container zeroes handled bars/cutout/IME insets before forwarding updates to WebView;
+see [shell inset maintenance](./android-pwa.md#shell-insets-and-folded-layouts). Verify native header
+alignment and keyboard hide after live fold changes as well as browser viewport tests.
 
 ## Stop, commands, and run recovery
 

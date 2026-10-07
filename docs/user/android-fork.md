@@ -113,6 +113,15 @@ shows its connection count and lets you stop it. This delivery path does not req
 Google Play services, or a T3 Connect account. Cloud DPoP connections are not supported by the
 native background transport.
 
+Automatic agent alerts stay quiet while Arcwright Code is visible on an awake screen on any
+connected device, including this phone. Input inactivity and loss of focus do not end suppression;
+minimizing, hiding, locking, or sleeping the display does. Viewed events are consumed rather than
+replayed when you minimize. **Send test** still sends an explicit test notification.
+
+Presence is shared through the phone's enabled, directly paired environments. Disconnected devices
+expire after at most 45 seconds; older clients and browser PWAs can have less accurate screen-sleep
+information. Update the desktop clients for native display-state detection.
+
 Keep Tailscale connected and allow unrestricted battery use for both apps when you need timely
 background alerts. Offline hosts and Android power saving can delay delivery. Open Arcwright Code once
 after reboot or force-stop to resume background connections. Disabling alerts stops this

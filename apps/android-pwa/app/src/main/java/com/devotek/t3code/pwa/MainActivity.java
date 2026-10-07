@@ -41,6 +41,7 @@ import org.json.JSONObject;
 /** A hostless web client. Remote environments are authenticated by the existing Connections flow. */
 public final class MainActivity extends ComponentActivity {
     static volatile boolean visible;
+    static volatile boolean shown;
     private static final String ORIGIN = "https://appassets.androidplatform.net";
     private static final int FILE_PICKER = 1;
     private static final int SAVE_FILE = 2;
@@ -81,7 +82,13 @@ public final class MainActivity extends ComponentActivity {
             Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
             Insets keyboard = insets.getInsets(WindowInsetsCompat.Type.ime());
             view.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, keyboard.bottom));
-            return insets;
+            // The container already handles these dimensions. Modern WebView forwards remaining
+            // bars to CSS safe-area values and IME to visualViewport; forwarding them unchanged
+            // adds a second inset to flow headers while fixed sidebar/controls stay above them.
+            // Send zeroed updates (not CONSUMED), so keyboard hide and live fold changes propagate.
+            return new WindowInsetsCompat.Builder(insets)
+                .setInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout()
+                    | WindowInsetsCompat.Type.ime(), Insets.NONE).build();
         });
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -329,6 +336,8 @@ public final class MainActivity extends ComponentActivity {
         if (webView != null) webView.saveState(state);
         super.onSaveInstanceState(state);
     }
+    @Override protected void onStart() { super.onStart(); shown = true; }
+    @Override protected void onStop() { shown = false; super.onStop(); }
     @Override protected void onResume() {
         super.onResume();
         visible = true;

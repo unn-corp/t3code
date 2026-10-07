@@ -264,6 +264,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
+  getNotificationVisibility: () =>
+    ipcRenderer.invoke(IpcChannels.GET_NOTIFICATION_VISIBILITY_CHANNEL),
+  onNotificationVisibilityChange: (listener) => {
+    const wrapped = () => listener();
+    ipcRenderer.on(IpcChannels.NOTIFICATION_VISIBILITY_CHANGED_CHANNEL, wrapped);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.NOTIFICATION_VISIBILITY_CHANGED_CHANNEL, wrapped);
+  },
   onWindowFullscreenStateChange: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, fullscreen: unknown) => {
       if (typeof fullscreen !== "boolean") return;

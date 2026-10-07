@@ -3,6 +3,10 @@ import * as Effect from "effect/Effect";
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
+import {
+  getNotificationVisibility,
+  installNotificationVisibility,
+} from "./methods/notificationVisibility.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import { showAgentNotification } from "./methods/notifications.ts";
 import { sendKeybinding } from "./methods/keybinding.ts";
@@ -86,6 +90,8 @@ import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./m
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   yield* installNotificationBadge();
+  yield* installNotificationVisibility();
+  yield* ipc.handle(getNotificationVisibility);
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(AppActivationIpc.setReady);

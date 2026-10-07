@@ -61,7 +61,7 @@ final class NativeNotifications {
             case "plan_ready" -> "notifyOnPlanReady";
             default -> "notifyOnInput";
         };
-        if (!prefs.optBoolean("enabled") || !prefs.optBoolean(option, true) || !allowed(context) || MainActivity.visible) return;
+        if (!prefs.optBoolean("enabled") || !prefs.optBoolean(option, true) || !allowed(context) || phoneVisible(context)) return;
         String title = switch (kind) {
             case "agent_completed" -> "Thread completed";
             case "agent_failed" -> "Thread failed";
@@ -72,6 +72,12 @@ final class NativeNotifications {
         String threadId = thread.getString("id");
         String route = "/" + android.net.Uri.encode(environmentId) + "/" + android.net.Uri.encode(threadId);
         post(context, environmentId + ":" + threadId, title, body, route, prefs.optBoolean("playSound", true));
+    }
+    static boolean phoneVisible(Context context) {
+        android.os.PowerManager power = context.getSystemService(android.os.PowerManager.class);
+        android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
+        return (MainActivity.shown || RecoveryActivity.shown)
+            && power != null && power.isInteractive() && (keyguard == null || !keyguard.isKeyguardLocked());
     }
     static void post(Context context, String tag, String title, String body, String route, boolean sound) {
         if (!allowed(context)) return;

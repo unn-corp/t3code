@@ -1265,6 +1265,9 @@ export interface DesktopBridge {
    */
   onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
+  /** Native visible/awake state for cross-device phone alert suppression. */
+  getNotificationVisibility?: () => Promise<boolean>;
+  onNotificationVisibilityChange?: (listener: () => void) => () => void;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;

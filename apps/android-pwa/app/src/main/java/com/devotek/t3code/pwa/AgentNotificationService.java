@@ -22,6 +22,8 @@ public final class AgentNotificationService extends Service {
     private static final String STOP = "com.devotek.t3code.pwa.STOP_ALERTS";
     private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
     private final Map<String, Connection> connections = new HashMap<>();
+    private final NetworkNotificationPresence presence = new NetworkNotificationPresence();
+    private final PhoneAlertQueue pendingAlerts = new PhoneAlertQueue();
     private final OkHttpClient http = new OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS).pingInterval(30, TimeUnit.SECONDS)
         .followRedirects(false).followSslRedirects(false).build();
@@ -32,6 +34,7 @@ public final class AgentNotificationService extends Service {
         worker.scheduleWithFixedDelay(() -> {
             if (!NativeNotifications.allowed(this)) stopSelf();
         }, 30, 30, TimeUnit.SECONDS);
+        worker.scheduleWithFixedDelay(this::flushAlerts, 3, 3, TimeUnit.SECONDS);
     }
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && STOP.equals(intent.getAction())) {
@@ -67,6 +70,10 @@ public final class AgentNotificationService extends Service {
     private void sync() {
         if (destroyed) return;
         JSONObject desired = NativeNotifications.read(this, "connections");
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        desired.keys().forEachRemaining(ids::add);
+        presence.configure(ids, android.os.SystemClock.elapsedRealtime());
+        pendingAlerts.configure(ids);
         for (String id : new java.util.ArrayList<>(connections.keySet())) {
             JSONObject value = desired.optJSONObject(id);
             if (value == null || !value.toString().equals(connections.get(id).config.toString())) {
@@ -83,6 +90,22 @@ public final class AgentNotificationService extends Service {
             }
         });
         updateStatus();
+    }
+    private void queueAlert(String environmentId, JSONObject thread, String kind) throws org.json.JSONException {
+        long now = android.os.SystemClock.elapsedRealtime();
+        pendingAlerts.offer(environmentId, thread, kind, now);
+        flushAlerts();
+    }
+    private void flushAlerts() {
+        if (destroyed) return;
+        long now = android.os.SystemClock.elapsedRealtime();
+        try {
+            JSONArray alerts = pendingAlerts.take(now, NativeNotifications.phoneVisible(this) || presence.suppressed(now), presence.ready(now));
+            for (int i = 0; i < alerts.length(); i++) {
+                JSONObject alert = alerts.getJSONObject(i);
+                NativeNotifications.alert(this, alert.getString("environmentId"), alert.getJSONObject("thread"), alert.getString("kind"));
+            }
+        } catch (org.json.JSONException ignored) { }
     }
     @Override public void onDestroy() {
         destroyed = true;
@@ -132,6 +155,9 @@ public final class AgentNotificationService extends Service {
                                 webSocket.send(new JSONObject().put("_tag", "Request").put("id", "1")
                                     .put("tag", "orchestration.subscribeShell").put("payload", new JSONObject())
                                     .put("headers", new JSONArray()).toString());
+                                webSocket.send(new JSONObject().put("_tag", "Request").put("id", "2")
+                                    .put("tag", "subscribeBackgroundPolicy").put("payload", new JSONObject())
+                                    .put("headers", new JSONArray()).toString());
                             } catch (org.json.JSONException ignored) { webSocket.cancel(); }
                         }
                         @Override public void onMessage(WebSocket webSocket, String text) {
@@ -158,7 +184,19 @@ public final class AgentNotificationService extends Service {
                     JSONObject frame = frames.optJSONObject(f);
                     if (frame == null) continue;
                     if ("Ping".equals(frame.optString("_tag"))) { webSocket.send("{\"_tag\":\"Pong\"}"); continue; }
-                    if (!"1".equals(frame.optString("requestId"))) continue;
+                    String requestId = frame.optString("requestId");
+                    if ("2".equals(requestId)) {
+                        if ("Chunk".equals(frame.optString("_tag"))) {
+                            JSONArray values = frame.getJSONArray("values");
+                            for (int i = 0; i < values.length(); i++) presence.update(id, values.getJSONObject(i), android.os.SystemClock.elapsedRealtime());
+                            webSocket.send("{\"_tag\":\"Ack\",\"requestId\":\"2\"}");
+                            flushAlerts();
+                        }
+                        // Older hosts may reject the subscription. Their unknown lease expires
+                        // instead of breaking the independent shell stream or blocking forever.
+                        continue;
+                    }
+                    if (!"1".equals(requestId)) continue;
                     if ("Exit".equals(frame.optString("_tag"))) { webSocket.close(1000, "Subscription ended"); retry(); return; }
                     if (!"Chunk".equals(frame.optString("_tag"))) continue;
                     JSONArray values = frame.getJSONArray("values");
@@ -172,6 +210,7 @@ public final class AgentNotificationService extends Service {
             }
         }
         void consume(JSONObject item) throws org.json.JSONException {
+            pendingAlerts.reconcile(id, item);
             JSONArray alerts = state.consume(item);
             if ("snapshot".equals(item.optString("kind")) && !item.has("resolvedRepositoryIdentityRoots")) {
                 android.util.Log.d("T3Alerts", "Background snapshot: " + item.getJSONObject("snapshot").getJSONArray("threads").length() + " threads");
@@ -179,7 +218,7 @@ public final class AgentNotificationService extends Service {
             }
             for (int i = 0; i < alerts.length(); i++) {
                 JSONObject alert = alerts.getJSONObject(i);
-                NativeNotifications.alert(AgentNotificationService.this, id, alert.getJSONObject("thread"), alert.getString("kind"));
+                queueAlert(id, alert.getJSONObject("thread"), alert.getString("kind"));
             }
         }
         void retry() {
