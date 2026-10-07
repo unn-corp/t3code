@@ -488,6 +488,13 @@ Releases are never deleted or overwritten.
 Artifacts are kept 7 days (candidate, receipts) and 1 day (JS bundle). Releases and reservation tags
 are kept indefinitely. Devices keep two previous verified builds and their restore points.
 
+Windows may briefly lock the cached recovery runtime after its self-test.
+[`forkRecoveryCache.ts`](../../packages/shared/src/forkRecoveryCache.ts) retries the same staging
+directory rename up to five times for `EPERM`/`EBUSY`, then fails without publishing a new recovery
+command. It never changes ACLs to force a rename. The promotion tests cover transient locks,
+persistent failure with the previous pointer retained, and immediate rejection of unrelated errors.
+For a persistent failure, resolve the file lock or permissions before explicitly retrying maintenance.
+
 ## External and manual paths
 
 - **Shell installers** (`scripts/install.sh`, `scripts/install.ps1`) discover `fork-v*` tags and

@@ -13,6 +13,7 @@ import type { ForkReleaseManifest } from "@t3tools/contracts";
 import type { ForkPlatformKey } from "./forkMaintenance.ts";
 import {
   installRecoveryHelper,
+  promoteRecoveryDirectory,
   readRecoveryCommand,
   recoveryInvocation,
   recoveryReady,
@@ -107,6 +108,52 @@ const serve = (helper: Uint8Array, node: Uint8Array) => async (name: string) =>
   name.endsWith(".mjs") ? helper : node;
 
 describe("recovery helper cache", () => {
+  it("promotes proven staging after transient runtime sharing locks", async () => {
+    const dir = await cacheDir();
+    const staging = NodePath.join(dir, ".staging-test");
+    const target = NodePath.join(dir, "1.0.2");
+    await NodeFSP.mkdir(staging, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(staging, "runtime"), "verified bytes");
+    const rename = NodeFSP.rename;
+    let attempts = 0;
+    vi.spyOn(MutableFSP, "rename").mockImplementation(async (from, to) => {
+      if (from === staging && ++attempts < 3)
+        throw Object.assign(new Error("Runtime is briefly locked"), { code: "EPERM" });
+      return rename(from, to);
+    });
+    NodeModule.syncBuiltinESMExports();
+    await promoteRecoveryDirectory(staging, target);
+    expect(attempts).toBe(3);
+    expect(await NodeFSP.readFile(NodePath.join(target, "runtime"), "utf8")).toBe("verified bytes");
+    await expect(NodeFSP.stat(staging)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("blocks persistent promotion locks and preserves the existing recovery pointer", async () => {
+    const dir = await cacheDir();
+    const staging = NodePath.join(dir, ".staging-test");
+    const target = NodePath.join(dir, "1.0.2");
+    await NodeFSP.mkdir(staging, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(dir, "current.json"), "previous recovery");
+    const locked = Object.assign(new Error("Runtime remains locked"), { code: "EPERM" });
+    const rename = vi.spyOn(MutableFSP, "rename").mockRejectedValue(locked);
+    NodeModule.syncBuiltinESMExports();
+    await expect(promoteRecoveryDirectory(staging, target)).rejects.toBe(locked);
+    expect(rename).toHaveBeenCalledTimes(5);
+    expect(await NodeFSP.readFile(NodePath.join(dir, "current.json"), "utf8")).toBe(
+      "previous recovery",
+    );
+    expect((await NodeFSP.stat(staging)).isDirectory()).toBe(true);
+    await expect(NodeFSP.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not retry unrelated promotion failures", async () => {
+    const unavailable = Object.assign(new Error("Different filesystem"), { code: "EXDEV" });
+    const rename = vi.spyOn(MutableFSP, "rename").mockRejectedValue(unavailable);
+    NodeModule.syncBuiltinESMExports();
+    await expect(promoteRecoveryDirectory("staging", "destination")).rejects.toBe(unavailable);
+    expect(rename).toHaveBeenCalledTimes(1);
+  });
+
   it("retries a briefly locked replacement directory and still proves the installed runtime", async () => {
     const dir = await cacheDir();
     const node = await realNode();

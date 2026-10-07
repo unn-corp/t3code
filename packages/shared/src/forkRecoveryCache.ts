@@ -56,6 +56,22 @@ async function removeTree(directory: string) {
   }
 }
 
+/** Publish an already-proven staging directory; persistent locks still block admission. */
+export async function promoteRecoveryDirectory(staging: string, destination: string) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await NodeFSP.rename(staging, destination);
+      return;
+    } catch (cause) {
+      // Windows can briefly deny moving the runtime just executed by the staging self-test.
+      // Retry the same atomic rename, without deleting data or changing ACLs to force it.
+      if (!isCode(cause, "EBUSY") && !isCode(cause, "EPERM")) throw cause;
+      if (attempt === 4) throw cause;
+      await NodeTimersPromises.setTimeout(50 * (attempt + 1));
+    }
+  }
+}
+
 async function cleanupAfterFailure(directory: string, originalCause: unknown): Promise<never> {
   try {
     await removeTree(directory);
@@ -183,7 +199,7 @@ export async function installRecoveryHelper(input: {
       helperPath: NodePath.join(stagingDir, assets.helper.name),
     });
     await removeTree(versionDir);
-    await NodeFSP.rename(stagingDir, versionDir);
+    await promoteRecoveryDirectory(stagingDir, versionDir);
   } catch (cause) {
     return cleanupAfterFailure(stagingDir, cause);
   }
