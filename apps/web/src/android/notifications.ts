@@ -3,6 +3,7 @@ import { isAndroidPwa } from "../env";
 export interface AndroidNotificationStatus {
   readonly permission: "ready" | "permission-needed" | "permission-blocked";
   readonly background: boolean;
+  readonly notificationClientVisible?: boolean;
 }
 interface NativeNotificationBridge {
   postMessage(message: string): void;

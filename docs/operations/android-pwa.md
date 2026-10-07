@@ -277,7 +277,8 @@ display power, and Linux DPMS/screensaver APIs through the existing web activity
 screen APIs conservatively leave visible windows awake; browser PWAs cannot reliably distinguish
 all display-off states. Presence only spans environments paired to both the visible client and this
 phone; unrelated hosts are not discovered through Tailscale. Mixed older clients may keep a visible
-lease until expiry or report screen sleep imprecisely. The phone checks native activity visibility,
+lease until expiry or report screen sleep imprecisely. The notification status bridge also supplies native visibility to the phone's activity reporter,
+so a background WebView cannot renew a false foreground lease. The phone checks native activity visibility,
 interactive display state, and keyguard, including its recovery activity and unfocused split-screen
 windows. This suppression applies to automatic agent alerts, not updater confirmations or Send test.
 

@@ -337,7 +337,11 @@ public final class MainActivity extends ComponentActivity {
         super.onSaveInstanceState(state);
     }
     @Override protected void onStart() { super.onStart(); shown = true; }
-    @Override protected void onStop() { shown = false; super.onStop(); }
+    @Override protected void onStop() {
+        shown = false;
+        if (webView != null) webView.evaluateJavascript("window.dispatchEvent(new Event('arcwright-notification-visibility'))", null);
+        super.onStop();
+    }
     @Override protected void onResume() {
         super.onResume();
         visible = true;

@@ -92,7 +92,8 @@ final class NativeNotifications {
     private JSONObject status() throws JSONException {
         boolean asked = store(activity).getBoolean("permissionAsked", false);
         return new JSONObject().put("permission", allowed(activity) ? "ready" : asked ? "permission-blocked" : "permission-needed")
-            .put("background", store(activity).getBoolean("background", false));
+            .put("background", store(activity).getBoolean("background", false))
+            .put("notificationClientVisible", phoneVisible(activity));
     }
     private void respond(JavaScriptReplyProxy reply, String id, JSONObject result, String error) {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return;

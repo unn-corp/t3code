@@ -3,16 +3,46 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { afterEach, vi } from "vite-plus/test";
 
+const android = vi.hoisted(() => ({ supported: vi.fn(() => false), request: vi.fn() }));
+vi.mock("../android/notifications", () => ({
+  supportsAndroidNotifications: android.supported,
+  androidNotificationRequest: android.request,
+}));
+
 import {
   observeBackgroundActivitySubscription,
   retainedBackgroundScopes,
   wasRecentlyInteracted,
   createActivityReport,
+  readNotificationClientVisibility,
 } from "./backgroundActivityReporter.ts";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  android.supported.mockReturnValue(false);
+});
 
 describe("wasRecentlyInteracted", () => {
+  it("uses the phone's native awake visibility even if WebView still reports visible", async () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", { visibilityState: "visible" });
+    android.supported.mockReturnValue(true);
+    android.request.mockResolvedValue({ notificationClientVisible: false });
+    expect(await readNotificationClientVisibility()).toBe(false);
+    vi.stubGlobal("document", { visibilityState: "hidden" });
+    android.request.mockResolvedValue({ notificationClientVisible: true });
+    expect(await readNotificationClientVisibility()).toBe(true);
+  });
+  it("uses native desktop visibility and supports older Android bridges", async () => {
+    vi.stubGlobal("window", { desktopBridge: { getNotificationVisibility: async () => true } });
+    vi.stubGlobal("document", { visibilityState: "hidden" });
+    expect(await readNotificationClientVisibility()).toBe(true);
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", { visibilityState: "visible" });
+    android.supported.mockReturnValue(true);
+    android.request.mockResolvedValue({ permission: "ready", background: true });
+    expect(await readNotificationClientVisibility()).toBe(true);
+  });
   it("reports native visible/awake state independently of expired input and browser focus", () => {
     vi.stubGlobal("window", {
       localStorage: { getItem: () => "fixture-client" },

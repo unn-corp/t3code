@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { randomUUID } from "./utils";
+import { androidNotificationRequest, supportsAndroidNotifications } from "../android/notifications";
 
 const CLIENT_ID_STORAGE_KEY = "t3.backgroundActivity.clientId";
 const REPORT_INTERVAL_MS = 25_000;
@@ -75,6 +76,17 @@ function getClientId(): string {
 
 function resolveClientKind(): ClientActivityReportInput["clientKind"] {
   return window.desktopBridge ? "desktop-renderer" : "web";
+}
+
+export async function readNotificationClientVisibility(): Promise<boolean> {
+  if (window.desktopBridge?.getNotificationVisibility)
+    return window.desktopBridge.getNotificationVisibility();
+  if (supportsAndroidNotifications())
+    return (
+      (await androidNotificationRequest("status")).notificationClientVisible ??
+      document.visibilityState === "visible"
+    );
+  return document.visibilityState === "visible";
 }
 
 export function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs: number): boolean {
@@ -195,11 +207,7 @@ export const backgroundActivityReporterLayer = Layer.effectDiscard(
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
-      const visible = yield* Effect.tryPromise(async () =>
-        window.desktopBridge?.getNotificationVisibility
-          ? await window.desktopBridge.getNotificationVisibility()
-          : document.visibilityState === "visible",
-      ).pipe(
+      const visible = yield* Effect.tryPromise(readNotificationClientVisibility).pipe(
         Effect.timeout("2 seconds"),
         Effect.orElseSucceed(() => document.visibilityState === "visible"),
       );
@@ -231,6 +239,7 @@ export const backgroundActivityReporterLayer = Layer.effectDiscard(
         window.addEventListener("focus", requestReport);
         window.addEventListener("blur", requestReport);
         window.addEventListener("online", requestReport);
+        window.addEventListener("arcwright-notification-visibility", requestReport);
         window.addEventListener("pointermove", recordInteraction);
         window.addEventListener("keydown", recordInteraction);
         window.addEventListener("wheel", recordInteraction, passiveListenerOptions);
@@ -243,6 +252,7 @@ export const backgroundActivityReporterLayer = Layer.effectDiscard(
           window.removeEventListener("focus", requestReport);
           window.removeEventListener("blur", requestReport);
           window.removeEventListener("online", requestReport);
+          window.removeEventListener("arcwright-notification-visibility", requestReport);
           window.removeEventListener("pointermove", recordInteraction);
           window.removeEventListener("keydown", recordInteraction);
           window.removeEventListener("wheel", recordInteraction);
