@@ -1,4 +1,5 @@
 import type { ForkUpdateStatus } from "@t3tools/contracts";
+import { formatBuildVersion } from "@t3tools/shared/buildVersion";
 export const forkPhaseLabels: Record<ForkUpdateStatus["phase"], string> = {
   idle: "Up to date",
   checking: "Checking…",
@@ -30,6 +31,24 @@ export const forkWaitingLabels: Record<ForkUpdateStatus["blockers"][number]["rea
   bootstrap: "This installation needs updater bootstrap",
   "automation-review": "Restored automation needs review",
 };
+
+/** Completed and pinned statuses describe the installed build; other transitions describe the target. */
+export function forkStatusDisplayBuild(
+  status: ForkUpdateStatus,
+): ForkUpdateStatus["currentBuild"] | null {
+  if (status.phase === "pinned" || status.phase === "completed") return status.currentBuild;
+  return status.targetBuild;
+}
+
+/** Show a useful label when the pin identifies the installed build, retaining a short ref otherwise. */
+export function forkPinnedBuildLabel(status: ForkUpdateStatus): string | null {
+  const pinnedBuild = status.policy.pinnedBuild;
+  if (pinnedBuild === null) return null;
+  return pinnedBuild === status.currentBuild.artifactSha256
+    ? `Pinned: ${formatBuildVersion(status.currentBuild)}`
+    : `Pinned: ${pinnedBuild.slice(0, 12)}`;
+}
+
 export function forkStatusDescription(status: ForkUpdateStatus): string {
   if (status.lastError) return status.lastError;
   if (status.blockers.length)

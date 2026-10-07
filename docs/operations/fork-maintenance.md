@@ -384,6 +384,13 @@ The native Android recovery screen also opens a pending Android installation con
 normal and recovery APKs, including a dismissed notification and a restarted app process; the
 button must open the existing app-owned installer session and must never submit another install.
 
+While an Android installation request waits, native `UpdateEngine.statusTarget` must name the
+exact requested artifact, including a cached rollback when a newer normal update is staged. The
+web adapter disables a second install action until that request finishes or is cancelled. Keep
+[UpdateEngineStatusTargetTest.java](../../apps/android-pwa/app/src/test/java/com/devotek/t3code/pwa/UpdateEngineStatusTargetTest.java)
+and [updates.test.ts](../../apps/web/src/android/updates.test.ts) in the release verification for
+selected-target identity and pending-request controls.
+
 Android updater persistence belongs to `UpdateStore`. Its backup must be written separately while
 the committed primary stays readable, then the new primary is atomically renamed over it. Package
 replacement can terminate any lifecycle write; moving the primary away before committing the new

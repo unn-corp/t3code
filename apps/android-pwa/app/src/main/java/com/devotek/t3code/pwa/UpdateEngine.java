@@ -1043,15 +1043,14 @@ final class UpdateEngine {
             for (UpdateState.Recovery entry : installableRecovery())
                 cached.put(new JSONObject().put("versionCode", entry.versionCode).put("version", entry.version).put("commit", entry.commit)
                     .put("channel", sourceChannel(entry.version)).put("sha256", entry.sha256).put("transactionId", recoveryTransactionId(entry)));
-            JSONObject target = null;
-            UpdateState.Pending pending = state.pending;
-            if (pending != null) target = build(pending.targetVersion, pending.targetCommit, pending.targetVersionCode, pending.targetChannel, pending.targetSha256, pending.tag);
-            else if (state.target != null) target = build(state.target.version, state.target.commit, state.target.versionCode, state.target.channel, state.target.sha256, state.target.tag);
-            else if (available != null) {
+            JSONObject availableTarget = null;
+            if (available != null) {
                 ReleaseManifest manifest = available.decision.manifest;
-                target = build(manifest.normal.sourceVersion, manifest.normal.sourceCommit, manifest.normal.versionCode, manifest.channel,
+                availableTarget = build(manifest.normal.sourceVersion, manifest.normal.sourceCommit, manifest.normal.versionCode, manifest.channel,
                     manifest.asset(manifest.normal.asset).sha256, available.decision.release.tag);
             }
+            JSONObject target = statusTarget(state, availableTarget);
+            UpdateState.Pending pending = state.pending;
             JSONObject pin = null;
             if (state.pin != null) pin = new JSONObject().put("versionCode", state.pin.versionCode).put("version", state.pin.version)
                 .put("commit", state.pin.commit).put("reason", state.pin.reason).put("artifactSha256", state.pin.artifactSha256);
@@ -1088,6 +1087,23 @@ final class UpdateEngine {
                 .put("installRequest", request == null ? JSONObject.NULL : request)
                 .put("confirmationPending", pending != null && "awaiting-confirmation".equals(pending.installerResult));
         } catch (JSONException error) { throw new IllegalStateException(error); }
+    }
+
+    /** Waiting recovery describes the selected APK, even when a newer normal update is staged. */
+    static JSONObject statusTarget(UpdateState state, JSONObject availableTarget) throws JSONException {
+        UpdateState.Pending pending = state.pending;
+        if (pending != null)
+            return build(pending.targetVersion, pending.targetCommit, pending.targetVersionCode, pending.targetChannel, pending.targetSha256, pending.tag);
+        if (state.intent != null && "rollback".equals(state.intent.kind)) {
+            UpdateState.Recovery recovery = state.recovery(state.intent.targetSha256);
+            return recovery == null ? null : build(recovery.version, recovery.commit, recovery.versionCode,
+                sourceChannel(recovery.version), recovery.sha256, "recovery");
+        }
+        UpdateState.Target target = state.target;
+        // A stale explicit request must never display a substituted build while admission rejects it.
+        if (state.intent != null && (target == null || !target.sha256.equals(state.intent.targetSha256))) return null;
+        return target == null ? availableTarget : build(target.version, target.commit, target.versionCode,
+            target.channel, target.sha256, target.tag);
     }
 
     private static JSONObject build(String version, String commit, long code, String channel, String sha, String tag) throws JSONException {

@@ -330,7 +330,15 @@ export function toForkUpdateStatus(status: AndroidUpdateStatus): ForkUpdateStatu
             label: status.unsupportedReason ?? "In-app updates are unavailable.",
           },
         ],
-    installable: status.supported && !!status.target && status.recovery.ready,
+    // A waiting request already names the build that was reviewed. Keep the
+    // generic shared "Install verified update" action disabled until native
+    // finishes or the request is cancelled; for a rollback that action would
+    // otherwise dispatch an update install for the recovery target.
+    installable:
+      status.supported &&
+      !!status.target &&
+      status.recovery.ready &&
+      status.installRequest === null,
     lastError: status.lastError,
     // Native recovery restores code only; the APK's data is app-private and never rewritten.
     recoveryOptions: status.recovery.cached.map((build) => ({

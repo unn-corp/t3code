@@ -693,6 +693,8 @@ export interface RecoverySource extends Predecessor {
   readonly asset: string;
 }
 
+const RECENT_ANDROID_SOURCES_PER_CHANNEL = 3;
+
 /**
  * Fixes every identity a run needs before anything is built: version, tag, commit, and the
  * recovery predecessor. Later jobs read this and never re-select. Refuses to plan without a
@@ -805,15 +807,15 @@ export const buildPlan = (input: {
       ? null
       : (eligible.find((record) => record.tagName === predecessor.tag)?.manifest?.channel ?? null),
   });
-  // Keep the newest two normal identities per channel: this covers the current lane and one
-  // previously retained release if a user rolls back before resuming updates.
+  // Keep a fixed recent normal-source window for each lane. Older cached recovery identities may
+  // need a guarded intermediate recovery or manual bootstrap before they can resume updates.
   for (const channel of ["stable", "nightly"] as const) {
     const recent = eligible
       .filter((record) => record.manifest!.channel === channel)
       .toSorted((left, right) =>
         compareForkVersions(right.manifest!.version, left.manifest!.version),
       )
-      .slice(0, 2);
+      .slice(0, RECENT_ANDROID_SOURCES_PER_CHANNEL);
     for (const record of recent)
       add({
         tag: record.tagName,

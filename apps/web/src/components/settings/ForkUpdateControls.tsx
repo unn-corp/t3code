@@ -3,7 +3,12 @@ import { formatBuildVersion } from "@t3tools/shared/buildVersion";
 import type { EnvironmentId, ForkRecoveryOption } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { ForkUpdateController, useForkUpdates } from "../../state/forkUpdates";
-import { forkPhaseLabels, forkStatusDetail } from "../forkUpdatePresentation";
+import {
+  forkPhaseLabels,
+  forkPinnedBuildLabel,
+  forkStatusDetail,
+  forkStatusDisplayBuild,
+} from "../forkUpdatePresentation";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -54,6 +59,8 @@ export function ForkUpdateControls({
     status.phase,
   );
   const detail = forkStatusDetail(status);
+  const displayBuild = forkStatusDisplayBuild(status);
+  const pinnedBuildLabel = forkPinnedBuildLabel(status);
   return (
     <>
       <SettingsRow
@@ -63,7 +70,7 @@ export function ForkUpdateControls({
           <div role="status" aria-live="polite">
             <p>
               {forkPhaseLabels[status.phase]}
-              {status.targetBuild ? ` · ${formatBuildVersion(status.targetBuild)}` : ""}
+              {displayBuild ? ` · ${formatBuildVersion(displayBuild)}` : ""}
             </p>
             {detail ? <p className="whitespace-normal break-words">{detail}</p> : null}
             {status.lastError ? (
@@ -211,7 +218,7 @@ export function ForkUpdateControls({
         title={status.policy.pinnedBuild !== null ? "Updates pinned" : "Pin this build"}
         description={
           status.policy.pinnedBuild !== null
-            ? `Pinned: ${status.policy.pinnedBuild}. Resume updates does not resume agent work.`
+            ? `${pinnedBuildLabel ?? "Pinned build"}. Resume updates does not resume agent work.`
             : "Keep the installed build until you explicitly resume updates."
         }
         control={

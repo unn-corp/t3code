@@ -204,6 +204,45 @@ it("maps native state into the shared maintenance status", async () => {
   });
 });
 
+it.each(["update", "rollback"] as const)(
+  "keeps a pending %s target visible without offering a second install",
+  async (kind) => {
+    const { toForkUpdateStatus } = await import("./updates");
+    const recoveryBuild = status().recovery.cached[0]!;
+    const target =
+      kind === "rollback"
+        ? {
+            version: recoveryBuild.version,
+            commit: recoveryBuild.commit,
+            versionCode: recoveryBuild.versionCode,
+            channel: recoveryBuild.channel,
+            artifactSha256: recoveryBuild.sha256,
+          }
+        : status().target;
+    if (!target) throw new Error("The fixture must have a pending target.");
+
+    const mapped = toForkUpdateStatus(
+      status({
+        phase: "waiting",
+        target,
+        installRequest: {
+          kind,
+          targetArtifactSha256: kind === "rollback" ? recoveryBuild.sha256 : target.artifactSha256,
+          transactionId: "pending-transaction",
+          requestedAt: "2026-10-07T14:00:00.000Z",
+        },
+      }),
+    );
+
+    expect(mapped.targetBuild).toMatchObject({
+      version: target.version,
+      commit: target.commit,
+      artifactSha256: kind === "rollback" ? recoveryBuild.sha256 : target.artifactSha256,
+    });
+    expect(mapped.installable).toBe(false);
+  },
+);
+
 it("preserves the native storage blocker in the shared status", async () => {
   const { toForkUpdateStatus } = await import("./updates");
   const mapped = toForkUpdateStatus(

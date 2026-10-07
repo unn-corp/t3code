@@ -298,9 +298,14 @@ interaction still blocks publication.
   The allocator reads all reservation tags with GitHub's unpaginated matching-refs API; do not
   apply release-list pagination to it. Once 100 tags exist, that would repeatedly read the same
   response and stall allocation. The REST adapter regression tests cover both 100 and 101 tags.
-- **Recovery APKs.** The manifest retains the primary predecessor plus the newest two eligible exact
-  normal-build identities per channel, the verified updater baseline, and a required promotion source, deduplicated by version and
-  commit. Each is rebuilt with `--kind recovery` and a unique code above the release normal code.
+- **Recovery APKs.** The manifest retains the primary predecessor plus the newest three eligible
+  exact normal-build identities per channel, the verified updater baseline, and a required promotion
+  source. This fixed window lets recent installs resume with an exact-source recovery APK without
+  recursively copying older manifests' recovery matrices. Sources are deduplicated by version and
+  commit, rebuilt with `--kind recovery`, and assigned unique codes above the release normal code.
+  A device rolled back to an identity outside this window must first use a still-cached signed
+  recovery to reach a retained identity, or use the documented manual bootstrap path; do not assume
+  every historical recovery remains available in each new release.
   Extra recovery builds use the current builder against the exact retained source checkout. The
   baseline stays in that set so a phone reverted to it can stage a newer update with an exact-source
   recovery APK. Retain the verified baseline release while those devices are supported. The finite

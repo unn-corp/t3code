@@ -576,7 +576,7 @@ describe("recovery predecessor", () => {
     assert.equal(fromBaseline[0]!.channel, null);
     assert.include(fromBaseline[0]!.asset, "from-1.0.0");
   });
-  it("freezes newest two sources per channel plus the promotion source without collapsing same-commit versions", () => {
+  it("freezes the newest three normal sources per channel plus the promotion source", () => {
     const stableOld = makeRelease({
       version: "1.0.0",
       commit: sha("stable-old"),
@@ -589,6 +589,14 @@ describe("recovery predecessor", () => {
       version: "1.0.2-nightly.20261008.1",
       commit: sha("nightly-old"),
     });
+    const nightlyOlder = makeRelease({
+      version: "1.0.2-nightly.20261006.1",
+      commit: sha("nightly-older"),
+    });
+    const nightlyOutsideWindow = makeRelease({
+      version: "1.0.2-nightly.20261005.1",
+      commit: sha("nightly-outside-window"),
+    });
     const promotedCommit = sha("promoted-nightly");
     const nightlyNew = makeRelease({
       version: "1.0.2-nightly.20261009.1",
@@ -598,7 +606,7 @@ describe("recovery predecessor", () => {
       channel: "stable",
       now: NOW,
       runNumber: 9,
-      releases: [stableOld, stableNew, nightlyOld, nightlyNew],
+      releases: [stableOld, stableNew, nightlyOld, nightlyOlder, nightlyOutsideWindow, nightlyNew],
     });
     assert.equal(outcome.kind, "release");
     if (outcome.kind !== "release") return;
@@ -609,7 +617,43 @@ describe("recovery predecessor", () => {
     assert.include(identities, `1.0.2-nightly.20261009.1:${promotedCommit}`);
     assert.notInclude(identities, `1.0.2:${promotedCommit}`);
     assert.include(identities, `1.0.1:${sha("stable-new")}`);
+    assert.include(identities, `1.0.2-nightly.20261006.1:${sha("nightly-older")}`);
+    assert.notInclude(identities, `1.0.2-nightly.20261005.1:${sha("nightly-outside-window")}`);
+    assert.equal(
+      outcome.plan.recoverySources.filter((source) => source.channel === "nightly").length,
+      3,
+    );
     assert.equal(new Set(identities).size, identities.length);
+  });
+
+  it("keeps the newest three eligible Android sources and excludes older identities", () => {
+    const releases = [66, 65, 58, 49, 34].map((run) =>
+      makeRelease({
+        version: `1.0.1-nightly.20261007.${run}`,
+        commit: sha(`nightly-${run}`),
+      }),
+    );
+    const outcome = buildPlan({
+      channel: "nightly",
+      commit: sha("next"),
+      now: NOW,
+      runNumber: 67,
+      releases,
+    });
+    assert.equal(outcome.kind, "release");
+    if (outcome.kind !== "release") return;
+
+    const identities = outcome.plan.recoverySources.map(
+      ({ version, commit }) => `${version}:${commit}`,
+    );
+    assert.include(identities, `1.0.1-nightly.20261007.66:${sha("nightly-66")}`);
+    assert.include(identities, `1.0.1-nightly.20261007.65:${sha("nightly-65")}`);
+    assert.include(identities, `1.0.1-nightly.20261007.58:${sha("nightly-58")}`);
+    assert.notInclude(identities, `1.0.1-nightly.20261007.49:${sha("nightly-49")}`);
+    assert.equal(
+      outcome.plan.recoverySources.filter((source) => source.channel === "nightly").length,
+      3,
+    );
   });
 
   it("allocates above a hand-installed stable baseline for nightly and stable promotion", () => {
