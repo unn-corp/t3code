@@ -9,8 +9,8 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { ChildProcessSpawner } from "effect/unstable/process";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { ChildProcessSpawner } from "effect/process";
 import type { OrganizationPatchProcessObserverShape } from "../textGeneration/OrganizationPatchProcessObserver.ts";
 import { organizationScopeLaunchBrokerClient } from "./OrganizationScopeLaunchBroker.ts";
 import { organizationQABrokerOperationPrefix } from "./OrganizationScopedBrokerHosts.ts";

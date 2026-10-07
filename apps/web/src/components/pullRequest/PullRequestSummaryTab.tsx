@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
   GitHubAccountId,
@@ -17,7 +18,6 @@ import {
 } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
-import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";

@@ -6,14 +6,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import type { TerminalSummary } from "@t3tools/contracts";
 import * as ProcessDiagnostics from "../diagnostics/ProcessDiagnostics.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory } from "../persistence/Sqlite.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as IdleProcessRoots from "./IdleProcessRoots.ts";
@@ -118,7 +118,7 @@ const layer = (sources: Sources = {}) =>
           }),
         ),
     } as never),
-  ).pipe(Layer.provideMerge(SqlitePersistenceMemory));
+  ).pipe(Layer.provideMerge(layerMemory));
 
 describe("device activity sources", () => {
   it.effect("reads an idle device as idle", () =>

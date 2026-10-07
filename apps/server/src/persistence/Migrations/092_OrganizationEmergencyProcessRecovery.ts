@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** Added after stop requests were first migrated; preserves existing databases. */
 export default Effect.gen(function* () {

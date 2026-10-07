@@ -2,7 +2,7 @@
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import { Effect } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { expect, it } from "@effect/vitest";
 import { openTemporaryShareProxy } from "./TemporaryShareProxy.ts";
 

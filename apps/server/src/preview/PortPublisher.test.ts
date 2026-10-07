@@ -35,11 +35,12 @@ it("reports exhaustion rather than allocating outside its range", () => {
 
 // The external Tailscale process is faked; the publisher and HTTP proxy are real.
 import { NodeServices } from "@effect/platform-node";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { Effect, FileSystem, Layer, Path, Sink, Stream } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortPublisher from "./PortPublisher.ts";
@@ -109,6 +110,7 @@ const fixture = () => {
     Layer.provide(NodeServices.layer),
   );
   const dependencies = Layer.mergeAll(
+    NodeCrypto.layer,
     config,
     NodeServices.layer,
     runner,
@@ -119,7 +121,7 @@ const fixture = () => {
     mappings,
     calls,
     dependencies,
-    layer: PortPublisher.layer.pipe(Layer.provide(dependencies)),
+    layer: PortPublisher.layer.pipe(Layer.provideMerge(dependencies)),
     setFailOff: (value: boolean) => {
       failOff = value;
     },

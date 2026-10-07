@@ -15,7 +15,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { MaintenanceWorkHeld, withAutomationWork } from "../maintenance/WorkAdmission.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { OrganizationGitTargetPreflight } from "./OrganizationGitTargetPreflight.ts";

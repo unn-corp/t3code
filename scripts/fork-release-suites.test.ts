@@ -65,7 +65,9 @@ describe("the required suites", () => {
     assert.include(SUITES["native-android"].required.join(" "), "InstallerSessionsTest");
     assert.include(SUITES["native-android"].required.join(" "), "UpdateReconcilerTest");
     assert.include(SUITES["client-updates"].required.join(" "), "UpdateRecoveryDialog.test.tsx");
-    assert.include(SUITES["client-updates"].required.join(" "), "browserRecordingUpload.test.ts");
+    // Recording now travels through the host's CDP browser instead of an Electron renderer upload.
+    // Its broker and persisted attachment checks remain a mandatory release gate.
+    assert.include(SUITES["host-runtime"].required.join(" "), "src/preview/ServerBrowser.test.ts");
     const runtime = SUITES["host-runtime"].required;
     for (const file of [
       "src/agentDashboard/AgentDashboardSecurityScheduler.test.ts",

@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** An unscoped permit can be released only after the broker proves no dispatch
  * or an exact stop of a prepared identity. Legacy unknown markers stay held.

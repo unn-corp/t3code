@@ -16,8 +16,8 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { Command } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { encodeWav, renderTones, SAMPLE_RATE, SOUND_SPECS } from "./lib/notification-sounds.ts";
 

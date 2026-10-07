@@ -2,10 +2,14 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
+import {
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  type PreparedConnection,
+} from "../connection/model.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
+import { layerRemoteHttpClient } from "../rpc/http.ts";
 import { fetchEnvironmentTranscription } from "./openwhisprHttp.ts";
 
 const target = new PrimaryConnectionTarget({
@@ -29,7 +33,7 @@ describe("environment transcription", () => {
     fetchEnvironmentTranscription({ prepared, audio, signer: Option.none() }).pipe(
       Effect.tap((value) => Effect.sync(() => expect(value.text).toBe("hello"))),
       Effect.provide(
-        remoteHttpClientLayer((url, init) => {
+        layerRemoteHttpClient((url, init) => {
           expect(String(url)).toBe("https://host.example/api/voice/openwhispr");
           expect(init?.method).toBe("POST");
           expect(init?.credentials).toBe("include");
@@ -47,7 +51,7 @@ describe("environment transcription", () => {
       signer: Option.none(),
     }).pipe(
       Effect.provide(
-        remoteHttpClientLayer((_url, init) => {
+        layerRemoteHttpClient((_url, init) => {
           expect(new Headers(init?.headers).get("authorization")).toBe("Bearer test-token");
           return Promise.resolve(Response.json({ text: "hello" }));
         }),
@@ -64,7 +68,7 @@ describe("environment transcription", () => {
         }),
       ),
       Effect.provide(
-        remoteHttpClientLayer(() =>
+        layerRemoteHttpClient(() =>
           Promise.resolve(
             Response.json(
               { _tag: "OpenWhisprTranscriptionError", reason: "unavailable" },
@@ -109,6 +113,10 @@ it.effect("refreshes relay credentials and signs the audio request on retry", ()
     const value = yield* fetchEnvironmentTranscription({
       prepared: {
         ...prepared,
+        target: new RelayConnectionTarget({
+          environmentId: target.environmentId,
+          label: target.label,
+        }),
         httpAuthorization: { _tag: "Dpop", accessToken: "expired", expiresAtEpochMs: 0 },
       },
       audio,
@@ -116,7 +124,7 @@ it.effect("refreshes relay credentials and signs the audio request on retry", ()
       remoteAuthorization: Option.some(remoteAuthorization),
     }).pipe(
       Effect.provide(
-        remoteHttpClientLayer((url, init) => {
+        layerRemoteHttpClient((url, init) => {
           expect(String(url)).toBe("https://relay.example/api/voice/openwhispr");
           expect(init?.body).toEqual(audio);
           requests += 1;

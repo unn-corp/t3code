@@ -9,7 +9,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeOS from "node:os";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -18,7 +18,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { discoverAgentSessions } from "../provider/agentSessionDiscovery.ts";
 import { readAgentTranscript } from "../provider/agentTranscript.ts";
-import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { IdAllocatorV2 } from "../orchestration-v2/IdAllocator.ts";

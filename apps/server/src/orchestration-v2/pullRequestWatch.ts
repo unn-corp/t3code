@@ -53,6 +53,7 @@ export function evaluatePullRequestWatch(
   // An empty list keeps the last state: a host can answer with one when its check read fails.
   let failedChecks = headMoved ? [] : watch.failedChecks;
   let passed = headMoved ? false : watch.passed;
+  let passedChecks = headMoved ? [] : watch.passedChecks;
   if (detail.checks.length > 0) {
     const failed = detail.checks.filter(isFailedCheck);
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
@@ -62,27 +63,37 @@ export function evaluatePullRequestWatch(
 
     const required = detail.checks.filter((check) => check.required === true);
     const gate = required.length > 0 ? required : detail.checks;
+    const requiredNames = required.map((check) => check.name);
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
-    if (passedNow && !passed) {
+    const newRequiredCheck = requiredNames.some((name) => !passedChecks.includes(name));
+    // Older watches have `passed` but no check names. Fill that baseline silently.
+    if (passedNow && (!passed || (passedChecks.length > 0 && newRequiredCheck))) {
       changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
     }
     passed = passedNow;
+    passedChecks = passedNow ? requiredNames : [];
   }
 
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
   const through = Date.parse(watch.remarksThrough);
   // GitHub times are per second, so remarks at the boundary time are told apart by ID.
   const fresh = (remarks ?? []).filter((remark) => {
-    const at = Date.parse(remark.createdAt);
+    const at = Date.parse(remark.editedAt ?? remark.createdAt);
     return (
       (at > through || (at === through && !watch.remarkIds.includes(remark.id))) &&
       remark.author?.login.toLowerCase() !== own
     );
   });
   if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });
-  const latest = Math.max(through, ...fresh.map((remark) => Date.parse(remark.createdAt)));
-  const atLatest = fresh.filter((remark) => Date.parse(remark.createdAt) === latest);
-  const remarksThrough = latest === through ? watch.remarksThrough : atLatest[0]!.createdAt;
+  const latest = Math.max(
+    through,
+    ...fresh.map((remark) => Date.parse(remark.editedAt ?? remark.createdAt)),
+  );
+  const atLatest = fresh.filter(
+    (remark) => Date.parse(remark.editedAt ?? remark.createdAt) === latest,
+  );
+  const remarksThrough =
+    latest === through ? watch.remarksThrough : (atLatest[0]!.editedAt ?? atLatest[0]!.createdAt);
   const remarkIds = [
     ...(latest === through ? watch.remarkIds : []),
     ...atLatest.map((remark) => remark.id),
@@ -105,6 +116,7 @@ export function evaluatePullRequestWatch(
       headSha,
       failedChecks,
       passed,
+      passedChecks,
       remarksThrough,
       remarkIds,
       conflicting,
@@ -187,7 +199,7 @@ export function pullRequestWatchMessage(input: {
     "",
     exhausted
       ? `Arcwright Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
-      : "Look into each item and act on it as your task requires. Arcwright Code keeps watching and wakes you on the next change, so end your turn when you are done. Call unwatch_pull_request when you no longer need updates.",
+      : "Look into each item and act on it as your task requires. Arcwright Code keeps watching and wakes you on the next change, so end your turn when you are done. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
   ].join("\n");
   const failed = changes.some(
     (change) => change.kind === "checks-failed" || change.kind === "conflicting",

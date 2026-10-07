@@ -61,6 +61,8 @@ export interface SettingsSearchItem {
   readonly localBackendManagementOnly?: boolean;
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
+  // Its row only renders while this environment's T3 Connect managed tunnel is on.
+  readonly managedTunnelOnly?: boolean;
   /**
    * Sorts after every other match. Keybinding commands mirror rows on other
    * surfaces, so "model" must still lead with Default model, not Model Picker.
@@ -78,6 +80,7 @@ export interface SettingsSearchAvailability {
   readonly canManageLocalBackend: boolean;
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
+  readonly managedTunnelActive?: boolean;
 }
 
 /**
@@ -141,6 +144,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "disk storage delete deleted archived threads old inactive merged unchanged worktrees retention days project inherit off custom",
     ],
+  },
+  {
+    id: "storage-worktrees-location",
+    title: "Worktree location",
+    to: "/settings/storage",
+    scope: "environment-defaults",
+    searchTerms: ["worktree location folder directory path drive external disk"],
   },
   {
     id: "storage-artifacts",
@@ -759,6 +769,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "notifications",
   },
   {
+    id: "privacy-policy",
+    title: "Privacy policy",
+    to: "/settings/general",
+    searchTerms: ["telemetry analytics usage data tracking legal opt out"],
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",
@@ -982,6 +998,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["rollback restore files snapshots change summaries large assets lfs unreal"],
   },
   {
+    id: "remove-agent-credits-on-merge",
+    title: "Remove agent credits when merging",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["pull request github squash co-authored-by attribution claude codex generated"],
+  },
+  {
     id: "pull-request-merge-method",
     title: "Default merge method",
     to: "/settings/source-control",
@@ -1020,6 +1043,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["static semantic prefix custom prompt instructions feat fix refactor chore"],
     environmentOnly: true,
     scope: "project-defaults",
+  },
+  {
+    id: "github-accounts",
+    title: "GitHub accounts and token",
+    to: "/settings/source-control",
+    searchTerms: [
+      "github gh account login user host enterprise ghes switch multiple accounts disable sign in token personal access token pat api key credential",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
   },
   {
     id: "bitbucket-credentials",
@@ -1070,6 +1103,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     localBackendManagementOnly: true,
   },
   {
+    id: "local-environment-availability",
+    title: "Local environment availability",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["turn off on disable enable local server agents remote only restart"],
+    desktopOnly: true,
+  },
+  {
     id: "network-access",
     title: "Network access",
     to: "/settings/connections",
@@ -1107,6 +1148,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["managed tunnel cloud other devices remote"],
     desktopOnly: true,
     cloudOnly: true,
+  },
+  {
+    id: "hold-webhooks-while-offline",
+    localEnvironmentOnly: true,
+    title: "Hold webhooks while offline",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["webhook automations offline queue mailbox t3 connect"],
+    cloudOnly: true,
+    managedTunnelOnly: true,
   },
   {
     id: "publish-agent-activity",
@@ -1285,7 +1336,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
-      (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement),
+      (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+      (!item.managedTunnelOnly || availability.managedTunnelActive === true),
   );
 }
 

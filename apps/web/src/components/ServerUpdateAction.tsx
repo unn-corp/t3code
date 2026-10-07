@@ -1,4 +1,13 @@
-import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  AuthEnvironmentMaintainScope,
+  type AuthSessionState,
+  sessionGrantsScope,
+  supportsForkMaintenanceAdmission,
+} from "@t3tools/contracts";
+import type { AsyncResult } from "effect/reactivity";
+import { environmentSession } from "~/state/session";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { hostForkUpdateController, requestHostUpdates } from "../state/hostForkUpdates";
 import { forkStatusDescription } from "./forkUpdatePresentation";
 import type {
@@ -59,7 +68,11 @@ type UpdateButtonProps = Pick<ComponentProps<typeof Button>, "variant" | "size" 
 function useServerUpdate() {
   return async (target: ServerUpdateTarget, failureTitle = "Server update failed") => {
     const { environmentId, serverLabel } = target;
-    if (pendingUpdateEnvironmentIds.has(environmentId)) return;
+    if (
+      !canUpdateServer(appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId))) ||
+      pendingUpdateEnvironmentIds.has(environmentId)
+    )
+      return;
     pendingUpdateEnvironmentIds.add(environmentId);
     try {
       const controller = hostForkUpdateController(environmentId);
@@ -104,7 +117,10 @@ export function ServerUpdatesAction({
     (target) =>
       supportsForkMaintenanceAdmission(target.forkMaintenance) &&
       target.selfUpdate !== null &&
-      (target.selfUpdate !== "desktop-managed" || target.desktopAppUpdate),
+      (target.selfUpdate !== "desktop-managed" || target.desktopAppUpdate) &&
+      canUpdateServer(
+        appAtomRegistry.get(environmentSession.sessionStateAtom(target.environmentId)),
+      ),
   );
   const handleUpdate = async () => {
     if (pending.current) return;
@@ -137,6 +153,11 @@ export function ServerUpdatesAction({
       {label}
     </Button>
   );
+}
+
+function canUpdateServer(result: AsyncResult.AsyncResult<AuthSessionState, unknown>): boolean {
+  if (result._tag !== "Success" || !result.value.authenticated) return false;
+  return sessionGrantsScope(result.value, AuthEnvironmentMaintainScope);
 }
 
 /**
@@ -174,7 +195,7 @@ export function ServerUpdateProgress({
 
 /**
  * Offers the update path advertised by a version-skewed server. Self-updates
- * delegate their full lifecycle to client-runtime so this component can
+ * delegate their full lifecycle to the host update controller so this component can
  * unmount during reconnect without losing operation state.
  */
 export function ServerUpdateAction({
@@ -190,6 +211,9 @@ export function ServerUpdateAction({
   className,
   appearance = "button",
 }: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
+  const isDesktopAppUpdate = selfUpdate === "desktop-managed";
+  const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
+  const canUpdate = canUpdateServer(useAtomValue(sessionStateAtom));
   const update = useServerUpdate();
   if (
     !supportsForkMaintenanceAdmission(forkMaintenance) ||
@@ -208,13 +232,20 @@ export function ServerUpdateAction({
     );
   }
   const handleUpdate = async () => {
-    if (pendingUpdateEnvironmentIds.has(environmentId)) return;
-    if (selfUpdate === "desktop-managed") {
-      const confirmed = await requestConfirmDialog(
-        `Request an update on ${serverLabel}? Installation waits for all registered work to stop, then the desktop app closes and relaunches.`,
-      );
-      if (confirmed === false) return;
+    if (
+      !canUpdateServer(appAtomRegistry.get(sessionStateAtom)) ||
+      pendingUpdateEnvironmentIds.has(environmentId)
+    ) {
+      return;
     }
+    if (isDesktopAppUpdate) {
+      const confirmed =
+        (await requestConfirmDialog(
+          `Request an update on ${serverLabel}? Installation waits for all registered work to stop, then the desktop app closes and relaunches.`,
+        )) ?? true;
+      if (!confirmed) return;
+    }
+    if (!canUpdateServer(appAtomRegistry.get(sessionStateAtom))) return;
     await update({
       environmentId,
       serverLabel,
@@ -234,6 +265,7 @@ export function ServerUpdateAction({
               variant="ghost-muted"
               className={className}
               aria-label={`${label} for ${serverLabel}`}
+              disabled={!canUpdate || pendingUpdateEnvironmentIds.has(environmentId)}
               onClick={() => void handleUpdate()}
             />
           }
@@ -244,7 +276,13 @@ export function ServerUpdateAction({
       </Tooltip>
     );
   return (
-    <Button size={size} variant={variant} className={className} onClick={() => void handleUpdate()}>
+    <Button
+      size={size}
+      variant={variant}
+      className={className}
+      disabled={!canUpdate || pendingUpdateEnvironmentIds.has(environmentId)}
+      onClick={() => void handleUpdate()}
+    >
       {label}
     </Button>
   );
@@ -264,8 +302,14 @@ export function OutdatedServerUpdateAction({
   readonly label?: string;
 }) {
   const update = useAtomCommand(updateOutdatedServer, { reportFailure: false });
+  const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
+  const canUpdate = canUpdateServer(useAtomValue(sessionStateAtom));
   const handleUpdate = async () => {
-    if (pendingUpdateEnvironmentIds.has(environmentId)) return;
+    if (
+      !canUpdateServer(appAtomRegistry.get(sessionStateAtom)) ||
+      pendingUpdateEnvironmentIds.has(environmentId)
+    )
+      return;
     pendingUpdateEnvironmentIds.add(environmentId);
     try {
       const result = await update({
@@ -288,7 +332,12 @@ export function OutdatedServerUpdateAction({
     }
   };
   return (
-    <Button size="xs" variant="outline" onClick={() => void handleUpdate()}>
+    <Button
+      size="xs"
+      variant="outline"
+      disabled={!canUpdate || pendingUpdateEnvironmentIds.has(environmentId)}
+      onClick={() => void handleUpdate()}
+    >
       {label}
     </Button>
   );

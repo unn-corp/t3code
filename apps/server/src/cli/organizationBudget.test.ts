@@ -8,9 +8,9 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
 import Migration081 from "../persistence/Migrations/081_OrganizationProviderBudgets.ts";
 import Migration083 from "../persistence/Migrations/083_OrganizationProviderBudgetAudit.ts";

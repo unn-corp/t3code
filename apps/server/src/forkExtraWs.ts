@@ -9,10 +9,10 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForRpcMethod, withRpcWorkAdmission } from "./auth/RpcAuthorization.ts";
 import { listNativeSessions, resumeNativeSession } from "./provider/NativeSessionResume.ts";
-import { observeRpcStreamEffect } from "./observability/RpcInstrumentation.ts";
 import { PreviewManager } from "./preview/Manager.ts";
 import { PreviewAutomationBroker } from "./mcp/PreviewAutomationBroker.ts";
 
@@ -46,10 +46,7 @@ export const makeForkExtraWsRpcLayer = (session: EnvironmentAuth.AuthenticatedSe
         [WS_METHODS.codexSessionsResume]: (input) =>
           authorize(WS_METHODS.codexSessionsResume, resumeNativeSession(input)),
         [WS_METHODS.previewAttach]: (input) =>
-          observeRpcStreamEffect(
-            WS_METHODS.previewAttach,
-            authorize(WS_METHODS.previewAttach, preview.attachFrames(input)),
-          ),
+          Stream.unwrap(authorize(WS_METHODS.previewAttach, preview.attachFrames(input))),
         [WS_METHODS.previewPublishFrame]: (input) =>
           authorize(WS_METHODS.previewPublishFrame, preview.publishFrame(input)),
         [WS_METHODS.previewInput]: (input) =>

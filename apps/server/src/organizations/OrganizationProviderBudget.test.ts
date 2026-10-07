@@ -6,7 +6,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import Migration081 from "../persistence/Migrations/081_OrganizationProviderBudgets.ts";
 import {
   OrganizationProviderBudget,

@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
   GitHubAccountId,
@@ -20,7 +21,6 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";

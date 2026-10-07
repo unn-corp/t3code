@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 import { OrganizationWorkError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const MARKER_RECORD = /^([a-f0-9]{64})\|(\d+(?:\.\d+)?)\|([a-f0-9-]{36})$/;

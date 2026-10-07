@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** Stop requests fence dispatch immediately; exit receipts do not imply scope cleanup. */
 export default Effect.gen(function* () {

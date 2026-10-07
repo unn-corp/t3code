@@ -15,6 +15,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ResearchRouteImport } from './routes/research'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as OrganizationsRouteImport } from './routes/organizations'
+import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as AgentDashboardRouteImport } from './routes/agent-dashboard'
 import { Route as ChatRouteImport } from './routes/_chat'
@@ -76,6 +77,11 @@ const PairRoute = PairRouteImport.update({
 const OrganizationsRoute = OrganizationsRouteImport.update({
   id: '/organizations',
   path: '/organizations',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConnectAgentRoute = ConnectAgentRouteImport.update({
+  id: '/connect-agent',
+  path: '/connect-agent',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConnectRoute = ConnectRouteImport.update({
@@ -246,6 +252,7 @@ export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/agent-dashboard': typeof AgentDashboardRouteWithChildren
   '/connect': typeof ConnectRoute
+  '/connect-agent': typeof ConnectAgentRoute
   '/organizations': typeof OrganizationsRouteWithChildren
   '/pair': typeof PairRoute
   '/research': typeof ResearchRoute
@@ -283,6 +290,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
+  '/connect-agent': typeof ConnectAgentRoute
   '/pair': typeof PairRoute
   '/research': typeof ResearchRoute
   '/settings': typeof SettingsRouteWithChildren
@@ -323,6 +331,7 @@ export interface FileRoutesById {
   '/_chat': typeof ChatRouteWithChildren
   '/agent-dashboard': typeof AgentDashboardRouteWithChildren
   '/connect': typeof ConnectRoute
+  '/connect-agent': typeof ConnectAgentRoute
   '/organizations': typeof OrganizationsRouteWithChildren
   '/pair': typeof PairRoute
   '/research': typeof ResearchRoute
@@ -365,6 +374,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agent-dashboard'
     | '/connect'
+    | '/connect-agent'
     | '/organizations'
     | '/pair'
     | '/research'
@@ -402,6 +412,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
+    | '/connect-agent'
     | '/pair'
     | '/research'
     | '/settings'
@@ -441,6 +452,7 @@ export interface FileRouteTypes {
     | '/_chat'
     | '/agent-dashboard'
     | '/connect'
+    | '/connect-agent'
     | '/organizations'
     | '/pair'
     | '/research'
@@ -482,6 +494,7 @@ export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   AgentDashboardRoute: typeof AgentDashboardRouteWithChildren
   ConnectRoute: typeof ConnectRoute
+  ConnectAgentRoute: typeof ConnectAgentRoute
   OrganizationsRoute: typeof OrganizationsRouteWithChildren
   PairRoute: typeof PairRoute
   ResearchRoute: typeof ResearchRoute
@@ -533,6 +546,13 @@ declare module '@tanstack/react-router' {
       path: '/organizations'
       fullPath: '/organizations'
       preLoaderRoute: typeof OrganizationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/connect-agent': {
+      id: '/connect-agent'
+      path: '/connect-agent'
+      fullPath: '/connect-agent'
+      preLoaderRoute: typeof ConnectAgentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/connect': {
@@ -860,6 +880,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   AgentDashboardRoute: AgentDashboardRouteWithChildren,
   ConnectRoute: ConnectRoute,
+  ConnectAgentRoute: ConnectAgentRoute,
   OrganizationsRoute: OrganizationsRouteWithChildren,
   PairRoute: PairRoute,
   ResearchRoute: ResearchRoute,

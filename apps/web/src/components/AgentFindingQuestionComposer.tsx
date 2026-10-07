@@ -314,6 +314,7 @@ export const AgentFindingQuestionComposer = memo(function AgentFindingQuestionCo
                     <div className="flex shrink-0 items-center justify-end">
                       <ComposerPrimaryActions
                         compact
+                        canOperateThread={!disabled}
                         pendingAction={null}
                         canInterrupt={false}
                         isRunning={false}

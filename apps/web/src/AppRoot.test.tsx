@@ -3,8 +3,8 @@ import { RouterProvider } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
 import { DesktopAgentNotificationCoordinator } from "./agentNotifications/DesktopAgentNotificationCoordinator";
+import { AndroidBrowserHosts } from "./android/AndroidBrowserHosts";
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
-import { PreviewAutomationHosts } from "./components/preview/PreviewAutomationHosts";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
@@ -23,7 +23,7 @@ describe("AppRoot", () => {
     expect(isValidElement(children[1]) && children[1].type).toBe(
       DesktopAgentNotificationCoordinator,
     );
-    expect(isValidElement(children[2]) && children[2].type).toBe(PreviewAutomationHosts);
+    expect(isValidElement(children[2]) && children[2].type).toBe(AndroidBrowserHosts);
     expect(isValidElement(children[3]) && children[3].type).toBe(ElectronBrowserHost);
     expect(isValidElement(children[4]) && children[4].type).toBe(QuitHoldOverlay);
   });

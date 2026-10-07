@@ -729,6 +729,32 @@ describe("DesktopForkMaintenance", () => {
   it("blocks installation when a managed WSL data home cannot be determined", async () => {
     const device = await makeDevice();
     await device.server(9001, "desktop-server");
+    let managedWsl: Awaited<ReturnType<DesktopMaintenanceInput["managedWsl"]>> = [];
+    const core = device.makeCore({
+      pid: 100,
+      version: "1.0.0",
+      commit: commit("1"),
+      overrides: {
+        managedWsl: async () => managedWsl,
+        resolveWslHome: async () => null,
+      },
+    });
+    await core.start();
+    await core.check();
+    await core.runAction({ action: "confirm-bootstrap" });
+    // Discover an unconfirmed distribution after the known local cohort was bootstrapped.
+    // The install must recheck membership instead of proceeding on the old confirmation.
+    managedWsl = [{ distro: "Ubuntu", command: null }];
+    await device.quiesce();
+    await expect(core.install(NEW_DIGEST)).rejects.toMatchObject({
+      reason: expect.stringContaining("Ubuntu"),
+    });
+    expect(device.handoffs).toEqual([]);
+  });
+
+  it("refuses bootstrap confirmation when a managed WSL data home is unknown", async () => {
+    const device = await makeDevice();
+    await device.server(9001, "desktop-server");
     const core = device.makeCore({
       pid: 100,
       version: "1.0.0",
@@ -739,12 +765,11 @@ describe("DesktopForkMaintenance", () => {
       },
     });
     await core.start();
-    await core.check();
-    await core.runAction({ action: "confirm-bootstrap" }).catch(() => undefined);
-    await device.quiesce();
-    await expect(core.install(NEW_DIGEST)).rejects.toMatchObject({
+    await expect(core.runAction({ action: "confirm-bootstrap" })).rejects.toMatchObject({
       reason: expect.stringContaining("Ubuntu"),
     });
+    const store = await CoordinatorStore.open(device.coordinator, device.identity, 9001);
+    expect((await store.status(device.clock.value)).bootstrapped).toBe(false);
     expect(device.handoffs).toEqual([]);
   });
 

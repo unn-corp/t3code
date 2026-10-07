@@ -14,7 +14,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { runMigrations } from "../persistence/Migrations.ts";
 import Migration082 from "../persistence/Migrations/082_OrganizationWorkIntents.ts";

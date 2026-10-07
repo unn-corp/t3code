@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { withAutomationWork } from "../maintenance/WorkAdmission.ts";
 import { OrganizationProviderBudgetError } from "./OrganizationProviderBudget.ts";
 import {

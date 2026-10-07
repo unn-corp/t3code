@@ -7,6 +7,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import {
+  SourceControlProviderError,
   SourceControlRepositoryError,
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
@@ -14,12 +15,11 @@ import {
   type SourceControlProviderKind,
   type SourceControlPublishRepositoryInput,
   type SourceControlPublishRepositoryResult,
-  type SourceControlProjectPullRequest,
-  type SourceControlPullRequestMergeMethod,
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryInfo,
   type SourceControlRepositoryLookupInput,
-  type GitHubAccountId,
+  type SourceControlProjectPullRequest,
+  type SourceControlPullRequestMergeMethod,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
@@ -29,9 +29,12 @@ import {
   type GitCloneProgressLine,
 } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
+const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
 
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
@@ -61,7 +64,6 @@ export class SourceControlRepositoryService extends Context.Service<
     readonly listProjectPullRequests: (input: {
       readonly cwd: string;
       readonly repository: string;
-      readonly githubAccountId?: GitHubAccountId;
       readonly limit?: number;
     }) => Effect.Effect<
       ReadonlyArray<SourceControlProjectPullRequest>,
@@ -70,7 +72,6 @@ export class SourceControlRepositoryService extends Context.Service<
     readonly mergeProjectPullRequest: (input: {
       readonly cwd: string;
       readonly repository: string;
-      readonly githubAccountId?: GitHubAccountId;
       readonly number: number;
       readonly expectedHeadOid: string;
       readonly method: SourceControlPullRequestMergeMethod;
@@ -113,7 +114,12 @@ function mapRepositoryError(operation: string, provider: SourceControlProviderKi
       : new SourceControlRepositoryError({
           operation,
           provider,
-          detail: "The source control operation could not be completed.",
+          detail:
+            isSourceControlProviderError(cause) &&
+            cause.provider === "bitbucket" &&
+            isBitbucketRepositoryLocatorError(cause.cause)
+              ? BitbucketApi.BitbucketRepositoryLocatorError.detail
+              : "The source control operation could not be completed.",
           cause,
         }),
   );
@@ -179,9 +185,9 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const github = yield* GitHubCli.GitHubCli;
   const path = yield* Path.Path;
   const providers = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const github = yield* GitHubCli.GitHubCli;
 
   const ensureConcreteProvider = (input: {
     readonly operation: string;
@@ -325,7 +331,13 @@ export const make = Effect.gen(function* () {
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(prepared.destinationPath),
-        args: ["clone", "--progress", prepared.cloneUrl, path.basename(prepared.destinationPath)],
+        args: [
+          "clone",
+          "--progress",
+          "--",
+          prepared.cloneUrl,
+          path.basename(prepared.destinationPath),
+        ],
         timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
         // Progress redraws add up on a slow multi-GB clone. The buffered copy
         // is never read (the tail is kept by hand above), so keep it small
@@ -484,7 +496,7 @@ export const make = Effect.gen(function* () {
             new SourceControlRepositoryError({
               operation: "listProjectPullRequests",
               provider: "github",
-              detail: cause.detail,
+              detail: cause.message,
               cause,
             }),
         ),
@@ -496,7 +508,7 @@ export const make = Effect.gen(function* () {
             new SourceControlRepositoryError({
               operation: "mergeProjectPullRequest",
               provider: "github",
-              detail: cause.detail,
+              detail: cause.message,
               cause,
             }),
         ),
@@ -504,4 +516,6 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(SourceControlRepositoryService, make);
+export const layer = Layer.effect(SourceControlRepositoryService, make).pipe(
+  Layer.provideMerge(GitHubCli.layer),
+);

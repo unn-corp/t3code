@@ -15,7 +15,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";

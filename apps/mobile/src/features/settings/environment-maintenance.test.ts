@@ -1,4 +1,4 @@
-import { AuthOrchestrationOperateScope, ServerProvider } from "@t3tools/contracts";
+import { AuthEnvironmentMaintainScope, ServerProvider } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -33,7 +33,7 @@ const provider = Schema.decodeUnknownSync(ServerProvider)({
 afterEach(() => vi.unstubAllGlobals());
 
 describe("environment maintenance access", () => {
-  it("requires a connected authenticated session with operate permission", () => {
+  it("requires a connected authenticated session with environment maintenance permission", () => {
     const session = {
       authenticated: true,
       auth: {
@@ -42,7 +42,7 @@ describe("environment maintenance access", () => {
         sessionMethods: [],
         sessionCookieName: "session",
       },
-      scopes: [AuthOrchestrationOperateScope],
+      scopes: [AuthEnvironmentMaintainScope],
     };
     expect(canMaintainEnvironment(session, true)).toBe(true);
     expect(canMaintainEnvironment(session, false)).toBe(false);
@@ -53,6 +53,56 @@ describe("environment maintenance access", () => {
     expect(canMaintainEnvironment(null, true)).toBe(false);
   });
 
+  it.each([
+    { scopes: ["environment:maintain"], expected: true },
+    { scopes: ["orchestration:operate"], expected: false },
+    { scopes: ["providers:manage"], expected: false },
+  ] as const)("uses the advertised update permission for $scopes", ({ scopes, expected }) => {
+    expect(
+      canMaintainEnvironment(
+        {
+          authenticated: true,
+          auth: {
+            policy: "remote-reachable",
+            bootstrapMethods: [],
+            sessionMethods: [],
+            sessionCookieName: "session",
+            serverUpdateScope: "environment:maintain",
+          },
+          scopes,
+        },
+        true,
+      ),
+    ).toBe(expected);
+  });
+
+  it.each([
+    { permissions: ["environment:maintain"], expected: true },
+    { permissions: ["providers:manage"], expected: false },
+    { permissions: [], expected: false },
+  ] as const)(
+    "honors exact permissions over legacy scopes: $permissions",
+    ({ permissions, expected }) => {
+      expect(
+        canMaintainEnvironment(
+          {
+            authenticated: true,
+            auth: {
+              policy: "remote-reachable",
+              bootstrapMethods: [],
+              sessionMethods: [],
+              sessionCookieName: "session",
+              serverUpdateScope: "environment:maintain",
+            },
+            scopes: ["orchestration:operate"],
+            permissions,
+          },
+          true,
+        ),
+      ).toBe(expected);
+    },
+  );
+
   it("requires remote desktop update support for desktop hosts", () => {
     expect(supportsEnvironmentUpdate({})).toBe(false);
     expect(supportsEnvironmentUpdate({ serverSelfUpdate: "respawn" })).toBe(false);
@@ -61,7 +111,7 @@ describe("environment maintenance access", () => {
       coordinatorId: "fixture",
       participantId: "fixture",
       admission: true,
-      activityProtocol: 2,
+      activityProtocol: 3,
       recovery: true,
     };
     expect(supportsEnvironmentUpdate({ serverSelfUpdate: "respawn", forkMaintenance })).toBe(true);
@@ -69,7 +119,7 @@ describe("environment maintenance access", () => {
     for (const capability of [
       legacyCapability,
       { ...forkMaintenance, activityProtocol: 1 },
-      { ...forkMaintenance, activityProtocol: 3 },
+      { ...forkMaintenance, activityProtocol: 4 },
     ])
       expect(
         supportsEnvironmentUpdate({

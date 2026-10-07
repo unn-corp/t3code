@@ -9,7 +9,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSettings from "../serverSettings.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import { OrganizationStore, OrganizationStoreLive } from "./OrganizationStore.ts";

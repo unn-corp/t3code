@@ -1,9 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off - Disposable fixtures use Node UUIDs to create unique isolated database and filesystem data.
 import * as NodeCrypto from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { runMigrations } from "../persistence/Migrations.ts";
 import Migration071 from "../persistence/Migrations/071_OrganizationWorkScopes.ts";
 import Migration072 from "../persistence/Migrations/072_OrganizationWorkArtifacts.ts";

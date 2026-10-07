@@ -10,7 +10,7 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { OrganizationTentativeFindingId } from "../../../../packages/contracts/src/organizationIntake.ts";
 import {
   OrganizationWorkAttemptId,

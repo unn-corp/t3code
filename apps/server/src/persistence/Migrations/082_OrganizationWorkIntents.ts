@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** A durable proposal snapshot. This table grants no execution authority. */
 export default Effect.gen(function* () {

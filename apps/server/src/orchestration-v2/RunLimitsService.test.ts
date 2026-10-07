@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { expect, it } from "vite-plus/test";
 import {
   DEFAULT_RUN_LIMITS,
@@ -230,7 +230,7 @@ itEffect.effect(
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+          ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
           ServerSettings.layerTest(),
         ),
       ),

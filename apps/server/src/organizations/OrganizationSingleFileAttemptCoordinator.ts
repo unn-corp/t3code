@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - This Node-only server module uses synchronous host crypto for persistent IDs or hashes; replacing it would add Crypto service requirements through the persistence API.
 // @effect-diagnostics preferSchemaOverJson:off - Versioned syntax evidence is bounded JSON without source text.
 import * as NodeCrypto from "node:crypto";
 import { OrganizationWorkAttemptId } from "../../../../packages/contracts/src/organizationWork.ts";

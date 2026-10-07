@@ -5,7 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

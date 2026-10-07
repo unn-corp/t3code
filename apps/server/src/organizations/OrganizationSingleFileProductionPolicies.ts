@@ -1,10 +1,11 @@
+// @effect-diagnostics nodeBuiltinImport:off - This Node-only server module uses synchronous host crypto for persistent IDs or hashes; replacing it would add Crypto service requirements through the persistence API.
 // @effect-diagnostics preferSchemaOverJson:off tryCatchInEffectGen:off - Persisted capability and request identity use bounded JSON.
 import * as NodeCrypto from "node:crypto";
 import { TextGenerationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import {
   OrganizationWorkAttemptId,

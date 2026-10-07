@@ -36,6 +36,7 @@ import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -46,18 +47,19 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
 import * as IdleProcessRoots from "../../maintenance/IdleProcessRoots.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
-import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
+import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import {
   ProviderAdapterForkThreadError,
   ProviderAdapterOpenSessionError,
@@ -70,9 +72,16 @@ import type { ProviderContinuationRequest } from "../ProviderContinuationRequest
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
   makeReplayServerConfig,
-  makeCodexProviderAdapterRegistryReplayLayer,
+  layer as makeCodexProviderAdapterRegistryReplayLayer,
   withCodexReplayChildMetadata,
 } from "./CodexAdapterV2.testkit.ts";
+
+const projectDynamicToolItem = (
+  item: Parameters<typeof CodexAdapterV2.projectCodexDynamicToolItem>[0],
+) =>
+  Effect.runSync(
+    CodexAdapterV2.projectCodexDynamicToolItem(item).pipe(Effect.provide(NodeCrypto.layer)),
+  );
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
@@ -722,10 +731,7 @@ describe("CodexAdapterV2 process spawning", () => {
       });
       const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
         Effect.provide(
-          Layer.mergeAll(
-            CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer,
-            IdleProcessRoots.layer,
-          ),
+          Layer.mergeAll(CodexAdapterV2.layerAppServerClientFactory, IdleProcessRoots.layer),
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(
@@ -782,7 +788,7 @@ describe("CodexAdapterV2 process spawning", () => {
         Effect.provide(
           Layer.mergeAll(
             IdleProcessRoots.layer,
-            CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer,
+            CodexAdapterV2.layerAppServerClientFactory,
             ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-binary-home-" }),
           ),
         ),
@@ -824,24 +830,15 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
       },
       result: { content: [] },
     };
-    assert.equal(
-      CodexAdapterV2.projectCodexDynamicToolItem(call).title,
-      "Inspect Saga music screen",
-    );
-    assert.equal(
-      CodexAdapterV2.projectCodexDynamicToolItem({ ...call, arguments: { title: "  " } }).title,
-      "js",
-    );
-    assert.equal(
-      CodexAdapterV2.projectCodexDynamicToolItem({ ...call, server: "github" }).title,
-      "js",
-    );
+    assert.equal(projectDynamicToolItem(call).title, "Inspect Saga music screen");
+    assert.equal(projectDynamicToolItem({ ...call, arguments: { title: "  " } }).title, "js");
+    assert.equal(projectDynamicToolItem({ ...call, server: "github" }).title, "js");
   });
 
   it.each(["inProgress", "completed", "failed"] as const)(
     "presents ordinary MCP calls when %s",
     (status) => {
-      const projection = CodexAdapterV2.projectCodexDynamicToolItem({
+      const projection = projectDynamicToolItem({
         type: "mcpToolCall",
         id: "weather-call",
         server: "weather",
@@ -860,7 +857,7 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
   );
 
   it("uses Codex connector names without reading a display title from arguments", () => {
-    const projection = CodexAdapterV2.projectCodexDynamicToolItem({
+    const projection = projectDynamicToolItem({
       type: "mcpToolCall",
       id: "connector-call",
       server: "_apps",
@@ -887,7 +884,7 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
   });
 
   it("preserves native browser and app icons alongside MCP tool output", () => {
-    const browser = CodexAdapterV2.projectCodexDynamicToolItem({
+    const browser = projectDynamicToolItem({
       type: "mcpToolCall",
       id: "browser",
       server: "browser",
@@ -915,7 +912,7 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
       faviconUrl: "https://example.com/icon.png",
     });
     assert.equal(browser.toolSource?.name, "Chrome");
-    const app = CodexAdapterV2.projectCodexDynamicToolItem({
+    const app = projectDynamicToolItem({
       type: "mcpToolCall",
       id: "app",
       server: "computer",
@@ -940,7 +937,7 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
   });
 
   it("preserves MCP arguments and prefers structured output", () => {
-    const projection = CodexAdapterV2.projectCodexDynamicToolItem({
+    const projection = projectDynamicToolItem({
       type: "mcpToolCall",
       id: "call-create-threads",
       server: "t3-code",
@@ -970,7 +967,7 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
   });
 
   it("preserves namespaced dynamic tool output", () => {
-    const projection = CodexAdapterV2.projectCodexDynamicToolItem({
+    const projection = projectDynamicToolItem({
       type: "dynamicToolCall",
       id: "call-dynamic",
       namespace: "workspace",
@@ -1683,6 +1680,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const crypto = yield* Crypto.Crypto;
       const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
       const continuationRequests: Array<ProviderContinuationRequest> = [];
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
@@ -1730,6 +1728,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               continuationRequests.push(request);
             }),
         },
+        crypto,
       });
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
@@ -3612,7 +3611,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               type: "emit_inbound",
               label: "item/completed/answer-overlap-original",
-              afterMs: 100,
               frame: {
                 method: "item/completed",
                 params: {
@@ -3626,6 +3624,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               type: "emit_inbound",
               label: "item/completed/answer-overlap-duplicate",
+              afterMs: 100,
               frame: {
                 method: "item/completed",
                 params: {
@@ -3662,6 +3661,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }),
         );
         yield* Effect.yieldNow;
+        yield* awaitUntil(() => assistantMessages(harness.events).length === 1, "original answer");
         yield* TestClock.adjust("50 millis");
         yield* Effect.yieldNow;
 

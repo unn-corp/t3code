@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** Replaces the first 078 trigger on databases that applied it before null legacy markers were fenced. */
 export default Effect.gen(function* () {

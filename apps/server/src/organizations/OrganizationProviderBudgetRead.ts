@@ -1,6 +1,6 @@
 import type { OrganizationId, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import type { OrganizationProviderBudgetConfigurationAuthority } from "./OrganizationProviderBudgetConfiguration.ts";
 
 const PROJECT_PAGE_SIZE = 100;

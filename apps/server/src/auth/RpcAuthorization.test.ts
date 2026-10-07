@@ -1,30 +1,34 @@
 import {
+  AuthEnvironmentMaintainScope,
+  AuthDiagnosticsReadScope,
+  AuthFilesystemReadScope,
+  AuthProvidersManageScope,
+  AuthSettingsWriteScope,
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
-  EnvironmentId,
-  AuthTerminalOperateScope,
+  AuthSourceControlWriteScope,
+  AuthPreviewOperateScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
-  ProviderInstanceId,
+  AuthTerminalReadScope,
+  AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
-import * as RpcTest from "effect/unstable/rpc/RpcTest";
-import { MaintenanceWorkHeld, WorkAdmission } from "../maintenance/WorkAdmission.ts";
+import * as RpcTest from "effect/rpc/RpcTest";
 
 import {
   RPC_REQUIRED_SCOPES,
   requiredScopeForRpcMethod,
   requiredScopeForDeviceList,
-  rpcMethodNeedsWorkAdmission,
-  rpcScopeAuthorizationLayer,
 } from "./RpcAuthorization.ts";
+import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
@@ -36,7 +40,7 @@ describe("RPC authorization scopes", () => {
       AuthOrchestrationReadScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverReportHostPowerState)).toBe(
-      AuthOrchestrationOperateScope,
+      AuthEnvironmentMaintainScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverGetBackgroundPolicy)).toBe(
       AuthOrchestrationReadScope,
@@ -44,6 +48,16 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.subscribeBackgroundPolicy)).toBe(
       AuthOrchestrationReadScope,
     );
+  });
+
+  it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {
+    for (const method of [
+      WS_METHODS.scheduledTasksListWebhookDeliveries,
+      WS_METHODS.scheduledTasksGetWebhookDelivery,
+      WS_METHODS.scheduledTasksRotateWebhookToken,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
   });
 
   it("allows relay status reads without granting relay installation access", () => {
@@ -73,13 +87,13 @@ describe("RPC authorization scopes", () => {
       AuthOrchestrationReadScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareAcpRegistryAgent)).toBe(
-      AuthOrchestrationOperateScope,
+      AuthProvidersManageScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverUninstallAcpRegistryManagedBinary)).toBe(
-      AuthOrchestrationOperateScope,
+      AuthProvidersManageScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverAcceptAcpRegistryUrlAuth)).toBe(
-      AuthOrchestrationOperateScope,
+      AuthProvidersManageScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverListAcpRegistrySessions)).toBe(
       AuthOrchestrationReadScope,
@@ -88,7 +102,7 @@ describe("RPC authorization scopes", () => {
       AuthOrchestrationOperateScope,
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.serverLogoutAcpRegistry)).toBe(
-      AuthOrchestrationOperateScope,
+      AuthProvidersManageScope,
     );
   });
 
@@ -104,6 +118,71 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsRequestReviewers)).toBe(
       requiredScopeForRpcMethod(WS_METHODS.pullRequestsComment),
     );
+  });
+
+  it("requires source control writes to start, retry, or cancel project clones", () => {
+    for (const method of [
+      WS_METHODS.projectCloneStart,
+      WS_METHODS.projectCloneRetry,
+      WS_METHODS.projectCloneCancel,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSourceControlWriteScope);
+    }
+    expect(requiredScopeForRpcMethod(WS_METHODS.subscribeProjectClones)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
+  it("separates viewing pull request file progress from writing it", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsFilesViewed)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsSetFilesViewed)).toBe(
+      AuthSourceControlWriteScope,
+    );
+  });
+
+  it("separates preview control from observation", () => {
+    for (const method of [
+      WS_METHODS.previewOpen,
+      WS_METHODS.previewNavigate,
+      WS_METHODS.previewResize,
+      WS_METHODS.previewRefresh,
+      WS_METHODS.previewClose,
+      WS_METHODS.previewReportStatus,
+      WS_METHODS.previewAdjust,
+      WS_METHODS.previewClearProfile,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthPreviewOperateScope);
+    }
+    for (const method of [
+      WS_METHODS.previewList,
+      WS_METHODS.subscribePreviewEvents,
+      WS_METHODS.subscribeDiscoveredLocalServers,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
+  it("separates passive terminal observation from operations that can change a shell", () => {
+    for (const method of [
+      WS_METHODS.terminalObserve,
+      WS_METHODS.subscribeTerminalEvents,
+      WS_METHODS.subscribeTerminalMetadata,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
+    }
+    for (const method of [
+      WS_METHODS.terminalAttach,
+      WS_METHODS.terminalOpen,
+      WS_METHODS.terminalWrite,
+      WS_METHODS.terminalResize,
+      WS_METHODS.terminalClear,
+      WS_METHODS.terminalRestart,
+      WS_METHODS.terminalClose,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
+    }
   });
 
   it("rejects unknown RPC method names", () => {
@@ -138,7 +217,17 @@ describe("RPC scope middleware", () => {
     ),
   );
 
-  it.effect("checks each RPC's declared scope before its handler runs", () =>
+  it.effect.each([
+    { scopes: [AuthOrchestrationReadScope], missing: AuthEnvironmentMaintainScope },
+    {
+      scopes: [AuthOrchestrationReadScope, AuthEnvironmentMaintainScope],
+      missing: AuthDiagnosticsReadScope,
+    },
+    {
+      scopes: [AuthOrchestrationReadScope, AuthDiagnosticsReadScope],
+      missing: AuthEnvironmentMaintainScope,
+    },
+  ])("rejects telemetry retry without $missing before its handler runs", ({ scopes, missing }) =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
       const client = yield* RpcTest.makeClient(group).pipe(
@@ -148,7 +237,7 @@ describe("RPC scope middleware", () => {
             group.toLayerHandler(WS_METHODS.serverRetryResourceTelemetry, () =>
               Effect.sync(() => handled.push("retry")).pipe(Effect.andThen(Effect.never)),
             ),
-            rpcScopeAuthorizationLayer([AuthOrchestrationReadScope]),
+            RpcAuthorization.layer(scopes),
           ),
         ),
       );
@@ -158,188 +247,158 @@ describe("RPC scope middleware", () => {
         yield* client[WS_METHODS.serverRetryResourceTelemetry]({}).pipe(Effect.flip),
       ).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
-        requiredScope: AuthOrchestrationOperateScope,
+        requiredPermission: missing,
       });
       expect(handled).toEqual([]);
     }).pipe(Effect.scoped),
   );
+});
 
-  it.effect("does not lease terminal or provider-auth observers, while writes retain a lease", () =>
-    (() => {
-      const log: string[] = [];
-      let fenced = false;
-      let wrote = false;
-      const admission = {
-        acquire: Effect.suspend(() =>
-          fenced
-            ? Effect.fail(new MaintenanceWorkHeld({ cause: "fenced" }))
-            : Effect.sync(() => {
-                log.push("acquire");
-                return () => Effect.sync(() => void log.push("release"));
+describe("settings mutation authorization", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.serverUpdateSettings> =>
+        tag !== WS_METHODS.serverUpdateSettings,
+    ),
+  );
+  const providerInstanceMutation = {
+    operation: "remove" as const,
+    instanceId: ProviderInstanceId.make("codex_work"),
+  };
+
+  it.effect("allows provider-only mutations while denying mixed settings without their grant", () =>
+    Effect.gen(function* () {
+      let handled = 0;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+              Effect.sync(() => {
+                handled++;
+                return DEFAULT_SERVER_SETTINGS;
               }),
-        ),
-        acquirePassive: Effect.succeed(() => Effect.void),
-        check: Effect.suspend(() =>
-          fenced
-            ? Effect.fail(new MaintenanceWorkHeld({ cause: "fenced" }))
-            : Effect.sync(() => void log.push("check")),
-        ),
-        checkAutomation: Effect.void,
-      };
-      return Effect.gen(function* () {
-        const writeStarted = yield* Deferred.make<void>();
-        const finishWrite = yield* Deferred.make<void>();
-        const subscriptionMethods = [
-          WS_METHODS.subscribeTerminalEvents,
-          WS_METHODS.subscribeTerminalMetadata,
-          WS_METHODS.previewAutomationConnect,
-          WS_METHODS.providerAuthSubscribe,
-          WS_METHODS.terminalWrite,
-        ] as const;
-        const subscriptionGroup = WsRpcGroup.omit(
-          ...[...WsRpcGroup.requests.keys()].filter(
-            (
-              tag,
-            ): tag is Exclude<
-              keyof typeof RPC_REQUIRED_SCOPES,
-              (typeof subscriptionMethods)[number]
-            > => !(subscriptionMethods as ReadonlyArray<string>).includes(tag),
-          ),
-        );
-        const eventSeen = yield* Deferred.make<void>();
-        const metadataSeen = yield* Deferred.make<void>();
-        const authSeen = yield* Deferred.make<void>();
-        const hostConnected = yield* Deferred.make<void>();
-        const client = yield* RpcTest.makeClient(subscriptionGroup).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              subscriptionGroup.toLayerHandler(WS_METHODS.subscribeTerminalEvents, () =>
-                Stream.concat(
-                  Stream.succeed({
-                    type: "output" as const,
-                    threadId: "thread-1",
-                    terminalId: "default",
-                    data: "ready",
-                  }).pipe(Stream.tap(() => Deferred.succeed(eventSeen, undefined))),
-                  Stream.never,
-                ),
-              ),
-              subscriptionGroup.toLayerHandler(WS_METHODS.subscribeTerminalMetadata, () =>
-                Stream.concat(
-                  Stream.succeed({
-                    type: "remove" as const,
-                    threadId: "thread-1",
-                    terminalId: "default",
-                  }).pipe(Stream.tap(() => Deferred.succeed(metadataSeen, undefined))),
-                  Stream.never,
-                ),
-              ),
-              subscriptionGroup.toLayerHandler(WS_METHODS.providerAuthSubscribe, () =>
-                Stream.concat(
-                  Stream.succeed({
-                    instanceId: ProviderInstanceId.make("codex"),
-                    phase: "idle" as const,
-                    flowId: null,
-                    authorizationUrl: null,
-                    expiresAt: null,
-                    message: null,
-                  }).pipe(Stream.tap(() => Deferred.succeed(authSeen, undefined))),
-                  Stream.never,
-                ),
-              ),
-              subscriptionGroup.toLayerHandler(WS_METHODS.previewAutomationConnect, () =>
-                Stream.concat(
-                  Stream.succeed({
-                    type: "connected" as const,
-                    connectionId: "desktop-connection",
-                  }).pipe(Stream.tap(() => Deferred.succeed(hostConnected, undefined))),
-                  Stream.never,
-                ),
-              ),
-              subscriptionGroup.toLayerHandler(WS_METHODS.terminalWrite, () =>
-                Effect.gen(function* () {
-                  wrote = true;
-                  yield* Deferred.succeed(writeStarted, undefined);
-                  yield* Deferred.await(finishWrite);
-                }),
-              ),
-              rpcScopeAuthorizationLayer([AuthTerminalOperateScope, AuthOrchestrationOperateScope]),
             ),
+            RpcAuthorization.layer([AuthProvidersManageScope]),
           ),
-        );
+        ),
+      );
+      yield* client[WS_METHODS.serverUpdateSettings]({ patch: {}, providerInstanceMutation });
+      expect(handled).toBe(1);
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: { defaultRuntimeMode: "full-access" },
+          providerInstanceMutation,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(handled).toBe(1);
+    }).pipe(Effect.scoped),
+  );
 
-        const eventFiber = yield* Stream.runDrain(
-          client[WS_METHODS.subscribeTerminalEvents]({}),
-        ).pipe(Effect.forkChild);
-        const metadataFiber = yield* Stream.runDrain(
-          client[WS_METHODS.subscribeTerminalMetadata]({}),
-        ).pipe(Effect.forkChild);
-        const authFiber = yield* Stream.runDrain(
-          client[WS_METHODS.providerAuthSubscribe]({
-            instanceId: ProviderInstanceId.make("codex"),
-          }),
-        ).pipe(Effect.forkChild);
-        const connectFiber = yield* Stream.runDrain(
-          client[WS_METHODS.previewAutomationConnect]({
-            clientId: "desktop-client",
-            environmentId: EnvironmentId.make("desktop-environment"),
-          }),
-        ).pipe(Effect.forkChild);
-        yield* Deferred.await(eventSeen);
-        yield* Deferred.await(metadataSeen);
-        yield* Deferred.await(authSeen);
-        yield* Deferred.await(hostConnected);
-        expect(rpcMethodNeedsWorkAdmission(WS_METHODS.subscribeTerminalEvents)).toBe(false);
-        expect(rpcMethodNeedsWorkAdmission(WS_METHODS.subscribeTerminalMetadata)).toBe(false);
-        expect(rpcMethodNeedsWorkAdmission(WS_METHODS.providerAuthSubscribe)).toBe(false);
-        expect(rpcMethodNeedsWorkAdmission(WS_METHODS.previewAutomationConnect)).toBe(false);
-        expect(log.filter((entry) => entry === "check")).toHaveLength(4);
-        expect(log).not.toContain("acquire");
-
-        const terminalWrite = yield* Effect.forkChild(
-          client[WS_METHODS.terminalWrite]({
-            threadId: "thread-1",
-            terminalId: "default",
-            data: "echo hello\n",
-          }),
-        );
-        yield* Deferred.await(writeStarted);
-        expect(wrote).toBe(true);
-        expect(rpcMethodNeedsWorkAdmission(WS_METHODS.terminalWrite)).toBe(true);
-        expect(log).toEqual(["check", "check", "check", "check", "acquire"]);
-
-        fenced = true;
-        const denied = yield* Stream.runCollect(
-          client[WS_METHODS.subscribeTerminalEvents]({}),
-        ).pipe(Effect.flip);
-        expect(denied).toMatchObject({ _tag: "ForkMaintenanceError" });
-        const deniedAuth = yield* Stream.runCollect(
-          client[WS_METHODS.providerAuthSubscribe]({
-            instanceId: ProviderInstanceId.make("codex"),
-          }),
-        ).pipe(Effect.flip);
-        expect(deniedAuth).toMatchObject({ _tag: "ForkMaintenanceError" });
-        const deniedConnect = yield* Stream.runCollect(
-          client[WS_METHODS.previewAutomationConnect]({
-            clientId: "desktop-client",
-            environmentId: EnvironmentId.make("desktop-environment"),
-          }),
-        ).pipe(Effect.flip);
-        expect(deniedConnect).toMatchObject({ _tag: "ForkMaintenanceError" });
-        const deniedWrite = yield* client[WS_METHODS.terminalWrite]({
-          threadId: "thread-1",
-          terminalId: "default",
-          data: "echo blocked\n",
-        }).pipe(Effect.flip);
-        expect(deniedWrite).toMatchObject({ _tag: "ForkMaintenanceError" });
-        yield* Deferred.succeed(finishWrite, undefined);
-        yield* Fiber.join(terminalWrite);
-        expect(log).toEqual(["check", "check", "check", "check", "acquire", "release"]);
-        yield* Fiber.interrupt(eventFiber);
-        yield* Fiber.interrupt(metadataFiber);
-        yield* Fiber.interrupt(authFiber);
-        yield* Fiber.interrupt(connectFiber);
-      }).pipe(Effect.provideService(WorkAdmission, admission), Effect.scoped);
-    })(),
+  it.effect("does not let a settings grant create or remove providers", () =>
+    Effect.gen(function* () {
+      let handled = false;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+              Effect.sync(() => {
+                handled = true;
+                return DEFAULT_SERVER_SETTINGS;
+              }),
+            ),
+            RpcAuthorization.layer([AuthSettingsWriteScope]),
+          ),
+        ),
+      );
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: {},
+          providerInstanceMutation,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+      expect(handled).toBe(false);
+    }).pipe(Effect.scoped),
   );
 });
+
+it.effect("requires task permission before attaching a prepared worktree to a thread", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.gitPreparePullRequestThread
+        > => tag !== WS_METHODS.gitPreparePullRequestThread,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.gitPreparePullRequestThread, () =>
+            Effect.sync(() => {
+              handled = true;
+            }).pipe(Effect.andThen(Effect.never)),
+          ),
+          RpcAuthorization.layer([AuthSourceControlWriteScope]),
+        ),
+      ),
+    );
+    expect(
+      yield* client[WS_METHODS.gitPreparePullRequestThread]({
+        cwd: "/repo",
+        reference: "42",
+        mode: "worktree",
+        threadId: ThreadId.make("thread"),
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+    expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("separates host file URLs from readable attachment URLs", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.assetsCreateUrl> =>
+          tag !== WS_METHODS.assetsCreateUrl,
+      ),
+    );
+    let handled = 0;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.assetsCreateUrl, () =>
+            Effect.sync(() => {
+              handled++;
+              return { relativeUrl: "/api/assets/file", expiresAt: 1 };
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    yield* client[WS_METHODS.assetsCreateUrl]({
+      resource: { _tag: "attachment", attachmentId: "image" },
+    });
+    for (const resource of [
+      { _tag: "workspace-file", threadId: ThreadId.make("thread"), path: "file.txt" },
+      { _tag: "media-file", threadId: ThreadId.make("thread"), path: "/repo/image.png" },
+      { _tag: "draft-workspace-file", cwd: "/repo", path: "file.txt" },
+    ] as const) {
+      expect(
+        yield* client[WS_METHODS.assetsCreateUrl]({ resource }).pipe(Effect.flip),
+      ).toMatchObject({
+        requiredScope: AuthOrchestrationReadScope,
+        requiredPermission: AuthFilesystemReadScope,
+      });
+    }
+    expect(handled).toBe(1);
+  }).pipe(Effect.scoped),
+);

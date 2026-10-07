@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - This Node-only server module uses synchronous host crypto for persistent IDs or hashes; replacing it would add Crypto service requirements through the persistence API.
 import * as NodeCrypto from "node:crypto";
 import { PROVIDER_SEND_TURN_MAX_FILE_BYTES, type ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";

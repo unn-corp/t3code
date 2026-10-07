@@ -13,8 +13,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { ChildProcessSpawner } from "effect/unstable/process";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { ChildProcessSpawner } from "effect/process";
 
 import { runMigrations } from "../persistence/Migrations.ts";
 import { OrganizationLiveWorkRuntimeReadiness } from "./OrganizationLiveWorkExecutor.ts";

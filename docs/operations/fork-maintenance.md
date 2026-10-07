@@ -7,8 +7,30 @@ is a separate Expo/store client; it does not build or update our APK.
 The initial audit compared the committed fork with its recorded upstream integrations, including
 `87eacfc6c4`, `01a14ef2bc`, and the tested integration at `01b0f9e896`. It also included the local
 Android, browser-sharing, and documentation changes. An upstream merge is not evidence that every
-fork feature shipped upstream. Recheck both `git log --first-parent` and `git diff upstream/main HEAD`
-when revisiting ownership; avoid treating an old merge-base file list as the current divergence.
+fork feature shipped upstream. Recheck `git log --first-parent` and compare the fork with the full
+upstream commit recorded in `fork-upstream.json` when revisiting ownership; avoid treating an old
+merge-base file list or a moving remote branch as the current divergence.
+
+## Integrating upstream
+
+Follow the [mandatory merge rules](../../AGENTS.md#mandatory-rules-for-upstream-merges). Record the
+pre-merge fork commit and pin the incoming upstream commit before resolving conflicts. Use the
+feature sections below to trace every affected retained feature through its contracts, runtime
+wiring, clients, persistence, and checks. Audit clean merges, moves, and deletions as well as
+conflict hunks; missing startup wiring or a renamed service can break a feature without a conflict.
+
+Upstream equivalents may replace fork implementations after equivalent behavior is verified on
+the affected surfaces and connection modes. Update ownership links and required release-suite
+paths when implementations move. Run focused checks against isolated data, obtain the independent
+Luna reviews required by `AGENTS.md`, and update provenance and affected guidance in the same change.
+Publishing and installing require the build, update, and recovery gates on that exact source;
+hardware validation that has not run must remain explicit. Source integration must not disturb
+running chats or enable scheduled releases.
+
+Published migration IDs are compatibility identities. Follow the
+[migration upgrade guide](../orchestration-v2/migration-upgrades.md) when upstream and fork histories
+assign different schemas to the same ID, and retain the history-preservation and failure tests.
+Never renumber installed fork history to make an upstream merge appear current.
 
 ## Product branding
 
@@ -39,7 +61,10 @@ Use Settings → Connections to pair each host. The Android
 
 **Ownership.** [MainActivity.java](../../apps/android-pwa/app/src/main/java/com/devotek/t3code/pwa/MainActivity.java)
 owns the shell and origin boundary; [build.gradle](../../apps/android-pwa/app/build.gradle) and
-[build-android-pwa.ts](../../scripts/build-android-pwa.ts) own packaging. Shared connections live in
+[build-android-pwa.ts](../../scripts/build-android-pwa.ts) own packaging. The retained phone automation host uses the native bridge and server broker; desktop browser
+automation uses upstream's `DesktopBrowserHost` channel rather than the retired renderer automation
+IPC. When updating browser contracts, check both paths and keep temporary Tailscale shares
+under the one-hour idle lease. Shared connections live in
 [client-runtime](../../packages/client-runtime/src). Web native adapters live in
 [android](../../apps/web/src/android).
 
@@ -89,7 +114,14 @@ own phone execution. [PreviewView.tsx](../../apps/web/src/components/preview/Pre
 [Manager.ts](../../apps/server/src/preview/Manager.ts),
 [PortPublisher.ts](../../apps/server/src/preview/PortPublisher.ts), and
 [TemporaryShareProxy.ts](../../apps/server/src/preview/TemporaryShareProxy.ts) own host sharing and
-cleanup. [RpcAuthorization.ts](../../apps/server/src/auth/RpcAuthorization.ts) and
+cleanup. Desktop/headless automation and recordings now use the host's
+[ServerBrowser.ts](../../apps/server/src/preview/ServerBrowser.ts) and desktop CDP channel.
+The server encodes recordings, enforces the attachment size limit, and persists conversation
+attachments; the retired Electron renderer upload helper is no longer an admission boundary.
+[ServerBrowser.test.ts](../../apps/server/src/preview/ServerBrowser.test.ts) covers broker routing and
+persisted recording bytes and is required by the host-runtime release suite. The phone host retains
+its separately advertised native operations and does not advertise recording support.
+[RpcAuthorization.ts](../../apps/server/src/auth/RpcAuthorization.ts) and
 [forkExtraWs.ts](../../apps/server/src/forkExtraWs.ts) share the host admission rules: browser host
 registration checks admission when attached; browser commands, element picking, frame writes, and
 session resume hold work leases until they finish. The [admission tests](../../apps/server/src/auth/RpcAuthorization.maintenance.test.ts)

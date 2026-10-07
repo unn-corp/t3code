@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { serveOrganizationScopeLaunchBroker } from "../organizations/OrganizationScopeLaunchBroker.ts";
 
 /** A detached, versioned CLI child holds the Organization launch socket across

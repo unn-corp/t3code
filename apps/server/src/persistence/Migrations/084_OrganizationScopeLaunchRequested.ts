@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** A one-time durable marker separates a reservation from the first OS launch call. */
 export default Effect.gen(function* () {

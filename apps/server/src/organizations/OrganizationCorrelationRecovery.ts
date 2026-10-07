@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - This Node-only server module uses synchronous host crypto for persistent IDs or hashes; replacing it would add Crypto service requirements through the persistence API.
 import * as NodeCrypto from "node:crypto";
 import {
   OrganizationObservation,
@@ -9,8 +10,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 import { withAutomationWork } from "../maintenance/WorkAdmission.ts";
 import {
   ORGANIZATION_INTAKE_CORRELATION_SUBJECT,

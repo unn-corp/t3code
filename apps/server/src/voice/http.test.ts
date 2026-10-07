@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
-import * as Etag from "effect/unstable/http/Etag";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as Etag from "effect/http/Etag";
 import { expect, it } from "@effect/vitest";
 import {
   AuthSessionId,
@@ -13,9 +13,9 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpRouter } from "effect/unstable/http";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import { HttpRouter } from "effect/http";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as OpenWhispr from "./OpenWhispr.ts";
 import { voiceHttpApiLayer } from "./http.ts";
 

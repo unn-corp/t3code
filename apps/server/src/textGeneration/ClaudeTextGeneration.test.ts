@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Disposable fixtures use Node UUIDs to create unique isolated database and filesystem data.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import { it } from "@effect/vitest";
@@ -16,7 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import type { ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -682,7 +683,6 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
       const claudeConfigDir = path.join(process.cwd(), ".claude-work-test");
       return yield* withFakeClaudeEnv(
         {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           output: JSON.stringify({
             structured_output: {
               title: "Use Claude home",

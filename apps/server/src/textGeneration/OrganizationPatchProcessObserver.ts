@@ -1,6 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import type { ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner } from "effect/process";
 
 /** The live-work adapter supplies this only for its selected Codex patch call. */
 export interface OrganizationPatchProcessObserverShape {

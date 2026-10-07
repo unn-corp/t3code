@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Disposable fixtures use Node UUIDs to create unique isolated database and filesystem data.
 // @effect-diagnostics preferSchemaOverJson:off - These cases mutate the exact JSON wire bytes.
 import * as NodeCrypto from "node:crypto";
 import { assert, it } from "@effect/vitest";

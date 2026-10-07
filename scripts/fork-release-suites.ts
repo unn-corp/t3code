@@ -95,7 +95,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
   "host-runtime": {
     id: "host-runtime",
     description:
-      "Runtime integration: registration before database opening, autonomous and resumed work admission, restored automation holds, Discord delivery retries, operator authorization, launcher trial and health boundaries.",
+      "Runtime integration: registration before database opening, autonomous and resumed work admission, restored automation holds, Discord delivery retries, operator authorization, launcher trial and health boundaries, and server-owned browser recording attachments.",
     targets: ["linux-x64", "windows-x64"],
     workdir: "apps/server",
     command: VITEST,
@@ -127,6 +127,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/serviceLauncherMaintenance.test.ts",
       "src/auth/RpcAuthorization.test.ts",
       "src/auth/RpcAuthorization.maintenance.test.ts",
+      "src/preview/ServerBrowser.test.ts",
     ],
     timeoutMinutes: 30,
   },
@@ -179,7 +180,6 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/android/updates.test.ts",
       "src/versionSkew.test.ts",
       "src/lib/attachmentUploadQueue.test.ts",
-      "src/browser/browserRecordingUpload.test.ts",
     ],
     timeoutMinutes: 30,
   },

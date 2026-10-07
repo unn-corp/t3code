@@ -247,7 +247,7 @@ function translateLegacyProjectOverridePatch(
     for (const [projectId, value] of Object.entries(map)) {
       if (canonicalProjectIds.has(projectId)) continue;
       const entry: ProjectSettingsOverrides = {
-        ...(entries.get(projectId) ?? currentEntries[projectId] ?? {}),
+        ...(entries.get(projectId) ?? currentEntries[projectId]),
       };
       if (value === null || value === undefined) {
         delete entry[key];
@@ -367,6 +367,24 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.githubAccounts !== undefined
       ? { githubAccounts: patch.githubAccounts as ServerSettings["githubAccounts"] }
+      : {}),
+    ...(patch.worktreesDirectory !== undefined &&
+    patch.worktreesDirectory !== current.worktreesDirectory
+      ? {
+          previousWorktreesDirectories: [
+            ...current.previousWorktreesDirectories.filter(
+              (directory) => directory !== patch.worktreesDirectory,
+            ),
+            ...(current.worktreesDirectory !== "" &&
+            !current.previousWorktreesDirectories.includes(current.worktreesDirectory)
+              ? [current.worktreesDirectory]
+              : []),
+          ],
+        }
+      : {}),
+    // Host replacement: deepMerge would keep a cleared account pin.
+    ...(patch.github?.hosts !== undefined
+      ? { github: { ...next.github, hosts: patch.github.hosts } }
       : {}),
     ...(projectSettingsOverridesPatch !== undefined
       ? {

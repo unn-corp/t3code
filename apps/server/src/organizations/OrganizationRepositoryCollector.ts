@@ -1,4 +1,5 @@
-import type { SqlClient } from "effect/unstable/sql/SqlClient";
+// @effect-diagnostics nodeBuiltinImport:off - This Node-only server module uses synchronous host crypto for persistent IDs or hashes; replacing it would add Crypto service requirements through the persistence API.
+import type { SqlClient } from "effect/sql/SqlClient";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as NodeCrypto from "node:crypto";

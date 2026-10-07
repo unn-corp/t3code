@@ -2,7 +2,7 @@
 
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, PreviewInputEvent, ThreadId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { previewEnvironment } from "~/state/preview";

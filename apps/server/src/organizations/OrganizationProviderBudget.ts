@@ -3,7 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;

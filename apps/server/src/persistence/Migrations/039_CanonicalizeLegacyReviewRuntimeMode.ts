@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 const LEGACY_REVIEW_RUNTIME_MODE = "automated-review";
 const FULL_ACCESS_RUNTIME_MODE = "full-access";

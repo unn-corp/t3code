@@ -6,7 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodeChildProcess from "node:child_process";
 import { ForkMaintenanceError, type ForkUpdateStatus } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import * as Layer from "effect/Layer";
 import { makeOperatorRoute } from "./MaintenanceOperatorHttp.ts";
 import { callOperator, describeStatus, discoverOperatorTarget } from "./operatorClient.ts";

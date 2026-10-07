@@ -90,15 +90,14 @@ import {
 } from "./auth/OrganizationGovernanceAuthorization.ts";
 import * as ServerConfig from "./config.ts";
 import * as ProjectionSnapshotQuery from "./agentDashboard/AutomationSnapshotQuery.ts";
-import { observeRpcEffect as instrumentRpcEffect } from "./observability/RpcInstrumentation.ts";
-import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderInstanceRegistry } from "./provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import { ForkWsRpcGroup as ForkRpcGroup } from "@t3tools/contracts";
 const decodeWorkIntentPage = Schema.decodeEffect(OrganizationWorkIntentListResult);
@@ -237,16 +236,13 @@ export const makeForkWsRpcLayer = (currentSession: EnvironmentAuth.Authenticated
         currentSession.scopes.includes(requiredScope)
           ? effect
           : Effect.fail(authorizationError(requiredScope));
+      // ServerWsRpcGroup applies RpcInstrumentation to fork RPCs too. Keep
+      // authorization here, and let that middleware own spans and metrics.
       const observeRpcEffect = <A, E, R>(
         method: string,
         effect: Effect.Effect<A, E, R>,
-        traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcEffect(
-          method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
-          traceAttributes,
-        );
+        _traceAttributes?: Readonly<Record<string, unknown>>,
+      ) => authorizeEffect(requiredScopeForRpcMethod(method), effect);
       const path = yield* Path.Path;
       const runAgentDashboardInvestigation = (projectId?: ProjectId | null) =>
         reviewJobService

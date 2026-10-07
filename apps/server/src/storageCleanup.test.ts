@@ -198,7 +198,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { MaintenanceWorkHeld, WorkAdmission } from "./maintenance/WorkAdmission.ts";
 import * as ConversationEvidence from "./assets/ConversationEvidence.ts";
 import * as ServerConfig from "./config.ts";

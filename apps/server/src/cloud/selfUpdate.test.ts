@@ -4,8 +4,8 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
@@ -79,7 +79,6 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
                 launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
               };
         return {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off - fake child-process stdout.
           stdout: JSON.stringify(result),
           stderr: "",
           code: ChildProcessSpawner.ExitCode(0),

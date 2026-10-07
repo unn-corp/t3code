@@ -4,8 +4,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -20,8 +20,8 @@ import {
   buildInitialHermesProviderSnapshot,
   checkHermesProviderStatus,
   enrichHermesSnapshot,
-} from "../Layers/HermesProvider.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+} from "../HermesProvider.ts";
+import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,

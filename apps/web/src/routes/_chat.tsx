@@ -1,3 +1,4 @@
+import { AuthPreviewOperateScope } from "@t3tools/contracts";
 import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
@@ -8,7 +9,9 @@ import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
+import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironmentScope } from "../state/session";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
@@ -22,7 +25,6 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { undoLatestThreadAction } from "../hooks/showThreadUndoNotice";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -32,6 +34,10 @@ function ChatRouteGlobalShortcuts() {
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const canOperatePreview = useEnvironmentScope(
+    routeThreadRef?.environmentId ?? null,
+    AuthPreviewOperateScope,
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -139,10 +145,7 @@ function ChatRouteGlobalShortcuts() {
       if (command === "preview.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        if (!routeThreadRef) return;
-        // The panel itself reports when no runtime can render the page, so the
-        // shortcut no longer refuses to open it on web.
-        if (!isPreviewSupportedInRuntime()) return;
+        if (!routeThreadRef || (!canOperatePreview && !previewOpen)) return;
         dispatchPreviewAction("toggle-panel");
         return;
       }
@@ -159,6 +162,7 @@ function ChatRouteGlobalShortcuts() {
       ) {
         event.preventDefault();
         event.stopPropagation();
+        if (!canOperatePreview) return;
         const action =
           command === "preview.refresh"
             ? "refresh"
@@ -181,6 +185,7 @@ function ChatRouteGlobalShortcuts() {
     activeDraftThread,
     activeThread,
     clearSelection,
+    canOperatePreview,
     handleNewThread,
     keybindings,
     defaultProjectRef,

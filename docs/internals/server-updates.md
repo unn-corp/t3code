@@ -12,6 +12,13 @@ Updates never stop agents. Activity blocks installation; it is never an input to
 `continueRunningThreads` is retired for the same reason. Crash and restart continuation (below) is a
 different feature and is unchanged.
 
+Database upgrades preserve the fork's published migration IDs. The
+[migration upgrade guide](../orchestration-v2/migration-upgrades.md) describes how recognized
+upstream and older preview histories are reconciled atomically without rerunning V2 or skipping
+fork schema changes. Unknown histories refuse startup. This reconciliation runs after the
+coordinator admits database opening; it does not bypass snapshots, provisional startup fences,
+or transaction-bound health verification.
+
 ## The device coordinator
 
 A host-local, per-OS-user directory ([`CoordinatorStore`](../../packages/shared/src/forkMaintenanceStore.ts))

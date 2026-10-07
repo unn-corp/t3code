@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - This Node-only server module uses synchronous host crypto for persistent IDs or hashes; replacing it would add Crypto service requirements through the persistence API.
 // @effect-diagnostics preferSchemaOverJson:off - Exact JSON bytes are the versioned artifact wire format.
 import * as NodeCrypto from "node:crypto";
 import * as Schema from "effect/Schema";

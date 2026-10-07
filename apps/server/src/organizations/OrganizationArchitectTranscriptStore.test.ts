@@ -12,7 +12,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { OrganizationArchitectMessageId } from "../../../../packages/contracts/src/organizationArchitect.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import { OrganizationStore, OrganizationStoreLive } from "./OrganizationStore.ts";

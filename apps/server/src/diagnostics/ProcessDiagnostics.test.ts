@@ -32,12 +32,12 @@ function makeNativeSnapshot(
   };
 }
 
-function makeTelemetryLayer(
+function layerTelemetryFor(
   snapshot: ResourceMonitorSnapshotEvent,
   desktopSnapshot?: DesktopHostTelemetrySnapshot,
   nativeStatus: "healthy" | "degraded" | "unavailable" = "healthy",
 ) {
-  const nativeLayer = NativeTelemetryClient.layerTest({
+  const layerNative = NativeTelemetryClient.layerTest({
     sampleNow: Effect.succeed({ generation: 0, snapshot }),
     health: Effect.succeed({
       status: nativeStatus,
@@ -48,7 +48,7 @@ function makeTelemetryLayer(
       sampleIntervalMs: 1_000,
     }),
   });
-  const desktopLayer = desktopSnapshot
+  const layerDesktop = desktopSnapshot
     ? DesktopTelemetryReceiver.layerTest({
         latest: Effect.succeedSome(desktopSnapshot),
         health: Effect.succeed({
@@ -59,7 +59,7 @@ function makeTelemetryLayer(
       })
     : DesktopTelemetryReceiver.layerTest();
   return ResourceTelemetry.layer.pipe(
-    Layer.provide(Layer.mergeAll(nativeLayer, desktopLayer, ResourceAttribution.layer)),
+    Layer.provide(Layer.mergeAll(layerNative, layerDesktop, ResourceAttribution.layer)),
   );
 }
 
@@ -100,8 +100,8 @@ describe("ProcessDiagnostics", () => {
           ioSemantics: "storage",
         },
       ]);
-      const telemetryLayer = makeTelemetryLayer(snapshot);
-      const layer = ProcessDiagnostics.layer.pipe(Layer.provideMerge(telemetryLayer));
+      const layerTelemetry = layerTelemetryFor(snapshot);
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provideMerge(layerTelemetry));
 
       const diagnostics = yield* Effect.gen(function* () {
         const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -121,7 +121,7 @@ describe("ProcessDiagnostics", () => {
     () =>
       Effect.gen(function* () {
         const sample = makeNativeSnapshot([], 1);
-        const baseLayer = makeTelemetryLayer(sample);
+        const baseLayer = layerTelemetryFor(sample);
         const cached = yield* Effect.service(ResourceTelemetry.ResourceTelemetry).pipe(
           Effect.flatMap((telemetry) => telemetry.latest),
           Effect.provide(baseLayer),
@@ -151,7 +151,7 @@ describe("ProcessDiagnostics", () => {
 
         const partial = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
           Effect.flatMap((diagnostics) => diagnostics.read),
-          Effect.provide(ProcessDiagnostics.layer.pipe(Layer.provide(makeTelemetryLayer(sample)))),
+          Effect.provide(ProcessDiagnostics.layer.pipe(Layer.provide(layerTelemetryFor(sample)))),
         );
         expect(Option.getOrThrow(partial.error).message).toContain("could not be read");
 
@@ -159,7 +159,7 @@ describe("ProcessDiagnostics", () => {
           Effect.flatMap((diagnostics) => diagnostics.read),
           Effect.provide(
             ProcessDiagnostics.layer.pipe(
-              Layer.provide(makeTelemetryLayer(makeNativeSnapshot([]), undefined, "unavailable")),
+              Layer.provide(layerTelemetryFor(makeNativeSnapshot([]), undefined, "unavailable")),
             ),
           ),
         );
@@ -170,8 +170,8 @@ describe("ProcessDiagnostics", () => {
   it.effect("rejects stale process identities before signaling", () =>
     Effect.gen(function* () {
       const snapshot = makeNativeSnapshot([]);
-      const telemetryLayer = makeTelemetryLayer(snapshot);
-      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(telemetryLayer));
+      const layerTelemetry = layerTelemetryFor(snapshot);
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(layerTelemetry));
 
       const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
         Effect.flatMap((processDiagnostics) =>
@@ -215,9 +215,9 @@ describe("ProcessDiagnostics", () => {
       ]);
       const staleTelemetry = yield* Effect.service(ResourceTelemetry.ResourceTelemetry).pipe(
         Effect.flatMap((telemetry) => telemetry.latest),
-        Effect.provide(makeTelemetryLayer(snapshot)),
+        Effect.provide(layerTelemetryFor(snapshot)),
       );
-      const telemetryLayer = Layer.succeed(
+      const layerTelemetry = Layer.succeed(
         ResourceTelemetry.ResourceTelemetry,
         ResourceTelemetry.ResourceTelemetry.of({
           latest: Effect.succeed(staleTelemetry),
@@ -234,7 +234,7 @@ describe("ProcessDiagnostics", () => {
           retry: Effect.die("unused"),
         }),
       );
-      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(telemetryLayer));
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(layerTelemetry));
 
       const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
         Effect.flatMap((processDiagnostics) =>
@@ -282,7 +282,7 @@ describe("ProcessDiagnostics", () => {
         },
       ]);
       const sampledAt = DateTime.makeUnsafe(sampledAtUnixMs);
-      const telemetryLayer = makeTelemetryLayer(snapshot, {
+      const layerTelemetry = layerTelemetryFor(snapshot, {
         version: 1,
         type: "desktopTelemetry",
         sequence: 1,
@@ -314,7 +314,7 @@ describe("ProcessDiagnostics", () => {
           },
         ],
       });
-      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(telemetryLayer));
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(layerTelemetry));
 
       const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
         Effect.flatMap((processDiagnostics) =>

@@ -51,6 +51,59 @@ T3 Code has 3 key app surfaces: **web**, **desktop**, and **mobile**.
 - Use isolated fixture data and `T3CODE_MAINTENANCE_NAMESPACE` for integration tests. Use Luna for
   delegated test conversations. Never enable automatic publishing before update/recovery validation.
 
+## Mandatory rules for upstream merges
+
+These rules and the fork maintenance invariants above are requirements, not the general defaults
+below. An upstream merge must preserve our fork's working behavior across all supported clients.
+
+- Pin the full upstream commit before merging and retain the pre-merge fork commit. Read
+  [fork feature ownership](docs/operations/fork-maintenance.md) and inspect the incoming changes
+  against that baseline, including files Git merges cleanly, deletes, moves, or replaces.
+  Preserve these fork-specific rules and guides when upstream rewrites its own agent instructions.
+  Record the affected fork features, preserved or replacement implementation paths, verification
+  results, and outstanding validation in the integration notes or merge commit.
+- Preserve **Arcwright Code** branding and logos, installed package/executable/signing identities,
+  saved connections and credentials, drafts, queues, pins, and recovery assets. Keep the included
+  T3 version separate from the Arcwright build counter; update `fork-upstream.json` to the exact
+  upstream commit actually integrated. Never rewrite published tags or reuse installation codes.
+- Preserve the standalone Android APK, Tailscale connection flow, native browser and agent bridge,
+  system/background alerts and visible-device suppression, conversation-first launch, responsive
+  composer/sidebar and project dragging, Stop controls, and temporary-share idle teardown.
+  Upstream `apps/mobile` changes do not substitute for verifying the fork APK's bundled web UI.
+- Resolve conflicts by combining required behavior. Never use blanket `ours`/`theirs` resolution
+  or discard a fork hunk merely because upstream changed the same file. Follow each retained feature
+  through contracts, service/layer wiring, transport, UI entry points, persistence, and tests.
+- A clean textual merge is not proof of compatibility. Audit upstream deletions, renamed services,
+  dependency/API upgrades, changed defaults, authorization scopes, migrations, and startup wiring
+  for broken fork callers. Preserve old paired clients through supported compatibility handling.
+- Replace a fork implementation with an upstream equivalent only after proving equivalent behavior
+  on every affected client and connection mode and updating its ownership documentation and tests.
+  If a feature cannot be preserved, report the specific loss and obtain a user decision before
+  removing it or publishing the regression. Routine compatible adapters need no extra approval.
+- Every install/recovery entry point must retain coordinator admission, activity checks, launch/write
+  fencing, affected-home snapshots, health receipts, rescue copies, and explicit restored-automation
+  review. Missing capability or unknown activity must block; never restore legacy unsafe fallbacks
+  or stop working agents to make an update possible. Preserve Windows/WSL recovery runtime retention.
+- Keep maintenance authorization bound to the exact action, artifact, transaction, and snapshot.
+  Retain APK origin restrictions and secret/backup privacy. Preserve fork release ownership for
+  discovery, downloads, feeds, history links, and installers; keep upstream publishing jobs guarded.
+- Run focused regression checks for every affected retained feature, plus scoped typechecks for
+  changed contracts and consumers. Use isolated data/coordinator namespaces and low-priority,
+  single-worker local tests; CI owns complete builds/release checks. Never weaken assertions, skip
+  required safety suites, or suppress real type failures to make a merge pass.
+- Use independent Luna reviews for substantial cross-component merges: server/admission/recovery
+  safety and UI/Android integration. Resolve confirmed findings and re-review affected areas.
+- Update affected user, operations, and architecture guidance in the same integration. If files,
+  commands, test names, or UI routes move, update links, release-suite specifications, and examples.
+  The [fork documentation checker](scripts/check-fork-docs.ts) must pass.
+- Before committing, verify no unresolved conflicts or conflict markers remain and review the final
+  divergence against the pinned upstream commit. Before publishing/installing, require the relevant
+  build, update, and recovery gates on that exact source. Report checks and outstanding hardware
+  validation honestly; never claim a build is installed or fully commissioned without evidence.
+- Protect running chats throughout integration. Do not restart production servers, install over
+  active runtimes, write live T3 homes, or enable scheduled publishing as part of a source merge.
+  Existing user authorization still governs any separate deployment.
+
 ## A note from Theo
 
 I like ambitious ideas, simple systems, and software that feels obvious. Do not preserve complexity just because it already exists. Do not introduce machinery because it looks architecturally impressive. Understand the real constraint, then fight for the smallest model that makes the correct behavior unsurprising.
@@ -172,8 +225,9 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 ## Taste
 
 - Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
+- Client mutations use `createEnvironmentRpcCommand`. Add protected methods to `CLIENT_GUARDED_RPC_SCOPES` in contracts and use the command's `permissionAtom` for UI availability. Grants are checked at execution against the destination environment; the server remains authoritative. Keep raw RPC clients inside `rpc/`, and extend the permission behavior tests when adding a protected method.
 - Server features are services; transports stay thin. A `ws.ts` RPC handler, HTTP route, or MCP tool decodes input, calls one service method, and maps errors. See [Effect services](docs/internals/effect-services.md).
-- `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations.
+- `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations. See [Web UI](docs/internals/web-ui.md).
 - Inferred types over annotations. `any` is the enemy.
 - Comments describe how a thing is used, and move when the code moves. To be used mostly to describe functions, not to annotate every line of behavior.
 - Our users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations; they peg the GPU on high-refresh displays.

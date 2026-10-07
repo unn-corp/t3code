@@ -13,7 +13,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
   emptyProjection,
@@ -25,7 +25,7 @@ import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
+import { ProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "./ProviderDriver.ts";
 import { discoverAgentSessions } from "./agentSessionDiscovery.ts";
 import { listNativeSessions, resumeNativeSession } from "./NativeSessionResume.ts";

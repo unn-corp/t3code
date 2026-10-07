@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics preferSchemaOverJson:off - Publisher body fixtures intentionally use JSON text at the HTTP boundary.
 // @effect-diagnostics multipleEffectProvide:off - Test harness composes route, HTTP, and Node layers in one provide stack.
-// oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Route boundary tests exercise HTTP auth against a minimal feed router.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeFSP from "node:fs/promises";
@@ -22,7 +21,7 @@ import {
   HttpClientRequest,
   HttpRouter,
   type HttpServerRequest,
-} from "effect/unstable/http";
+} from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
@@ -75,6 +74,10 @@ const makeAuthLayer = (mode: "reject" | "allow" | "no-read-scope") =>
     authenticateWebSocketUpgrade: unusedAuthOperation as never,
     issueWebSocketTicket: unusedAuthOperation as never,
     issueStartupPairingUrl: unusedAuthOperation as never,
+    authenticateMcpClient: unusedAuthOperation as never,
+    issueMcpClientSession: unusedAuthOperation as never,
+    consumeMcpApprovalCode: unusedAuthOperation as never,
+    authenticateBrowserSession: unusedAuthOperation as never,
   } satisfies EnvironmentAuth.EnvironmentAuth["Service"]);
 
 const runWithFeedRoutes = <A, E>(

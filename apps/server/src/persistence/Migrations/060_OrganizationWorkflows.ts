@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** Keep workflow definitions in the independent Organization draft, not Projects. */
 export default Effect.gen(function* () {

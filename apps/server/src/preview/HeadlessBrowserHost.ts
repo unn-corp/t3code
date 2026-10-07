@@ -41,7 +41,7 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
 import * as CdpClient from "./CdpClient.ts";
@@ -208,7 +208,10 @@ const readNumber = (value: unknown, key: string): number | undefined => {
 const awaitDevToolsEndpoint = <E>(stderr: Stream.Stream<Uint8Array, E>) =>
   stderr.pipe(
     Stream.decodeText(),
-    Stream.scan("", (accumulated, chunk) => accumulated + chunk),
+    Stream.scan(
+      () => "",
+      (accumulated: string, chunk: string) => accumulated + chunk,
+    ),
     Stream.filterMap((accumulated) => {
       const endpoint = parseDevToolsEndpoint(accumulated);
       return endpoint === null ? Result.failVoid : Result.succeed(endpoint);

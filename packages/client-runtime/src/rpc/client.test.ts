@@ -1,12 +1,12 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   CommandId,
+  ThreadId,
+  PreviewTabId,
+  type PreviewAutomationStreamEvent,
   ORCHESTRATION_V2_WS_METHODS,
   EnvironmentAuthorizationError,
   EnvironmentId,
-  PreviewTabId,
-  ThreadId,
-  type PreviewAutomationStreamEvent,
   type RelayClientInstallProgressEvent,
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
@@ -24,8 +24,8 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
-import { SocketReadError } from "effect/unstable/socket/Socket";
-import { RpcClientError } from "effect/unstable/rpc";
+import { SocketReadError } from "effect/socket/Socket";
+import { RpcClientError } from "effect/rpc";
 
 import {
   AVAILABLE_CONNECTION_STATE,

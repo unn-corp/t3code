@@ -7,7 +7,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { runMigrations } from "../persistence/Migrations.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { OrganizationSingleFileAttemptPolicy } from "./OrganizationSingleFileAttemptCoordinator.ts";

@@ -13,7 +13,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import type { TerminalSummary } from "@t3tools/contracts";
 import { BUILD_IDENTITY } from "../appVersion.ts";
 import * as ServerConfig from "../config.ts";

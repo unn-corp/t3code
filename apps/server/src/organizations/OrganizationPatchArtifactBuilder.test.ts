@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Disposable fixtures use Node UUIDs to create unique isolated database and filesystem data.
 import * as NodeCrypto from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import {

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Mirrors the Node crypto hashing used by Expo native fingerprints.
 import * as NodeModule from "node:module";
 import * as NodeCrypto from "node:crypto";
 import { expect, it } from "vite-plus/test";

@@ -8,6 +8,7 @@ import {
 } from "./AgentNotificationSettings";
 import { RunLimitsSettings } from "./RunLimitsSettings";
 import { useAtomValue } from "@effect/atom-react";
+import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import {
   ArchiveIcon,
   ArchiveX,
@@ -19,6 +20,7 @@ import {
 import { Spinner } from "~/components/ui/spinner";
 import { SettingsGroup } from "./SettingsGroup";
 import { NotificationSettings } from "./NotificationSettings";
+import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -716,6 +718,7 @@ function BackgroundActivityAdvancedDialog({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const canWriteSettings = useScopedSettingsWriteAllowed();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
@@ -734,7 +737,7 @@ function BackgroundActivityAdvancedDialog({
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open && canWriteSettings} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-xl">
         <DialogHeader>
           <DialogTitle>Background Activity</DialogTitle>
@@ -743,7 +746,10 @@ function BackgroundActivityAdvancedDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
-          <div className="overflow-hidden rounded-xl border bg-card text-card-foreground">
+          <fieldset
+            disabled={!canWriteSettings}
+            className="min-w-0 overflow-hidden rounded-xl border bg-card text-card-foreground"
+          >
             <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
                 <div className="text-sm font-medium">Shared policy</div>
@@ -965,11 +971,12 @@ function BackgroundActivityAdvancedDialog({
                 </label>
               ))}
             </div>
-          </div>
+          </fieldset>
         </DialogPanel>
         <DialogFooter>
           <Button
             variant="outline"
+            disabled={!canWriteSettings}
             onClick={() => updateSettings(resetBackgroundActivitySettings())}
           >
             Reset all
@@ -4651,10 +4658,7 @@ export function GeneralSettingsPanel() {
                 checked={notificationPreferences.enabled}
                 onCheckedChange={(checked) =>
                   updateClientSettings({
-                    agentNotifications: {
-                      ...notificationPreferences,
-                      enabled: Boolean(checked),
-                    },
+                    agentNotifications: { ...notificationPreferences, enabled: Boolean(checked) },
                   })
                 }
                 aria-label="Enable desktop agent notifications"
@@ -4701,96 +4705,51 @@ export function GeneralSettingsPanel() {
                     />
                   ))
                 : null}
-              <SettingsRow
-                title="Agent finished"
-                description="Notify when agent work completes."
-                control={
-                  <Switch
-                    checked={notificationPreferences.notifyOnCompletion}
-                    onCheckedChange={(checked) =>
-                      updateClientSettings({
-                        agentNotifications: {
-                          ...notificationPreferences,
-                          notifyOnCompletion: Boolean(checked),
-                        },
-                      })
-                    }
-                    aria-label="Notify when an agent finishes"
-                  />
-                }
-              />
-              <SettingsRow
-                title="Plan ready"
-                description="Notify when an agent proposes a plan for review."
-                control={
-                  <Switch
-                    checked={notificationPreferences.notifyOnPlanReady}
-                    onCheckedChange={(checked) =>
-                      updateClientSettings({
-                        agentNotifications: {
-                          ...notificationPreferences,
-                          notifyOnPlanReady: Boolean(checked),
-                        },
-                      })
-                    }
-                    aria-label="Notify when a plan is ready"
-                  />
-                }
-              />
-              <SettingsRow
-                title="Input needed"
-                description="Notify when an agent needs approval or a response."
-                control={
-                  <Switch
-                    checked={notificationPreferences.notifyOnInput}
-                    onCheckedChange={(checked) =>
-                      updateClientSettings({
-                        agentNotifications: {
-                          ...notificationPreferences,
-                          notifyOnInput: Boolean(checked),
-                        },
-                      })
-                    }
-                    aria-label="Notify when agent input is needed"
-                  />
-                }
-              />
-              <SettingsRow
-                title="Agent failed"
-                description="Notify when an agent run ends with an error."
-                control={
-                  <Switch
-                    checked={notificationPreferences.notifyOnFailure}
-                    onCheckedChange={(checked) =>
-                      updateClientSettings({
-                        agentNotifications: {
-                          ...notificationPreferences,
-                          notifyOnFailure: Boolean(checked),
-                        },
-                      })
-                    }
-                    aria-label="Notify when an agent fails"
-                  />
-                }
-              />
-              <SettingsRow
-                title="Show project and thread names"
-                description="Turn this off to keep notification content generic on your desktop."
-                control={
-                  <Switch
-                    checked={notificationPreferences.showProjectAndThreadNames}
-                    onCheckedChange={(checked) =>
-                      updateClientSettings({
-                        agentNotifications: {
-                          ...notificationPreferences,
-                          showProjectAndThreadNames: Boolean(checked),
-                        },
-                      })
-                    }
-                    aria-label="Show project and thread names in notifications"
-                  />
-                }
-              />
+              {(
+                [
+                  ["notifyOnCompletion", "Agent finished", "Notify when agent work completes."],
+                  [
+                    "notifyOnPlanReady",
+                    "Plan ready",
+                    "Notify when an agent proposes a plan for review.",
+                  ],
+                  [
+                    "notifyOnInput",
+                    "Input needed",
+                    "Notify when an agent needs approval or a response.",
+                  ],
+                  [
+                    "notifyOnFailure",
+                    "Agent failed",
+                    "Notify when an agent run ends with an error.",
+                  ],
+                  [
+                    "showProjectAndThreadNames",
+                    "Show project and thread names",
+                    "Turn this off to keep notification content generic on your desktop.",
+                  ],
+                ] as const
+              ).map(([key, title, description]) => (
+                <SettingsRow
+                  key={key}
+                  title={title}
+                  description={description}
+                  control={
+                    <Switch
+                      checked={notificationPreferences[key]}
+                      onCheckedChange={(checked) =>
+                        updateClientSettings({
+                          agentNotifications: {
+                            ...notificationPreferences,
+                            [key]: Boolean(checked),
+                          },
+                        })
+                      }
+                      aria-label={title}
+                    />
+                  }
+                />
+              ))}
             </>
           ) : null}
         </SettingsSection>
@@ -4803,7 +4762,7 @@ export function GeneralSettingsPanel() {
       )}
 
       <AppUpdateSettings />
-      <SettingsSection title="About">
+      <SettingsSection id="about" title="About">
         <SettingsRow
           title={<AboutVersionTitle />}
           description={<ClientBuildIdentity />}
@@ -4811,6 +4770,19 @@ export function GeneralSettingsPanel() {
             <a href="#app-updates" className="text-sm underline">
               App updates
             </a>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("privacy-policy")}
+          description="How we handle your data, including the anonymous usage data Arcwright Code collects."
+          control={
+            <Button
+              render={<a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer noopener" />}
+              size="sm"
+              variant="outline"
+            >
+              View policy
+            </Button>
           }
         />
       </SettingsSection>

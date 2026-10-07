@@ -11,7 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { OrganizationStore, OrganizationStoreLive } from "./OrganizationStore.ts";
 import {
   OrganizationLiveWorkEmergencyDeferred,

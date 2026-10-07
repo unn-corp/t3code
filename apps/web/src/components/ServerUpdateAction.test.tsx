@@ -1,11 +1,25 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import type { EnvironmentId, ForkUpdateStatus } from "@t3tools/contracts";
+import { AuthSessionState, type EnvironmentId, type ForkUpdateStatus } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-const state = vi.hoisted(() => ({ action: vi.fn(), bulk: vi.fn(), toast: vi.fn() }));
+
+const state = vi.hoisted(() => ({
+  action: vi.fn(),
+  bulk: vi.fn(),
+  toast: vi.fn(),
+  session: null as AsyncResult.AsyncResult<AuthSessionState, Error> | null,
+  sessionAtom: Symbol("session"),
+}));
 vi.mock("../state/hostForkUpdates", () => ({
   hostForkUpdateController: () => ({ action: state.action }),
   requestHostUpdates: state.bulk,
 }));
+vi.mock("~/state/session", () => ({
+  environmentSession: { sessionStateAtom: () => state.sessionAtom },
+}));
+vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => state.session } }));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.session }));
 vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("react", async (original) => {
   const actual = await original<typeof import("react")>();
@@ -17,6 +31,18 @@ vi.mock("react/compiler-runtime", async () => {
   return { c: reactHookHarness.useMemoCache };
 });
 import { reactHookHarness as hooks } from "../test/reactHookHarness";
+const decodeSessionState = Schema.decodeUnknownSync(AuthSessionState);
+const session = decodeSessionState({
+  authenticated: true,
+  scopes: ["environment:maintain"],
+  auth: {
+    policy: "remote-reachable",
+    bootstrapMethods: ["one-time-token"],
+    sessionMethods: ["bearer-access-token"],
+    sessionCookieName: "t3_session",
+    serverUpdateScope: "environment:maintain",
+  },
+});
 import {
   ServerUpdateAction,
   ServerUpdatesAction,
@@ -63,6 +89,7 @@ describe("server update actions", () => {
     state.action.mockReset().mockResolvedValue(waiting);
     state.bulk.mockReset();
     state.toast.mockReset();
+    state.session = AsyncResult.success(session);
   });
   it("offers bootstrap guidance when admission capability is absent", () => {
     const markup = renderToStaticMarkup(

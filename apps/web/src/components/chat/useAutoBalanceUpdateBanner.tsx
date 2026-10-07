@@ -1,7 +1,7 @@
 import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { useMemo, useState } from "react";
 
 import type { EnvironmentPresentation } from "~/state/environments";

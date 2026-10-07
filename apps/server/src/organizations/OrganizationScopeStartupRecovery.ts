@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { stopAndVerifyOrganizationScopedSandbox } from "./OrganizationScopedSandboxHost.ts";
 import { recordOrganizationUnattachedScopeRecovery } from "./OrganizationScopeRecoveryStore.ts";
 import {

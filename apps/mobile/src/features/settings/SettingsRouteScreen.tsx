@@ -6,7 +6,7 @@ import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, Linking, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,9 +35,11 @@ import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import {
+  AuthRelayWriteScope,
   DEFAULT_SERVER_SETTINGS,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -346,6 +348,8 @@ function ConfiguredSettingsRouteScreen() {
     const updateResult = await settleAsyncResult(() =>
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
+          canConfigureEnvironment: (environmentId) =>
+            readEnvironmentScope(environmentId, AuthRelayWriteScope),
           enabled: true,
           previousEnabled: liveActivitiesPreferenceEnabled,
           clerkToken: tokenResult.value,
@@ -441,6 +445,8 @@ function ConfiguredSettingsRouteScreen() {
           const updateResult = await settleAsyncResult(() =>
             runtime.runPromiseExit(
               setLiveActivityUpdatesEnabled({
+                canConfigureEnvironment: (environmentId) =>
+                  readEnvironmentScope(environmentId, AuthRelayWriteScope),
                 enabled: false,
                 previousEnabled: liveActivitiesPreferenceEnabled,
                 clerkToken: token,
