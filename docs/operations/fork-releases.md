@@ -470,6 +470,10 @@ Do these in order. Each is outside the repository.
    Disable [fixture automation](./development.md#fixture-automation) before launching a packaged
    desktop against isolated data. Pruned database schedules do not disable default repository
    reviews; unintended test work can consume provider usage and block maintenance admission.
+   Exercise the packaged desktop's automatic installation as well as a requested installation.
+   Its activity observation must continue while the controller waits for post-fence acknowledgements;
+   an older build with a coupled polling loop can refuse an idle installation. Use a baseline with
+   independent activity polling before relying on unattended delivery.
 7. Set `FORK_RELEASES_ENABLED` to `true`. Scheduled runs then publish, and a manual run publishes only
    with the `publish` input. Withdraw any bad release (below) and keep the variable unset to stop
    automatic publication.

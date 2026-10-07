@@ -142,6 +142,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/updates/updateChannels.test.ts",
       "src/updates/updateMachine.test.ts",
       "src/maintenance/DesktopForkMaintenance.identity.test.ts",
+      "src/maintenance/maintenancePolling.test.ts",
     ],
     timeoutMinutes: 30,
   },

@@ -70,6 +70,9 @@ background service, development servers). Constraints that are easy to get wrong
 - **Idle means five stopped minutes** for every participant, then the fence is taken and every
   participant must re-observe it (`frozenFor`) before the transaction starts. Held queues are not
   activity and are never cleared.
+- **Activity polling stays independent of controller actions.** The desktop reports activity on its
+  own five-second loop while serialized update actions wait for fence acknowledgements. Combining
+  those loops can block the desktop's own acknowledgement and make a stopped device appear stale.
 - **Admission is atomic with the fence.** `register` validates the fence in the same critical section, so
   a runtime that read "no fence" an instant earlier is still refused. A runtime started by the
   transaction itself presents a one-use capability bound to its exact home, consumed in that same section.

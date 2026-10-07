@@ -42,6 +42,7 @@ import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import { DesktopMaintenanceBridge } from "./DesktopMaintenanceBridge.ts";
+import { startMaintenancePolling } from "./maintenancePolling.ts";
 import {
   createDesktopMaintenance,
   type DesktopMaintenance,
@@ -56,7 +57,6 @@ const { logInfo, logError } = DesktopObservability.makeComponentLogger("desktop-
 /** The desktop keeps its existing check cadence; the managed-host cadence is slower. */
 const CHECK_INTERVAL = Duration.minutes(4);
 const STARTUP_CHECK_DELAY = Duration.seconds(15);
-const TICK_INTERVAL = Duration.seconds(5);
 const RELEASES_PER_CHECK = 12;
 
 const isMaintenanceError = Schema.is(ForkMaintenanceError);
@@ -369,16 +369,16 @@ export const make = Effect.gen(function* () {
     const checkAndStage = Effect.promise(() => core.check()).pipe(
       Effect.catchCause(() => Effect.void),
     );
-    // Four-minute checks after a short startup delay, and a five second tick for activity and the automatic gate.
+    // Four-minute checks after a short startup delay. Activity has its own loop:
+    // a pending controller action must not prevent acknowledgement of its fence.
     yield* Effect.sleep(STARTUP_CHECK_DELAY).pipe(
       Effect.andThen(checkAndStage.pipe(Effect.repeat(Schedule.spaced(CHECK_INTERVAL)))),
       Effect.forkScoped,
     );
-    yield* Effect.promise(() => core.tick()).pipe(
-      Effect.catchCause(() => Effect.void),
-      Effect.repeat(Schedule.spaced(TICK_INTERVAL)),
-      Effect.forkScoped,
-    );
+    yield* startMaintenancePolling({
+      observe: Effect.promise(() => core.observe()),
+      tick: Effect.promise(() => core.tick()),
+    });
     // A server on this device relays remote and agent requests here; concurrent identical ones share one outcome.
     yield* Stream.runForEach(publisher.maintenanceRequests, (request) =>
       handleRelayedRequest(request).pipe(

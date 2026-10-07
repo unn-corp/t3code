@@ -1045,7 +1045,6 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
           return decorate(unavailableStatus(unavailable ?? "Device maintenance is not running."));
         // A held launch changes nothing: no observation registers this process, and no automatic install can start.
         if (heldReason !== null) return decorate(await controller.status());
-        await observe().catch(() => undefined);
         await controller.tick();
         await housekeeping();
         return decorate(await controller.status());
