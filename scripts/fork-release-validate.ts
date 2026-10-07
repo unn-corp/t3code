@@ -142,8 +142,10 @@ const executableIn = (contentDir: string) =>
   NodePath.join(contentDir, HOST_PLATFORM === "win32" ? "t3.exe" : "t3");
 
 const serverEnv = (home: string): NodeJS.ProcessEnv => {
-  const scratch = NodePath.join(NodePath.dirname(home), "runtime-scratch");
-  NodeFS.mkdirSync(scratch, { recursive: true });
+  // Package probes terminate disposable processes; Windows termination can leave a held lock.
+  // Preserve the data home, but give each probe its own coordinator. The required safety suites
+  // separately exercise shared-registry restart/recovery, including abandoned-lock refusal.
+  const scratch = NodeFS.mkdtempSync(NodePath.join(NodePath.dirname(home), "runtime-scratch-"));
   return cliSmokeEnvironment({
     platform: HOST_PLATFORM,
     home,

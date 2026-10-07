@@ -32,7 +32,7 @@ afterEach(() => {
   NodeFS.rmSync(root, { recursive: true, force: true });
 });
 
-type Behavior = "healthy" | "wipes-home" | "migrates-home";
+type Behavior = "healthy" | "wipes-home" | "migrates-home" | "leaves-coordinator-lock";
 
 /**
  * A tiny stand-in for the single-executable server archive: same layout, `--version`, and a
@@ -51,6 +51,13 @@ if (command === "--version") { console.log(${JSON.stringify(version)}); process.
 const home = process.env.T3CODE_HOME;
 if (!process.env.T3CODE_MAINTENANCE_NAMESPACE?.startsWith(path.dirname(home) + path.sep)) {
   console.error("validation must isolate its coordinator"); process.exit(2);
+}
+if (${JSON.stringify(behavior)} === "leaves-coordinator-lock") {
+  const coordinator = process.env.T3CODE_MAINTENANCE_NAMESPACE;
+  const lock = path.join(coordinator, "registry.lock");
+  if (fs.existsSync(lock)) { console.error("Unrepaired coordinator lock"); process.exit(3); }
+  fs.mkdirSync(coordinator, { recursive: true });
+  fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, started: "fixture" }));
 }
 const data = path.join(home, "userdata");
 if (${JSON.stringify(behavior)} === "wipes-home") fs.rmSync(data, { recursive: true, force: true });
@@ -211,6 +218,33 @@ describe("server archive update", () => {
 
   it("replaces the binary in place and keeps the data home", async () => {
     await serverUpdate(archives(), scratch("update"));
+  });
+
+  it("keeps abandoned smoke locks separate while preserving the same home across replacement", async () => {
+    const directory = scratch("abandoned-locks");
+    await serverUpdate(
+      {
+        previous: makeServerArchive("1.0.0", "leaves-coordinator-lock"),
+        next: makeServerArchive("1.0.1", "leaves-coordinator-lock"),
+        previousVersion: "1.0.0",
+        nextVersion: "1.0.1",
+      },
+      directory,
+    );
+    const locks = NodeFS.readdirSync(directory)
+      .filter((name) => name.startsWith("runtime-scratch-"))
+      .map((name) => NodePath.join(directory, name, "coordinator/registry.lock"))
+      .filter((file) => NodeFS.existsSync(file));
+    assert.lengthOf(locks, 2);
+    for (const file of locks)
+      assert.equal(JSON.parse(NodeFS.readFileSync(file, "utf8")).started, "fixture");
+    assert.equal(
+      NodeFS.readFileSync(
+        NodePath.join(directory, "home/userdata/fork-release-marker.txt"),
+        "utf8",
+      ),
+      "kept across the update\n",
+    );
   });
 
   it("fails when the new build destroys the data home", async () => {

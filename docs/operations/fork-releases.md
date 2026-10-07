@@ -237,6 +237,12 @@ process-death/reboot recovery. Drive the live update and recovery on
 real hardware during [commissioning](#commissioning), and keep adding coordinator integration tests
 to the `coordinator` suite's required list as they land.
 
+Archive package probes preserve the same data home across replacement, but use a separate isolated
+coordinator for each process invocation. Windows forcibly terminates these disposable smoke servers,
+which can leave a coordinator lock; the next package probe must not reuse it. Old test coordinators
+remain untouched until the entire scratch directory is removed. Shared-coordinator restart, lock
+refusal, and recovery remain requirements of the safety suites above.
+
 APK startup validation cold-starts `MainActivity` with Activity Manager in the disposable emulator,
 so it loads the installed APK rather than reusing a warm task from its predecessor. It requires its
 successful acknowledgement and a surviving app process eight seconds later. ADB commands have a
