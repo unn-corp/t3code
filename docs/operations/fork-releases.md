@@ -146,7 +146,7 @@ this cold-start allowance does not change coordinator activity or ownership dead
 Use **Fork Windows safety diagnostic** on `main` to rerun all three required Windows safety suites
 with individual assertion failures retained for three days, plus the recovery helper's real
 snapshot/restore proof. Select `scope: helper` to diagnose just that proof, or
-`scope: desktop-updater` for that Windows suite alone. Controller fixture installation refusals
+`scope: desktop-updater` or `scope: host-runtime` for that Windows suite alone. Controller fixture installation refusals
 include the preceding staging phase and error so a failed download or helper proof is visible.
 The workflow has read-only permissions, produces no eligibility receipts, and does not allocate Android codes or rebuild
 application payloads. Windows directory ACL setup has a bounded 30-second cold-start allowance;

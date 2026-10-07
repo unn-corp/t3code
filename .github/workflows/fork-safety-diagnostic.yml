@@ -6,7 +6,7 @@ on:
       scope:
         description: "Run all safety suites and the helper, or select one diagnostic"
         type: choice
-        options: [all, helper, desktop-updater]
+        options: [all, helper, host-runtime, desktop-updater]
         default: all
 
 permissions:
@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.scope == 'desktop-updater' && '["desktop-updater"]' || '["coordinator","host-runtime","desktop-updater"]') }}
+        suite: ${{ fromJSON(inputs.scope == 'desktop-updater' && '["desktop-updater"]' || inputs.scope == 'host-runtime' && '["host-runtime"]' || '["coordinator","host-runtime","desktop-updater"]') }}
     steps:
       - name: Checkout diagnostic source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -74,7 +74,7 @@ jobs:
           retention-days: 3
 
   helper:
-    if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main' && inputs.scope != 'desktop-updater'
+    if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main' && inputs.scope != 'desktop-updater' && inputs.scope != 'host-runtime'
     runs-on: windows-2025
     timeout-minutes: 15
     steps:
