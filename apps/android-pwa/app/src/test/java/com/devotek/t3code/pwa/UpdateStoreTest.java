@@ -110,7 +110,7 @@ public final class UpdateStoreTest {
     }
     @Test public void legacyPendingConfirmationDoesNotInventAnInstallerTarget() throws Exception {
         File dir = folder.newFolder("legacy-confirmation");
-        Files.writeString(new File(dir, "state.json").toPath(), "{\"format\":1,\"pending\":{\"transactionId\":\"legacy\",\"sessionId\":18,\"installerResult\":\"awaiting-confirmation\"}}");
+        Files.write(new File(dir, "state.json").toPath(), "{\"format\":1,\"pending\":{\"transactionId\":\"legacy\",\"sessionId\":18,\"installerResult\":\"awaiting-confirmation\"}}".getBytes(StandardCharsets.UTF_8));
         UpdateState.Pending pending = UpdateStore.open(dir).snapshot().pending;
         assertEquals("legacy", pending.transactionId);
         assertEquals("", pending.confirmationFilterUri);
