@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { reorderProjects, type UiState } from "../uiStateStore";
-import { startSidebarRepositoryDrag } from "./Sidebar.repositoryDrag";
+import { sidebarRepositoryTargetAt, startSidebarRepositoryDrag } from "./Sidebar.repositoryDrag";
 import type { SidebarPointerSensor } from "./Sidebar.pointer";
 
 class TestDocument extends EventTarget {
@@ -80,6 +80,61 @@ afterEach(() => {
 });
 
 describe("repository group gestures", () => {
+  it("moves the entire group when touch releases in viewport padding beside a row", () => {
+    const padding = { closest: () => null };
+    const rows = [
+      {
+        dataset: { repositoryGroupDropKey: "a" },
+        getBoundingClientRect: () => ({ top: 10, bottom: 30, height: 20 }),
+      },
+      {
+        dataset: { repositoryGroupDropKey: "b" },
+        getBoundingClientRect: () => ({ top: 35, bottom: 100, height: 65 }),
+      },
+      {
+        dataset: { repositoryGroupDropKey: "c" },
+        getBoundingClientRect: () => ({ top: 105, bottom: 200, height: 95 }),
+      },
+    ];
+    const list = {
+      ownerDocument: { elementFromPoint: () => padding },
+      contains: () => false,
+      querySelectorAll: () => rows,
+    } as unknown as HTMLElement;
+    const viewport = {
+      getBoundingClientRect: () => ({ left: 0, right: 350, top: 0, bottom: 300 }),
+      contains: (node: unknown) => node === padding,
+    } as unknown as HTMLElement;
+    let state = { projectOrder: Object.values(members).flat() } as UiState;
+    sensor = startSidebarRepositoryDrag(pointer("pointerdown", { pointerType: "touch" }), {
+      sourceKey: "a",
+      targetAt: (point) => sidebarRepositoryTargetAt(list, viewport, point),
+      onStart: () => undefined,
+      onTarget: () => undefined,
+      onFinish: () => undefined,
+      onDrop: (source, target) => {
+        state = reorderProjects(
+          state,
+          state.projectOrder,
+          members[source as Group],
+          members[target as Group],
+        );
+      },
+    });
+    document.dispatchEvent(
+      pointer("pointermove", { pointerType: "touch", clientX: 345, clientY: 70 }),
+    );
+    document.dispatchEvent(
+      pointer("pointerup", { pointerType: "touch", clientX: 345, clientY: 70, buttons: 0 }),
+    );
+    expect(state.projectOrder).toEqual(["laptop:/b", "laptop:/a", "deck:/a", "deck:/c"]);
+    expect(sidebarRepositoryTargetAt(list, viewport, { x: 345, y: 103 })).toBe("c");
+    expect(sidebarRepositoryTargetAt(list, viewport, { x: 345, y: 205 })).toBeNull();
+    expect(sidebarRepositoryTargetAt(list, viewport, { x: 351, y: 70 })).toBeNull();
+    viewport.contains = () => false;
+    expect(sidebarRepositoryTargetAt(list, viewport, { x: 345, y: 70 })).toBeNull();
+  });
+
   function scrollFixture() {
     let id = 0;
     let scrollTop = 0;

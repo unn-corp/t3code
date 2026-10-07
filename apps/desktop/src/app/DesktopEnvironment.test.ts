@@ -40,6 +40,18 @@ const makeEnvironment = (
   DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(makeEnvironmentLayer(overrides, env)));
 
 describe("DesktopEnvironment", () => {
+  it.each(["0.0.45", "1.0.1-nightly.20261007.50"])(
+    "keeps installed branding independent of channel for %s",
+    (appVersion) => {
+      const branding = DesktopEnvironment.resolveDesktopAppBranding({
+        isDevelopment: false,
+        appVersion,
+      });
+      assert.equal(branding.displayName, "Arcwright Code");
+      assert.equal(branding.baseName, "Arcwright Code");
+      assert.equal(branding.stageLabel, appVersion.includes("nightly") ? "Nightly" : "Alpha");
+    },
+  );
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(

@@ -11056,13 +11056,13 @@ export default function ChatView(props: ChatViewProps) {
               data-chat-composer-overlay="true"
               className={
                 isDraftHeroState
-                  ? "pointer-events-none absolute inset-0 z-20 flex items-center"
+                  ? "pointer-events-none absolute inset-0 z-20 flex items-start overflow-y-auto"
                   : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
               }
             >
               <div
                 ref={draftHeroTransition.transitionGroupRef}
-                className="chat-composer-lane w-full"
+                className={cn("chat-composer-lane w-full", isDraftHeroState && "my-auto py-4")}
               >
                 <div
                   data-chat-composer-stack="true"
@@ -11073,7 +11073,10 @@ export default function ChatView(props: ChatViewProps) {
                   )}
                 >
                   {isDraftHeroState ? (
-                    <div className="absolute inset-x-0 bottom-full">
+                    // Keep the headline in the measured stack. Auto margins center
+                    // the whole draft when it fits and collapse to zero when the
+                    // keyboard leaves too little room, so the stack can scroll.
+                    <div>
                       <div
                         className="pb-4 group-has-data-[composer-shoulder-tab]/composer-stack:pb-0"
                         style={

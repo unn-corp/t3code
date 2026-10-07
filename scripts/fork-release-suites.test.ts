@@ -61,6 +61,7 @@ describe("the required suites", () => {
     }
     assert.include(SUITES["desktop-updater"].required.join(" "), "updateMachine");
     assert.include(SUITES["native-android"].required.join(" "), "InstallTransactionTest");
+    assert.include(SUITES["native-android"].required.join(" "), "InstallerSessionsTest");
     assert.include(SUITES["native-android"].required.join(" "), "UpdateReconcilerTest");
     assert.include(SUITES["client-updates"].required.join(" "), "UpdateRecoveryDialog.test.tsx");
     assert.include(SUITES["client-updates"].required.join(" "), "browserRecordingUpload.test.ts");

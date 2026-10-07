@@ -228,7 +228,7 @@ import {
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
-import { startSidebarRepositoryDrag } from "./Sidebar.repositoryDrag";
+import { sidebarRepositoryTargetAt, startSidebarRepositoryDrag } from "./Sidebar.repositoryDrag";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
   ThreadPullRequestBadgeControl,
@@ -712,7 +712,7 @@ function SidebarRepositoryGroupHeader(props: {
           aria-description="Drag to reorder, or press Arrow Up or Arrow Down."
           aria-label={`Reorder ${props.group.displayName} repository group`}
           data-testid="sidebar-repository-group-handle"
-          className="ml-1 flex size-5 shrink-0 touch-none cursor-grab items-center justify-center rounded-sm text-sidebar-muted-foreground/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring active:cursor-grabbing"
+          className="ml-1 flex size-8 shrink-0 touch-none cursor-grab items-center justify-center rounded-sm text-sidebar-muted-foreground/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring active:cursor-grabbing sm:size-5 [@media(pointer:coarse)]:size-11"
         >
           <GripVerticalIcon aria-hidden className="size-3.5" />
         </button>
@@ -5803,24 +5803,18 @@ export default function Sidebar() {
                                       if (!event.isPrimary || event.button !== 0) return;
                                       event.stopPropagation();
                                       projectGroupDragSensorRef.current?.cancel();
-                                      const document = event.currentTarget.ownerDocument;
+                                      const list = threadListRef.current;
+                                      const viewport = list?.closest<HTMLElement>(
+                                        '[data-slot="scroll-area-viewport"]',
+                                      );
                                       projectGroupDragSensorRef.current =
                                         startSidebarRepositoryDrag(event.nativeEvent, {
                                           sourceKey: group.projectKey,
-                                          scrollElement:
-                                            threadListRef.current?.closest<HTMLElement>(
-                                              '[data-slot="scroll-area-viewport"]',
-                                            ),
-                                          targetAt: (point) => {
-                                            const node = document
-                                              .elementFromPoint(point.x, point.y)
-                                              ?.closest<HTMLElement>(
-                                                "[data-repository-group-drop-key]",
-                                              );
-                                            return node && threadListRef.current?.contains(node)
-                                              ? (node.dataset.repositoryGroupDropKey ?? null)
-                                              : null;
-                                          },
+                                          scrollElement: viewport,
+                                          targetAt: (point) =>
+                                            list && viewport
+                                              ? sidebarRepositoryTargetAt(list, viewport, point)
+                                              : null,
                                           onStart: () =>
                                             setDraggingProjectGroupKey(group.projectKey),
                                           onTarget: setDropProjectGroupKey,

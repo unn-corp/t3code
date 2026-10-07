@@ -18,6 +18,11 @@ own the wordmark and AC lightning mark; [the asset guide](../../assets/README.md
 regeneration and verification. Header images, launchers, splash screens, notifications, and
 widgets must use these shared outputs. Keep installed package IDs, signing identities, URL
 schemes, legacy data folders, and recovery artifact names compatible when changing display names.
+Installed Android, Windows and Linux application names are exactly **Arcwright Code**. Channel
+and Arcwright build identity belong in About and App updates. Development desktops retain the
+`(Dev)` label. Windows keeps its previous channel-specific executable filename so already
+recorded updater/recovery handoffs still relaunch it; NSIS shortcuts and uninstall metadata use
+the clean product name. Do not change those executable paths without a handoff migration.
 
 ## Android client
 
@@ -100,12 +105,19 @@ Sidebar behavior is shared by [Sidebar.tsx](../../apps/web/src/components/Sideba
 and [GlanceRail.tsx](../../apps/web/src/components/GlanceRail.tsx).
 Grouped repository grips use
 [Sidebar.repositoryDrag.ts](../../apps/web/src/components/Sidebar.repositoryDrag.ts) and the
-shared pointer lifecycle. Drop destinations include each group's heading and active conversation
-rows; touch and keyboard reordering persist through the existing local project-order store.
+shared pointer lifecycle. Drop destinations include each group's heading, active conversation
+rows and adjacent viewport padding; touch grips are larger without changing the sidebar width.
+Touch and keyboard reordering persist through the existing local project-order store.
 The legacy sidebar retains its dnd-kit project sorting. Keep repository destinations distinct
 from thread state drops, and cancel a pending gesture when search replaces the list or a window
 resizes. [Repository gesture tests](../../apps/web/src/components/Sidebar.repositoryDrag.test.ts)
 cover physical members moving together, release positions, clicks, and interrupted gestures.
+The empty-draft headline in [ChatView.tsx](../../apps/web/src/components/ChatView.tsx) participates
+in layout with the composer: the whole stack centers when it fits and scrolls below the header
+when the keyboard reduces available height. Fixed header controls share the safe-area top inset
+with the flow header; breadcrumb space must reserve the full control cluster. Verify long
+project/thread names, short keyboard-sized viewports, and the mobile sidebar wordmark alongside
+the existing cover/unfolded resize checks.
 [OpenWhisprVoiceInput.tsx](../../apps/web/src/components/chat/OpenWhisprVoiceInput.tsx)
 uses the shared client-operation guard; its [interaction tests](../../apps/web/src/components/chat/OpenWhisprVoiceInput.test.tsx)
 cover denied admission, cancelled permission acquisition, and pending transcription.

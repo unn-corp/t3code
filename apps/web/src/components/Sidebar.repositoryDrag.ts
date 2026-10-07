@@ -1,5 +1,46 @@
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 
+/** Padding belongs to the repository beside it. Hit-testing only descendants
+ * made a release a few pixels beside a row silently discard an otherwise valid drag. */
+export function sidebarRepositoryTargetAt(
+  list: HTMLElement,
+  viewport: HTMLElement,
+  point: { x: number; y: number },
+): string | null {
+  const bounds = viewport.getBoundingClientRect();
+  if (
+    point.x < bounds.left ||
+    point.x >= bounds.right ||
+    point.y < bounds.top ||
+    point.y >= bounds.bottom
+  )
+    return null;
+  const hit = list.ownerDocument.elementFromPoint(point.x, point.y);
+  if (!hit || !viewport.contains(hit)) return null;
+  const direct = hit.closest<HTMLElement>("[data-repository-group-drop-key]");
+  if (direct && list.contains(direct)) return direct.dataset.repositoryGroupDropKey ?? null;
+  // Only the vertical extent of the repository rows accepts padding drops.
+  // Search, utility controls, the settled shelf and other overlays stay outside.
+  let nearest: HTMLElement | null = null;
+  let distance = Infinity;
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (const row of list.querySelectorAll<HTMLElement>("[data-repository-group-drop-key]")) {
+    const rect = row.getBoundingClientRect();
+    if (rect.height === 0) continue;
+    top = Math.min(top, rect.top);
+    bottom = Math.max(bottom, rect.bottom);
+    const offset = Math.max(rect.top - point.y, point.y - rect.bottom, 0);
+    if (offset < distance) {
+      nearest = row;
+      distance = offset;
+    }
+  }
+  return point.y >= top && point.y < bottom
+    ? (nearest?.dataset.repositoryGroupDropKey ?? null)
+    : null;
+}
+
 /** Repository grips use the same release/cancellation rules as thread grips, including touch.
  * Resolve the release point again: a last pointermove may never reach the document. */
 export function startSidebarRepositoryDrag(

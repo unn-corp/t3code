@@ -182,6 +182,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       pwa("ApkVerifierTest"),
       pwa("InstallGuardTest"),
       pwa("InstallIntentsTest"),
+      pwa("InstallerSessionsTest"),
       pwa("InstallTransactionTest"),
       pwa("RecoveryCacheTest"),
       pwa("ReleaseClientTest"),

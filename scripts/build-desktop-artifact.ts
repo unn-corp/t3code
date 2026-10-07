@@ -2653,10 +2653,9 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
-export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "Arcwright Code (Nightly)"
-    : (desktopPackageJson.productName ?? "Arcwright Code");
+export function resolveDesktopProductName(_version: string): string {
+  // Channels belong in About/update state, not the installed application's name.
+  return desktopPackageJson.productName ?? "Arcwright Code";
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2824,9 +2823,19 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // Keep blockmap-based differential downloads enabled while changing the
     // installed file topology. The optimization is in the payload shape, not
     // in trading update bandwidth for install speed.
-    buildConfig.nsis = { differentialPackage: true };
+    buildConfig.nsis = {
+      differentialPackage: true,
+      shortcutName: "Arcwright Code",
+      uninstallDisplayName: "Arcwright Code",
+    };
     const winConfig: Record<string, unknown> = {
       target: [target],
+      // Existing updater handoffs relaunch this path after NSIS replacement.
+      // Rename visible product metadata/shortcuts without breaking those plans.
+      executableName:
+        resolveDesktopUpdateChannel(version) === "nightly"
+          ? "Arcwright Code (Nightly)"
+          : "Arcwright Code (Alpha)",
       icon: "icon.ico",
       // Resource editing applies the product metadata and icon independently
       // of code signing. Disabling it for local unsigned builds leaves the

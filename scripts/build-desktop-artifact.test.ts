@@ -290,12 +290,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
   });
 
-  it("switches desktop packaging product names to nightly for nightly builds", () => {
-    assert.equal(resolveDesktopProductName("0.0.17"), "Arcwright Code (Alpha)");
-    assert.equal(
-      resolveDesktopProductName("0.0.17-nightly.20260413.42"),
-      "Arcwright Code (Nightly)",
-    );
+  it("keeps the installed product name the same across release channels", () => {
+    assert.equal(resolveDesktopProductName("0.0.17"), "Arcwright Code");
+    assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Arcwright Code");
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
@@ -685,7 +682,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ...DESKTOP_EXTRA_RESOURCES,
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
-      assert.deepStrictEqual(win.nsis, { differentialPackage: true });
+      assert.deepStrictEqual(win.nsis, {
+        differentialPackage: true,
+        shortcutName: "Arcwright Code",
+        uninstallDisplayName: "Arcwright Code",
+      });
+      assert.equal(win.productName, "Arcwright Code");
+      assert.equal((win.win as Record<string, unknown>).executableName, "Arcwright Code (Alpha)");
       // The Claude SDK platform packages and .bin shims never ship.
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@cursor/sdk-*",
@@ -697,7 +700,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "**/*.map",
       ]);
       assert.deepStrictEqual(mac.dmg, {
-        title: "Arcwright Code (Alpha) 1.2.3 Installer",
+        title: "Arcwright Code 1.2.3 Installer",
         background: "dmg/dmg-background-latest.png",
         window: { width: 640, height: 432 },
         contents: [
