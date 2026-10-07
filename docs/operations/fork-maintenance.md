@@ -287,6 +287,11 @@ replacement can terminate any lifecycle write; moving the primary away before co
 file produces a false corruption hold. `UpdateStoreTest` verifies interrupted commits preserve the
 installer session and recovery pin. See [state and restart verification](./android-pwa.md#state-pins-and-restart-verification).
 
+The native recovery page can also discard explicitly confirmed orphaned Android installer
+sessions after backup recovery. `InstallerSessions` and `InstallerSessionsTest` own identity,
+ownership, inactivity, and stale-dialog checks; `UpdateEngine` revalidates before cancellation.
+This repair leaves the safety hold and update policy paused until the normal reboot/settings review.
+
 **Verification.** [forkMaintenanceAdmission.test.ts](../../packages/shared/src/forkMaintenanceAdmission.test.ts),
 [forkMaintenanceStore.test.ts](../../packages/shared/src/forkMaintenanceStore.test.ts), and
 [forkMaintenanceTransaction.test.ts](../../packages/shared/src/forkMaintenanceTransaction.test.ts) cover stale/unknown

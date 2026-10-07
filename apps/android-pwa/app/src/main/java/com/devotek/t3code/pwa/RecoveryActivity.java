@@ -97,6 +97,12 @@ public final class RecoveryActivity extends Activity {
         }
         if (!status.isNull("lastError")) content.addView(text(status.optString("lastError"), 14, false));
         UpdateState state = engine.snapshot();
+        if (state != null && state.recoveredFromCorruption && state.pending == null) {
+            content.addView(text("Restart the phone and review App updates. If an older installer lost its confirmation, discard its unfinished sessions here first. This leaves updates paused.", 15, true));
+            if (android.os.Build.VERSION.SDK_INT >= 30)
+                content.addView(button("Review unfinished Android updates", view -> confirmDiscardInstallations()));
+            else content.addView(text("Reviewing unfinished installer sessions requires Android 11 or newer. Finish the existing Android installer before reviewing App updates.", 14, false));
+        }
         if (state != null && state.lastOutcome != null && !"completed".equals(state.lastOutcome.result))
             content.addView(text("Last installation " + state.lastOutcome.result + ": " + state.lastOutcome.message, 14, false));
         if (state != null && state.recoveryRequired())
@@ -148,6 +154,25 @@ public final class RecoveryActivity extends Activity {
         content.addView(text("If this phone cannot open Arcwright Code or this screen cannot install, use the signed recovery APK from the release: "
             + "verify its SHA-256 and certificate, then install it over the current app with adb or Android's package installer. "
             + "Never uninstall: that removes saved connections. The maintainer runbook has the exact steps.", 13, false));
+    }
+
+    private void confirmDiscardInstallations() {
+        try {
+            List<InstallerSessions.Session> sessions = engine.unfinishedInstallerSessions();
+            if (sessions.isEmpty()) {
+                Toast.makeText(this, "No unfinished Android updates. Review App updates after restarting the phone.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            String refusal = InstallerSessions.refusal(sessions, sessions, getPackageName(), engine.snapshot().pending != null);
+            if (refusal != null) throw new UpdateEngine.UpdateException(refusal);
+            StringBuilder message = new StringBuilder("Discard these unfinished Arcwright Code installations? This cancels their Android prompts and leaves updates paused. Saved connections and app data stay in place.");
+            for (InstallerSessions.Session session : sessions)
+                message.append("\nSession ").append(session.id).append(" · ").append(Iso8601.format(session.createdAt));
+            new AlertDialog.Builder(this).setTitle("Discard unfinished updates?").setMessage(message.toString())
+                .setNegativeButton("Keep", null)
+                .setPositiveButton("Discard", (dialog, which) -> background("Unfinished updates discarded. Review App updates.", () -> engine.discardUnfinishedInstallations(sessions)))
+                .show();
+        } catch (UpdateEngine.UpdateException error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
     }
 
     private void confirmInstall(UpdateState.Recovery build) {

@@ -252,11 +252,42 @@ final class UpdateEngine {
                 }
                 if (automatic != null) state.automatic = automatic;
                 // Review is admitted only after a proven reboot and no surviving installer sessions.
+                if (state.recoveredFromCorruption) state.lastError = null;
                 state.recoveredFromCorruption = false;
             });
         } catch (IOException error) { throw new UpdateException("Could not save update settings."); }
         available = null;
         changed();
+    }
+
+    List<InstallerSessions.Session> unfinishedInstallerSessions() throws UpdateException {
+        if (Build.VERSION.SDK_INT < 30) throw new UpdateException("Reviewing unfinished sessions requires Android 11 or newer. Finish the existing Android installer before retrying.");
+        try {
+            List<InstallerSessions.Session> result = new ArrayList<>();
+            for (PackageInstaller.SessionInfo info : app.getPackageManager().getPackageInstaller().getMySessions())
+                result.add(new InstallerSessions.Session(info.getSessionId(), info.getCreatedMillis(),
+                    info.getInstallerPackageName(), info.getAppPackageName(), info.isActive()));
+            return result;
+        } catch (RuntimeException error) { throw new UpdateException("Could not verify Android's unfinished installations."); }
+    }
+
+    /** Local recovery confirmation cancels only orphaned sessions; it never clears the corruption hold. */
+    void discardUnfinishedInstallations(List<InstallerSessions.Session> confirmed) throws UpdateException {
+        if (store == null || !store.snapshot().recoveredFromCorruption) throw new UpdateException("Updater state does not need this repair.");
+        if (!busy.tryLock()) throw new UpdateException("Wait for the updater to finish checking.");
+        try {
+            UpdateState state = store.snapshot();
+            if (!operations.active().isEmpty()) throw new UpdateException("Finish phone browser, upload, and native work first.");
+            if (!state.recoveredFromCorruption) throw new UpdateException("Updater state no longer needs this repair.");
+            String refusal = InstallerSessions.refusal(confirmed, unfinishedInstallerSessions(), app.getPackageName(), state.pending != null);
+            if (refusal != null) throw new UpdateException(refusal);
+            PackageInstaller installer = app.getPackageManager().getPackageInstaller();
+            for (InstallerSessions.Session session : confirmed) installer.abandonSession(session.id);
+            if (!installer.getMySessions().isEmpty()) throw new UpdateException("Android still has an unfinished installation. Review again.");
+            // Only configure(), after a proven reboot and no sessions, can remove the safety hold.
+            store.mutate(next -> { next.automatic = false; next.lastError = "Unfinished Android updates discarded. Review App updates after restarting the phone."; });
+        } catch (IOException | RuntimeException error) { throw new UpdateException("Could not discard the unfinished Android updates. The safety hold remains.");
+        } finally { busy.unlock(); changed(); }
     }
 
     void pinCurrent() throws UpdateException {

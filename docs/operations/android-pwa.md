@@ -404,6 +404,18 @@ automatic installation off and blocks manual installation too. An older backup c
 installer or external-dialog hold. Review is accepted only after a proven phone reboot and no
 surviving PackageInstaller sessions; changing an unrelated preference cannot waive that check. The format is shared with recovery builds, so fields may be added but never reinterpreted.
 
+If an older backup lost an install confirmation but Android retained its session, open native
+recovery on Android 11 or newer and choose **Review unfinished Android updates**. Earlier versions
+cannot bind creation times through the public installer API and must finish their existing Android
+installer before reviewing settings. The confirmation lists exact session
+IDs and creation times. **Discard** rechecks the entire list, app ownership, target package,
+inactivity, and absence of a recorded pending install before abandoning those sessions. Changed,
+active, unknown, or other-package sessions are refused. This action does not clear the safety hold
+or enable updates: finish the phone restart and explicitly review App updates afterward. The
+`InstallerSessions` policy and its unit tests own this boundary; `UpdateEngine` calls Android's
+app-owned installer API and `RecoveryActivity` owns the confirmation. ADB cannot abandon an
+app-owned session on devices that enforce installer UID ownership.
+
 The pending installation and, for a rollback, the pin are persisted **before** `PackageInstaller`
 is called; if that write fails, nothing is installed. The process is normally killed during the
 install, so the next process proves what happened from the store: the running package must match
