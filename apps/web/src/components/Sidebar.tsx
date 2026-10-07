@@ -95,7 +95,6 @@ import {
   useReducer,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -229,6 +228,7 @@ import {
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
+import { startSidebarRepositoryDrag } from "./Sidebar.repositoryDrag";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
   ThreadPullRequestBadgeControl,
@@ -666,10 +666,8 @@ function SidebarRepositoryGroupHeader(props: {
   activeCount: number;
   collapsed: boolean;
   onToggle: () => void;
-  onDragStart: (event: ReactDragEvent<HTMLButtonElement>) => void;
-  onDragOver: (event: ReactDragEvent<HTMLDivElement>) => void;
-  onDrop: (event: ReactDragEvent<HTMLDivElement>) => void;
-  onDragEnd: () => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   isDragging: boolean;
   isDropTarget: boolean;
 }) {
@@ -677,11 +675,10 @@ function SidebarRepositoryGroupHeader(props: {
     <li
       data-testid="sidebar-repository-group"
       data-repository-key={props.group.projectKey}
+      data-repository-group-drop-key={props.group.projectKey}
       className="list-none"
     >
       <div
-        onDragOver={props.onDragOver}
-        onDrop={props.onDrop}
         className={cn(
           "group/repository flex w-full min-w-0 items-center rounded-md pb-1 pl-2.5 pr-1 pt-2 text-2xs font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
           props.isDragging && "opacity-50",
@@ -710,12 +707,12 @@ function SidebarRepositoryGroupHeader(props: {
         </button>
         <button
           type="button"
-          draggable
-          onDragStart={props.onDragStart}
-          onDragEnd={props.onDragEnd}
+          onPointerDown={props.onPointerDown}
+          onKeyDown={props.onKeyDown}
+          aria-description="Drag to reorder, or press Arrow Up or Arrow Down."
           aria-label={`Reorder ${props.group.displayName} repository group`}
           data-testid="sidebar-repository-group-handle"
-          className="ml-1 flex size-5 shrink-0 cursor-grab items-center justify-center rounded-sm text-sidebar-muted-foreground/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring active:cursor-grabbing"
+          className="ml-1 flex size-5 shrink-0 touch-none cursor-grab items-center justify-center rounded-sm text-sidebar-muted-foreground/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring active:cursor-grabbing"
         >
           <GripVerticalIcon aria-hidden className="size-3.5" />
         </button>
@@ -1179,6 +1176,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // sortable bag applied to the row root so the whole row drags (the
   // pointer sensor's distance constraint keeps plain clicks working).
   sortable?: SortableThreadRowBag | undefined;
+  repositoryGroupDropKey?: string | undefined;
   dropVerb: SidebarDropVerb | null;
   // While dragging, the pin marker stays only for a pinned thread still over
   // the pinned section. Any other position shows the verb badge instead, and
@@ -1830,6 +1828,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       <li
         data-thread-item={threadKey}
         {...sortableRootProps}
+        data-repository-group-drop-key={props.repositoryGroupDropKey}
         {...(fileDropHandlers ?? {})}
         className={cn(
           // Matches the h-9 row so unrendered rows never shift the list when they paint.
@@ -1997,6 +1996,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     <li
       data-thread-item={threadKey}
       {...sortableRootProps}
+      data-repository-group-drop-key={props.repositoryGroupDropKey}
       {...(fileDropHandlers ?? {})}
       className={cn(
         // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
@@ -3134,7 +3134,11 @@ export default function Sidebar() {
     () => visibleActiveGroupThreads(activeThreadGroups, collapsedProjectGroups),
     [activeThreadGroups, collapsedProjectGroups],
   );
-  const draggingProjectGroupKeyRef = useRef<string | null>(null);
+  const projectGroupDragSensorRef = useRef<SidebarPointerSensor | null>(null);
+  useEffect(() => {
+    if (isSearchingThreads) projectGroupDragSensorRef.current?.cancel();
+    return () => projectGroupDragSensorRef.current?.cancel();
+  }, [isSearchingThreads]);
   const [draggingProjectGroupKey, setDraggingProjectGroupKey] = useState<string | null>(null);
   const [dropProjectGroupKey, setDropProjectGroupKey] = useState<string | null>(null);
 
@@ -4292,16 +4296,13 @@ export default function Sidebar() {
   );
 
   const clearProjectGroupDrag = useCallback(() => {
-    draggingProjectGroupKeyRef.current = null;
+    projectGroupDragSensorRef.current = null;
     setDraggingProjectGroupKey(null);
     setDropProjectGroupKey(null);
   }, []);
-  const handleProjectGroupDrop = useCallback(
-    (targetProjectKey: string, event: ReactDragEvent<HTMLDivElement>) => {
-      const sourceProjectKey = draggingProjectGroupKeyRef.current;
-      if (sourceProjectKey === null || sourceProjectKey === targetProjectKey) return;
-      event.preventDefault();
-      clearProjectGroupDrag();
+  const reorderProjectGroup = useCallback(
+    (sourceProjectKey: string, targetProjectKey: string) => {
+      if (sourceProjectKey === targetProjectKey) return;
       const source = projectGroups.find((group) => group.projectKey === sourceProjectKey);
       const target = projectGroups.find((group) => group.projectKey === targetProjectKey);
       if (!source || !target) return;
@@ -4323,7 +4324,6 @@ export default function Sidebar() {
       }
     },
     [
-      clearProjectGroupDrag,
       orderedProjects,
       projectGroups,
       reorderProjects,
@@ -5641,6 +5641,13 @@ export default function Sidebar() {
                                   })
                                 : null
                             }
+                            repositoryGroupDropKey={
+                              section === "active"
+                                ? projectGroupByPhysicalRef.get(
+                                    `${thread.environmentId}:${thread.projectId}`,
+                                  )?.projectKey
+                                : undefined
+                            }
                             // All sections: a woken thread can classify straight
                             // into the settled tail (PR merged while snoozed), and
                             // the wake signal must survive the trip. Still-snoozed
@@ -5792,27 +5799,51 @@ export default function Sidebar() {
                                     activeCount={groupThreads.length}
                                     collapsed={collapsedProjectGroups.has(group.projectKey)}
                                     onToggle={() => toggleProjectGroup(group.projectKey)}
-                                    onDragStart={(event) => {
-                                      event.dataTransfer.effectAllowed = "move";
-                                      event.dataTransfer.setData(
-                                        "text/plain",
-                                        "t3-repository-group",
-                                      );
-                                      draggingProjectGroupKeyRef.current = group.projectKey;
-                                      setDraggingProjectGroupKey(group.projectKey);
-                                      setDropProjectGroupKey(null);
+                                    onPointerDown={(event) => {
+                                      if (!event.isPrimary || event.button !== 0) return;
+                                      event.stopPropagation();
+                                      projectGroupDragSensorRef.current?.cancel();
+                                      const document = event.currentTarget.ownerDocument;
+                                      projectGroupDragSensorRef.current =
+                                        startSidebarRepositoryDrag(event.nativeEvent, {
+                                          sourceKey: group.projectKey,
+                                          scrollElement:
+                                            threadListRef.current?.closest<HTMLElement>(
+                                              '[data-slot="scroll-area-viewport"]',
+                                            ),
+                                          targetAt: (point) => {
+                                            const node = document
+                                              .elementFromPoint(point.x, point.y)
+                                              ?.closest<HTMLElement>(
+                                                "[data-repository-group-drop-key]",
+                                              );
+                                            return node && threadListRef.current?.contains(node)
+                                              ? (node.dataset.repositoryGroupDropKey ?? null)
+                                              : null;
+                                          },
+                                          onStart: () =>
+                                            setDraggingProjectGroupKey(group.projectKey),
+                                          onTarget: setDropProjectGroupKey,
+                                          onDrop: reorderProjectGroup,
+                                          onFinish: clearProjectGroupDrag,
+                                        });
                                     }}
-                                    onDragOver={(event) => {
-                                      const source = draggingProjectGroupKeyRef.current;
-                                      if (source === null || source === group.projectKey) return;
+                                    onKeyDown={(event) => {
+                                      if (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+                                        return;
                                       event.preventDefault();
-                                      event.dataTransfer.dropEffect = "move";
-                                      setDropProjectGroupKey(group.projectKey);
+                                      event.stopPropagation();
+                                      const groups = activeThreadGroups.flatMap(({ group }) =>
+                                        group ? [group] : [],
+                                      );
+                                      const index = groups.findIndex(
+                                        (candidate) => candidate.projectKey === group.projectKey,
+                                      );
+                                      const target =
+                                        groups[index + (event.key === "ArrowUp" ? -1 : 1)];
+                                      if (target)
+                                        reorderProjectGroup(group.projectKey, target.projectKey);
                                     }}
-                                    onDrop={(event) =>
-                                      handleProjectGroupDrop(group.projectKey, event)
-                                    }
-                                    onDragEnd={clearProjectGroupDrag}
                                     isDragging={draggingProjectGroupKey === group.projectKey}
                                     isDropTarget={dropProjectGroupKey === group.projectKey}
                                   />,

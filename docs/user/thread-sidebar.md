@@ -45,6 +45,19 @@ and worktree while you stay in the new thread composer. This requires a Git proj
 
 ## Pin and reorder threads
 
+### Reorder repository groups
+
+In the grouped sidebar on web, desktop, and the fork Android app, drag a repository's
+grip onto another repository's heading or one of its conversation rows. Touch dragging
+works from the same grip. With the grip focused, press `Arrow Up` or `Arrow Down` to
+move the group. Press `Escape` to cancel a drag.
+
+Reordering switches repository sorting to manual and saves the order on this client.
+Repositories shared by several connected environments move together. Thread ordering
+is separate and continues to be saved by the server.
+
+### Arrange threads
+
 Pin a thread from its menu to keep it above your active work.
 
 On web and desktop, unpinning, settling, snoozing, and archiving a thread each show

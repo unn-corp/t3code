@@ -98,6 +98,14 @@ transcription; cancelling releases that hold only after the pending operation en
 Sidebar behavior is shared by [Sidebar.tsx](../../apps/web/src/components/Sidebar.tsx),
 [LegacySidebar.tsx](../../apps/web/src/components/LegacySidebar.tsx), their pointer/drag helpers,
 and [GlanceRail.tsx](../../apps/web/src/components/GlanceRail.tsx).
+Grouped repository grips use
+[Sidebar.repositoryDrag.ts](../../apps/web/src/components/Sidebar.repositoryDrag.ts) and the
+shared pointer lifecycle. Drop destinations include each group's heading and active conversation
+rows; touch and keyboard reordering persist through the existing local project-order store.
+The legacy sidebar retains its dnd-kit project sorting. Keep repository destinations distinct
+from thread state drops, and cancel a pending gesture when search replaces the list or a window
+resizes. [Repository gesture tests](../../apps/web/src/components/Sidebar.repositoryDrag.test.ts)
+cover physical members moving together, release positions, clicks, and interrupted gestures.
 [OpenWhisprVoiceInput.tsx](../../apps/web/src/components/chat/OpenWhisprVoiceInput.tsx)
 uses the shared client-operation guard; its [interaction tests](../../apps/web/src/components/chat/OpenWhisprVoiceInput.test.tsx)
 cover denied admission, cancelled permission acquisition, and pending transcription.
