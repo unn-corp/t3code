@@ -23,6 +23,7 @@ import { recoveryProofEnvironment } from "./forkRecoveryProofEnvironment.ts";
 const run = NodeUtil.promisify(NodeChildProcess.execFile);
 export const RECOVERY_HELPER_PROTOCOL_LINE = "recovery-helper-protocol=1";
 const RETAINED_VERSIONS = 2;
+const PROMOTION_RETRY_DELAYS_MS = [100, 200, 400, 800, 1_600, 2_000, 2_000, 2_000] as const;
 
 const Command = Schema.Struct({
   protocol: Schema.Literal(1),
@@ -66,8 +67,9 @@ export async function promoteRecoveryDirectory(staging: string, destination: str
       // Windows can briefly deny moving the runtime just executed by the staging self-test.
       // Retry the same atomic rename, without deleting data or changing ACLs to force it.
       if (!isCode(cause, "EBUSY") && !isCode(cause, "EPERM")) throw cause;
-      if (attempt === 4) throw cause;
-      await NodeTimersPromises.setTimeout(50 * (attempt + 1));
+      const delay = PROMOTION_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) throw cause;
+      await NodeTimersPromises.setTimeout(delay);
     }
   }
 }

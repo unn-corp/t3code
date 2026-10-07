@@ -6,6 +6,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 // oxlint-disable-next-line t3code/namespace-node-imports -- fault injection needs the mutable builtin default, not its immutable ESM namespace
 import MutableFSP from "node:fs/promises";
+// oxlint-disable-next-line t3code/namespace-node-imports -- retry fault injection needs the mutable builtin default
+import MutableTimersPromises from "node:timers/promises";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
@@ -108,7 +110,7 @@ const serve = (helper: Uint8Array, node: Uint8Array) => async (name: string) =>
   name.endsWith(".mjs") ? helper : node;
 
 describe("recovery helper cache", () => {
-  it("promotes proven staging after transient runtime sharing locks", async () => {
+  it("promotes proven staging after transient locks outlast the old half-second retry window", async () => {
     const dir = await cacheDir();
     const staging = NodePath.join(dir, ".staging-test");
     const target = NodePath.join(dir, "1.0.2");
@@ -116,14 +118,19 @@ describe("recovery helper cache", () => {
     await NodeFSP.writeFile(NodePath.join(staging, "runtime"), "verified bytes");
     const rename = NodeFSP.rename;
     let attempts = 0;
+    const delays: number[] = [];
+    vi.spyOn(MutableTimersPromises, "setTimeout").mockImplementation(async (delay) => {
+      delays.push(Number(delay));
+    });
     vi.spyOn(MutableFSP, "rename").mockImplementation(async (from, to) => {
-      if (from === staging && ++attempts < 3)
+      if (from === staging && ++attempts < 8)
         throw Object.assign(new Error("Runtime is briefly locked"), { code: "EPERM" });
       return rename(from, to);
     });
     NodeModule.syncBuiltinESMExports();
     await promoteRecoveryDirectory(staging, target);
-    expect(attempts).toBe(3);
+    expect(attempts).toBe(8);
+    expect(delays).toEqual([100, 200, 400, 800, 1_600, 2_000, 2_000]);
     expect(await NodeFSP.readFile(NodePath.join(target, "runtime"), "utf8")).toBe("verified bytes");
     await expect(NodeFSP.stat(staging)).rejects.toMatchObject({ code: "ENOENT" });
   });
@@ -135,10 +142,15 @@ describe("recovery helper cache", () => {
     await NodeFSP.mkdir(staging, { recursive: true });
     await NodeFSP.writeFile(NodePath.join(dir, "current.json"), "previous recovery");
     const locked = Object.assign(new Error("Runtime remains locked"), { code: "EPERM" });
+    const delays: number[] = [];
+    vi.spyOn(MutableTimersPromises, "setTimeout").mockImplementation(async (delay) => {
+      delays.push(Number(delay));
+    });
     const rename = vi.spyOn(MutableFSP, "rename").mockRejectedValue(locked);
     NodeModule.syncBuiltinESMExports();
     await expect(promoteRecoveryDirectory(staging, target)).rejects.toBe(locked);
-    expect(rename).toHaveBeenCalledTimes(5);
+    expect(rename).toHaveBeenCalledTimes(9);
+    expect(delays).toEqual([100, 200, 400, 800, 1_600, 2_000, 2_000, 2_000]);
     expect(await NodeFSP.readFile(NodePath.join(dir, "current.json"), "utf8")).toBe(
       "previous recovery",
     );
@@ -174,6 +186,50 @@ describe("recovery helper cache", () => {
     });
     expect(locks).toBe(-1);
     expect(await recoveryReady(dir)).toBe(true);
+  });
+
+  it("leaves the prior recovery command current when staging promotion remains locked", async () => {
+    const dir = await cacheDir();
+    const node = await realNode();
+    const priorHelper = helperScript();
+    const prior = await installRecoveryHelper({
+      cacheDir: dir,
+      manifest: manifest("1.0.1", priorHelper, node),
+      platform: HOST_PLATFORM,
+      fetchAsset: serve(priorHelper, node),
+    });
+    const nextHelper = helperScript();
+    const locked = Object.assign(new Error("Runtime remains locked"), { code: "EPERM" });
+    const delays: number[] = [];
+    const rename = NodeFSP.rename;
+    const target = NodePath.join(dir, "1.0.2");
+    let attempts = 0;
+    vi.spyOn(MutableTimersPromises, "setTimeout").mockImplementation(async (delay) => {
+      delays.push(Number(delay));
+    });
+    vi.spyOn(MutableFSP, "rename").mockImplementation(async (from, to) => {
+      if (to === target && String(from).includes(`${NodePath.sep}.staging-`)) {
+        attempts++;
+        throw locked;
+      }
+      return rename(from, to);
+    });
+    NodeModule.syncBuiltinESMExports();
+
+    await expect(
+      installRecoveryHelper({
+        cacheDir: dir,
+        manifest: manifest("1.0.2", nextHelper, node),
+        platform: HOST_PLATFORM,
+        fetchAsset: serve(nextHelper, node),
+      }),
+    ).rejects.toBe(locked);
+
+    expect(attempts).toBe(9);
+    expect(delays).toEqual([100, 200, 400, 800, 1_600, 2_000, 2_000, 2_000]);
+    expect(await readRecoveryCommand(dir)).toEqual(prior);
+    expect(await recoveryReady(dir)).toBe(true);
+    expect((await NodeFSP.readdir(dir)).filter((name) => name.startsWith(".staging"))).toEqual([]);
   });
 
   it("keeps the original proof failure when staging cleanup stays locked, without admitting the build", async () => {

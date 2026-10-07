@@ -335,9 +335,11 @@ ships its matching Node runtime: `t3-recovery-node-linux-x64` or
 manifest. The installer retains its platform's pair in owner-only recovery storage outside the
 application directory and records the absolute runtime/helper paths in its recovery command.
 Recovery does not require a system Node install or a working Electron installation.
-Brief Windows executable locks during cache cleanup receive bounded retries. Persistent locks
-still block staging; if the proof also failed, diagnostics retain both failures with the proof
-as the cause. Cleanup must never replace the original failure or make an unproven helper current.
+Brief Windows executable locks during cache cleanup and staging promotion receive bounded retries.
+Promotion uses exponential backoff capped at two seconds per retry, for about nine seconds total;
+persistent locks still block staging and leave the previous recovery command current. If proof also
+failed, diagnostics retain both failures with the proof as the cause. Cleanup must never replace the
+original failure or make an unproven helper current.
 
 The builder copies the Node 24-or-newer x64 runtime from the matching platform runner, bundles
 all helper dependencies, and runs `--self-test` with that copied runtime from a neutral directory.

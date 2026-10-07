@@ -136,6 +136,8 @@ background delivery without deleting the app's saved environments.
 
 ## Browser on the phone
 
+Open a thread → right panel → **Add panel surface → Browser**.
+
 The **Browser** panel renders sites in a separate phone WebView. Agents can navigate, inspect,
 click, type, scroll, and capture that tab while Arcwright Code is open. Keep the panel visible for
 screenshots. The phone browser has its own cookies and adapts to the current display size,
