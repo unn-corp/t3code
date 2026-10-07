@@ -52,7 +52,7 @@ public final class AgentNotificationService extends Service {
     private android.app.Notification ongoing(String text) {
         PendingIntent stop = PendingIntent.getService(this, 0, new Intent(this, AgentNotificationService.class).setAction(STOP), PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, NativeNotifications.CONNECTION)
-            .setSmallIcon(R.drawable.notification_icon).setContentTitle("T3 background alerts").setContentText(text)
+            .setSmallIcon(R.drawable.notification_icon).setContentTitle("Arcwright Code background alerts").setContentText(text)
             .setOnlyAlertOnce(true).setOngoing(true).setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setContentIntent(NativeNotifications.tap(this, "/settings"))
             .addAction(0, "Stop background alerts", stop).build();

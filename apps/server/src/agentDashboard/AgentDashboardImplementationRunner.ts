@@ -49,11 +49,11 @@ export const buildAgentDashboardImplementationNudgePrompt = (input: {
   const progressContext = (() => {
     switch (input.reason) {
       case "stalled":
-        return "T3 has not observed meaningful progress from this work session recently.";
+        return "Arcwright Code has not observed meaningful progress from this work session recently.";
       case "missing-pull-request":
-        return "Your latest turn finished, but T3 could not find a pull request for this worktree branch.";
+        return "Your latest turn finished, but Arcwright Code could not find a pull request for this worktree branch.";
       case "pull-request-not-draft":
-        return "T3 found the pull request for this worktree branch, but it is ready for review instead of draft.";
+        return "Arcwright Code found the pull request for this worktree branch, but it is ready for review instead of draft.";
       default: {
         const exhaustive: never = input.reason;
         throw new Error(`Unhandled implementation nudge reason: ${String(exhaustive)}`);
@@ -214,7 +214,7 @@ const make = Effect.gen(function* () {
       (cause) =>
         new AgentDashboardImplementationRunnerError({
           operation: "generate identifier",
-          message: "T3 could not generate an implementation session identifier.",
+          message: "Arcwright Code could not generate an implementation session identifier.",
           cause,
         }),
     ),
@@ -248,7 +248,7 @@ const make = Effect.gen(function* () {
             (cause) =>
               new AgentDashboardImplementationRunnerError({
                 operation: "resolve default branch",
-                message: `T3 could not identify the default branch for ${input.project.title}.`,
+                message: `Arcwright Code could not identify the default branch for ${input.project.title}.`,
                 cause,
               }),
           ),
@@ -261,7 +261,7 @@ const make = Effect.gen(function* () {
               (cause) =>
                 new AgentDashboardImplementationRunnerError({
                   operation: "resolve default branch",
-                  message: `T3 could not inspect the current branch for ${input.project.title}.`,
+                  message: `Arcwright Code could not inspect the current branch for ${input.project.title}.`,
                   cause,
                 }),
             ),
@@ -274,7 +274,7 @@ const make = Effect.gen(function* () {
       if (!baseBranch) {
         return yield* new AgentDashboardImplementationRunnerError({
           operation: "resolve default branch",
-          message: `T3 could not identify the default branch for ${input.project.title}.`,
+          message: `Arcwright Code could not identify the default branch for ${input.project.title}.`,
         });
       }
       const trackedRemoteName = yield* git
@@ -287,7 +287,7 @@ const make = Effect.gen(function* () {
             (cause) =>
               new AgentDashboardImplementationRunnerError({
                 operation: "resolve default branch remote",
-                message: `T3 could not identify the tracked remote for ${input.project.title}.`,
+                message: `Arcwright Code could not identify the tracked remote for ${input.project.title}.`,
                 cause,
               }),
           ),
@@ -307,7 +307,8 @@ const make = Effect.gen(function* () {
           (cause) =>
             new AgentDashboardImplementationRunnerError({
               operation: "claim finding",
-              message: "T3 could not reserve the finding for continuous implementation.",
+              message:
+                "Arcwright Code could not reserve the finding for continuous implementation.",
               cause,
             }),
         ),

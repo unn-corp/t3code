@@ -14,7 +14,7 @@ export async function transcribeWithOpenWhispr(
 ): Promise<string> {
   signal?.throwIfAborted();
   const prepared = environmentId === null ? null : readPreparedConnection(environmentId);
-  if (!prepared) throw new Error("Connect to the T3 server before dictating.");
+  if (!prepared) throw new Error("Connect to the Arcwright Code server before dictating.");
   const bytes = new Uint8Array(await audio.arrayBuffer());
   signal?.throwIfAborted();
   const atom = connectionAtomRuntime.atom(

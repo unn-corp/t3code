@@ -1,6 +1,6 @@
-# T3 Code docs
+# Arcwright Code docs
 
-## Using T3 Code
+## Using Arcwright Code
 
 See [Fork maintenance and feature ownership](./operations/fork-maintenance.md) when changing retained fork behavior.
 The [fork release runbook](./operations/fork-releases.md) owns nightly/stable publishing and recovery;
@@ -12,7 +12,7 @@ store/Expo app in `apps/mobile` has a separate build and notification system.
 
 - [Fork Android app: installation, Tailscale, and everyday use](./user/android-fork.md)
 
-- [Install T3 Code](./user/install.md)
+- [Install Arcwright Code](./user/install.md)
 - [Messages and context](./user/composer.md)
 - [Working with threads](./user/thread-sidebar.md)
 - [Permission modes](./user/permission-modes.md)
@@ -41,12 +41,12 @@ Upstream Expo/React Native mobile app: [apps/mobile/README.md](../apps/mobile/RE
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
 - [Running in the background](./user/background-service.md)
-- [Updating T3 Code](./user/updating.md)
+- [Updating Arcwright Code](./user/updating.md)
 - Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md)
 
 ---
 
-## Working on T3 Code
+## Working on Arcwright Code
 
 Start with the [development runbook](./operations/development.md) and
 [contribution policy](../CONTRIBUTING.md).

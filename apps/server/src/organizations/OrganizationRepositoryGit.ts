@@ -259,7 +259,7 @@ export async function commitAndPush(directory: string, env: NodeJS.ProcessEnv, m
     "git",
     [
       "-c",
-      "user.name=T3 Code",
+      "user.name=Arcwright Code",
       "-c",
       "user.email=t3-code@users.noreply.github.com",
       "commit",

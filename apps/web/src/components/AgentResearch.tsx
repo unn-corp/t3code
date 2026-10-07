@@ -366,7 +366,7 @@ export function AgentResearch() {
         showFailure(
           record.id,
           "Connect an environment first",
-          "This finding needs a T3 Code environment to start an agent session.",
+          "This finding needs an Arcwright Code environment to start an agent session.",
         );
         return;
       }
@@ -381,7 +381,7 @@ export function AgentResearch() {
       if (!project) {
         showFailure(
           record.id,
-          "Add this repository to T3 Code first",
+          "Add this repository to Arcwright Code first",
           `No project is configured for ${record.workspaceRoot || record.repositoryName}.`,
         );
         return;
@@ -403,7 +403,7 @@ export function AgentResearch() {
         showFailure(
           record.id,
           "Primary branch not found",
-          "T3 could not identify this repository's default branch. Refresh repository data and try again.",
+          "Arcwright Code could not identify this repository's default branch. Refresh repository data and try again.",
         );
         return;
       }
@@ -705,7 +705,7 @@ export function AgentResearch() {
                         <TerminalIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                         <div>
                           <p className="text-xs text-muted-foreground">Agent work</p>
-                          <p className="mt-1 text-xs">Linked to an active T3 Code thread</p>
+                          <p className="mt-1 text-xs">Linked to an active Arcwright Code thread</p>
                         </div>
                       </div>
                     ) : null}
@@ -856,7 +856,7 @@ export function AgentResearch() {
             </EmptyTitle>
             <EmptyDescription>
               {records.length === 0
-                ? "Run a research collection in T3 Code and its findings will appear here."
+                ? "Run a research collection in Arcwright Code and its findings will appear here."
                 : stageFilter === "actionable"
                   ? "Imported research remains available in the Legacy archive. New findings appear here after they are tied to a repository."
                   : stageFilter === "archive"

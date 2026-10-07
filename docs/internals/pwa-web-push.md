@@ -3,7 +3,7 @@
 > For maintainers. This document describes the two relay delivery paths. The
 > installed-PWA path is intentionally **not** a T3 Connect feature.
 
-T3 Code has two distinct ways to deliver Web Push. They share the relay's
+Arcwright Code has two distinct ways to deliver Web Push. They share the relay's
 delivery queue and the `relay_web_push_subscriptions` table, but their identity,
 authorization, and lifecycle rules are deliberately different. Do not collapse
 them into one path or make an installed PWA require a Clerk account.

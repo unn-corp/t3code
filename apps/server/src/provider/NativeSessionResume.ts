@@ -147,7 +147,7 @@ export const resumeNativeSession = (input: typeof CodexSessionsResumeInput.Type)
             if (owners.some((owner) => owner.thread_id !== threadId))
               return yield* new NativeSessionResumeError({
                 message:
-                  "This native session is already attached to another T3 thread. Open that thread to continue it.",
+                  "This native session is already attached to another Arcwright Code thread. Open that thread to continue it.",
               });
             const snapshot = yield* instance.snapshot.getSnapshot;
             const sameInstance =

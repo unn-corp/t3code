@@ -220,7 +220,7 @@ export function buildHeaderEmbed(input: HeaderInput): DiscordEmbed {
       { name: "Runtime", value: formatRuntimeMode(input.runtimeMode), inline: true },
       { name: "Status", value: input.status, inline: true },
     ],
-    footer: { text: "T3 Code" },
+    footer: { text: "Arcwright Code" },
     timestamp: input.createdAt,
   };
 }

@@ -19,7 +19,7 @@ describe("dashboard needs-you queue", () => {
           environmentId: "environment-1",
           threadId: "thread-1",
           title: "Fix the dashboard",
-          projectName: "T3 Code",
+          projectName: "Arcwright Code",
           state: "error",
           updatedAt: "2026-08-27T12:00:00.000Z",
         },
@@ -41,7 +41,7 @@ describe("dashboard needs-you queue", () => {
       kind: "thread",
       state: "needs-input",
       title: "Fix the dashboard",
-      projectName: "T3 Code",
+      projectName: "Arcwright Code",
       reason: "Approval is required before continuing",
       actionLabel: "Respond",
     });
@@ -86,7 +86,7 @@ describe("dashboard needs-you queue", () => {
         {
           id: "finding-critical",
           projectId: "project-1",
-          projectName: "T3 Code",
+          projectName: "Arcwright Code",
           title: "Critical regression",
           severity: "critical",
           status: "open",

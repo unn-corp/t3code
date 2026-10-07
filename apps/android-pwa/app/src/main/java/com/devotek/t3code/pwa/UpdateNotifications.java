@@ -78,17 +78,17 @@ final class UpdateNotifications {
         return null;
     }
 
-    /** Opens Android's confirmation directly while T3 Code is on screen; otherwise asks through a notification. */
+    /** Opens Android's confirmation directly while Arcwright Code is on screen; otherwise asks through a notification. */
     static void confirm(Context context, PendingIntent confirmation) {
         if (MainActivity.visible || RecoveryActivity.visible) {
             try { openConfirmation(context, confirmation); return; } catch (PendingIntent.CanceledException | RuntimeException ignored) { /* Fall back to the notification. */ }
         }
-        post(context, CONFIRM, "Confirm the T3 Code update", "Tap to let Android finish installing the verified update.",
+        post(context, CONFIRM, "Confirm the Arcwright Code update", "Tap to let Android finish installing the verified update.",
             confirmation);
     }
 
     static void openConfirmation(Context context, PendingIntent confirmation) throws PendingIntent.CanceledException {
-        if (!MainActivity.visible && !RecoveryActivity.visible) throw new IllegalStateException("T3 Code must be visible to open Android confirmation.");
+        if (!MainActivity.visible && !RecoveryActivity.visible) throw new IllegalStateException("Arcwright Code must be visible to open Android confirmation.");
         ActivityOptions options = ActivityOptions.makeBasic();
         // Sender opt-in is required from Android 14. Android 16 can additionally require
         // current visibility at send time, closing the lifecycle race after our own check.
@@ -104,7 +104,7 @@ final class UpdateNotifications {
     }
 
     static void failure(Context context) {
-        post(context, FAILURE, "T3 Code update did not install", "Open recovery to check the installed build or install a recovery build.",
+        post(context, FAILURE, "Arcwright Code update did not install", "Open recovery to check the installed build or install a recovery build.",
             PendingIntent.getActivity(context, FAILURE, RecoveryActivity.intent(context), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
     }
 

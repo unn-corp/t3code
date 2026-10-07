@@ -184,7 +184,7 @@ it.effect("refuses to steal a native session owned by another T3 conversation", 
     });
     yield* sql`INSERT INTO orchestration_v2_projection_provider_threads VALUES(${id}, 'other-thread')`;
     const error = yield* Effect.flip(resumeNativeSession(input));
-    expect(error.message).toContain("already attached to another T3 thread");
+    expect(error.message).toContain("already attached to another Arcwright Code thread");
     expect(f.writes).toHaveLength(0);
   }).pipe(Effect.provide(f.layer));
 });

@@ -990,7 +990,7 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Server URL",
-        description: "Leave blank to let T3 Code spawn the server when needed.",
+        description: "Leave blank to let Arcwright Code spawn the server when needed.",
         providerSettingsForm: {
           placeholder: "http://127.0.0.1:4096",
           clearWhenEmpty: "omit",
@@ -1440,6 +1440,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "newWorktreesStartFromOrigin",
   "worktreeSubmodules",
   "defaultAutoPull",
+  "automaticGitStatus",
+  "automaticCheckpoints",
   "defaultProjectScripts",
   "enableAgentBrowserAccess",
   "enableAgentDeviceAccess",
@@ -1471,6 +1473,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: ForwardCompatibleOptional(WorktreeSubmodules),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
+  automaticGitStatus: Schema.optionalKey(Schema.Boolean),
+  automaticCheckpoints: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
@@ -1539,6 +1543,8 @@ export type RunLimits = typeof RunLimits.Type;
 export const DEFAULT_RUN_LIMITS: RunLimits = { maxDurationMinutes: null, maxOutputTokens: null };
 
 export const ServerSettings = Schema.Struct({
+  automaticGitStatus: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  automaticCheckpoints: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   runLimits: RunLimits.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUN_LIMITS))),
   threadRunLimits: Schema.Record(ThreadId, Schema.NullOr(RunLimits)).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1995,6 +2001,8 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
+  automaticGitStatus: Schema.optionalKey(Schema.Boolean),
+  automaticCheckpoints: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   projectScriptOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Array(ProjectScript))),

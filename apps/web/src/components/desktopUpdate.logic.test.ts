@@ -257,7 +257,7 @@ describe("desktop update UI helpers", () => {
         availableVersion: "1.1.0",
         downloadedVersion: "1.1.1",
       }),
-    ).toContain("Install update 1.1.1 and restart T3 Code?");
+    ).toContain("Install update 1.1.1 and restart Arcwright Code?");
   });
 
   it("falls back to generic install confirmation copy when no version is available", () => {
@@ -266,7 +266,7 @@ describe("desktop update UI helpers", () => {
         availableVersion: null,
         downloadedVersion: null,
       }),
-    ).toContain("Install update and restart T3 Code?");
+    ).toContain("Install update and restart Arcwright Code?");
   });
 
   it("keeps the same install confirmation copy across desktop platforms", () => {
@@ -276,7 +276,7 @@ describe("desktop update UI helpers", () => {
         downloadedVersion: "1.1.0",
       }),
     ).toBe(
-      "Install update 1.1.0 and restart T3 Code?\n\nInstallation waits until all registered agents and background work on this device are stopped. Updates never stop agents.",
+      "Install update 1.1.0 and restart Arcwright Code?\n\nInstallation waits until all registered agents and background work on this device are stopped. Updates never stop agents.",
     );
   });
 });

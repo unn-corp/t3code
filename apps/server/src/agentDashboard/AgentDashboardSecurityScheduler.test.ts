@@ -104,7 +104,7 @@ describe("AgentDashboardSecurityScheduler", () => {
     expect(recovered).toMatchObject({
       lastStatus: "failed",
       nextRunAt: "2026-08-11T00:05:00.000Z",
-      lastError: "T3 restarted before the local security scan completed.",
+      lastError: "Arcwright Code restarted before the local security scan completed.",
       intervalMinutes: 120,
       runCount: 4,
     });

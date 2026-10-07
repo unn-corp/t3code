@@ -74,7 +74,7 @@ it("gives stale findings a structured completion path without repository deliver
   expect(prompt).toContain("T3_FINDING_OUTCOME: stale");
   expect(prompt).toContain("T3_FINDING_REASON: <one-line reason>");
   expect(prompt).toContain("do not commit, push, or open a pull request");
-  expect(prompt).toContain("T3 will dismiss the finding automatically");
+  expect(prompt).toContain("Arcwright Code will dismiss the finding automatically");
 });
 
 it("instructs automated implementations to extend a coherently related pull request", () => {

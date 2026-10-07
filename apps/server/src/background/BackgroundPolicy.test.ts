@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSettings from "../serverSettings.ts";
 import * as BackgroundPolicy from "./BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./HostPowerMonitor.ts";
+import * as StoragePressure from "./StoragePressure.ts";
 
 const TEST_NOW = DateTime.makeUnsafe("2026-05-13T00:00:00.000Z");
 
@@ -78,6 +79,38 @@ function makeLayer(
 }
 
 describe("BackgroundPolicy", () => {
+  it.effect("pauses optional Git work under storage pressure without dropping client demand", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      yield* policy.reportClientActivity(
+        AuthSessionId.make("session-1"),
+        RpcClientId.make(1),
+        makeReport(),
+      );
+      const snapshot = yield* policy.snapshot;
+      assert.equal(snapshot.shouldRunOpportunisticWork, false);
+      assert.equal(snapshot.storagePressure?.reason, "io-pressure");
+      assert.equal(yield* policy.hasDemand({ type: "vcs-status", cwd: "/repo" }), true);
+      assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), false);
+    }).pipe(
+      Effect.provide(
+        makeLayer(nominalHostPower).pipe(
+          Layer.provide(
+            Layer.succeed(StoragePressure.StoragePressure, {
+              read: Effect.succeed({
+                ioSomeAvg10: 54,
+                ioFullAvg10: 10,
+                availableBytes: 100_000_000_000,
+                totalBytes: 1_000_000_000_000,
+                reason: "io-pressure" as const,
+                sampledAt: TEST_NOW,
+              }),
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
   it.effect("records foreground scoped client demand", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;

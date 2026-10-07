@@ -141,7 +141,7 @@ const normalizeSchedule = (value: unknown, now = Date.now()): AgentDashboardRevi
     lastCompletedAt: isoOrNull(raw.lastCompletedAt),
     lastStatus: recoveredFromRestart ? "failed" : lastStatus,
     lastError: recoveredFromRestart
-      ? "T3 restarted before the findings portfolio cycle completed."
+      ? "Arcwright Code restarted before the findings portfolio cycle completed."
       : stringValue(raw.lastError),
     lastTarget: stringValue(raw.lastTarget),
     heartbeatAt: isoOrNull(raw.heartbeatAt) ?? isoAt(now),
@@ -310,7 +310,7 @@ const make = Effect.gen(function* () {
       catch: (cause) =>
         new AgentDashboardReviewSchedulerError({
           operation: "read schedule",
-          message: "Failed to initialize the T3 findings portfolio schedule.",
+          message: "Failed to initialize the Arcwright Code findings portfolio schedule.",
           cause,
         }),
     }),
@@ -322,7 +322,7 @@ const make = Effect.gen(function* () {
       catch: (cause) =>
         new AgentDashboardReviewSchedulerError({
           operation: "write schedule",
-          message: "Failed to persist the T3 findings portfolio schedule.",
+          message: "Failed to persist the Arcwright Code findings portfolio schedule.",
           cause,
         }),
     });
@@ -512,7 +512,7 @@ const make = Effect.gen(function* () {
               }
             }).pipe(
               Effect.catchCause((cause) =>
-                Effect.logWarning("T3 schedule follow-up for review job failed", {
+                Effect.logWarning("Arcwright Code schedule follow-up for review job failed", {
                   runId: enqueued.id,
                   cause,
                 }),
@@ -564,7 +564,7 @@ const make = Effect.gen(function* () {
     yield* runScheduled;
   }).pipe(
     Effect.catchCause((cause) =>
-      Effect.logError("T3 scheduled findings portfolio cycle failed", { cause }).pipe(
+      Effect.logError("Arcwright Code scheduled findings portfolio cycle failed", { cause }).pipe(
         Effect.asVoid,
       ),
     ),

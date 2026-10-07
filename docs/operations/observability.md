@@ -1,8 +1,8 @@
 # Observability
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Arcwright Code? See [docs/user](../user/).
 
-T3 Code has one server-side observability model:
+Arcwright Code has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
@@ -86,6 +86,28 @@ Metrics are not written to a local file.
 - current definitions: `apps/server/src/observability/Metrics.ts`
 
 If OTLP is not configured, metrics still exist in-process, but you will not have a local artifact to inspect.
+
+### SQLite and storage stalls
+
+The native SQLite client records `t3_sqlite_operation_duration` for open, close, prepare, and execute
+calls, including failed calls and synchronous lock/storage waits, excluding time queued for a
+connection or Effect scheduling. Calls taking at least 250 ms emit a `sqlite.operation.slow` warning span, limited to
+one per connection per minute. The added diagnostics contain operation names, durations and
+outcomes, without query text, parameters, or database paths. Existing SQL spans keep their own
+attributes.
+
+Compare these warning spans with `server.eventLoop.stall`, Git spans, and host I/O pressure around
+the same time. SQLite timings establish how long the call blocked; they do not distinguish a busy
+lock, disk latency, or expensive query on their own. The driver still uses synchronous SQLite, so
+worker isolation should be evaluated from these measurements rather than assumed to be required.
+
+The background policy's `storagePressure` sample reports Linux I/O PSI and free space on the
+database filesystem. Samples are cached for five seconds; probes have a 250 ms wait limit. Missing
+telemetry stays unknown. Automatic Git status work and opportunistic background work pause when
+I/O `some avg10` reaches 20%, `full avg10` reaches 10%, or available space falls below 2 GiB or 5%.
+A one-minute cooldown after the last constrained sample avoids a burst of work on recovery.
+PSI measures time stalled on I/O, not disk utilization. Free-space readings do not establish healthy
+Btrfs metadata allocation, and these safeguards cannot throttle Git workers owned by another app.
 
 ### Event Loop Stalls
 
@@ -216,7 +238,7 @@ macOS app bundle example:
 T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
 T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
-"/Applications/T3 Code.app/Contents/MacOS/T3 Code"
+"/Applications/Arcwright Code.app/Contents/MacOS/Arcwright Code"
 ```
 
 Direct binary example:
@@ -649,7 +671,7 @@ pid="$(jq .pid "${T3CODE_HOME:-$HOME/.t3}/userdata/server-runtime.json")"
 ps -p "$pid" -o command=
 ```
 
-If `ps` shows the T3 Code server, send the signal:
+If `ps` shows the Arcwright Code server, send the signal:
 
 ```bash
 kill -USR2 "$pid"

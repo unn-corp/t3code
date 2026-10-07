@@ -457,7 +457,7 @@ export function GlanceRail() {
               </Link>
               <Link className={cn(DOCK_ITEM_CLASS, "cursor-pointer")} to="/settings">
                 <DockItemContent
-                  detail="Customize T3 Code"
+                  detail="Customize Arcwright Code"
                   icon={<Settings2Icon aria-hidden="true" className="size-5" />}
                   title="Settings"
                 />

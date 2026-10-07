@@ -68,7 +68,7 @@ final class NativeNotifications {
             case "plan_ready" -> "Plan ready";
             default -> "Input or approval needed";
         };
-        String body = prefs.optBoolean("showProjectAndThreadNames", true) ? thread.optString("title", "T3 Code") : "Open T3 Code to view the thread.";
+        String body = prefs.optBoolean("showProjectAndThreadNames", true) ? thread.optString("title", "Arcwright Code") : "Open Arcwright Code to view the thread.";
         String threadId = thread.getString("id");
         String route = "/" + android.net.Uri.encode(environmentId) + "/" + android.net.Uri.encode(threadId);
         post(context, environmentId + ":" + threadId, title, body, route, prefs.optBoolean("playSound", true));
@@ -160,7 +160,7 @@ final class NativeNotifications {
                     store(activity).edit().putBoolean("background", payload.getBoolean("enabled")).apply(); refresh(); break;
                 case "test":
                     if (!allowed(activity)) throw new JSONException("Allow notifications in Android settings first.");
-                    post(activity, "t3-notification-preview", "T3 Code", "Android notifications are working on this phone.", "/settings", true); break;
+                    post(activity, "t3-notification-preview", "Arcwright Code", "Android notifications are working on this phone.", "/settings", true); break;
                 case "settings":
                     if (Build.VERSION.SDK_INT >= 26) activity.openSettings(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, activity.getPackageName()));
                     else activity.openSettings(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + activity.getPackageName())));

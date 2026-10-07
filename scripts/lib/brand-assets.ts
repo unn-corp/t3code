@@ -1,4 +1,12 @@
 export const BRAND_ASSET_PATHS = {
+  mainLogoMarkPng: "assets/arcwright/mark.png",
+  mainLogoWordmarkPng: "assets/arcwright/wordmark.png",
+  mainLogoMarkOnLightPng: "assets/arcwright/mark-on-light.png",
+  mainLogoMarkOnDarkPng: "assets/arcwright/mark-on-dark.png",
+  mainLogoSquareOnDarkPng: "assets/arcwright/mark-square-on-dark.png",
+  mainLogoWordmarkOnLightPng: "assets/arcwright/wordmark-on-light.png",
+  mainLogoWordmarkOnDarkPng: "assets/arcwright/wordmark-on-dark.png",
+
   developmentIconComposerProject: "assets/dev/app-icon.icon",
   developmentIosIconPng: "assets/dev/blueprint-ios-1024.png",
   developmentUniversalIconPng: "assets/dev/blueprint-universal-1024.png",

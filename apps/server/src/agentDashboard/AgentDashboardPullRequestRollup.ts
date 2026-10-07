@@ -142,7 +142,7 @@ const normalizeSchedule = (value: unknown, now = Date.now()): PullRequestRollupS
     lastCompletedAt: isoOrNull(raw.lastCompletedAt),
     lastStatus: wasRunning ? "failed" : lastStatus,
     lastError: wasRunning
-      ? "T3 restarted before the pull request rollup scan completed."
+      ? "Arcwright Code restarted before the pull request rollup scan completed."
       : typeof raw.lastError === "string" && raw.lastError.trim().length > 0
         ? raw.lastError.trim()
         : null,
@@ -328,7 +328,7 @@ const make = Effect.gen(function* () {
       catch: (cause) =>
         new AgentDashboardPullRequestRollupError({
           operation: "read schedule",
-          message: "T3 could not initialize the pull request rollup schedule.",
+          message: "Arcwright Code could not initialize the pull request rollup schedule.",
           cause,
         }),
     }),
@@ -340,7 +340,7 @@ const make = Effect.gen(function* () {
       catch: (cause) =>
         new AgentDashboardPullRequestRollupError({
           operation: "write schedule",
-          message: "T3 could not persist the pull request rollup schedule.",
+          message: "Arcwright Code could not persist the pull request rollup schedule.",
           cause,
         }),
     });
@@ -361,7 +361,7 @@ const make = Effect.gen(function* () {
       (cause) =>
         new AgentDashboardPullRequestRollupError({
           operation: "generate identifier",
-          message: "T3 could not generate a pull request rollup identifier.",
+          message: "Arcwright Code could not generate a pull request rollup identifier.",
           cause,
         }),
     ),
@@ -385,7 +385,7 @@ const make = Effect.gen(function* () {
         (cause) =>
           new AgentDashboardPullRequestRollupError({
             operation: "persist run",
-            message: "T3 could not persist the pull request rollup run.",
+            message: "Arcwright Code could not persist the pull request rollup run.",
             cause,
           }),
       ),
@@ -403,7 +403,7 @@ const make = Effect.gen(function* () {
       if (!baseBranch) {
         return yield* new AgentDashboardPullRequestRollupError({
           operation: "resolve base branch",
-          message: `T3 could not identify the rollup target branch for ${project.title}.`,
+          message: `Arcwright Code could not identify the rollup target branch for ${project.title}.`,
         });
       }
       return { baseBranch, refs };
@@ -413,7 +413,7 @@ const make = Effect.gen(function* () {
           ? cause
           : new AgentDashboardPullRequestRollupError({
               operation: "resolve base branch",
-              message: `T3 could not identify the rollup target branch for ${project.title}.`,
+              message: `Arcwright Code could not identify the rollup target branch for ${project.title}.`,
               cause,
             }),
       ),
@@ -562,7 +562,7 @@ const make = Effect.gen(function* () {
         });
         return yield* new AgentDashboardPullRequestRollupError({
           operation: "launch agent",
-          message: `T3 could not start the pull request rollup for ${input.project.title}.`,
+          message: `Arcwright Code could not start the pull request rollup for ${input.project.title}.`,
           cause: launchResult.failure,
         });
       }
@@ -670,7 +670,7 @@ const make = Effect.gen(function* () {
               ...input,
               status: "partial",
               error:
-                "The agent finished, but T3 could not verify the pre-release pull request. Open the work session to inspect the result.",
+                "The agent finished, but Arcwright Code could not verify the pre-release pull request. Open the work session to inspect the result.",
             });
             return;
           }
@@ -728,7 +728,7 @@ const make = Effect.gen(function* () {
               ...input,
               status: "failed",
               error:
-                "T3 could not continue monitoring the pull request rollup. Open the generated work session to inspect it.",
+                "Arcwright Code could not continue monitoring the pull request rollup. Open the generated work session to inspect it.",
             }),
           ),
           Effect.catchCause((persistCause) =>
@@ -756,7 +756,7 @@ const make = Effect.gen(function* () {
           ...run,
           status: "failed",
           error:
-            "T3 restarted before it could verify the pull request rollup. Open the generated work session to inspect it.",
+            "Arcwright Code restarted before it could verify the pull request rollup. Open the generated work session to inspect it.",
           updatedAt: recoveredAt,
           completedAt: recoveredAt,
         }),
@@ -772,7 +772,7 @@ const make = Effect.gen(function* () {
         (cause) =>
           new AgentDashboardPullRequestRollupError({
             operation: "read settings",
-            message: "T3 could not read the pull request rollup settings.",
+            message: "Arcwright Code could not read the pull request rollup settings.",
             cause,
           }),
       ),
@@ -841,7 +841,7 @@ const make = Effect.gen(function* () {
                 catch: (cause) =>
                   new AgentDashboardPullRequestRollupError({
                     operation: "inspect repository path",
-                    message: `T3 could not inspect the repository path for ${project.title}.`,
+                    message: `Arcwright Code could not inspect the repository path for ${project.title}.`,
                     cause,
                   }),
               });

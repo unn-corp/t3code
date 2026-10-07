@@ -37,6 +37,8 @@ import {
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import * as VcsProcess from "./VcsProcess.ts";
+import * as ProcessRunner from "../processRunner.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
 
@@ -204,8 +206,84 @@ it.effect("bounds Git bursts across drivers without timing out queued commands",
   }).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect(
+  "shares the heavy Git limit between driver and checkpoint process paths, including unlimited commands",
+  () =>
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      const starts = yield* Queue.unbounded<string>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.acquireRelease(
+          Queue.offer(starts, "driver").pipe(
+            Effect.as(
+              ChildProcessSpawner.makeHandle({
+                ...makeSuccessfulHandle("ok"),
+                exitCode: Deferred.await(release).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              }),
+            ),
+          ),
+          () => Effect.void,
+        ),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const first = yield* driver
+        .execute({ operation: "test.sharedBudget", cwd: "/first", args: ["diff"], timeoutMs: null })
+        .pipe(Effect.forkChild);
+      const second = yield* driver
+        .execute({
+          operation: "test.sharedBudget",
+          cwd: "/second",
+          args: ["push"],
+          timeoutMs: 60_000,
+        })
+        .pipe(Effect.forkChild);
+      yield* Queue.take(starts);
+      yield* Queue.take(starts);
+      const process = yield* VcsProcess.make.pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            Queue.offer(starts, input.args[0]!).pipe(
+              Effect.as({
+                stdout: "ok",
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              }),
+            ),
+        }),
+      );
+      const third = yield* process
+        .run({
+          operation: "test.checkpointBudget",
+          command: "git",
+          cwd: "/third",
+          args: ["add", "-A"],
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.equal(yield* Queue.size(starts), 0);
+      yield* process.run({
+        operation: "test.metadataBudget",
+        command: "git",
+        cwd: "/first",
+        args: ["rev-parse", "HEAD"],
+      });
+      assert.equal(yield* Queue.take(starts), "rev-parse");
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.joinAll([first, second]);
+      yield* Fiber.join(third);
+      assert.equal(yield* Queue.take(starts), "add");
+    }).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.effect.each([{ timeoutMs: null }, { timeoutMs: 30_001 }])(
-  "keeps all Git slots available with a pending command whose timeout is $timeoutMs",
+  "counts long Git commands toward the shared budget while metadata reads proceed ($timeoutMs)",
   ({ timeoutMs }) =>
     Effect.gen(function* () {
       const slowGate = yield* Deferred.make<void>();
@@ -238,14 +316,14 @@ it.effect.each([{ timeoutMs: null }, { timeoutMs: 30_001 }])(
       yield* Queue.take(starts);
       const burst = yield* Effect.all(
         Array.from({ length: 8 }, () =>
-          driver.execute({ operation: "test.fastGit", cwd: "/repo", args: ["status"] }),
+          driver.execute({ operation: "test.fastGit", cwd: "/repo", args: ["rev-parse", "HEAD"] }),
         ),
         { concurrency: "unbounded" },
       ).pipe(Effect.forkChild);
 
       yield* TestClock.adjust("0 seconds");
-      assert.equal(yield* Queue.size(starts), 8);
-      assert.equal(active, 9);
+      assert.equal(yield* Queue.size(starts), 7);
+      assert.equal(active, 8);
       yield* Deferred.succeed(fastGate, undefined);
       assert.equal((yield* Fiber.join(burst)).length, 8);
       assert.equal(active, 1);

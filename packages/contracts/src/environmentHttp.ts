@@ -592,7 +592,7 @@ export class OpenWhisprTranscriptionError extends Schema.TaggedError<OpenWhisprT
       case "invalid_response":
         return "OpenWhispr returned an invalid transcription response.";
       case "unavailable":
-        return "OpenWhispr is unavailable on the connected T3 server. Start its transcription service and try again.";
+        return "OpenWhispr is unavailable on the connected Arcwright Code server. Start its transcription service and try again.";
     }
   }
 }

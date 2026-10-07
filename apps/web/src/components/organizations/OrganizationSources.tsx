@@ -441,7 +441,7 @@ export function OrganizationSources({
                 accept selected GitHub issue or plain-text email relay payloads at{" "}
                 <code>/api/organizations/intake/relay</code>. The upstream relay must select
                 relevant events and authenticate to its provider; this does not connect a GitHub or
-                email account in T3.
+                email account in Arcwright Code.
               </p>
             ) : null}
           </div>

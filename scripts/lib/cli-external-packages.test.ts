@@ -273,7 +273,7 @@ var x = 1;
   });
 
   it("scans dependencies whose parent directories contain spaces", () => {
-    const dependencyRoot = "../../Code Bases/T3 fork/node_modules/.pnpm";
+    const dependencyRoot = "../../Code Bases/Arcwright Code fork/node_modules/.pnpm";
     const result = findInlinedExternalPackages(
       region(`${dependencyRoot}/effect@4.0.0/node_modules/effect/dist/index.js`) +
         region(

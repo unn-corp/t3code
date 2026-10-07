@@ -38,6 +38,7 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  RefreshCwIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import {
@@ -178,18 +179,19 @@ const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
 
 type RefreshVcsStatus = (target: {
   readonly environmentId: ScopedThreadRef["environmentId"];
-  readonly input: { readonly cwd: string };
+  readonly input: { readonly cwd: string; readonly automatic?: boolean };
 }) => Promise<unknown>;
 
 function requestVcsStatusRefresh(
   refresh: RefreshVcsStatus,
   environmentId: ScopedThreadRef["environmentId"] | null,
   cwd: string | null,
+  automatic = false,
 ): void {
   if (environmentId === null || cwd === null) {
     return;
   }
-  void refresh({ environmentId, input: { cwd } });
+  void refresh({ environmentId, input: { cwd, automatic } });
 }
 const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
 
@@ -1273,7 +1275,7 @@ export default function GitActionsControl({
       }
       refreshTimeout = window.setTimeout(() => {
         refreshTimeout = null;
-        requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+        requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd, true);
       }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
     };
     const handleVisibilityChange = () => {
@@ -1705,6 +1707,14 @@ export default function GitActionsControl({
           <MenuItemLabel>Publish repository...</MenuItemLabel>
         </MenuItem>
       ) : null}
+      <MenuItem
+        density={presentation === "menu" ? "touch" : "default"}
+        disabled={isGitActionRunning}
+        onClick={() => requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd)}
+      >
+        <RefreshCwIcon />
+        <MenuItemLabel>Refresh status</MenuItemLabel>
+      </MenuItem>
       {gitStatusForActions?.refName === null && (
         <p className="px-2 py-1.5 text-xs text-warning">
           Detached HEAD: create and check out a branch to enable push and pull request actions.
@@ -1718,6 +1728,14 @@ export default function GitActionsControl({
           <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
         )}
       {gitStatusError && <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError}</p>}
+      {gitStatusForActions?.automaticRefreshPaused && (
+        <p className="px-2 py-1.5 text-xs text-muted-foreground">
+          {gitStatusForActions.automaticRefreshPaused === "disabled"
+            ? "Automatic refresh is off."
+            : "Automatic refresh is paused while storage recovers."}{" "}
+          Last reported status shown. Use Refresh to update it.
+        </p>
+      )}
     </>
   );
 
@@ -1760,7 +1778,8 @@ export default function GitActionsControl({
             )}
             <MenuSub
               onOpenChange={(open) => {
-                if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+                if (open)
+                  requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd, true);
               }}
             >
               <MenuSubTrigger density="touch" disabled={isGitActionRunning}>
@@ -1892,7 +1911,7 @@ export default function GitActionsControl({
               <Menu
                 onOpenChange={(open) => {
                   if (open) {
-                    requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+                    requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd, true);
                   }
                 }}
               >

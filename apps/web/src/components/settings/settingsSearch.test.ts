@@ -45,6 +45,17 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it.each([
+    ["automatic git status", "automatic-git-status"],
+    ["automatic checkpoints", "automatic-checkpoints"],
+    ["file rollback", "automatic-checkpoints"],
+  ])("finds repository activity controls for %s", (query, id) => {
+    expect(
+      searchSettings(query).some(
+        (item) => item.id === id && item.to === "/settings/source-control",
+      ),
+    ).toBe(true);
+  });
   it.each(["send shortcut", "multiline", "new line"])("finds Send shortcut for %s", (query) => {
     expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
   });

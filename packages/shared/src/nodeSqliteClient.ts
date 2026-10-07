@@ -24,6 +24,7 @@ import * as Client from "effect/unstable/sql/SqlClient";
 import type { Connection } from "effect/unstable/sql/SqlConnection";
 import { SqlError, classifySqliteError } from "effect/unstable/sql/SqlError";
 import * as Statement from "effect/unstable/sql/Statement";
+import * as SqliteDiagnostics from "./nodeSqliteDiagnostics.ts";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
@@ -115,27 +116,30 @@ const make = Effect.fn("makeWithDatabase")(function* (
     : undefined;
 
   const makeConnection = Effect.gen(function* () {
+    const diagnose = SqliteDiagnostics.make();
     const scope = yield* Effect.scope;
-    const db = yield* Effect.try({
-      try: () =>
+    const db = yield* diagnose(
+      "open",
+      () =>
         new NodeSqlite.DatabaseSync(options.filename, {
           readOnly: options.readonly ?? false,
           allowExtension: options.allowExtension ?? false,
         }),
-      catch: (cause) =>
+      (cause) =>
         new SqlError({
           reason: classifyError(cause, "Failed to open database", "open"),
         }),
-    });
+    );
     yield* Scope.addFinalizer(
       scope,
-      Effect.try({
-        try: () => db.close(),
-        catch: (cause) =>
+      diagnose(
+        "close",
+        () => db.close(),
+        (cause) =>
           new SqlError({
             reason: classifyError(cause, "Failed to close database", "close"),
           }),
-      }).pipe(Effect.orDie),
+      ).pipe(Effect.orDie),
     );
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
@@ -150,13 +154,14 @@ const make = Effect.fn("makeWithDatabase")(function* (
     };
 
     const prepare = (sql: string) =>
-      Effect.try({
-        try: () => db.prepare(sql),
-        catch: (cause) =>
+      diagnose(
+        "prepare",
+        () => db.prepare(sql),
+        (cause) =>
           new SqlError({
             reason: classifyError(cause, "Failed to prepare statement", "prepare"),
           }),
-      });
+      );
 
     const prepareCache = yield* Cache.makeWith(prepare, {
       capacity: options.prepareCacheSize ?? 200,
@@ -170,22 +175,23 @@ const make = Effect.fn("makeWithDatabase")(function* (
       params: ReadonlyArray<unknown>,
       raw: boolean,
     ) =>
-      Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
-        try {
-          statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
-          if (hasRows(statement)) {
-            return Effect.succeed(statement.all(...(params as any)));
-          }
-          const result = statement.run(...(params as any));
-          return Effect.succeed(raw ? (result as unknown as ReadonlyArray<any>) : []);
-        } catch (cause) {
-          return Effect.fail(
+      Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) =>
+        diagnose(
+          "execute",
+          () => {
+            statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
+            if (hasRows(statement)) {
+              return statement.all(...(params as any));
+            }
+            const result = statement.run(...(params as any));
+            return raw ? (result as unknown as ReadonlyArray<any>) : [];
+          },
+          (cause) =>
             new SqlError({
               reason: classifyError(cause, "Failed to execute statement", "execute"),
             }),
-          );
-        }
-      });
+        ),
+      );
 
     const run = (sql: string, params: ReadonlyArray<unknown>, raw = false) =>
       Effect.flatMap(Cache.get(prepareCache, sql), (s) => runStatement(s, params, raw));
@@ -197,8 +203,9 @@ const make = Effect.fn("makeWithDatabase")(function* (
       Effect.acquireUseRelease(
         Effect.succeed(statement),
         (statement) =>
-          Effect.try({
-            try: () => {
+          diagnose(
+            "execute",
+            () => {
               if (hasRows(statement)) {
                 statement.setReturnArrays(true);
                 // Safe to cast to array after we've setReturnArrays(true)
@@ -209,11 +216,11 @@ const make = Effect.fn("makeWithDatabase")(function* (
               statement.run(...(params as any));
               return [];
             },
-            catch: (cause) =>
+            (cause) =>
               new SqlError({
                 reason: classifyError(cause, "Failed to execute statement", "execute"),
               }),
-          }),
+          ),
         (statement) =>
           Effect.try({
             try: () => {

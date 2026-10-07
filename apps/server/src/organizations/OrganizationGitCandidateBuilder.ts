@@ -73,9 +73,9 @@ function runGit(
         GIT_OPTIONAL_LOCKS: "0",
         GIT_TERMINAL_PROMPT: "0",
         GIT_INDEX_FILE: indexFile,
-        GIT_AUTHOR_NAME: "T3 Organization Candidate",
+        GIT_AUTHOR_NAME: "Arcwright Code Organization Candidate",
         GIT_AUTHOR_EMAIL: "organization-candidate@t3.invalid",
-        GIT_COMMITTER_NAME: "T3 Organization Candidate",
+        GIT_COMMITTER_NAME: "Arcwright Code Organization Candidate",
         GIT_COMMITTER_EMAIL: "organization-candidate@t3.invalid",
       },
     });
@@ -185,7 +185,7 @@ export function buildOrganizationGitCandidate(
         "-p",
         artifact.baseCommit,
         "-m",
-        "T3 Organization candidate",
+        "Arcwright Code Organization candidate",
       ]))
         .toString("ascii")
         .trim();

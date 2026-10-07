@@ -208,7 +208,7 @@ describe("drafting a candidate", () => {
     assert.equal(stored.prerelease, true);
     assert.equal(
       stored.name,
-      `T3 Code Arcwright build ${candidate.plan.version.split(".").at(-1)} · Nightly`,
+      `Arcwright Code Arcwright build ${candidate.plan.version.split(".").at(-1)} · Nightly`,
     );
     assert.include(
       stored.body,

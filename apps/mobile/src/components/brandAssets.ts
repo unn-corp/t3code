@@ -2,7 +2,7 @@ import Constants from "expo-constants";
 
 const appVariant = Constants.expoConfig?.extra?.appVariant;
 
-export const T3_CODE_BRAND_MARK_SOURCE =
+export const ARCWRIGHT_APP_ICON_SOURCE =
   appVariant === "development"
     ? require("../../../../assets/dev/blueprint-ios-1024.png")
     : appVariant === "preview"

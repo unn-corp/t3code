@@ -153,6 +153,7 @@ import {
   GitRunStackedActionInput,
   WorktreeStorageUsage,
   VcsStatusInput,
+  VcsRefreshStatusInput,
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "./git.ts";
@@ -2106,7 +2107,7 @@ const WsVcsWorktreeStorageUsageRpc = Rpc.make(WS_METHODS.vcsWorktreeStorageUsage
 });
 
 const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
-  payload: VcsStatusInput,
+  payload: VcsRefreshStatusInput,
   success: VcsStatusResult,
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });

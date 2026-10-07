@@ -362,8 +362,8 @@ class FakeDpkg implements DebTool {
   files = (name: string) =>
     this.installed.has(name)
       ? [
-          `/opt/T3 Code/resources/package-type`,
-          ...(this.withUpdateConfig ? [`/opt/T3 Code/resources/app-update.yml`] : []),
+          `/opt/Arcwright Code/resources/package-type`,
+          ...(this.withUpdateConfig ? [`/opt/Arcwright Code/resources/app-update.yml`] : []),
         ]
       : [];
   read = () => this.packageType;

@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as DateTime from "effect/DateTime";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
@@ -14,6 +15,60 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
+import * as StoragePressure from "../background/StoragePressure.ts";
+import * as WorkspaceGitPolicy from "../vcs/WorkspaceGitPolicy.ts";
+
+it.effect.each(["disabled", "io-pressure"] as const)(
+  "skips optional turn-end scans when %s",
+  (reason) => {
+    let workspaceRefreshes = 0;
+    const layer = RunFinalization.observerLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(WorkspaceEntries.WorkspaceEntries)({
+            refresh: () =>
+              Effect.sync(() => {
+                workspaceRefreshes++;
+              }),
+          }),
+          Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+            refreshLocalStatus: () => Effect.die("must not scan assets"),
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+          Layer.mock(PullRequestService.PullRequestService)({
+            refreshAfterTurn: () => Effect.void,
+          }),
+          Layer.succeed(WorkspaceGitPolicy.WorkspaceGitPolicy, {
+            read: () =>
+              Effect.succeed({
+                automaticGitStatus: reason !== "disabled",
+                automaticCheckpoints: true,
+              }),
+          }),
+          Layer.succeed(StoragePressure.StoragePressure, {
+            read: Effect.succeed({
+              ioSomeAvg10: 54,
+              ioFullAvg10: 10,
+              availableBytes: null,
+              totalBytes: null,
+              reason: reason === "io-pressure" ? reason : null,
+              sampledAt: DateTime.makeUnsafe(0),
+            }),
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const observer = yield* RunFinalization.RunFinalizationObserver;
+      yield* observer.refresh({
+        cwd: "/repo",
+        threadId: ThreadId.make("thread"),
+        runId: RunId.make("run"),
+      });
+      assert.equal(workspaceRefreshes, reason === "disabled" ? 1 : 0);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("refreshes workspace after checkpoint capture without reading history", () => {
   const threadId = ThreadId.make("thread_finalize");

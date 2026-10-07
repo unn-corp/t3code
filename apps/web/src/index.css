@@ -1281,7 +1281,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background-color: color-mix(in oklab, var(--primary) 45%, transparent);
   }
   :root {
-    /* Keep the original T3 Code artwork palettes as the defaults. Built-in
+    /* Keep the original Arcwright Code artwork palettes as the defaults. Built-in
        themes override them with their own pigments in the components layer. */
     --stage-art-top: oklch(0.782169 0.123386 240.226);
     --stage-art-mid: oklch(0.616111 0.195824 259.735);
@@ -3444,4 +3444,13 @@ code {
 
 @utility glance-rail-highlight-shadow {
   box-shadow: 0 0 12px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+/* The lettering follows appearance while the bolt keeps its brand blue. */
+html.dark .arcwright-mark {
+  content: url("../../../assets/arcwright/mark-on-dark.png");
+}
+
+html.dark .arcwright-wordmark {
+  content: url("../../../assets/arcwright/wordmark-on-dark.png");
 }

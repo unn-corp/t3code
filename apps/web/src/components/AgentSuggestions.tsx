@@ -718,7 +718,7 @@ export function AgentSuggestions() {
       if (!environmentId) {
         showStartFailure(
           "Connect an environment first",
-          "The suggestion needs a T3 Code environment to start a work session.",
+          "The suggestion needs an Arcwright Code environment to start a work session.",
         );
         return;
       }
@@ -741,7 +741,7 @@ export function AgentSuggestions() {
       );
       if (!project) {
         showStartFailure(
-          "Add this repository to T3 Code first",
+          "Add this repository to Arcwright Code first",
           `No project is configured for ${suggestion.repositoryPath || suggestion.projectName}.`,
         );
         return;
@@ -752,7 +752,7 @@ export function AgentSuggestions() {
       if (!baseBranch) {
         showStartFailure(
           "Primary branch not found",
-          "T3 could not identify this repository's default branch. Refresh repository data and try again.",
+          "Arcwright Code could not identify this repository's default branch. Refresh repository data and try again.",
         );
         return;
       }

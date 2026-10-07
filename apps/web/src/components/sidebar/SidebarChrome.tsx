@@ -8,7 +8,7 @@ import { formatBuildVersion } from "@t3tools/shared/buildVersion";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
-import { T3Wordmark } from "../T3Wordmark";
+import { ArcwrightWordmark } from "../ArcwrightLogo";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -125,20 +125,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
 }
 
 function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
-  return (
-    // Center the visible capitals, without the font's ascender/descender space.
-    <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
-      <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
-      <span
-        className={cn(
-          "truncate [text-box:trim-both_cap_alphabetic]",
-          onBackdrop ? "text-white/70" : "text-muted-foreground",
-        )}
-      >
-        Code
-      </span>
-    </span>
-  );
+  return <ArcwrightWordmark onDark={onBackdrop} className="h-6 w-auto shrink-0" />;
 }
 
 function SidebarUtilityItem({
@@ -248,14 +235,14 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <Tooltip>
         <TooltipTrigger
           render={
-            <p className="truncate px-2 text-[10px] leading-4 text-muted-foreground/70 group-data-[collapsible=icon]:hidden">
+            <p className="truncate px-2 text-3xs leading-4 text-muted-foreground/70 group-data-[collapsible=icon]:hidden">
               {formatBuildVersion(APP_BUILD_IDENTITY)}
               {APP_BUILD_LABEL ? ` · ${APP_BUILD_LABEL}` : null}
             </p>
           }
         />
         <TooltipPopup side="top">
-          T3 Code {formatBuildVersion(APP_BUILD_IDENTITY)}. Installer release: {APP_VERSION}
+          Arcwright Code {formatBuildVersion(APP_BUILD_IDENTITY)}. Installer release: {APP_VERSION}
           {APP_BUILD_LABEL ? `, ${APP_BUILD_LABEL}` : null}
         </TooltipPopup>
       </Tooltip>

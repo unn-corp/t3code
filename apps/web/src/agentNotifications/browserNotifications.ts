@@ -63,7 +63,7 @@ export async function showBrowserNotificationPreview(): Promise<BrowserNotificat
   if (worker.type !== "ready")
     return worker.type === "unsupported" ? "unsupported" : "permission-needed";
   const registration = worker.registration;
-  await registration.showNotification("T3 Code", {
+  await registration.showNotification("Arcwright Code", {
     body: "Browser notifications are working on this device.",
     tag: "t3-code-notification-preview",
   });

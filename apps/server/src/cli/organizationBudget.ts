@@ -28,7 +28,7 @@ export class OrganizationBudgetStateError extends Schema.TaggedError<Organizatio
 ) {}
 
 const baseDirFlag = Flag.String("base-dir").pipe(
-  Flag.withDescription("Absolute T3 Code data directory containing userdata/state.sqlite."),
+  Flag.withDescription("Absolute Arcwright Code data directory containing userdata/state.sqlite."),
 );
 
 /** This authority exists only in a local CLI process and only for the shared ceiling. */
@@ -52,7 +52,8 @@ const withExistingState = <A, E>(
     const fs = yield* FileSystem.FileSystem;
     if (!path.isAbsolute(baseDir) || baseDir.trim().length === 0) {
       return yield* new OrganizationBudgetStateError({
-        message: "--base-dir must be an absolute path to an existing T3 Code data directory.",
+        message:
+          "--base-dir must be an absolute path to an existing Arcwright Code data directory.",
       });
     }
     const { dbPath } = yield* deriveServerPaths(path.resolve(baseDir), undefined, {
@@ -60,7 +61,7 @@ const withExistingState = <A, E>(
     });
     if (!(yield* fs.exists(dbPath))) {
       return yield* new OrganizationBudgetStateError({
-        message: `No initialized T3 Code database exists at ${dbPath}. Start T3 Code with this --base-dir first.`,
+        message: `No initialized Arcwright Code database exists at ${dbPath}. Start Arcwright Code with this --base-dir first.`,
       });
     }
 

@@ -295,7 +295,7 @@ export const maintenanceCommand = Command.make("maintenance").pipe(
     }),
     simple(
       "bootstrap",
-      "Confirm every T3 Code installation on this device is registered, which lifts the bootstrap blocker.",
+      "Confirm every Arcwright Code installation on this device is registered, which lifts the bootstrap blocker.",
       { action: "confirm-bootstrap" },
     ),
     policyCommand,

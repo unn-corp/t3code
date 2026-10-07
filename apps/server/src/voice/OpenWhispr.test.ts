@@ -73,7 +73,7 @@ describe("OpenWhispr", () => {
       const service = yield* OpenWhispr.OpenWhispr;
       const error = yield* service.transcribe(audio).pipe(Effect.flip);
       expect(error.reason).toBe("unavailable");
-      expect(error.message).toContain("connected T3 server");
+      expect(error.message).toContain("connected Arcwright Code server");
     }).pipe(Effect.provide(testLayer(() => Promise.resolve(new Response(null, { status: 503 }))))),
   );
 

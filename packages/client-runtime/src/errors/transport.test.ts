@@ -45,10 +45,10 @@ describe("isTransportConnectionErrorMessage", () => {
     ).toBe(false);
   });
 
-  it("returns true for the T3 server WebSocket message", () => {
-    expect(isTransportConnectionErrorMessage("Unable to connect to the T3 server WebSocket.")).toBe(
-      true,
-    );
+  it.each(["Arcwright Code", "T3"])("recognizes %s server WebSocket errors", (brand) => {
+    expect(
+      isTransportConnectionErrorMessage(`Unable to connect to the ${brand} server WebSocket.`),
+    ).toBe(true);
   });
 
   it("returns true for ping timeout", () => {

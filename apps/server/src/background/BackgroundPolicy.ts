@@ -25,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSettings from "../serverSettings.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 import * as HostPowerMonitor from "./HostPowerMonitor.ts";
+import * as StoragePressure from "./StoragePressure.ts";
 
 export class BackgroundPolicy extends Context.Service<
   BackgroundPolicy,
@@ -179,6 +180,7 @@ function leaseMayRunScopedWork(
 }
 
 function computeSnapshot(input: {
+  readonly storagePressure: NonNullable<BackgroundPolicySnapshot["storagePressure"]>;
   readonly hostPower: HostPowerSnapshot;
   readonly leases: ReadonlyMap<string, ClientActivityLease>;
   readonly now: DateTime.Utc;
@@ -197,13 +199,15 @@ function computeSnapshot(input: {
   }
 
   return {
+    storagePressure: input.storagePressure,
     hostPower: input.hostPower,
     leases: activeLeases,
     activeForegroundLeaseCount: foregroundLeases.length,
     activeScopeKeys: [...activeScopeKeys].toSorted(),
     shouldRunOpportunisticWork:
       foregroundLeases.some((lease) => !isClientConstrained(lease, input.settings)) &&
-      !isHostConstrained(input.hostPower, input.settings),
+      !isHostConstrained(input.hostPower, input.settings) &&
+      input.storagePressure.reason === null,
     updatedAt: input.updatedAt,
   };
 }
@@ -211,6 +215,7 @@ function computeSnapshot(input: {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
+  const storagePressure = yield* StoragePressure.StoragePressure;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const leasesRef = yield* Ref.make(new Map<string, ClientActivityLease>());
   const changes = yield* PubSub.sliding<BackgroundPolicySnapshot>(1);
@@ -222,13 +227,21 @@ export const make = Effect.fn("background.policy.make")(function* () {
   );
 
   const snapshot = Effect.gen(function* () {
-    const [hostPower, leases, now, settings] = yield* Effect.all([
+    const [hostPower, leases, now, settings, sampledStorage] = yield* Effect.all([
       hostPowerMonitor.snapshot,
       Ref.get(leasesRef),
       DateTime.now,
       backgroundActivitySettings,
+      storagePressure.read,
     ]);
-    return computeSnapshot({ hostPower, leases, now, settings, updatedAt: now });
+    return computeSnapshot({
+      hostPower,
+      leases,
+      now,
+      settings,
+      storagePressure: sampledStorage,
+      updatedAt: now,
+    });
   });
 
   const publishSnapshotUnlocked = snapshot.pipe(
@@ -293,6 +306,12 @@ export const make = Effect.fn("background.policy.make")(function* () {
     Effect.gen(function* () {
       const [current, settings] = yield* Effect.all([snapshot, backgroundActivitySettings]);
       if (isHostConstrained(current.hostPower, settings)) {
+        return false;
+      }
+      if (
+        (scope.type === "vcs-status" || scope.type === "git-refs") &&
+        current.storagePressure?.reason != null
+      ) {
         return false;
       }
       return current.leases.some((lease) =>

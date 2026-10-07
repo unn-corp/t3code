@@ -96,7 +96,7 @@ it.effect(
         assert.ok(rawCommit.includes(`parent ${f.baseCommit}\n`));
         assert.ok(
           rawCommit.includes(
-            "author T3 Organization Candidate <organization-candidate@t3.invalid>",
+            "author Arcwright Code Organization Candidate <organization-candidate@t3.invalid>",
           ),
         );
         assert.deepEqual(

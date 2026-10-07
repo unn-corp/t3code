@@ -107,7 +107,7 @@ const normalizeSchedule = (value: unknown, now = Date.now()): AgentDashboardSecu
     lastCompletedAt: isoOrNull(raw.lastCompletedAt),
     lastStatus: recoveredFromRestart ? "failed" : lastStatus,
     lastError: recoveredFromRestart
-      ? "T3 restarted before the local security scan completed."
+      ? "Arcwright Code restarted before the local security scan completed."
       : stringValue(raw.lastError),
     lastTarget: stringValue(raw.lastTarget),
     heartbeatAt: isoOrNull(raw.heartbeatAt) ?? isoAt(now),
@@ -161,7 +161,7 @@ const make = Effect.gen(function* () {
       catch: (cause) =>
         new AgentDashboardSecuritySchedulerError({
           operation: "read schedule",
-          message: "Failed to initialize the T3 security collector schedule.",
+          message: "Failed to initialize the Arcwright Code security collector schedule.",
           cause,
         }),
     }),
@@ -173,7 +173,7 @@ const make = Effect.gen(function* () {
       catch: (cause) =>
         new AgentDashboardSecuritySchedulerError({
           operation: "write schedule",
-          message: "Failed to persist the T3 security collector schedule.",
+          message: "Failed to persist the Arcwright Code security collector schedule.",
           cause,
         }),
     });
@@ -335,7 +335,9 @@ const make = Effect.gen(function* () {
     yield* runScheduled;
   }).pipe(
     Effect.catchCause((cause) =>
-      Effect.logError("T3 scheduled security collection failed", { cause }).pipe(Effect.asVoid),
+      Effect.logError("Arcwright Code scheduled security collection failed", { cause }).pipe(
+        Effect.asVoid,
+      ),
     ),
   );
   yield* Effect.forkScoped(tick.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));

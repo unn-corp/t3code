@@ -104,7 +104,7 @@ final class NativeBrowser {
                 case "command": {
                     // Held from here until reply(); a lease expires it if a callback is ever lost.
                     PhoneOperations.shared().begin("browser", id, PhoneOperations.BROWSER_LEASE_MS);
-                    if (!MainActivity.visible) throw new IllegalStateException("Open T3 Code on the phone to control its browser");
+                    if (!MainActivity.visible) throw new IllegalStateException("Open Arcwright Code on the phone to control its browser");
                     Tab tab = tabs.get(payload.getString("key"));
                     if (tab == null) throw new IllegalArgumentException("Phone browser tab is no longer open");
                     command(tab, payload.getString("operation"), payload.optJSONObject("input"), reply, id); return;

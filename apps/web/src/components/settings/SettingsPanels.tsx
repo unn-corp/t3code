@@ -2198,7 +2198,7 @@ export function AutomationSettingsPanel() {
       <SettingsSection title="Agent automations">
         <SettingsRow
           {...searchableSetting("continuous-improvement")}
-          description="Continuously starts one implementation agent at a time for open, ready-to-act findings. Each run works in an isolated branch and must deliver through a draft pull request. T3 never merges it automatically."
+          description="Continuously starts one implementation agent at a time for open, ready-to-act findings. Each run works in an isolated branch and must deliver through a draft pull request. Arcwright Code never merges it automatically."
           resetAction={
             settings.continuousImprovement.enabled !==
             DEFAULT_UNIFIED_SETTINGS.continuousImprovement.enabled ? (
@@ -2437,7 +2437,7 @@ export function AutomationSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("inactive-worktree-cleanup")}
-          description="Periodically removes inactive T3 worktrees only when they are settled, clean, and their current commit is confirmed on the branch's configured remote after a fetch. Local and remote branches are retained."
+          description="Periodically removes inactive Arcwright Code worktrees only when they are settled, clean, and their current commit is confirmed on the branch's configured remote after a fetch. Local and remote branches are retained."
           resetAction={
             inactiveWorktreeCleanupEnabledDirty ? (
               <SettingResetButton
@@ -2510,7 +2510,7 @@ export function AutomationSettingsPanel() {
         <SettingsRow
           {...searchableSetting("inactive-worktree-cleanup-age")}
           className="bg-muted/20 sm:pl-9"
-          description="Minimum age of both the worktree's latest T3 activity and its current commit before removal is allowed."
+          description="Minimum age of both the worktree's latest Arcwright Code activity and its current commit before removal is allowed."
           resetAction={
             inactiveWorktreeCleanupAgeDirty ? (
               <SettingResetButton
@@ -2780,7 +2780,7 @@ export function AutomationSettingsPanel() {
         <SettingsRow
           {...searchableSetting("pull-request-rollup-branch-prefix")}
           className="bg-muted/20 sm:pl-9"
-          description="Prefix used for isolated pre-release rollup branches. T3 appends the date and a unique identifier."
+          description="Prefix used for isolated pre-release rollup branches. Arcwright Code appends the date and a unique identifier."
           control={
             <DraftInput
               className="w-full sm:w-56"
@@ -2841,7 +2841,7 @@ export function AutomationSettingsPanel() {
         <SettingsRow
           {...searchableSetting("pull-request-rollup-remove-worktrees")}
           className="bg-muted/20 sm:pl-9"
-          description="Safely remove a clean rollup worktree after T3 verifies the generated pull request."
+          description="Safely remove a clean rollup worktree after Arcwright Code verifies the generated pull request."
           control={
             <Switch
               checked={settings.pullRequestRollup.removeCompletedWorktrees}
@@ -2974,7 +2974,7 @@ export function AutomationSettingsPanel() {
         <SettingsRow
           {...searchableSetting("decision-follow-up-interval")}
           className="bg-muted/20 sm:pl-9"
-          description="How often T3 checks for findings that need a user decision."
+          description="How often Arcwright Code checks for findings that need a user decision."
           control={
             <Select
               value={String(settings.decisionFollowUp.intervalMinutes)}
@@ -3004,7 +3004,7 @@ export function AutomationSettingsPanel() {
         <SettingsRow
           {...searchableSetting("decision-follow-up-reminders")}
           className="bg-muted/20 sm:pl-9"
-          description="Minimum time before T3 may start another conversation about the same unresolved finding."
+          description="Minimum time before Arcwright Code may start another conversation about the same unresolved finding."
           control={
             <AutomationIntegerControl
               value={settings.decisionFollowUp.reminderDays}
@@ -3189,7 +3189,7 @@ export function AutomationSettingsPanel() {
         <SettingsRow
           {...searchableSetting("repository-review-interval")}
           className="bg-muted/20 sm:pl-9"
-          description="How often T3 runs the read-only discovery and qualification pass while the app is open."
+          description="How often Arcwright Code runs the read-only discovery and qualification pass while the app is open."
           resetAction={
             repositoryReviewIntervalDirty ? (
               <SettingResetButton
@@ -3416,7 +3416,7 @@ export function GeneralSettingsPanel() {
       occurredAt: new Date().toISOString(),
       deepLink:
         "/threads/desktop-notification-test/desktop-notification-test" as AgentNotificationEvent["deepLink"],
-      threadTitle: "T3 Code notification test",
+      threadTitle: "Arcwright Code notification test",
     };
 
     void bridge.showAgentNotification(event).then((outcome) => {
@@ -3530,7 +3530,7 @@ export function GeneralSettingsPanel() {
       <SettingsSection id="organization" title="Organization">
         <SettingsRow
           {...searchableSetting("dictation-microphone")}
-          description="Choose the microphone used for voice dictation. Detect requests access so T3 can display specific device names."
+          description="Choose the microphone used for voice dictation. Detect requests access so Arcwright Code can display specific device names."
           resetAction={
             settings.dictationMicrophoneDeviceId !==
             DEFAULT_UNIFIED_SETTINGS.dictationMicrophoneDeviceId ? (
@@ -4645,7 +4645,7 @@ export function GeneralSettingsPanel() {
         <SettingsSection id={searchableSetting("notifications").id} title="Agent notifications">
           <SettingsRow
             title="Desktop notifications"
-            description="Notify when an agent finishes, has a plan ready, needs input, or fails. Notifications are suppressed while T3 Code is focused."
+            description="Notify when an agent finishes, has a plan ready, needs input, or fails. Notifications are suppressed while Arcwright Code is focused."
             control={
               <Switch
                 checked={notificationPreferences.enabled}
@@ -4674,7 +4674,7 @@ export function GeneralSettingsPanel() {
               />
               <SettingsRow
                 title="Play notification sounds"
-                description="Play a sound alongside the system notification while T3 Code is running."
+                description="Play a sound alongside the system notification while Arcwright Code is running."
                 control={
                   <Switch
                     checked={notificationPreferences.playSound}
@@ -4836,7 +4836,7 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
-          description="Notices for dependencies, assets, and optional tools used by T3 Code."
+          description="Notices for dependencies, assets, and optional tools used by Arcwright Code."
           control={
             <Button
               render={<Link to="/settings/open-source-licenses" />}

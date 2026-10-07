@@ -40,6 +40,10 @@ function compactMenuBranchLabel(branch: string): string {
 }
 
 function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
+  if (gitStatus?.automaticRefreshPaused)
+    return gitStatus.automaticRefreshPaused === "disabled"
+      ? "Automatic refresh off · Last reported status"
+      : "Storage busy · Last reported status";
   if (!gitStatus) {
     return "Checking status";
   }

@@ -105,7 +105,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
       return;
     Alert.alert(
       `Update ${environment?.environmentLabel ?? "environment"}?`,
-      `Install T3 Code ${targetVersion}. ${capabilities.serverSelfUpdate === "desktop-managed" ? "The desktop app will close and relaunch." : "The server will restart and reconnect."} Installation waits until all registered agents and background work on that device are stopped. Updates never stop agents.`,
+      `Install Arcwright Code ${targetVersion}. ${capabilities.serverSelfUpdate === "desktop-managed" ? "The desktop app will close and relaunch." : "The server will restart and reconnect."} Installation waits until all registered agents and background work on that device are stopped. Updates never stop agents.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -201,7 +201,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             {config ? (
               <>
                 <RunLimitsPanel environmentId={environmentId} disabled={disabled} />
-                <SettingsSection title="T3 Code">
+                <SettingsSection title="Arcwright Code">
                   <View className="gap-1 p-4">
                     <Text className="text-base text-foreground">Version {version}</Text>
                     <Text selectable className="text-xs text-foreground-muted">
@@ -233,7 +233,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                       <Text className="text-sm text-foreground-muted">
                         {capabilities?.serverSelfUpdate === "desktop-managed"
                           ? "Update the desktop app on this machine."
-                          : "Update and restart T3 Code on this machine."}
+                          : "Update and restart Arcwright Code on this machine."}
                       </Text>
                     ) : null}
                   </View>

@@ -88,7 +88,7 @@ async function assertStopped(stateDir: string) {
     throw new Error("Cannot verify server state. Stop the server and check server-runtime.json.");
   if (isProcessAlive(runtime.pid))
     throw new Error(
-      "Stop the T3 server before creating a backup so settings and attachments match its database.",
+      "Stop the Arcwright Code server before creating a backup so settings and attachments match its database.",
     );
 }
 async function checkDatabase(path: string) {

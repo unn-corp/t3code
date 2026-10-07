@@ -1,4 +1,4 @@
-# T3 Code Mobile (upstream Expo app)
+# Arcwright Code Mobile (upstream Expo app)
 
 This directory contains the upstream Expo/React Native client. This fork's standalone Android
 app lives in [`../android-pwa`](../android-pwa); use its
@@ -6,7 +6,7 @@ app lives in [`../android-pwa`](../android-pwa); use its
 the fork's APK.
 
 > [!WARNING]
-> T3 Code Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
+> Arcwright Code Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
 
 ## Quickstart
 
@@ -15,9 +15,9 @@ the fork's APK.
 
 This app has three variants:
 
-- `development`: Expo dev client, installable side-by-side as `T3 Code Dev`
-- `preview`: persistent internal preview build, installable side-by-side as `T3 Code Preview`
-- `production`: store/release build as `T3 Code`
+- `development`: Expo dev client, installable side-by-side as `Arcwright Code Dev`
+- `preview`: persistent internal preview build, installable side-by-side as `Arcwright Code Preview`
+- `production`: store/release build as `Arcwright Code`
 
 Run commands from `apps/mobile`.
 

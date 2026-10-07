@@ -8,7 +8,7 @@ const createCommand = Command.make("create", {
   outputDir: Flag.String("output"),
 }).pipe(
   Command.withDescription(
-    "Back up a stopped T3 home to a new local directory, including credentials and attachments.",
+    "Back up a stopped Arcwright Code home to a new local directory, including credentials and attachments.",
   ),
   Command.withHandler((input) =>
     Effect.gen(function* () {
@@ -23,7 +23,7 @@ const restoreCommand = Command.make("restore", {
   homeDir: Flag.String("home-dir"),
 }).pipe(
   Command.withDescription(
-    "Verify and restore a backup into a new T3 home. Existing directories are never replaced.",
+    "Verify and restore a backup into a new Arcwright Code home. Existing directories are never replaced.",
   ),
   Command.withHandler((input) =>
     Effect.gen(function* () {
@@ -36,6 +36,6 @@ const restoreCommand = Command.make("restore", {
   ),
 );
 export const backupCommand = Command.make("backup").pipe(
-  Command.withDescription("Create or restore local T3 data backups."),
+  Command.withDescription("Create or restore local Arcwright Code data backups."),
   Command.withSubcommands([createCommand, restoreCommand]),
 );

@@ -55,9 +55,9 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
   // Spaces and specifiers are quoted and escaped on the way in.
   expect(
     BootService.bootServiceBaseDirOf(
-      BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%")),
+      BootService.renderBootServiceUnit(plan("/home/theo/Arcwright Code Data/100%")),
     ),
-  ).toBe("/home/theo/T3 Data/100%");
+  ).toBe("/home/theo/Arcwright Code Data/100%");
   expect(
     BootService.bootServiceBaseDirOf(
       BootService.renderBootServicePlist(plan("/Users/theo/a&b"), {
@@ -123,11 +123,11 @@ it("appends both stdio streams to the boot service log", () => {
 
 it("escapes XML in host paths", () => {
   const plist = BootService.renderBootServicePlist(
-    { ...macPlan, baseDir: "/Users/theo/T3 & <Co>" },
+    { ...macPlan, baseDir: "/Users/theo/Arcwright Code & <Co>" },
     { homeDir: "/Users/theo", environmentPath: "/Users/theo/Tools & <Scripts>:/usr/bin" },
   );
 
-  expect(plist).toContain("<string>/Users/theo/T3 &amp; &lt;Co&gt;</string>");
+  expect(plist).toContain("<string>/Users/theo/Arcwright Code &amp; &lt;Co&gt;</string>");
   expect(plist).toContain("<string>/Users/theo/Tools &amp; &lt;Scripts&gt;:/usr/bin</string>");
 });
 
@@ -230,7 +230,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         deviceGuard: async () => {
           if (control.recordGuard) commands.push("guard:acquire");
           if (control.guard === "blocked")
-            throw new DeviceRestartBlocked(["An agent is running in T3 Code."]);
+            throw new DeviceRestartBlocked(["An agent is running in Arcwright Code."]);
           return {
             release: async () => {
               if (control.recordGuard) commands.push("guard:release");
@@ -637,7 +637,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       control.guard = "blocked";
       const error = yield* service.restart.pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceRestartBlockedError");
-      expect(error.message).toContain("An agent is running in T3 Code.");
+      expect(error.message).toContain("An agent is running in Arcwright Code.");
       expect(error.message).toContain("It keeps running");
       expect(
         commands.filter(

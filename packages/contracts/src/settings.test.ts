@@ -20,6 +20,24 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("automatic repository activity settings", () => {
+  it("preserves existing defaults and round-trips environment and project choices", () => {
+    expect(decodeServerSettings({})).toMatchObject({
+      automaticGitStatus: true,
+      automaticCheckpoints: true,
+    });
+    const input = {
+      automaticGitStatus: false,
+      automaticCheckpoints: false,
+      projectSettingsOverrides: {
+        assets: { automaticGitStatus: true, automaticCheckpoints: false },
+      },
+    };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toMatchObject(input);
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");

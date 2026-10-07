@@ -111,7 +111,7 @@ describe("AgentDashboardSnapshot", () => {
       repositories: [
         {
           projectId: "project-1",
-          title: "T3 Code",
+          title: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
           repositoryIdentity: {
             canonicalKey: "github.com/pingdotgg/t3code",
@@ -202,7 +202,7 @@ describe("AgentDashboardSnapshot", () => {
           id: "repository:project-1",
           kind: "repository",
           status: "dirty",
-          title: "T3 Code",
+          title: "Arcwright Code",
           summary: "Working tree has local changes",
           observedAt: "2026-08-09T12:00:58.000Z",
           repository: { projectId: "project-1" },
@@ -221,7 +221,7 @@ describe("AgentDashboardSnapshot", () => {
           status: "actionable",
           action: "open-repository",
           title: "Review local changes",
-          summary: "T3 Code has working-tree changes to inspect",
+          summary: "Arcwright Code has working-tree changes to inspect",
           updatedAt: "2026-08-09T12:00:58.000Z",
           repository: { projectId: "project-1" },
           thread: null,
@@ -254,7 +254,7 @@ describe("AgentDashboardSnapshot", () => {
           actions: [{ label: "Open source", url: "https://example.com/release" }],
           origin: {
             projectId: "project-1",
-            projectName: "T3 Code",
+            projectName: "Arcwright Code",
             projectPath: "/workspace/t3code",
             threadId: "thread-1",
           },
@@ -286,7 +286,7 @@ describe("AgentDashboardSnapshot", () => {
     expect(snapshot.externalFeed[0]?.actions[0]?.label).toBe("Open source");
     expect(snapshot.externalFeed[0]?.origin).toEqual({
       projectId: "project-1",
-      projectName: "T3 Code",
+      projectName: "Arcwright Code",
       projectPath: "/workspace/t3code",
       threadId: "thread-1",
     });

@@ -48,7 +48,7 @@ it.effect("requires an explicit absolute base directory with existing state", ()
   return Effect.gen(function* () {
     const missing = yield* readGlobalOrganizationBudget(fixture.baseDir).pipe(Effect.flip);
     assert.equal(missing._tag, "OrganizationBudgetStateError");
-    assert.match(missing.message, /No initialized T3 Code database/);
+    assert.match(missing.message, /No initialized Arcwright Code database/);
 
     const relative = yield* readGlobalOrganizationBudget("relative-directory").pipe(Effect.flip);
     assert.equal(relative._tag, "OrganizationBudgetStateError");

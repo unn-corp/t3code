@@ -26,7 +26,7 @@ and recovery-helper checks still must all pass; missing or failed safety evidenc
 
 ### Version provenance and history
 
-Display **T3 Code 0.0.45 · Arcwright build 35 · Nightly** (or Stable), using the
+Display **Arcwright Code 0.0.45 · Arcwright build 35 · Nightly** (or Stable), using the
 upstream source actually included. Update [`fork-upstream.json`](../../fork-upstream.json)
 in the same change as an upstream integration, recording that base's package version and
 full commit. Do not substitute today's upstream main. The build helper embeds this

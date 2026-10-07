@@ -365,7 +365,7 @@ export const createDraft = async (
   const draft = await github.createDraftRelease({
     tagName: plan.tag,
     commit: plan.commit,
-    name: `T3 Code ${formatBuildVersion({ version: plan.version, ...(manifest.upstreamVersion ? { upstreamVersion: manifest.upstreamVersion } : {}), ...(manifest.forkBuildNumber ? { forkBuildNumber: manifest.forkBuildNumber } : {}) })}`,
+    name: `Arcwright Code ${formatBuildVersion({ version: plan.version, ...(manifest.upstreamVersion ? { upstreamVersion: manifest.upstreamVersion } : {}), ...(manifest.forkBuildNumber ? { forkBuildNumber: manifest.forkBuildNumber } : {}) })}`,
     body: releaseNotes(plan, summary),
     prerelease: plan.channel === "nightly",
   });

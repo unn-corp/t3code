@@ -47,7 +47,9 @@ const NODE_BYTES = WINDOWS
 const HELPER_BYTES = Buffer.from('console.log("recovery-helper-protocol=1");\n');
 const installerName = (version: string) =>
   WINDOWS ? `T3-Code-${version}-x64.exe` : `T3-Code-${version}-x86_64.AppImage`;
-const INSTALL_TARGET = WINDOWS ? "C:\\Apps\\T3 Code\\T3 Code.exe" : "/Apps/T3-Code.AppImage";
+const INSTALL_TARGET = WINDOWS
+  ? "C:\\Apps\\Arcwright Code\\Arcwright Code.exe"
+  : "/Apps/T3-Code.AppImage";
 
 interface Payload {
   readonly name: string;
@@ -744,7 +746,7 @@ describe("DesktopForkMaintenance", () => {
     await core.observe();
     const store = await CoordinatorStore.open(device.coordinator, device.identity, 9001);
     const desktop = (await store.status(device.clock.value)).participants.find(
-      (p) => p.label === "T3 Code desktop",
+      (p) => p.label === "Arcwright Code desktop",
     )!;
     expect(desktop.descendants).toEqual([
       { pid: 4500, started: device.table.get(4500)!, label: "Backend" },

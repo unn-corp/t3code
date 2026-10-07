@@ -1604,7 +1604,7 @@ const makeCoreWsRpcLayer = (
               if (racedImport !== null) return { threadId, imported: false } as const;
               return yield* new AcpRegistryOperationError({
                 reason: "session_import_failed",
-                message: "Could not create a T3 thread for the ACP session.",
+                message: "Could not create an Arcwright Code thread for the ACP session.",
                 cause: launched.failure,
               });
             }
@@ -1645,7 +1645,8 @@ const makeCoreWsRpcLayer = (
             if (importedThread !== null) {
               return yield* new AcpRegistryOperationError({
                 reason: "session_delete_failed",
-                message: "Delete the imported T3 thread before deleting its native ACP session.",
+                message:
+                  "Delete the imported Arcwright Code thread before deleting its native ACP session.",
               });
             }
             yield* manager.deleteSession({
@@ -3423,7 +3424,7 @@ const makeCoreWsRpcLayer = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRefreshStatus,
-            vcsStatusBroadcaster.refreshStatus(input.cwd),
+            vcsStatusBroadcaster.refreshStatus(input.cwd, { automatic: input.automatic ?? false }),
             {
               "rpc.aggregate": "vcs",
             },

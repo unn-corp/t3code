@@ -68,7 +68,7 @@ describe("Android APK verification", () => {
       [
         "package: name='com.devotek.t3code.pwa' versionCode='29853679' versionName='1.0.1' platformBuildVersionName='16' compileSdkVersion='36'",
         "sdkVersion:'24'",
-        "application-label:'T3 Code'",
+        "application-label:'Arcwright Code'",
       ].join("\n"),
     );
     assert.deepStrictEqual(facts, {

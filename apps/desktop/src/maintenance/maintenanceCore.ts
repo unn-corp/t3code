@@ -507,7 +507,7 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
         await store.register(
           {
             id,
-            label: "T3 Code desktop",
+            label: "Arcwright Code desktop",
             kind: "desktop",
             homes: [paths.processHome],
             updateTarget: false,
@@ -547,7 +547,7 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
         blockers.push({
           participantId,
           reason: "unknown-participant",
-          label: `Another T3 Code desktop uses the data home ${home}. It cannot be updated or health-checked together with this one, so installing is blocked until it is closed.`,
+          label: `Another Arcwright Code desktop uses the data home ${home}. It cannot be updated or health-checked together with this one, so installing is blocked until it is closed.`,
         });
     } catch {
       blockers.push({
@@ -584,7 +584,7 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
               {
                 participantId: member.id,
                 reason: "bootstrap",
-                label: `${member.distro} has no registered T3 runtime.`,
+                label: `${member.distro} has no registered Arcwright Code runtime.`,
               },
             ]
           : !wslActivityIsCurrent(status.participants)
@@ -754,14 +754,14 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
       return {
         kind: "blocked",
         reason:
-          "Another T3 Code process is updating or restoring this device. Close every T3 Code window and start it again once that finishes.",
+          "Another Arcwright Code process is updating or restoring this device. Close every Arcwright Code window and start it again once that finishes.",
       };
     const journal = await activeStore.readJournal(fence.transactionId);
     if (journal === null)
       return {
         kind: "blocked",
         reason:
-          "A device update holds this device but its journal is missing. Run the recovery helper's `status` command before starting T3 Code.",
+          "A device update holds this device but its journal is missing. Run the recovery helper's `status` command before starting Arcwright Code.",
       };
     const runningTarget = journal.target !== null && isBuild(journal.target);
     return (journal.phase === "trial" || journal.phase === "verified") && runningTarget
@@ -802,7 +802,7 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
     const blocked = async (why: string): Promise<StartupPlan> => {
       const fence = await activeStore.fenceSnapshot().catch(() => null);
       return hold(
-        `The unfinished device update could not be completed: ${why} T3 Code will not open your data until it is restored. ${await recoveryGuidance(fence?.transactionId)}`,
+        `The unfinished device update could not be completed: ${why} Arcwright Code will not open your data until it is restored. ${await recoveryGuidance(fence?.transactionId)}`,
       );
     };
     try {
@@ -914,7 +914,7 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
     if (await journalsEvidenceInFlight()) {
       coordinator = "pending";
       return hold(
-        `${reason}. A device update may be in flight, so T3 Code will not open your data. ${await recoveryGuidance()}`,
+        `${reason}. A device update may be in flight, so Arcwright Code will not open your data. ${await recoveryGuidance()}`,
       );
     }
     unavailable = reason;
@@ -957,7 +957,7 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
       plan = await startupPlan(store);
     } catch (cause) {
       return hold(
-        `${messageOf(cause)}. T3 Code will not open your data until the coordinator can say no update is in flight.`,
+        `${messageOf(cause)}. Arcwright Code will not open your data until the coordinator can say no update is in flight.`,
       );
     }
     if (plan.kind === "resume-first") return resolveBeforeStart(store);

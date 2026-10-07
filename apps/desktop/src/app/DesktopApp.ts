@@ -133,7 +133,7 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
   const wasQuitting = yield* Ref.getAndSet(state.quitting, true);
   if (!wasQuitting) {
     yield* electronDialog.showErrorBox(
-      "T3 Code failed to start",
+      "Arcwright Code failed to start",
       `Stage: ${stage}\n${message}${detail}`,
     );
   }
@@ -198,8 +198,8 @@ const bootstrap = Effect.gen(function* () {
     yield* electronDialog
       .showMessageBox({
         type: "warning",
-        title: "T3 Code is holding your data",
-        message: "A device update did not finish, so T3 Code did not open your data.",
+        title: "Arcwright Code is holding your data",
+        message: "A device update did not finish, so Arcwright Code did not open your data.",
         detail: maintenancePlan.reason,
         buttons: ["OK"],
       })

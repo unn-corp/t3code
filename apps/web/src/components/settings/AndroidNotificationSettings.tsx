@@ -49,7 +49,7 @@ export function AndroidNotificationSettings() {
         description={
           message ??
           (status?.permission === "permission-blocked"
-            ? "Allow T3 Code notifications in Android settings, then turn alerts on."
+            ? "Allow Arcwright Code notifications in Android settings, then turn alerts on."
             : "Android system alerts when an agent finishes, fails, has a plan ready, or needs your input.")
         }
         control={
@@ -139,7 +139,7 @@ export function AndroidNotificationSettings() {
       />
       <SettingsRow
         title="Background battery settings"
-        description="Android can delay network access while asleep. If background alerts are delayed, allow unrestricted battery use for T3 Code and keep Tailscale connected."
+        description="Android can delay network access while asleep. If background alerts are delayed, allow unrestricted battery use for Arcwright Code and keep Tailscale connected."
         control={
           <Button
             variant="outline"

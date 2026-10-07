@@ -244,7 +244,7 @@ export function AgentActivity(
     </HStack>
   );
 
-  // The branded T3 mark. `assetName` resolves the template image set bundled in
+  // The branded AC mark. `assetName` resolves the template image set bundled in
   // the widget extension's asset catalog. Image views only honor `resizable`
   // directly (frame/foregroundStyle are dropped), so we size it via a container
   // frame the resizable image fills and tint it through the container's
@@ -252,7 +252,7 @@ export function AgentActivity(
   // the glyph's aspect ratio so it never distorts.
   const renderLogo = (height: number, color: Foreground) => (
     <HStack modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color)]}>
-      <Image assetName="T3Mark" modifiers={[resizable()]} />
+      <Image assetName="ArcwrightMark" modifiers={[resizable()]} />
     </HStack>
   );
 

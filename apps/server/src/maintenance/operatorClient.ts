@@ -27,7 +27,7 @@ export async function discoverOperatorTarget(baseDir: string): Promise<OperatorT
   const token = await readOperatorToken(baseDir);
   if (token === null)
     throw new Error(
-      "No running T3 Code server with device maintenance was found for this home (no operator credential).",
+      "No running Arcwright Code server with device maintenance was found for this home (no operator credential).",
     );
   for (const variant of ["userdata", "dev"]) {
     try {
@@ -44,7 +44,7 @@ export async function discoverOperatorTarget(baseDir: string): Promise<OperatorT
       // try the next variant
     }
   }
-  throw new Error("The T3 Code server for this home is not running.");
+  throw new Error("The Arcwright Code server for this home is not running.");
 }
 
 /** One call to the one controller. Never throws for a refusal: the reason is the controller's own. */

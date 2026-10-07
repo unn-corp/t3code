@@ -110,7 +110,7 @@ async function open(input: MaintenanceHostInput, env: NodeJS.ProcessEnv): Promis
     if (cause instanceof UnsupportedPlatformError)
       return { mode: "unavailable", reason: cause.message };
     throw new MaintenanceStartupHeld({
-      reason: `This runtime could not join device maintenance: ${cause instanceof Error ? cause.message : String(cause)}. Resolve the coordinator before starting T3 Code.`,
+      reason: `This runtime could not join device maintenance: ${cause instanceof Error ? cause.message : String(cause)}. Resolve the coordinator before starting Arcwright Code.`,
     });
   }
   const { kind, updateTarget } = participantKindFor(input, env);
@@ -136,11 +136,11 @@ async function open(input: MaintenanceHostInput, env: NodeJS.ProcessEnv): Promis
     // Supported runtimes must register before opening a database. Even a temporary lock/read failure
     // cannot start an invisible runtime which another participant could miss when its next read succeeds.
     throw new MaintenanceStartupHeld({
-      reason: `This runtime could not read device maintenance: ${cause instanceof Error ? cause.message : String(cause)}. Resolve the coordinator before starting T3 Code.`,
+      reason: `This runtime could not read device maintenance: ${cause instanceof Error ? cause.message : String(cause)}. Resolve the coordinator before starting Arcwright Code.`,
     });
   }
   const heldReason =
-    "Device maintenance is in progress. Wait for the update to finish verification or recovery, then start T3 Code again.";
+    "Device maintenance is in progress. Wait for the update to finish verification or recovery, then start Arcwright Code again.";
   const abandonedOwner = status.fence !== null && status.fence.holderAlive === false;
   if (status.fence !== null && trial === null && !(kind === "service" && abandonedOwner)) {
     throw new MaintenanceStartupHeld({ reason: heldReason });

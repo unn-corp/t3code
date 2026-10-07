@@ -531,7 +531,7 @@ export async function observeWslMembers(input: {
             {
               participantId: member.id,
               reason: "bootstrap" as const,
-              label: `${member.distro} has no registered T3 runtime.`,
+              label: `${member.distro} has no registered Arcwright Code runtime.`,
             },
           ]
         : !wslActivityIsCurrent(status.participants)

@@ -45,7 +45,7 @@ it("makes an interrupted T3 review due immediately after restart", () => {
   expect(schedule).toMatchObject({
     lastStatus: "failed",
     nextRunAt: "2026-08-10T00:00:00.000Z",
-    lastError: "T3 restarted before the findings portfolio cycle completed.",
+    lastError: "Arcwright Code restarted before the findings portfolio cycle completed.",
   });
 });
 

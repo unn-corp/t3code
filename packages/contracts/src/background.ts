@@ -100,6 +100,16 @@ export const ClientActivityLease = Schema.Struct({
 export type ClientActivityLease = typeof ClientActivityLease.Type;
 
 export const BackgroundPolicySnapshot = Schema.Struct({
+  storagePressure: Schema.optionalKey(
+    Schema.Struct({
+      ioSomeAvg10: Schema.NullOr(Schema.Number),
+      ioFullAvg10: Schema.NullOr(Schema.Number),
+      availableBytes: Schema.NullOr(Schema.Number),
+      totalBytes: Schema.NullOr(Schema.Number),
+      reason: Schema.NullOr(Schema.Literals(["io-pressure", "low-space"])),
+      sampledAt: Schema.DateTimeUtc,
+    }),
+  ),
   hostPower: HostPowerSnapshot,
   leases: Schema.Array(ClientActivityLease),
   activeForegroundLeaseCount: Schema.Number,

@@ -507,7 +507,7 @@ const windowsDesktopExecutable = (directory: string): string => {
     (name) => /^T3.*\.exe$/i.test(name) && !/uninstall/i.test(name),
   );
   if (matches.length !== 1)
-    throw new Error("The isolated Windows installation has no unique T3 executable.");
+    throw new Error("The isolated Windows installation has no unique Arcwright Code executable.");
   return NodePath.join(directory, matches[0]!);
 };
 

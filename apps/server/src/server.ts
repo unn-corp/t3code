@@ -36,6 +36,8 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
+import * as WorkspaceGitPolicy from "./vcs/WorkspaceGitPolicy.ts";
+import * as StoragePressure from "./background/StoragePressure.ts";
 import * as ServerConfig from "./config.ts";
 import * as AgentDashboardReviewRunner from "./agentDashboard/AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewJobService from "./agentDashboard/AgentDashboardReviewJobService.ts";
@@ -278,6 +280,11 @@ const ServerSettingsLayerLive = ServerSettings.layer.pipe(
   Layer.provideMerge(SqlitePersistence.layerConfig),
 );
 
+const WorkspaceGitPolicyLayerLive = WorkspaceGitPolicy.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+);
+const StoragePressureLayerLive = StoragePressure.layer;
+
 const GitVcsDriverLayerLive = GitVcsDriver.layer.pipe(Layer.provide(ServerSettingsLayerLive));
 
 const NativeTelemetryLayerLive = NativeTelemetryClient.layer.pipe(
@@ -303,6 +310,7 @@ const DesktopAppUpdateLayerLive = DesktopAppUpdate.layer.pipe(
 );
 
 const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
+  Layer.provide(StoragePressureLayerLive),
   Layer.provide(HostPowerMonitorLayerLive),
   Layer.provideMerge(ServerSettingsLayerLive),
 );
@@ -418,6 +426,8 @@ const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProjectCloneTrackerLayerLive),
   Layer.provideMerge(
     VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(WorkspaceGitPolicyLayerLive),
+      Layer.provide(StoragePressureLayerLive),
       Layer.provide(GitWorkflowLayerLive),
       // Auto-pull reads the project row. The orchestration runtime also
       // consumes the broadcaster (run finalization), so the policy cannot read
@@ -494,12 +504,15 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
 );
 
 const OrchestrationV2RuntimeLayerLive = OrchestrationV2ProductionLayerLive.pipe(
+  Layer.provide(WorkspaceGitPolicyLayerLive),
   Layer.provide(ProviderEventIngestor.analyticsLive),
   Layer.provide(CheckpointStoreLayerLive),
   Layer.provide(GitWorkflowLayerLive),
   Layer.provide(ResourceCleanupService.live),
   Layer.provide(
     RunFinalizationService.observerLive.pipe(
+      Layer.provide(WorkspaceGitPolicyLayerLive),
+      Layer.provide(StoragePressureLayerLive),
       Layer.provide(ProjectionStoreV2.layer),
       Layer.provide(PullRequestServiceLive),
       Layer.provide(ProjectServiceLayerLive),

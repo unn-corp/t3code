@@ -117,7 +117,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   );
 
   useEffect(() => {
-    void gitActions.refreshSelectedThreadGitStatus({ quiet: true });
+    void gitActions.refreshSelectedThreadGitStatus({ quiet: true, automatic: true });
   }, [gitActions]);
 
   const openExistingPr = useCallback(async () => {

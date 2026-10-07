@@ -118,7 +118,7 @@ it("stores a canonical destination when receiving a push without exposing privat
   });
   handlers.get("push")?.(event);
   await event.waitUntil.mock.calls[0]?.[0];
-  expect(showNotification).toHaveBeenCalledWith("T3 Code", {
+  expect(showNotification).toHaveBeenCalledWith("Arcwright Code", {
     body: "Agent activity needs your attention.",
     data: { deepLink },
     tag: undefined,

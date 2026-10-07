@@ -83,7 +83,7 @@ describe("product context", () => {
 
   it("builds a repository-informed, approval-gated discovery interview", () => {
     const prompt = buildProductDiscoveryConversationPrompt({
-      projectName: "T3 Code",
+      projectName: "Arcwright Code",
       workspaceRoot: "/workspace/t3code",
       productContextPath: "PRODUCT.md",
       hasConfirmedContext: false,

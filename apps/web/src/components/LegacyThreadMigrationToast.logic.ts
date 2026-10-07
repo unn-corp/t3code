@@ -11,7 +11,7 @@ export function legacyThreadMigrationNotice(
     return {
       type: "warning" as const,
       title: "Some conversations still need restoring",
-      description: `${failed.toLocaleString()} ${failed === 1 ? "conversation needs" : "conversations need"} another attempt. Open an affected conversation to retry, or restart T3 Code when convenient. Your original history is retained.`,
+      description: `${failed.toLocaleString()} ${failed === 1 ? "conversation needs" : "conversations need"} another attempt. Open an affected conversation to retry, or restart Arcwright Code when convenient. Your original history is retained.`,
       timeout: 0,
     };
   }
@@ -23,7 +23,7 @@ export function legacyThreadMigrationNotice(
       completed === undefined
         ? `Restoring ${total} ${migration.totalThreadCount === 1 ? "conversation" : "conversations"} from the previous version.`
         : `${completed.toLocaleString()} of ${total} conversations restored.`
-    } You can keep working. Large histories take longer; restoration resumes when you reopen T3 Code.${failed > 0 ? ` ${failed.toLocaleString()} need another attempt.` : ""}`,
+    } You can keep working. Large histories take longer; restoration resumes when you reopen Arcwright Code.${failed > 0 ? ` ${failed.toLocaleString()} need another attempt.` : ""}`,
     timeout: 0,
   };
 }

@@ -12,7 +12,7 @@ const payload = {
   eventId: "event-1",
   deepLink: "/threads/environment/thread",
   showProjectAndThreadNames: false,
-  title: "T3 Code",
+  title: "Arcwright Code",
   body: "Agent activity needs your attention.",
   createdAt: "2026-08-02T00:00:00.000Z",
   expiresAt: "2026-08-02T00:05:00.000Z",

@@ -504,7 +504,7 @@ const make = Effect.gen(function* () {
       (cause) =>
         new AgentDashboardReviewJobServiceError({
           operation: "generate identifier",
-          message: "T3 could not generate an identifier for the review job.",
+          message: "Arcwright Code could not generate an identifier for the review job.",
           cause,
         }),
     ),
@@ -524,10 +524,13 @@ const make = Effect.gen(function* () {
             Effect.flatMap(() =>
               dashboardStore.recordAutomationRun(saved).pipe(
                 Effect.tapError((cause) =>
-                  Effect.logWarning("T3 repository review coverage persistence failed", {
-                    runId: saved.id,
-                    cause,
-                  }),
+                  Effect.logWarning(
+                    "Arcwright Code repository review coverage persistence failed",
+                    {
+                      runId: saved.id,
+                      cause,
+                    },
+                  ),
                 ),
                 Effect.orElseSucceed(() => undefined),
               ),
@@ -573,10 +576,13 @@ const make = Effect.gen(function* () {
       (threadId) =>
         runner.hideReviewThread?.(threadId).pipe(
           Effect.tapError((cause) =>
-            Effect.logWarning("T3 could not hide a historical repository review session", {
-              threadId,
-              cause,
-            }),
+            Effect.logWarning(
+              "Arcwright Code could not hide a historical repository review session",
+              {
+                threadId,
+                cause,
+              },
+            ),
           ),
           Effect.ignore,
         ) ?? Effect.void,
@@ -593,11 +599,14 @@ const make = Effect.gen(function* () {
     runner.hideReviewThread
       ? runner.hideReviewThread(review.threadId).pipe(
           Effect.tapError((cause) =>
-            Effect.logWarning("T3 could not hide a completed repository review session", {
-              runId: run.id,
-              threadId: review.threadId,
-              cause,
-            }),
+            Effect.logWarning(
+              "Arcwright Code could not hide a completed repository review session",
+              {
+                runId: run.id,
+                threadId: review.threadId,
+                cause,
+              },
+            ),
           ),
           Effect.ignore,
         )
@@ -697,11 +706,14 @@ const make = Effect.gen(function* () {
                   }),
                 );
                 if (Exit.isFailure(nudgeExit)) {
-                  yield* Effect.logWarning("T3 could not nudge an incomplete repository review", {
-                    runId: run.id,
-                    threadId: review.threadId,
-                    cause: nudgeExit.cause,
-                  });
+                  yield* Effect.logWarning(
+                    "Arcwright Code could not nudge an incomplete repository review",
+                    {
+                      runId: run.id,
+                      threadId: review.threadId,
+                      cause: nudgeExit.cause,
+                    },
+                  );
                   break;
                 }
                 yield* Effect.sleep(MONITOR_POLL_INTERVAL);
@@ -733,8 +745,9 @@ const make = Effect.gen(function* () {
             }),
           );
           if (Exit.isFailure(nudgeExit)) {
-            monitorFailure = "Repository review stalled and T3 could not send a progress check.";
-            yield* Effect.logWarning("T3 could not nudge a stalled repository review", {
+            monitorFailure =
+              "Repository review stalled and Arcwright Code could not send a progress check.";
+            yield* Effect.logWarning("Arcwright Code could not nudge a stalled repository review", {
               runId: run.id,
               threadId: review.threadId,
               cause: nudgeExit.cause,
@@ -850,7 +863,7 @@ const make = Effect.gen(function* () {
             target: review.projectName,
             repository: { projectId: review.projectId },
           };
-          yield* Effect.logWarning("T3 repository review ingestion failed", {
+          yield* Effect.logWarning("Arcwright Code repository review ingestion failed", {
             runId: run.id,
             threadId: review.threadId,
             cause,
@@ -902,7 +915,7 @@ const make = Effect.gen(function* () {
             yield* persist({
               ...running,
               status: "failed",
-              error: "T3 could not select the next due repository review.",
+              error: "Arcwright Code could not select the next due repository review.",
               updatedAt: failedAt,
               completedAt: failedAt,
             }).pipe(Effect.ignore);
@@ -974,7 +987,7 @@ const make = Effect.gen(function* () {
             updatedAt: failedAt,
             completedAt: failedAt,
           };
-          yield* Effect.logWarning("T3 repository review job failed", {
+          yield* Effect.logWarning("Arcwright Code repository review job failed", {
             runId: run.id,
             cause,
           });
@@ -1088,7 +1101,7 @@ const make = Effect.gen(function* () {
 
   yield* dashboardStore.repairRepositoryCoverage(loadInitial).pipe(
     Effect.tapError((cause) =>
-      Effect.logWarning("T3 could not repair repository review coverage", { cause }),
+      Effect.logWarning("Arcwright Code could not repair repository review coverage", { cause }),
     ),
     Effect.ignore,
   );
@@ -1113,7 +1126,7 @@ const make = Effect.gen(function* () {
       const shell = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
         Effect.tapError((cause) =>
           Effect.logWarning(
-            "T3 is waiting to reconnect interrupted repository reviews until the project snapshot is available",
+            "Arcwright Code is waiting to reconnect interrupted repository reviews until the project snapshot is available",
             { cause },
           ),
         ),
@@ -1132,7 +1145,7 @@ const make = Effect.gen(function* () {
                 ...run,
                 status: "failed",
                 error:
-                  "T3 restarted and could not reconnect this repository review to its durable thread and project.",
+                  "Arcwright Code restarted and could not reconnect this repository review to its durable thread and project.",
                 updatedAt: failedAt,
                 completedAt: failedAt,
               }).pipe(Effect.ignore);

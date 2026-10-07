@@ -60,7 +60,7 @@ describe("environment transcription", () => {
       Effect.tap((error) =>
         Effect.sync(() => {
           expect(error._tag).toBe("OpenWhisprTranscriptionError");
-          expect(error.message).toContain("connected T3 server");
+          expect(error.message).toContain("connected Arcwright Code server");
         }),
       ),
       Effect.provide(

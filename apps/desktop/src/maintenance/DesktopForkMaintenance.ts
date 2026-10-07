@@ -280,7 +280,7 @@ export const make = Effect.gen(function* () {
         const pid = Option.getOrNull((await runPromise(instance.snapshot)).activePid);
         if (pid === null) continue;
         const started = await processCreationIdentity(pid).catch(() => UNKNOWN_PROCESS_IDENTITY);
-        if (started !== null) found.push({ pid, started, label: "T3 Code backend" });
+        if (started !== null) found.push({ pid, started, label: "Arcwright Code backend" });
       }
       return found;
     },

@@ -24,7 +24,7 @@ describe("transcribeWithOpenWhispr", () => {
   it("requires the selected environment to be connected", async () => {
     prepared.mockReturnValue(null);
     await expect(transcribeWithOpenWhispr(environmentId, new Blob(["audio"]))).rejects.toThrow(
-      "Connect to the T3 server",
+      "Connect to the Arcwright Code server",
     );
     expect(execute).not.toHaveBeenCalled();
   });

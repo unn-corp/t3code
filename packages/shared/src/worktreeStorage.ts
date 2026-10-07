@@ -7,7 +7,7 @@ export function worktreeStorageUnavailableReason(
   if (supports.length === 0) return "Connect an environment to check copy-on-write support.";
   for (const support of supports) {
     if (support == null)
-      return "Update the selected T3 server to a version that supports space-efficient worktrees.";
+      return "Update the selected Arcwright Code server to a version that supports space-efficient worktrees.";
     if (!support.supported)
       return support.reason ?? "Copy-on-write file copies are unavailable on a selected server.";
   }

@@ -45,7 +45,7 @@ self.addEventListener("push", (event) => {
   const generic = payload.showProjectAndThreadNames !== true;
   const title =
     generic || typeof payload.title !== "string" || payload.title.length === 0
-      ? "T3 Code"
+      ? "Arcwright Code"
       : payload.title;
   const body =
     generic || typeof payload.body !== "string" || payload.body.length === 0

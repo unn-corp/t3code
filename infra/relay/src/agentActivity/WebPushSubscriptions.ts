@@ -122,7 +122,7 @@ function notificationCopy(input: {
   readonly names: boolean;
 }) {
   if (!input.names) {
-    return { title: "T3 Code", body: "Agent activity needs your attention." };
+    return { title: "Arcwright Code", body: "Agent activity needs your attention." };
   }
   switch (input.kind) {
     case "plan_ready":

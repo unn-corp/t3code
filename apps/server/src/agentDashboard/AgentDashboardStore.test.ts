@@ -182,7 +182,7 @@ it.effect("imports the legacy feed when the T3 target already exists but is empt
       ts: 1_900_000_000,
       agent: "hermes",
       title: "Legacy update",
-      text: "Still visible after the T3 store was initialized.",
+      text: "Still visible after the Arcwright Code store was initialized.",
       level: "success",
     };
     const previousHome = process.env.HOME;
@@ -234,7 +234,7 @@ it.effect("preserves feed origin metadata for project and chat navigation", () =
           agent: "codex",
           title: "Origin-aware update",
           text: "Open the source chat from this card.",
-          project_name: "T3 Code",
+          project_name: "Arcwright Code",
           project_path: "/workspace/t3code",
           thread_id: "thread-1",
         }),
@@ -242,7 +242,7 @@ it.effect("preserves feed origin metadata for project and chat navigation", () =
 
       expect(appended.origin).toEqual({
         projectId: null,
-        projectName: "T3 Code",
+        projectName: "Arcwright Code",
         projectPath: "/workspace/t3code",
         threadId: "thread-1",
       });
@@ -882,7 +882,7 @@ it.effect("links a finding to its working chat and records the transition", () =
         thread: { projectId: "project-1", threadId: "thread-working" },
         disposition: {
           state: "in-progress",
-          note: "Work started from the T3 Code Agent Dashboard.",
+          note: "Work started from the Arcwright Code Agent Dashboard.",
         },
       });
       expect(await Effect.runPromise(store.readExternalActions)).toEqual(

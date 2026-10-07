@@ -25,9 +25,11 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as StoragePressure from "../background/StoragePressure.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as WorkspaceGitPolicy from "./WorkspaceGitPolicy.ts";
 
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
@@ -191,7 +193,10 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly refreshLocalStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
-    readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    readonly refreshStatus: (
+      cwd: string,
+      options?: { readonly automatic?: boolean },
+    ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     /**
      * Refresh a loaded cwd after a turn if background policy allows it.
      * GitManager retries missing PRs for the current branch and keeps known
@@ -222,6 +227,8 @@ export const make = Effect.gen(function* () {
   const autoPullPolicy = yield* VcsAutoPullPolicy;
   const workflow = yield* GitWorkflowService.GitWorkflowService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+  const storagePressure = yield* StoragePressure.StoragePressure;
+  const gitPolicy = yield* WorkspaceGitPolicy.WorkspaceGitPolicy;
   const fs = yield* FileSystem.FileSystem;
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<VcsStatusChange>(),
@@ -247,6 +254,10 @@ export const make = Effect.gen(function* () {
 
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
     function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
+      const paused = (yield* getCachedStatus(cwd))?.local?.value.automaticRefreshPaused;
+      if (local.automaticRefreshPaused === undefined && paused !== undefined) {
+        local = { ...local, automaticRefreshPaused: paused };
+      }
       const nextLocal = {
         fingerprint: fingerprintStatusPart(local),
         value: local,
@@ -274,6 +285,38 @@ export const make = Effect.gen(function* () {
       return local;
     },
   );
+
+  const updateRefreshPause = (
+    cwd: string,
+    reason: VcsStatusLocalResult["automaticRefreshPaused"],
+  ) =>
+    Effect.gen(function* () {
+      const local = yield* Ref.modify(cacheRef, (cache) => {
+        const previous = cache.get(cwd);
+        if (!previous?.local) return [null, cache] as const;
+        const value = previous.local.value;
+        if ((value.automaticRefreshPaused ?? null) === (reason ?? null))
+          return [null, cache] as const;
+        const next = { ...value, automaticRefreshPaused: reason ?? null };
+        return [
+          next,
+          new Map(cache).set(cwd, {
+            ...previous,
+            local: { fingerprint: fingerprintStatusPart(next), value: next },
+          }),
+        ] as const;
+      });
+      if (local) {
+        yield* PubSub.publish(changesPubSub, { cwd, event: { _tag: "localUpdated", local } });
+      }
+    });
+
+  const automaticRefreshPause = (cwd: string) =>
+    Effect.gen(function* () {
+      const storage = yield* storagePressure.read;
+      if (storage.reason !== null) return storage.reason;
+      return (yield* gitPolicy.read(cwd)).automaticGitStatus ? null : ("disabled" as const);
+    });
 
   const updateCachedRemoteStatus = Effect.fn("VcsStatusBroadcaster.updateCachedRemoteStatus")(
     function* (cwd: string, remote: VcsStatusRemoteResult | null, options?: { publish?: boolean }) {
@@ -311,6 +354,10 @@ export const make = Effect.gen(function* () {
     remote: VcsStatusRemoteResult | null,
     options?: { publish?: boolean },
   ) {
+    const paused = (yield* getCachedStatus(cwd))?.local?.value.automaticRefreshPaused;
+    if (local.automaticRefreshPaused === undefined && paused !== undefined) {
+      local = { ...local, automaticRefreshPaused: paused };
+    }
     const nextLocal = {
       fingerprint: fingerprintStatusPart(local),
       value: local,
@@ -448,6 +495,7 @@ export const make = Effect.gen(function* () {
     options?: {
       readonly refreshUpstream?: boolean;
       readonly policyCwds?: ReadonlyArray<string>;
+      readonly forceLocalRefresh?: boolean;
     },
   ) {
     return yield* withRemoteWriteLock(
@@ -464,11 +512,12 @@ export const make = Effect.gen(function* () {
         // move them with no local trigger (a push from a terminal, a PR merged on the host), so
         // re-read local status on the first fetch and whenever divergence moves.
         if (
-          remote &&
-          (!previousRemote ||
-            previousRemote.aheadCount !== remote.aheadCount ||
-            previousRemote.behindCount !== remote.behindCount ||
-            previousRemote.aheadOfDefaultCount !== remote.aheadOfDefaultCount)
+          options?.forceLocalRefresh ||
+          (remote &&
+            (!previousRemote ||
+              previousRemote.aheadCount !== remote.aheadCount ||
+              previousRemote.behindCount !== remote.behindCount ||
+              previousRemote.aheadOfDefaultCount !== remote.aheadOfDefaultCount))
         ) {
           yield* refreshLocalStatusCore(cwd);
         }
@@ -479,8 +528,16 @@ export const make = Effect.gen(function* () {
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
-  )(function* (rawCwd) {
+  )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    const reason = yield* automaticRefreshPause(rawCwd);
+    if (options?.automatic && reason !== null) {
+      const local = yield* getOrLoadLocalStatus(cwd);
+      yield* updateRefreshPause(cwd, reason);
+      const cached = yield* getCachedStatus(cwd);
+      return mergeGitStatusParts(cached?.local?.value ?? local, cached?.remote?.value ?? null);
+    }
+    yield* updateRefreshPause(cwd, reason);
     // invalidateStatus (not the two partial invalidations) so an explicit
     // refresh also bypasses GitManager's slow PR-lookup cache.
     return yield* withRemoteWriteLock(
@@ -543,8 +600,16 @@ export const make = Effect.gen(function* () {
         if (Duration.isZero(configuredInterval) && !needsInitialRefresh) {
           return activeInterval;
         }
-
         const demandCwds = yield* Ref.get(demandCwdsRef);
+        const reason =
+          (yield* Effect.forEach([...demandCwds.keys()], automaticRefreshPause)).find(
+            (value) => value !== null,
+          ) ?? null;
+        if (reason !== null) {
+          yield* updateRefreshPause(cwd, reason);
+          return activeInterval;
+        }
+
         const shouldRun =
           needsInitialRefresh ||
           (yield* Effect.forEach(
@@ -560,11 +625,16 @@ export const make = Effect.gen(function* () {
           return activeInterval;
         }
 
+        // A pause can skip turn-end refreshes. Refresh the cached local status
+        // once on recovery even when the remote branch has not moved.
+        const previouslyPaused = (yield* getCachedStatus(cwd))?.local?.value.automaticRefreshPaused;
         const exit = yield* refreshRemoteStatus(cwd, {
           refreshUpstream: !Duration.isZero(configuredInterval),
           policyCwds: [...demandCwds.keys()],
+          forceLocalRefresh: previouslyPaused != null,
         }).pipe(Effect.exit);
         if (Exit.isSuccess(exit)) {
+          yield* updateRefreshPause(cwd, null);
           yield* Ref.set(needsInitialRefreshRef, false);
           yield* Ref.set(consecutiveFailuresRef, 0);
           return activeInterval;
@@ -706,6 +776,9 @@ export const make = Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
         const subscription = yield* PubSub.subscribe(changesPubSub);
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
+        const pause = yield* automaticRefreshPause(input.cwd);
+        yield* updateRefreshPause(cwd, pause);
+        const visibleLocal = (yield* getCachedStatus(cwd))?.local?.value ?? initialLocal;
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;
         yield* retainRemotePoller(
@@ -721,7 +794,7 @@ export const make = Effect.gen(function* () {
         return Stream.concat(
           Stream.make({
             _tag: "snapshot" as const,
-            local: initialLocal,
+            local: visibleLocal,
             remote: initialRemote,
           }),
           Stream.fromSubscription(subscription).pipe(

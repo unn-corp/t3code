@@ -381,10 +381,10 @@ export function dashboardFindingQualificationReason(record: DashboardFindingReco
   const actionability = record.finding.actionability;
   if (actionability?.qualificationReason) return actionability.qualificationReason;
   if (record.finding.provenance.source === "local-secret-scan") {
-    return "T3 must verify whether the redacted value is a real credential and whether remediation requires external rotation.";
+    return "Arcwright Code must verify whether the redacted value is a real credential and whether remediation requires external rotation.";
   }
   if (record.finding.provenance.source === "local-git") {
-    return "Working-tree state is repository health. T3 will not turn local edits into an unattended implementation.";
+    return "Working-tree state is repository health. Arcwright Code will not turn local edits into an unattended implementation.";
   }
   return "A read-only qualification pass has not produced a bounded implementation plan yet.";
 }
@@ -708,7 +708,7 @@ export function buildSuggestionWorkPrompt(
     "- If the finding is no longer applicable, explain what changed and why instead of making speculative edits.",
     "",
     "## Completion",
-    "After the work is complete and focused validation succeeds, mark this finding as Done in T3 Code. Do not mark it as Done while work or validation remains; report any remaining work or blocker instead.",
+    "After the work is complete and focused validation succeeds, mark this finding as Done in Arcwright Code. Do not mark it as Done while work or validation remains; report any remaining work or blocker instead.",
   ].join("\n");
 }
 
@@ -788,7 +788,7 @@ export function buildResearchFindingPrompt(
           "- If the finding is stale or invalid, explain why and do not make speculative changes.",
           "",
           "## Completion",
-          "After implementation and focused validation succeed, mark this finding as Done in T3 Code. Do not mark it as Done while work or validation remains.",
+          "After implementation and focused validation succeed, mark this finding as Done in Arcwright Code. Do not mark it as Done while work or validation remains.",
         ]
       : [
           "- Inspect the current repository before judging applicability.",
@@ -1341,7 +1341,7 @@ export function buildNativeResearchRecords(
             ? `${activeThreads.length} agent${activeThreads.length === 1 ? " is" : "s are"} active in this repository.`
             : needsAttention
               ? "This repository has an agent that needs attention."
-              : "Repository and agent state are connected to T3 Code.",
+              : "Repository and agent state are connected to Arcwright Code.",
         signal: needsAttention
           ? "needs-attention"
           : activeThreads.length > 0
@@ -1351,7 +1351,7 @@ export function buildNativeResearchRecords(
         threadCount: group.threads.length,
         activeThreadCount: activeThreads.length,
         latestThreadTitle: latestThread?.title ?? null,
-        source: "T3 Code",
+        source: "Arcwright Code",
         relevanceScore: needsAttention ? 45 : activeThreads.length > 0 ? 80 : 65,
         categories: ["repository", needsAttention ? "needs-attention" : "connected"],
         evidence: [
@@ -1414,7 +1414,7 @@ export function buildNativeResearchRecordsFromSnapshot(
           record.activeThreadCount ??
           repositoryThreads.filter((thread) => thread.state === "running").length,
         latestThreadTitle: latestThread?.title ?? null,
-        source: "T3 Code",
+        source: "Arcwright Code",
         relevanceScore: record.status === "clean" ? 100 : record.status === "ahead" ? 80 : 45,
         categories: ["repository", record.status],
         evidence: [

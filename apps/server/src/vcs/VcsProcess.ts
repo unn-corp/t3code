@@ -19,6 +19,7 @@ import {
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as GitProcessBudget from "./GitProcessBudget.ts";
 
 export interface VcsProcessInput {
   readonly operation: string;
@@ -211,7 +212,10 @@ export const make = Effect.gen(function* () {
   });
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
-    const bounded = vcsProcesses.withPermits(1)(runUnbounded(input));
+    const bounded =
+      input.command === "git"
+        ? GitProcessBudget.withPermit(input.cwd, input.args, runUnbounded(input))
+        : vcsProcesses.withPermits(1)(runUnbounded(input));
     if (
       input.command === "git" &&
       input.operation === CHECKPOINT_CAPTURE_OPERATION &&

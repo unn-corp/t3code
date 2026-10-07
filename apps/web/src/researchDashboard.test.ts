@@ -112,11 +112,11 @@ describe("dashboard repository presentation", () => {
             remoteName: "origin",
             remoteUrl: "https://github.com/unnamed/t3code.git",
           },
-          displayName: "T3 Code",
+          displayName: "Arcwright Code",
           name: "t3code",
         },
       }),
-    ).toBe("T3 Code");
+    ).toBe("Arcwright Code");
     expect(
       resolveDashboardRepositoryName({ title: "Local checkout", repositoryIdentity: null }),
     ).toBe("Local checkout");
@@ -178,11 +178,11 @@ describe("dashboard repository questions", () => {
   it("grounds the agent in the selected repository and trims the question", () => {
     expect(
       buildDashboardRepositoryQuestionPrompt(
-        { title: "T3 Code", workspaceRoot: "/work/t3code" },
+        { title: "Arcwright Code", workspaceRoot: "/work/t3code" },
         "  What is blocking the release?  ",
       ),
     ).toContain(
-      "Repository: T3 Code\nRepository path: /work/t3code\n\n## User question\nWhat is blocking the release?",
+      "Repository: Arcwright Code\nRepository path: /work/t3code\n\n## User question\nWhat is blocking the release?",
     );
   });
 });

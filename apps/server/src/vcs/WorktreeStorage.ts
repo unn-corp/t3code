@@ -131,10 +131,10 @@ export const make = Effect.gen(function* () {
           supported: false,
           reason:
             code === "EACCES" || code === "EPERM"
-              ? "T3 cannot write to the worktree folder to check copy-on-write support. Check its permissions."
+              ? "Arcwright Code cannot write to the worktree folder to check copy-on-write support. Check its permissions."
               : code === "ENOSPC"
                 ? "There is not enough free space to check copy-on-write support."
-                : "The filesystem containing T3's worktree folder does not support copy-on-write file copies. Use a compatible filesystem such as Btrfs, reflink-enabled XFS, or APFS.",
+                : "The filesystem containing Arcwright Code's worktree folder does not support copy-on-write file copies. Use a compatible filesystem such as Btrfs, reflink-enabled XFS, or APFS.",
         });
       }),
     );

@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
+import * as WorkspaceGitPolicy from "../vcs/WorkspaceGitPolicy.ts";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
@@ -248,6 +249,7 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const checkpointStore = yield* CheckpointStore.CheckpointStore;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const gitPolicy = yield* WorkspaceGitPolicy.WorkspaceGitPolicy;
     const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
@@ -261,7 +263,10 @@ export const layer: Layer.Layer<
       withWorkspaceLock(
         input.scope.cwd,
         Effect.gen(function* () {
-          if (!(yield* isGitCheckpointable(input.scope.cwd))) {
+          if (
+            !(yield* gitPolicy.read(input.scope.cwd, input.scope.threadId)).automaticCheckpoints ||
+            !(yield* isGitCheckpointable(input.scope.cwd))
+          ) {
             return;
           }
 
@@ -371,7 +376,10 @@ export const layer: Layer.Layer<
             ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
           });
 
-          if (!(yield* isGitCheckpointable(input.scope.cwd))) {
+          if (
+            !(yield* gitPolicy.read(input.scope.cwd, input.scope.threadId)).automaticCheckpoints ||
+            !(yield* isGitCheckpointable(input.scope.cwd))
+          ) {
             return makeCheckpoint({
               id: checkpointId,
               scope: input.scope,

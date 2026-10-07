@@ -5,6 +5,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as StoragePressure from "../background/StoragePressure.ts";
+import * as WorkspaceGitPolicy from "../vcs/WorkspaceGitPolicy.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
@@ -94,15 +96,22 @@ export const observerLive = Layer.effect(
     const vcsStatus = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const storagePressure = yield* StoragePressure.StoragePressure;
+    const gitPolicy = yield* WorkspaceGitPolicy.WorkspaceGitPolicy;
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: ({ cwd, threadId, runId }) =>
         Effect.gen(function* () {
+          if ((yield* storagePressure.read).reason !== null) return;
+          const policy = yield* gitPolicy.read(cwd, threadId);
           const [, local] = yield* Effect.all(
-            [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
+            [
+              workspaceEntries.refresh(cwd),
+              policy.automaticGitStatus ? vcsStatus.refreshLocalStatus(cwd) : Effect.succeed(null),
+            ],
             { concurrency: "unbounded" },
           );
-          if (local.refName === null || local.isDefaultRef) return;
+          if (local === null || local.refName === null || local.isDefaultRef) return;
           const thread = yield* projections.getThreadShell(threadId);
           if (!thread || thread.branch !== local.refName) return;
           if (thread.activeRunId !== null && thread.activeRunId !== runId) return;

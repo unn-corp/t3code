@@ -91,7 +91,7 @@ describe("mobile slash commands", () => {
       },
     });
     const item = items[0];
-    if (!item) throw new Error("Expected the T3 plan command");
+    if (!item) throw new Error("Expected the Arcwright Code plan command");
     expect(
       resolveComposerCommandSelection({
         draftMessage: "/plan",

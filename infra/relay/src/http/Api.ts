@@ -826,7 +826,7 @@ export const clientApi = HttpApiBuilder.group(
               eventId: `web-push-test:${subscription.id}`,
               deepLink: "/",
               showProjectAndThreadNames: false,
-              title: "T3 Code",
+              title: "Arcwright Code",
               body: "Your PWA push notifications are working.",
             })
             .pipe(Effect.orDie);
@@ -1484,7 +1484,7 @@ export const pwaApi = HttpApiBuilder.group(
               eventId: `pwa-web-push-test:${subscription.id}`,
               deepLink: "/",
               showProjectAndThreadNames: false,
-              title: "T3 Code",
+              title: "Arcwright Code",
               body: "Your PWA push notifications are working.",
             })
             .pipe(Effect.orDie);

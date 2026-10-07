@@ -24,7 +24,7 @@ This first Project execution path changes one explicitly selected file per work 
 
 ### Host provider ceiling
 
-An administrator of the machine running T3 Code can inspect and set the shared Organization provider ceiling from that machine's CLI. Use the same absolute data directory passed to the server as `--base-dir`. The database must already exist; these commands do not create an installation.
+An administrator of the machine running Arcwright Code can inspect and set the shared Organization provider ceiling from that machine's CLI. Use the same absolute data directory passed to the server as `--base-dir`. The database must already exist; these commands do not create an installation.
 
 ```sh
 t3 organization-budget show --base-dir /absolute/path/to/t3-data

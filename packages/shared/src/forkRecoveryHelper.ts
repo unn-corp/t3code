@@ -740,7 +740,7 @@ export async function recoverCohort(input: RecoverCohortInput): Promise<Readonly
   if (desktop === null) {
     return [
       restored,
-      "Admission stays fenced. Start T3 Code: the first healthy start verifies the restored runtimes, pins the reverted build, holds restored schedules and queues for your review, and then releases admission.",
+      "Admission stays fenced. Start Arcwright Code: the first healthy start verifies the restored runtimes, pins the reverted build, holds restored schedules and queues for your review, and then releases admission.",
     ];
   }
   // Only now, with every home restored, is the binary touched. A failure here leaves the restored data and the held fence as they are.
@@ -815,7 +815,7 @@ export async function main(argv: ReadonlyArray<string>, io: HelperIo = processIo
         ).catch(() => null);
         if (cached === null) {
           io.out(
-            "No verified recovery runtime is cached on this device. Install or update T3 Code once so it caches the helper and its Node runtime, then run this again.",
+            "No verified recovery runtime is cached on this device. Install or update Arcwright Code once so it caches the helper and its Node runtime, then run this again.",
           );
           return 1;
         }

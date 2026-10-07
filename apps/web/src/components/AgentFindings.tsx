@@ -769,7 +769,7 @@ export function AgentFindings({
       if (!githubRepositoryForRecord(record)) {
         showFailure(
           "Connect this repository to GitHub first",
-          "A GitHub remote is required before T3 Code can create an issue.",
+          "A GitHub remote is required before Arcwright Code can create an issue.",
         );
         return;
       }
@@ -819,7 +819,7 @@ export function AgentFindings({
       if (!environmentId) {
         showFailure(
           "Connect an environment first",
-          "This finding needs a T3 Code environment to start an agent session.",
+          "This finding needs an Arcwright Code environment to start an agent session.",
         );
         return;
       }
@@ -833,7 +833,7 @@ export function AgentFindings({
       const project = projectForRecord(record, environmentId);
       if (!project) {
         showFailure(
-          "Add this repository to T3 Code first",
+          "Add this repository to Arcwright Code first",
           `No project is configured for ${record.repositoryPath || record.projectName}.`,
         );
         return;
@@ -846,7 +846,7 @@ export function AgentFindings({
       if (intent === "implement" && !baseBranch) {
         showFailure(
           "Primary branch not found",
-          "T3 could not identify this repository's default branch. Refresh repository data and try again.",
+          "Arcwright Code could not identify this repository's default branch. Refresh repository data and try again.",
         );
         return;
       }
@@ -978,14 +978,14 @@ export function AgentFindings({
       if (!environmentId) {
         showFailure(
           "Connect an environment first",
-          "This question needs a T3 Code environment to start a session.",
+          "This question needs an Arcwright Code environment to start a session.",
         );
         return;
       }
       const project = projectForRecord(record, environmentId);
       if (!project) {
         showFailure(
-          "Add this repository to T3 Code first",
+          "Add this repository to Arcwright Code first",
           `No project is configured for ${record.repositoryPath || record.projectName}.`,
         );
         return;
@@ -1082,14 +1082,14 @@ export function AgentFindings({
       if (!environmentId) {
         showFailure(
           "Connect an environment first",
-          "Combining pull requests needs a T3 Code environment to start an agent session.",
+          "Combining pull requests needs an Arcwright Code environment to start an agent session.",
         );
         return false;
       }
       const project = findDashboardProject(projects, target, environmentId);
       if (!project) {
         showFailure(
-          "Add this repository to T3 Code first",
+          "Add this repository to Arcwright Code first",
           `No project is configured for ${target.repositoryPath || target.projectName}.`,
         );
         return false;
@@ -1260,7 +1260,7 @@ export function AgentFindings({
         stackedThreadToast({
           type: "success",
           title: "Research source configured",
-          description: "T3 collected the watch item for the selected repository.",
+          description: "Arcwright Code collected the watch item for the selected repository.",
         }),
       );
     } finally {
@@ -1632,8 +1632,8 @@ export function AgentFindings({
             <CollapsiblePanel>
               <div className="grid gap-2 border-t border-border/60 p-3">
                 <p className="text-xs text-muted-foreground">
-                  One finding runs at a time. T3 keeps the work session, launch failures, and
-                  verified pull request outcome here.
+                  One finding runs at a time. Arcwright Code keeps the work session, launch
+                  failures, and verified pull request outcome here.
                 </p>
                 {continuousImprovementRuns.length > 0 ? (
                   <div className="grid gap-2">
@@ -2307,8 +2307,8 @@ export function AgentFindings({
           <DialogHeader>
             <DialogTitle>Set up repository research</DialogTitle>
             <DialogDescription>
-              Add a topic or source to the local watchlist. T3 will collect it immediately and
-              include it in future portfolio runs.
+              Add a topic or source to the local watchlist. Arcwright Code will collect it
+              immediately and include it in future portfolio runs.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -2351,7 +2351,7 @@ export function AgentFindings({
                 />
               </Field>
               <Field>
-                <FieldLabel>What should T3 watch for?</FieldLabel>
+                <FieldLabel>What should Arcwright Code watch for?</FieldLabel>
                 <Textarea
                   disabled={savingResearchSource}
                   onChange={(event) => setResearchSummary(event.currentTarget.value)}

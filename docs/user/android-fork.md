@@ -17,7 +17,7 @@ installation from that source when Android asks. You can also install over USB w
 
 ```bash
 adb devices
-# Finish phone browser commands, uploads, and dialogs; background T3 Code for two minutes.
+# Finish phone browser commands, uploads, and dialogs; background Arcwright Code for two minutes.
 adb install -r t3-code-pwa.apk
 ```
 
@@ -28,9 +28,9 @@ imported.
 
 ### Automatic updates
 
-T3 Code checks this fork's GitHub releases when it opens and about every six hours on Wi-Fi.
+Arcwright Code checks this fork's GitHub releases when it opens and about every six hours on Wi-Fi.
 New versions are downloaded and verified in the background. An update never installs while you
-are using the phone: T3 Code waits until it has been in the background for 2 minutes and no
+are using the phone: Arcwright Code waits until it has been in the background for 2 minutes and no
 browser command, file upload, or system dialog is in progress. This applies when you tap
 **Install** too. The tap records your request for exactly the version you reviewed and shows
 **Waiting**; leave the app and it installs after the wait, even if automatic installation is off.
@@ -41,10 +41,10 @@ Agents running on your computers are not interrupted, since they run on those co
 - **Automatic installation.** Turn it off to install only after you tap **Install**. Your request
   never changes this setting.
 - **Pin.** Hold this version until you tap **Resume**. A rollback pins automatically.
-- **Allow installing.** The first time, Android asks you to let T3 Code install updates. Without it,
+- **Allow installing.** The first time, Android asks you to let Arcwright Code install updates. Without it,
   updates download and wait.
 
-Android may ask you to confirm the install. T3 Code shows a notification when it needs you.
+Android may ask you to confirm the install. Arcwright Code shows a notification when it needs you.
 You can also open **App updates → Open recovery → Open Android update confirmation**
 to reach that same Android prompt directly. Approve **Update** in Android; opening the prompt
 does not approve or start another installation.
@@ -53,10 +53,10 @@ older phones need the APK installed by hand.
 
 ### If an update goes wrong
 
-Before installing a new version, T3 Code keeps a verified copy of the previous version. If the app
+Before installing a new version, Arcwright Code keeps a verified copy of the previous version. If the app
 repeatedly fails to start, or an update does not match what was verified, it opens a **Recovery**
 screen instead. You can also open it any time from the **Recovery** shortcut when you long-press
-the T3 Code icon. From there you can continue to the app, request the saved previous version, or
+the Arcwright Code icon. From there you can continue to the app, request the saved previous version, or
 download the latest recovery build. A requested recovery build also waits for the 2 minutes away from
 the app, then replaces it in place and keeps your connections; it does not uninstall anything. If even that screen will not open, ask your fork maintainer for the
 signed recovery APK and install it over the existing app.
@@ -71,7 +71,7 @@ interface. Some features also require an updated fork server on each connected h
 ## Connect over Tailscale
 
 1. Connect the phone and each host computer to your Tailscale network. Keep Tailscale connected
-   while using T3 Code.
+   while using Arcwright Code.
 2. Start this fork's T3 server on each computer, or keep its desktop app running. Configure and
    authenticate the coding providers on those computers.
 3. On a desktop host, enable **Tailscale HTTPS** in **Settings → Connections** and create a pairing
@@ -108,14 +108,14 @@ Google Play services, or a T3 Connect account. Cloud DPoP connections are not su
 native background transport.
 
 Keep Tailscale connected and allow unrestricted battery use for both apps when you need timely
-background alerts. Offline hosts and Android power saving can delay delivery. Open T3 Code once
+background alerts. Offline hosts and Android power saving can delay delivery. Open Arcwright Code once
 after reboot or force-stop to resume background connections. Disabling alerts stops this
 background delivery without deleting the app's saved environments.
 
 ## Browser on the phone
 
 The **Browser** panel renders sites in a separate phone WebView. Agents can navigate, inspect,
-click, type, scroll, and capture that tab while T3 Code is open. Keep the panel visible for
+click, type, scroll, and capture that tab while Arcwright Code is open. Keep the panel visible for
 screenshots. The phone browser has its own cookies and adapts to the current display size,
 including folding or unfolding the phone. Close unused tabs before reaching the eight-tab limit.
 

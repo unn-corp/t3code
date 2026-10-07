@@ -124,7 +124,7 @@ it.effect("refuses backup while the recorded server process is alive", () =>
       (yield* run((service) =>
         service.create({ homeDir: data.home, outputDir: data.outputDir }),
       ).pipe(Effect.flip)).message,
-    ).toContain("Stop the T3 server");
+    ).toContain("Stop the Arcwright Code server");
     expect((yield* io(() => NodeFSP.stat(data.outputDir)).pipe(Effect.exit))._tag).toBe("Failure");
   }),
 );

@@ -84,12 +84,12 @@ describe("unified dashboard findings", () => {
 
   it("resolves a selected repository ID to its visible label", () => {
     const options = [
-      ["45bba84e-2416-4fc2-8e15-3707adbdcd3", "T3 Code"],
+      ["45bba84e-2416-4fc2-8e15-3707adbdcd3", "Arcwright Code"],
       ["project-2", "Arcwright AI"],
     ] as const;
 
     expect(resolveDashboardProjectOptionLabel(options, "45bba84e-2416-4fc2-8e15-3707adbdcd3")).toBe(
-      "T3 Code",
+      "Arcwright Code",
     );
     expect(resolveDashboardProjectOptionLabel(options, "missing-project")).toBe(
       "Choose a repository",
@@ -141,7 +141,7 @@ describe("unified dashboard findings", () => {
       repositories: [
         {
           projectId: ProjectId.make("project-1"),
-          title: "T3 Code",
+          title: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
         },
         {
@@ -192,7 +192,7 @@ describe("unified dashboard findings", () => {
     expect(visible.map((record) => record.id)).toEqual(["finding:security"]);
     expect(groupDashboardFindingRecords(records).map((group) => group.projectName)).toEqual([
       "Relay",
-      "T3 Code",
+      "Arcwright Code",
     ]);
   });
 
@@ -312,7 +312,7 @@ describe("unified dashboard findings", () => {
       repositories: [
         {
           projectId: ProjectId.make("project-1"),
-          title: "T3 Code",
+          title: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
         },
       ],
@@ -405,7 +405,7 @@ describe("pull request combination launch", () => {
 
   it("builds a guarded, ordered consolidation brief from reviewed heads", () => {
     const prompt = buildDashboardPullRequestCombinationPrompt({
-      projectName: "T3 Code",
+      projectName: "Arcwright Code",
       repositoryPath: "/workspace/t3code",
       baseRefName: "main",
       outputTitle: "Combine dashboard improvements",
@@ -477,7 +477,7 @@ describe("durable agent feed origins", () => {
         {
           title: "Tests finished",
           summary: "The focused suite passed.",
-          projectName: "T3 Code",
+          projectName: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
           provider: "codex",
           updatedAt: "2026-08-09T12:05:00.000Z",
@@ -485,14 +485,14 @@ describe("durable agent feed origins", () => {
         "  What should I review?  ",
       ),
     ).toContain(
-      "Update: Tests finished\nSummary: The focused suite passed.\nProject: T3 Code\nRepository path: /workspace/t3code",
+      "Update: Tests finished\nSummary: The focused suite passed.\nProject: Arcwright Code\nRepository path: /workspace/t3code",
     );
     expect(
       buildDashboardUpdateQuestionPrompt(
         {
           title: "Tests finished",
           summary: "The focused suite passed.",
-          projectName: "T3 Code",
+          projectName: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
           provider: "codex",
           updatedAt: "2026-08-09T12:05:00.000Z",
@@ -531,7 +531,7 @@ describe("durable agent feed origins", () => {
         {
           environmentId,
           id: projectId,
-          title: "T3 Code",
+          title: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
         },
       ],
@@ -552,7 +552,7 @@ describe("durable agent feed origins", () => {
 
     expect(records[0]).toMatchObject({
       projectId,
-      projectName: "T3 Code",
+      projectName: "Arcwright Code",
       workspaceRoot: "/workspace/t3code",
       threadId,
       branch: "feature/feed-origin",
@@ -619,7 +619,7 @@ describe("durable agent feed origins", () => {
         {
           environmentId,
           id: projectId,
-          title: "T3 Code",
+          title: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
         },
       ],
@@ -639,7 +639,7 @@ describe("durable agent feed origins", () => {
     );
 
     expect(records[0]).toMatchObject({
-      projectName: "T3 Code",
+      projectName: "Arcwright Code",
       projectId,
       threadId,
       chatLabel: "Open chat",
@@ -749,7 +749,7 @@ describe("agent dashboard suggestion actions", () => {
   it("builds an implementation prompt from the research finding", () => {
     const prompt = buildSuggestionWorkPrompt({
       repositoryPath: "/workspace/t3code",
-      projectName: "T3 Code",
+      projectName: "Arcwright Code",
       category: "bug",
       title: "Handle stale repository metadata",
       description: "The refresh path leaves repository metadata stale.",
@@ -769,7 +769,7 @@ describe("agent dashboard suggestion actions", () => {
     expect(prompt).toContain("## Recommended next step");
     expect(prompt).toContain("Run focused validation before you finish.");
     expect(prompt).toContain("## Completion");
-    expect(prompt).toContain("mark this finding as Done in T3 Code");
+    expect(prompt).toContain("mark this finding as Done in Arcwright Code");
   });
 
   it("does not render a migrated legacy suggestion twice after canonical ingestion", () => {
@@ -777,7 +777,7 @@ describe("agent dashboard suggestion actions", () => {
       repositories: [
         {
           projectId: ProjectId.make("project-1"),
-          title: "T3 Code",
+          title: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
         },
       ],
@@ -827,7 +827,7 @@ describe("agent dashboard suggestion actions", () => {
           createdAt: "2026-08-09T12:00:00.000Z",
           expiresAt: null,
           repository: {
-            name: "T3 Code",
+            name: "Arcwright Code",
             path: "/workspace/t3code",
             githubRepo: null,
           },
@@ -859,7 +859,7 @@ describe("agent dashboard suggestion actions", () => {
       repositories: [
         {
           projectId: ProjectId.make("project-1"),
-          title: "T3 Code",
+          title: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
         },
       ],
@@ -943,7 +943,7 @@ describe("agent dashboard suggestion actions", () => {
       repositories: [
         {
           projectId: ProjectId.make("project-1"),
-          title: "T3 Code",
+          title: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
         },
       ],
@@ -981,7 +981,7 @@ describe("agent dashboard suggestion actions", () => {
           source: "code_review",
           jobId: null,
           title: "Review local changes",
-          repository: { name: "T3 Code", path: "/workspace/t3code", githubRepo: null },
+          repository: { name: "Arcwright Code", path: "/workspace/t3code", githubRepo: null },
         },
         {
           id: "review-suggestion",
@@ -989,7 +989,7 @@ describe("agent dashboard suggestion actions", () => {
           source: "code_review",
           jobId: "run-1",
           title: "Parser finding",
-          repository: { name: "T3 Code", path: "/workspace/t3code", githubRepo: null },
+          repository: { name: "Arcwright Code", path: "/workspace/t3code", githubRepo: null },
           description: "A review finding.",
           status: "pending",
           createdAt: "2026-08-09T12:00:00.000Z",
@@ -1017,7 +1017,7 @@ describe("agent dashboard suggestion actions", () => {
       repositories: [
         {
           projectId: ProjectId.make("project-1"),
-          title: "T3 Code",
+          title: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
         },
       ],
@@ -1034,7 +1034,7 @@ describe("agent dashboard suggestion actions", () => {
           categories: ["machine-learning"],
           relevanceScore: 90,
           topicContext: null,
-          repositories: ["T3 Code"],
+          repositories: ["Arcwright Code"],
           watchDir: "/workspace/t3code",
           sinceDays: null,
           pdfUrl: null,
@@ -1046,7 +1046,7 @@ describe("agent dashboard suggestion actions", () => {
         {
           id: "repository-signal",
           status: "dirty",
-          title: "T3 Code workspace",
+          title: "Arcwright Code workspace",
           summary: "The repository has local changes.",
           observedAt: "2026-08-09T12:01:00.000Z",
           repository: { projectId: ProjectId.make("project-1") },
@@ -1079,7 +1079,7 @@ describe("agent dashboard suggestion actions", () => {
       repositories: [
         {
           projectId: ProjectId.make("project-1"),
-          title: "T3 Code",
+          title: "Arcwright Code",
           workspaceRoot: "/workspace/t3code",
         },
       ],
@@ -1158,7 +1158,7 @@ describe("agent dashboard suggestion actions", () => {
       id: "canonical-finding:finding:research",
       projectId: "project-1",
       environmentId: "native",
-      repositoryName: "T3 Code",
+      repositoryName: "Arcwright Code",
       workspaceRoot: "/workspace/t3code",
       title: "Use the parser cache in repository scans",
       summary: "Repeated parsing has measurable overhead.",
@@ -1210,6 +1210,6 @@ describe("agent dashboard suggestion actions", () => {
     expect(implementationPrompt).toContain("`src/scanner.ts` (scanRepository)");
     expect(implementationPrompt).toContain("Run the focused scanner benchmark.");
     expect(implementationPrompt).toContain("## Sources");
-    expect(implementationPrompt).toContain("mark this finding as Done in T3 Code");
+    expect(implementationPrompt).toContain("mark this finding as Done in Arcwright Code");
   });
 });

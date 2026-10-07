@@ -268,7 +268,7 @@ const make = Effect.gen(function* () {
         (cause) =>
           new AgentDashboardInactiveWorktreeCleanupError({
             operation: "read settings",
-            message: "T3 could not read the inactive worktree cleanup settings.",
+            message: "Arcwright Code could not read the inactive worktree cleanup settings.",
             cause,
           }),
       ),
@@ -289,7 +289,7 @@ const make = Effect.gen(function* () {
         (cause) =>
           new AgentDashboardInactiveWorktreeCleanupError({
             operation: "read portfolio",
-            message: "T3 could not read projects and repository automation policies.",
+            message: "Arcwright Code could not read projects and repository automation policies.",
             cause,
           }),
       ),
@@ -310,7 +310,7 @@ const make = Effect.gen(function* () {
             catch: (cause) =>
               new AgentDashboardInactiveWorktreeCleanupError({
                 operation: "inspect worktree",
-                message: "T3 could not inspect the inactive worktree safely.",
+                message: "Arcwright Code could not inspect the inactive worktree safely.",
                 cause,
               }),
           });
@@ -328,7 +328,8 @@ const make = Effect.gen(function* () {
             catch: (cause) =>
               new AgentDashboardInactiveWorktreeCleanupError({
                 operation: "verify worktree",
-                message: "T3 could not verify the inactive worktree after fetching its remote.",
+                message:
+                  "Arcwright Code could not verify the inactive worktree after fetching its remote.",
                 cause,
               }),
           });

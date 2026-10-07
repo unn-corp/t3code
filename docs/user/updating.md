@@ -20,7 +20,7 @@ continue to block installation.
 **Settings → General → About** shows the client identity and links to App updates.
 Android displays its source version separately from its installation sequence.
 
-The main label is **T3 Code 0.0.45 · Arcwright build 35 · Nightly**, for example.
+The main label is **Arcwright Code 0.0.45 · Arcwright build 35 · Nightly**, for example.
 The T3 version identifies the upstream code included; the Arcwright number identifies
 our build. About retains the exact upstream and Arcwright commits and the installer
 release for diagnosis. Android's installation sequence is separate: recovery installs

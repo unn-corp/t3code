@@ -2124,7 +2124,7 @@ const makeStore = (stateDir: string): AgentDashboardStoreService => {
           state: "in-progress" as const,
           updatedAt: now,
           actor: "dashboard",
-          note: "Work started from the T3 Code Agent Dashboard.",
+          note: "Work started from the Arcwright Code Agent Dashboard.",
           snoozeUntil: null,
         } satisfies AgentDashboardFinding["disposition"];
         const alreadyLinked =

@@ -10,13 +10,22 @@ Android, browser-sharing, and documentation changes. An upstream merge is not ev
 fork feature shipped upstream. Recheck both `git log --first-parent` and `git diff upstream/main HEAD`
 when revisiting ownership; avoid treating an old merge-base file list as the current divergence.
 
+## Product branding
+
+The fork is named **Arcwright Code** across web, Electron, the standalone Android APK, and
+Expo mobile variants. The transparent masters in [assets/arcwright](../../assets/arcwright)
+own the wordmark and AC lightning mark; [the asset guide](../../assets/README.md) explains
+regeneration and verification. Header images, launchers, splash screens, notifications, and
+widgets must use these shared outputs. Keep installed package IDs, signing identities, URL
+schemes, legacy data folders, and recovery artifact names compatible when changing display names.
+
 ## Android client
 
 **Behavior and reason.** A standalone APK bundles the shared web client and native phone features.
 It keeps environment pairing on the phone and primarily reaches hosts over Tailscale. Android does
 not run the coding-agent server or a Tailscale daemon inside the APK.
 
-**Entry points.** Launch T3 Code; use Settings → Connections to pair each host. The Android
+**Entry points.** Launch Arcwright Code; use Settings → Connections to pair each host. The Android
 [guide](../user/android-fork.md) covers installation and everyday routes. The
 [runbook](./android-pwa.md) owns signing, build commands, editing, and isolated verification.
 
@@ -141,6 +150,12 @@ schedules, queues, or standing work authorization.
 
 **Behavior and reason.** Fork fixes avoid rehashing Git LFS files while capturing checkpoints,
 recover stale Codex shadow-home entries, and support the fork's configured model/role shapes.
+T3-owned Git subprocesses share a budget of eight total commands and two heavy commands, with
+heavy commands serialized per checkout, including commands with extended or unlimited deadlines.
+Automatic status refreshes pause under storage pressure and can be disabled per project.
+Checkpoints can be disabled independently, preserving existing rollback points; this removes
+file rollback and automatic change summaries for new turns. These controls ship in web, desktop,
+the fork APK's web bundle, and upstream mobile. Rebuilding the APK is required to deliver them there.
 
 **Ownership and verification.** [checkpointing](../../apps/server/src/checkpointing) owns repository
 state; [provider](../../apps/server/src/provider) and
@@ -148,6 +163,11 @@ state; [provider](../../apps/server/src/provider) and
 Run the relevant checkpoint/provider regression tests when syncing upstream. Model availability
 comes from the live provider catalog, not a documentation snapshot. Confirm whether upstream has
 incorporated equivalent behavior before retaining compatibility patches.
+The Git budget and refresh policy are owned by [vcs](../../apps/server/src/vcs) and
+[background](../../apps/server/src/background); checkpoint policy is enforced by the V2
+[CheckpointService](../../apps/server/src/orchestration-v2/CheckpointService.ts). Retain their focused
+budget, pause/recovery, inheritance, and checkpoint-disable tests when syncing upstream. These
+limits cover T3-owned commands; provider shells and other applications have separate process owners.
 
 ## Conversation evidence retention
 

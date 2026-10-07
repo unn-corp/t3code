@@ -560,7 +560,7 @@ const make = Effect.gen(function* () {
             yield* persistRun(
               transitionContinuousImprovementRun(input.run, {
                 state: "needs-attention",
-                error: `T3 could not send an automated progress check to the implementation agent: ${nudgeResult.failure.message}`,
+                error: `Arcwright Code could not send an automated progress check to the implementation agent: ${nudgeResult.failure.message}`,
                 at: failedAt,
               }),
             );
@@ -675,8 +675,8 @@ const make = Effect.gen(function* () {
                 transitionContinuousImprovementRun(input.run, {
                   state: "needs-attention",
                   error: Result.isFailure(dismissalResult)
-                    ? "The agent confirmed the finding was stale, but T3 could not dismiss it automatically."
-                    : "The agent confirmed the finding was stale, but T3 could no longer find it to dismiss.",
+                    ? "The agent confirmed the finding was stale, but Arcwright Code could not dismiss it automatically."
+                    : "The agent confirmed the finding was stale, but Arcwright Code could no longer find it to dismiss.",
                   at: completedAt,
                 }),
               );
@@ -735,7 +735,7 @@ const make = Effect.gen(function* () {
               transitionContinuousImprovementRun(input.run, {
                 state: "needs-attention",
                 error:
-                  "The agent finished, but T3 could not verify a pull request because this project has no GitHub remote.",
+                  "The agent finished, but Arcwright Code could not verify a pull request because this project has no GitHub remote.",
                 at: completedAt,
               }),
             );
@@ -753,7 +753,7 @@ const make = Effect.gen(function* () {
               transitionContinuousImprovementRun(input.run, {
                 state: "needs-attention",
                 error:
-                  "The agent finished, but T3 could not verify whether its pull request was opened. Refresh the project pull requests and inspect the agent thread.",
+                  "The agent finished, but Arcwright Code could not verify whether its pull request was opened. Refresh the project pull requests and inspect the agent thread.",
                 at: completedAt,
               }),
             );
@@ -924,7 +924,7 @@ const make = Effect.gen(function* () {
             yield* persistRun(
               transitionContinuousImprovementRun(input.run, {
                 state: "needs-attention",
-                error: `T3 could not observe an active implementation after ${MAX_IMPLEMENTATION_NUDGES} automated progress checks. Open the work session to inspect its current state.`,
+                error: `Arcwright Code could not observe an active implementation after ${MAX_IMPLEMENTATION_NUDGES} automated progress checks. Open the work session to inspect its current state.`,
                 at: stalledAt,
               }),
             );
@@ -1278,7 +1278,7 @@ const make = Effect.gen(function* () {
           (cause) =>
             new AgentDashboardContinuousImprovementError({
               operation: "load retry target",
-              message: "T3 could not load the finding for this retry.",
+              message: "Arcwright Code could not load the finding for this retry.",
               cause,
             }),
         ),
@@ -1352,7 +1352,8 @@ const make = Effect.gen(function* () {
                 (cause) =>
                   new AgentDashboardContinuousImprovementError({
                     operation: "release previous implementation",
-                    message: "T3 could not release the previous implementation session.",
+                    message:
+                      "Arcwright Code could not release the previous implementation session.",
                     cause,
                   }),
               ),
@@ -1399,7 +1400,7 @@ const make = Effect.gen(function* () {
           transitionContinuousImprovementRun(run, {
             state: "needs-attention",
             error:
-              "T3 restarted and could not reconnect this implementation to its finding worktree. Open the work session to inspect it.",
+              "Arcwright Code restarted and could not reconnect this implementation to its finding worktree. Open the work session to inspect it.",
             at: resumedAt,
           }),
         ),

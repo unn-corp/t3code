@@ -95,7 +95,7 @@ const isActiveStatus = (status: AgentDashboardAutomationRunStatus): boolean =>
 export const recoverInterruptedRuns = (
   runs: ReadonlyArray<AgentDashboardAutomationRun>,
   nowIso: string,
-  error = "T3 restarted before the automation run completed.",
+  error = "Arcwright Code restarted before the automation run completed.",
   shouldRecover: (run: AgentDashboardAutomationRun) => boolean = () => true,
 ): ReadonlyArray<AgentDashboardAutomationRun> =>
   runs.map((run) =>
@@ -215,7 +215,7 @@ export const readPersistedRuns = (
       }),
   }).pipe(
     Effect.catch((cause) =>
-      Effect.logWarning("T3 could not read automation run history", { cause }).pipe(
+      Effect.logWarning("Arcwright Code could not read automation run history", { cause }).pipe(
         Effect.as([] as ReadonlyArray<AgentDashboardAutomationRun>),
       ),
     ),

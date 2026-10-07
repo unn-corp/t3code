@@ -76,7 +76,11 @@ export function useSelectedThreadGitActions() {
   );
 
   const refreshSelectedThreadGitStatus = useCallback(
-    async (options?: { readonly quiet?: boolean; readonly cwd?: string | null }) => {
+    async (options?: {
+      readonly quiet?: boolean;
+      readonly cwd?: string | null;
+      readonly automatic?: boolean;
+    }) => {
       if (!selectedThread || !selectedThreadProject) {
         return null;
       }
@@ -90,7 +94,7 @@ export function useSelectedThreadGitActions() {
       const execute = () =>
         refreshStatus({
           environmentId: selectedThread.environmentId,
-          input: { cwd },
+          input: { cwd, automatic: options?.automatic ?? false },
         });
       const result = options?.quiet
         ? await execute()
@@ -119,7 +123,7 @@ export function useSelectedThreadGitActions() {
     if (!selectedThread || !selectedThreadProject) {
       return;
     }
-    void refreshSelectedThreadGitStatus({ quiet: true });
+    void refreshSelectedThreadGitStatus({ quiet: true, automatic: true });
   }, [refreshSelectedThreadGitStatus, selectedThread, selectedThreadProject]);
 
   const runSelectedThreadGitMutation = useCallback(

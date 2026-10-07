@@ -17,7 +17,7 @@ const shared = {
 const StatusTool = Tool.make("t3_maintenance_status", {
   ...shared,
   description:
-    "Read this device's T3 Code update state: current and target build, the activity blocking installation, recovery options, and the homes an update would replace. Read-only.",
+    "Read this device's Arcwright Code update state: current and target build, the activity blocking installation, recovery options, and the homes an update would replace. Read-only.",
   success: ForkUpdateStatus,
 })
   .annotate(Tool.Readonly, true)
@@ -26,7 +26,7 @@ const StatusTool = Tool.make("t3_maintenance_status", {
 const CheckTool = Tool.make("t3_maintenance_check", {
   ...shared,
   description:
-    "Check for a newer eligible T3 Code release and stage it. This never installs. Installation, policy changes and recovery are made by a person (or the device's automatic gate) and are refused while any agent, including this one, is active, so an agent cannot trigger them.",
+    "Check for a newer eligible Arcwright Code release and stage it. This never installs. Installation, policy changes and recovery are made by a person (or the device's automatic gate) and are refused while any agent, including this one, is active, so an agent cannot trigger them.",
   success: ForkUpdateStatus,
 }).annotate(Tool.Destructive, false);
 

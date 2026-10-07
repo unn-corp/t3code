@@ -42,9 +42,9 @@ android {
         targetSdk 36
         versionCode providers.gradleProperty('pwaVersionCode').getOrElse('1').toInteger()
         versionName versionNameValue
-        resValue 'string', 'app_name', 'T3 Code'
+        resValue 'string', 'app_name', 'Arcwright Code'
         resValue 'string', 'recovery_shortcut_short', 'Recovery'
-        resValue 'string', 'recovery_shortcut_long', 'T3 Code recovery and updates'
+        resValue 'string', 'recovery_shortcut_long', 'Arcwright Code recovery and updates'
         buildConfigField 'String', 'FORK_RELEASE_MANIFEST_ASSET', '"' + manifestAssetName + '"'
         buildConfigField 'String', 'SOURCE_COMMIT', "\"${sourceCommit}\""
         buildConfigField 'String', 'SOURCE_VERSION', "\"${sourceVersion}\""

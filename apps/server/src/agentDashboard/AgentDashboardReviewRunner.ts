@@ -172,7 +172,7 @@ export const buildReviewPrompt = (
   },
 ): string =>
   [
-    "You are running a scheduled, read-only codebase review inside T3 Code.",
+    "You are running a scheduled, read-only codebase review inside Arcwright Code.",
     "This is the T3-native replacement for the retired Hermes Random Codebase Review job.",
     "",
     "Review target:",
@@ -362,7 +362,7 @@ const make = Effect.gen(function* () {
       (cause) =>
         new AgentDashboardReviewRunnerError({
           operation: "generate identifier",
-          message: "T3 could not generate an identifier for the repository review.",
+          message: "Arcwright Code could not generate an identifier for the repository review.",
           cause,
         }),
     ),
@@ -423,7 +423,7 @@ const make = Effect.gen(function* () {
           (cause) =>
             new AgentDashboardReviewRunnerError({
               operation: "select project",
-              message: "Failed to load T3 projects for scheduler selection.",
+              message: "Failed to load Arcwright Code projects for scheduler selection.",
               cause,
             }),
         ),
@@ -466,7 +466,7 @@ const make = Effect.gen(function* () {
           (cause) =>
             new AgentDashboardReviewRunnerError({
               operation: "load projects",
-              message: "Failed to load T3 projects for the scheduled review.",
+              message: "Failed to load Arcwright Code projects for the scheduled review.",
               cause,
             }),
         ),
@@ -475,7 +475,7 @@ const make = Effect.gen(function* () {
       if (projects.length === 0) {
         return yield* new AgentDashboardReviewRunnerError({
           operation: "select project",
-          message: "No stable T3 repository checkout is available for review.",
+          message: "No stable Arcwright Code repository checkout is available for review.",
         });
       }
 
@@ -488,7 +488,7 @@ const make = Effect.gen(function* () {
       if (requestedId && requestedId !== PENDING_SELECTION && explicitTarget === null) {
         return yield* new AgentDashboardReviewRunnerError({
           operation: "select project",
-          message: "The requested T3 project is not available for review.",
+          message: "The requested Arcwright Code project is not available for review.",
         });
       }
 
@@ -505,7 +505,7 @@ const make = Effect.gen(function* () {
       if (project === null) {
         return yield* new AgentDashboardReviewRunnerError({
           operation: "select project",
-          message: "The T3 repository review candidate list changed before selection.",
+          message: "The Arcwright Code repository review candidate list changed before selection.",
         });
       }
 
@@ -630,10 +630,13 @@ const make = Effect.gen(function* () {
         }
       }).pipe(
         Effect.tapError((cause) =>
-          Effect.logWarning("T3 could not snooze an internal repository review session", {
-            threadId,
-            cause,
-          }),
+          Effect.logWarning(
+            "Arcwright Code could not snooze an internal repository review session",
+            {
+              threadId,
+              cause,
+            },
+          ),
         ),
         Effect.ignore,
       );

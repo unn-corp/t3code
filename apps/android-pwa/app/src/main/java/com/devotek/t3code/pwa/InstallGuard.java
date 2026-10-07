@@ -43,9 +43,9 @@ final class InstallGuard {
         if (!input.recoveryReady) blockers.add(new Blocker("bootstrap", "A verified recovery build is not cached yet.", 0));
         if (!input.storageReady) blockers.add(new Blocker("storage", UpdateCapacity.INSUFFICIENT_MESSAGE, 0));
         if (!input.confirmationAvailable) blockers.add(new Blocker("authorization", "Enable App updates notifications in Android settings so installation confirmation can reach you.", 0));
-        if (!input.installPermission) blockers.add(new Blocker("authorization", "Allow T3 Code to install updates in Android settings.", 0));
+        if (!input.installPermission) blockers.add(new Blocker("authorization", "Allow Arcwright Code to install updates in Android settings.", 0));
         // No caller bypasses the quiet wait: a person's Install or Recovery request waits like an automatic one.
-        if (input.foreground) blockers.add(new Blocker("idle-window", "T3 Code is open on the phone.", InstallGuard.BACKGROUND_QUIET_MS));
+        if (input.foreground) blockers.add(new Blocker("idle-window", "Arcwright Code is open on the phone.", InstallGuard.BACKGROUND_QUIET_MS));
         else if (input.backgroundSince <= 0 || input.backgroundSince > input.now) {
             // Foreground state could not be proven, for example after the process was killed while open.
             blockers.add(new Blocker("idle-window", "Waiting for the app to stay in the background for 2 minutes.", BACKGROUND_QUIET_MS));

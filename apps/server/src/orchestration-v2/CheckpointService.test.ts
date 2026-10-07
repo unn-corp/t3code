@@ -16,6 +16,66 @@ import * as Layer from "effect/Layer";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as IdAllocator from "./IdAllocator.ts";
+import * as WorkspaceGitPolicy from "../vcs/WorkspaceGitPolicy.ts";
+
+it.effect(
+  "disabling checkpoints skips new Git captures while existing rollback points remain restorable",
+  () => {
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("scope-disabled"),
+      threadId: ThreadId.make("thread-disabled"),
+      runId: RunId.make("run-disabled"),
+      nodeId: NodeId.make("node-disabled"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-disabled"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo",
+      createdAt: DateTime.makeUnsafe(0),
+    };
+    const capture = vi.fn(() => Effect.void);
+    const restore = vi.fn(() => Effect.succeed(true));
+    const testLayer = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          Layer.succeed(WorkspaceGitPolicy.WorkspaceGitPolicy, {
+            read: () => Effect.succeed({ automaticGitStatus: true, automaticCheckpoints: false }),
+          }),
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: () => Effect.succeed(true),
+            hasCheckpointRef: () => Effect.succeed(true),
+            captureCheckpoint: capture,
+            restoreCheckpoint: restore,
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const service = yield* CheckpointService.CheckpointServiceV2;
+      yield* service.captureBaseline({ scope, ordinalWithinScope: 0 });
+      const checkpoint = yield* service.capture({
+        scope,
+        ordinalWithinScope: 1,
+        runId: scope.runId,
+        nodeId: scope.nodeId!,
+        appRunOrdinal: 1,
+        capturedAt: scope.createdAt,
+      });
+      assert.equal(checkpoint.status, "missing");
+      assert.deepEqual(checkpoint.files, []);
+      assert.equal(capture.mock.calls.length, 0);
+      const existing = yield* service.materializeBaselineCheckpoint({
+        scope,
+        ordinalWithinScope: 0,
+      });
+      assert.equal(existing.status, "ready");
+      yield* service.restore({ scope, checkpoint: existing });
+      assert.equal(restore.mock.calls.length, 1);
+    }).pipe(Effect.provide(testLayer));
+  },
+);
 
 it.effect.each([false, true, "interrupt"] as const)(
   "materializes baseline, lookup fails=%s",

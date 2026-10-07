@@ -26,6 +26,8 @@ import { GitManagerError } from "@t3tools/contracts";
 
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as StoragePressure from "../background/StoragePressure.ts";
+import * as WorkspaceGitPolicy from "./WorkspaceGitPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -78,10 +80,33 @@ function makeTestLayer(state: {
   remoteInvalidationCalls: number;
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
   backgroundWorkEnabled?: boolean;
+  automaticGitStatus?: boolean;
+  storageReason?: "io-pressure" | "low-space" | null;
   /** Runs before each remote status read, e.g. to hold a fetch open. */
   beforeRemoteStatus?: Effect.Effect<void>;
 }) {
   return VcsStatusBroadcaster.layer.pipe(
+    Layer.provide(
+      Layer.succeed(WorkspaceGitPolicy.WorkspaceGitPolicy, {
+        read: () =>
+          Effect.sync(() => ({
+            automaticGitStatus: state.automaticGitStatus !== false,
+            automaticCheckpoints: true,
+          })),
+      }),
+    ),
+    Layer.provide(
+      Layer.succeed(StoragePressure.StoragePressure, {
+        read: Effect.sync(() => ({
+          reason: state.storageReason ?? null,
+          ioSomeAvg10: null,
+          ioFullAvg10: null,
+          availableBytes: null,
+          totalBytes: null,
+          sampledAt: TEST_EPOCH,
+        })),
+      }),
+    ),
     Layer.provideMerge(NodeServices.layer),
     Layer.provide(makeBackgroundPolicyLayer(() => state.backgroundWorkEnabled !== false)),
     Layer.provide(
@@ -151,6 +176,96 @@ function makeBackgroundPolicyLayer(shouldRunScopeWork: (scope: BackgroundScope) 
 }
 
 describe("VcsStatusBroadcaster", () => {
+  it.effect(
+    "a cold automatic refresh loads initial local status without remote work when disabled",
+    () => {
+      const state = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        automaticGitStatus: false,
+      };
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const status = yield* broadcaster.refreshStatus("/repo", { automatic: true });
+        assert.equal(status.automaticRefreshPaused, "disabled");
+        assert.equal(state.localStatusCalls, 1);
+        assert.equal(state.remoteStatusCalls, 0);
+      }).pipe(Effect.provide(makeTestLayer(state)));
+    },
+  );
+  it.effect.each(["disabled", "io-pressure", "low-space"] as const)(
+    "keeps cached status during %s and allows explicit Refresh",
+    (reason) => {
+      const state = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        automaticGitStatus: true,
+        storageReason: null as "io-pressure" | "low-space" | null,
+      };
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.getStatus({ cwd: "/repo" });
+        if (reason === "disabled") state.automaticGitStatus = false;
+        else state.storageReason = reason;
+        const cached = yield* broadcaster.refreshStatus("/repo", { automatic: true });
+        assert.equal(cached.automaticRefreshPaused, reason);
+        assert.equal(state.localStatusCalls, 1);
+        assert.equal(state.remoteStatusCalls, 1);
+        const refreshed = yield* broadcaster.refreshStatus("/repo");
+        assert.equal(refreshed.automaticRefreshPaused, reason);
+        assert.equal(state.localStatusCalls, 2);
+        assert.equal(state.remoteStatusCalls, 2);
+      }).pipe(Effect.provide(makeTestLayer(state)));
+    },
+  );
+
+  it.effect("pauses the initial remote poll and refreshes local status once on recovery", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      storageReason: "io-pressure" as "io-pressure" | null,
+    };
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const initial = yield* Deferred.make<VcsStatusStreamEvent>();
+      const recovered = yield* Deferred.make<void>();
+      const stream = yield* Stream.runForEach(
+        broadcaster.streamStatus({ cwd: "/repo" }),
+        (event) => {
+          if (event._tag === "snapshot")
+            return Deferred.succeed(initial, event).pipe(Effect.asVoid);
+          if (event._tag === "localUpdated" && event.local.automaticRefreshPaused === null)
+            return Deferred.succeed(recovered, undefined).pipe(Effect.asVoid);
+          return Effect.void;
+        },
+      ).pipe(Effect.forkChild);
+      const snapshot = yield* Deferred.await(initial);
+      assert.equal(snapshot._tag, "snapshot");
+      if (snapshot._tag === "snapshot")
+        assert.equal(snapshot.local.automaticRefreshPaused, "io-pressure");
+      yield* TestClock.adjust("30 seconds");
+      assert.equal(state.remoteStatusCalls, 0);
+      assert.equal(state.localStatusCalls, 1);
+      state.storageReason = null;
+      yield* TestClock.adjust("30 seconds");
+      yield* Deferred.await(recovered);
+      assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.localStatusCalls, 2);
+      yield* Fiber.interrupt(stream);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
   it.effect.skipIf(!symlinksSupported)(
     "automatically pulls an enabled clean default branch when status detects it is behind",
     () => {
@@ -533,6 +648,7 @@ describe("VcsStatusBroadcaster", () => {
     "normalizes symlinked CWDs before cache lookup and workflow calls",
     () => {
       const seenCwds: string[] = [];
+      let configuredWorkspaceRoot = "";
       const state = {
         currentLocalStatus: baseLocalStatus,
         currentRemoteStatus: baseRemoteStatus,
@@ -544,6 +660,15 @@ describe("VcsStatusBroadcaster", () => {
       const testLayer = VcsStatusBroadcaster.layer.pipe(
         Layer.provideMerge(NodeServices.layer),
         Layer.provide(makeBackgroundPolicyLayer(() => true)),
+        Layer.provide(
+          Layer.succeed(WorkspaceGitPolicy.WorkspaceGitPolicy, {
+            read: (cwd: string) =>
+              Effect.succeed({
+                automaticGitStatus: cwd !== configuredWorkspaceRoot,
+                automaticCheckpoints: true,
+              }),
+          }),
+        ),
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             localStatus: (input) =>
@@ -580,12 +705,15 @@ describe("VcsStatusBroadcaster", () => {
           prefix: "t3-vcs-status-link-",
         });
         const linkDir = path.join(linkParent, "repo-link");
+        configuredWorkspaceRoot = linkDir;
         yield* fileSystem.symlink(realDir, linkDir);
         const realPath = yield* fileSystem.realPath(realDir);
 
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
         yield* broadcaster.getStatus({ cwd: linkDir });
         yield* broadcaster.getStatus({ cwd: realDir });
+        const paused = yield* broadcaster.refreshStatus(linkDir, { automatic: true });
+        assert.equal(paused.automaticRefreshPaused, "disabled");
 
         assert.deepStrictEqual(seenCwds, [realPath, realPath]);
         assert.equal(state.localStatusCalls, 1);

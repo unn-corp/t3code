@@ -86,7 +86,8 @@ export function PwaNotificationSettings() {
 
   const persistRemoteSubscription = useCallback(
     async (subscription: PushSubscription, preferences: typeof notificationPreferences) => {
-      if (!primaryEnvironment) throw new Error("Connect this PWA to a T3 Code server first.");
+      if (!primaryEnvironment)
+        throw new Error("Connect this PWA to a Arcwright Code server first.");
       const subscriptionId = await registerPwaPushSubscription({
         environmentId: primaryEnvironment.environmentId,
         subscription,
@@ -123,12 +124,12 @@ export function PwaNotificationSettings() {
         );
         throw new Error(
           result.state === "not-installed"
-            ? "Install T3 Code on your Home Screen before enabling push notifications."
+            ? "Install Arcwright Code on your Home Screen before enabling push notifications."
             : result.state === "worker-failed"
               ? "Preparing this device for notifications. Tap Enable notifications again in a moment."
               : result.state === "permission-granted"
                 ? "Permission is granted. Tap Enable notifications once more to subscribe this installation."
-                : "Allow notifications for T3 Code, then try again.",
+                : "Allow notifications for Arcwright Code, then try again.",
         );
       }
       const preferences = { ...notificationPreferences, enabled: true };

@@ -20,6 +20,33 @@ const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
 
 describe("resolveProjectSettings", () => {
+  it("lets an asset project disable automatic work and reset to environment defaults", () => {
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: {
+        [projectId]: { automaticGitStatus: false, automaticCheckpoints: false },
+      },
+    });
+    expect(resolveProjectSettings(settings, projectId).settings).toMatchObject({
+      automaticGitStatus: false,
+      automaticCheckpoints: false,
+    });
+    expect(resolveProjectSettings(settings, otherProjectId).settings).toMatchObject({
+      automaticGitStatus: true,
+      automaticCheckpoints: true,
+    });
+    const reset = applyServerSettingsPatch(settings, {
+      projectSettingsOverrides: {
+        [projectId]: clearProjectSettingsOverrides(settings, projectId, [
+          "automaticGitStatus",
+          "automaticCheckpoints",
+        ]),
+      },
+    });
+    expect(resolveProjectSettings(reset, projectId).settings).toMatchObject({
+      automaticGitStatus: true,
+      automaticCheckpoints: true,
+    });
+  });
   it("inherits every scopable key when the project has no overrides", () => {
     const resolved = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId);
     expect(resolved.settings).toBe(DEFAULT_SERVER_SETTINGS);

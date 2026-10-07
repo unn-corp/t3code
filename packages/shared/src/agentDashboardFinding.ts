@@ -113,11 +113,11 @@ export function buildAgentDashboardFindingPrompt(
           "- If the finding is stale or invalid, do not make speculative changes and follow the stale completion path below.",
           "",
           "## Stale completion",
-          "- If current repository evidence confirms the finding is stale or invalid, do not edit implementation code or T3 state files, and do not commit, push, or open a pull request.",
+          "- If current repository evidence confirms the finding is stale or invalid, do not edit implementation code or Arcwright Code state files, and do not commit, push, or open a pull request.",
           "- End the final response with these two lines, replacing the placeholder with a concise reason:",
           STALE_OUTCOME_MARKER,
           `${STALE_REASON_PREFIX} <one-line reason>`,
-          "- T3 will dismiss the finding automatically after reading that outcome.",
+          "- Arcwright Code will dismiss the finding automatically after reading that outcome.",
           "",
           "## Delivery",
           ...deliveryRequirements,
@@ -127,7 +127,7 @@ export function buildAgentDashboardFindingPrompt(
           "- If credentials, branch protection, or failing validation prevents delivery, leave the branch and worktree intact and report the exact blocker.",
           "",
           "## Completion",
-          "If the finding is current, after implementation and validation succeed and the draft pull request is open or updated, include the pull request URL in your final response and mark this finding as Done in T3 Code.",
+          "If the finding is current, after implementation and validation succeed and the draft pull request is open or updated, include the pull request URL in your final response and mark this finding as Done in Arcwright Code.",
         ]),
   ].join("\n");
 }

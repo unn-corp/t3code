@@ -48,8 +48,8 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     return yield* new OutdatedHostUpdateError({
       environmentId,
       message: !supportsForkMaintenanceAdmission(descriptor.capabilities.forkMaintenance)
-        ? `Update T3 Code on ${descriptor.label} manually. It predates device maintenance, so this app cannot check that no agent is running there or reverse a failed update, and it will not install over it.`
-        : `Update T3 Code on ${descriptor.label} from App updates, which checks activity and keeps a restore point.`,
+        ? `Update Arcwright Code on ${descriptor.label} manually. It predates device maintenance, so this app cannot check that no agent is running there or reverse a failed update, and it will not install over it.`
+        : `Update Arcwright Code on ${descriptor.label} from App updates, which checks activity and keeps a restore point.`,
     });
   },
 );

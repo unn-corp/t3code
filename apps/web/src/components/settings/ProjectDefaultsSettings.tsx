@@ -79,6 +79,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
+  const mixedGitStatus = useScopedSettingsMixed(["automaticGitStatus"]);
+  const mixedCheckpoints = useScopedSettingsMixed(["automaticCheckpoints"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -383,6 +385,52 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       ) : category === "source-control" ? (
         <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["automaticGitStatus"]}
+            mixed={mixedGitStatus}
+            {...searchableSetting("automatic-git-status")}
+            description="Refresh repository status after turns and in the background. Automatic refresh pauses during storage pressure. Turn off to refresh manually."
+            resetAction={
+              !settings.automaticGitStatus ? (
+                <SettingResetButton
+                  label="automatic Git status"
+                  onClick={() => updateSettings({ automaticGitStatus: true })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Automatic Git status"
+                mixed={mixedGitStatus}
+                checked={mixedGitStatus ? false : settings.automaticGitStatus}
+                onCheckedChange={(enabled) => updateSettings({ automaticGitStatus: enabled })}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["automaticCheckpoints"]}
+            mixed={mixedCheckpoints}
+            {...searchableSetting("automatic-checkpoints")}
+            description="Save file rollback points around agent turns. Turning this off removes file rollback and automatic change summaries for new turns. Existing rollback points remain available."
+            resetAction={
+              !settings.automaticCheckpoints ? (
+                <SettingResetButton
+                  label="automatic checkpoints"
+                  onClick={() => updateSettings({ automaticCheckpoints: true })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Automatic checkpoints"
+                mixed={mixedCheckpoints}
+                checked={mixedCheckpoints ? false : settings.automaticCheckpoints}
+                onCheckedChange={(enabled) => updateSettings({ automaticCheckpoints: enabled })}
+              />
+            }
+          />
           <SettingsRow
             serverScoped
             settingKeys={["defaultAutoPull"]}

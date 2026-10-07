@@ -45,7 +45,8 @@ export function DictationSetupAgentButton() {
           stackedThreadToast({
             type: "warning",
             title: "Add a project before starting setup",
-            description: "The setup agent needs a project on the primary T3 environment to run.",
+            description:
+              "The setup agent needs a project on the primary Arcwright Code environment to run.",
           }),
         );
       }

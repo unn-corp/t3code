@@ -164,7 +164,7 @@ describe("pull request rollup schedule", () => {
     expect(recovered).toMatchObject({
       lastStatus: "failed",
       nextRunAt: "2026-08-10T00:00:00.000Z",
-      lastError: "T3 restarted before the pull request rollup scan completed.",
+      lastError: "Arcwright Code restarted before the pull request rollup scan completed.",
     });
   });
 });

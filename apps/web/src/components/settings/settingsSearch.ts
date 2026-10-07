@@ -968,6 +968,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["auto pull default branch current checkout fast forward upstream"],
   },
   {
+    id: "automatic-git-status",
+    title: "Automatic Git status",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["repository refresh scans manual storage pressure large assets lfs unreal"],
+  },
+  {
+    id: "automatic-checkpoints",
+    title: "Automatic checkpoints",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["rollback restore files snapshots change summaries large assets lfs unreal"],
+  },
+  {
     id: "pull-request-merge-method",
     title: "Default merge method",
     to: "/settings/source-control",

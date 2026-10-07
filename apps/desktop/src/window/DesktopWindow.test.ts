@@ -1445,7 +1445,7 @@ describe("DesktopWindow", () => {
           const splashUrl = splash.loadURL.mock.calls[0]?.[0];
           assert.isDefined(splashUrl);
           const html = decodeURIComponent(String(splashUrl).split(",").slice(1).join(","));
-          assert.include(html, "Starting T3 Code");
+          assert.include(html, "Starting Arcwright Code");
           assert.include(html, "First-time upgrades can take several minutes");
           assert.notInclude(html, "Connecting to WSL");
 
@@ -1515,7 +1515,7 @@ describe("DesktopWindow", () => {
         createCount,
         mainWindow,
         onReveal: () => {
-          foreground = "T3 Code";
+          foreground = "Arcwright Code";
           operations.push("reveal");
         },
       });
@@ -1524,7 +1524,7 @@ describe("DesktopWindow", () => {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
         yield* desktopWindow.dispatchSnapShotEvent({ type: "started", id: captureOne });
-        assert.equal(foreground, "T3 Code");
+        assert.equal(foreground, "Arcwright Code");
         foreground = "Explorer";
         yield* desktopWindow.dispatchSnapShotEvent({ type: "ready", id: captureOne });
         yield* desktopWindow.dispatchSnapShotEvent({ type: "failed", id: captureTwo });

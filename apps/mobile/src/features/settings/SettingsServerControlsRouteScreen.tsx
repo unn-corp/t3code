@@ -51,6 +51,8 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
   "new-threads": ["defaultThreadEnvMode", "worktreeSubmodules", "defaultRuntimeMode"],
   "source-control": [
     "defaultAutoPull",
+    "automaticGitStatus",
+    "automaticCheckpoints",
     "newWorktreesStartFromOrigin",
     "branchNamingMode",
     "branchNamePrefix",
@@ -328,6 +330,24 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 
               {props.page === "source-control" ? (
                 <>
+                  <SettingsSection title="Repository activity">
+                    <SettingsSwitchRow
+                      icon="arrow.triangle.branch"
+                      label="Automatic Git status"
+                      subtitle="Refresh after turns and in the background. Pauses during storage pressure. Turn off to refresh manually."
+                      value={uniform("automaticGitStatus")}
+                      disabled={disabledFor("automaticGitStatus")}
+                      onValueChange={(value) => write({ automaticGitStatus: value })}
+                    />
+                    <SettingsSwitchRow
+                      icon="internaldrive"
+                      label="Automatic checkpoints"
+                      subtitle="Save file rollback points. Turning off removes file rollback and change summaries for new turns; existing points remain available."
+                      value={uniform("automaticCheckpoints")}
+                      disabled={disabledFor("automaticCheckpoints")}
+                      onValueChange={(value) => write({ automaticCheckpoints: value })}
+                    />
+                  </SettingsSection>
                   <BranchNamingSettings
                     key={targets
                       .map((target) => `${target.environment.environmentId}:${target.projectId}`)

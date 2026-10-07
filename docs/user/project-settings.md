@@ -38,6 +38,22 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Automatic repository activity
+
+In **Settings → Source Control**, select an environment or project and turn off **Automatic Git
+status** for repositories where background scans are expensive. Turn-end, focus, and background
+refreshes then keep the last reported status. Use **Refresh status** in the Git actions menu to
+update it. Opening a repository's status for the first time still loads its initial local status.
+
+Automatic refresh also pauses when the server detects storage pressure, then resumes after a
+recovery cooldown. A paused status is marked as the last reported result. Manual refresh and
+explicit Git actions remain available.
+
+**Automatic checkpoints** controls file rollback points around new agent turns. Turning it off
+also removes automatic change summaries and file rollback for those turns. Existing rollback
+points remain available. Both controls start enabled; turn them back on or reset the project's
+overrides to restore the environment defaults.
+
 ## Worktree branch names
 
 In **Settings → Source Control → Worktree branch naming**, choose a static prefix,
@@ -155,7 +171,7 @@ deleted automatically because their ownership is unknown.
 
 Select the project and open Project to choose an icon, emoji, monogram, or image. The choice applies to
 every checkout in the project group and appears on connected clients. Choose **Automatic** to let
-T3 Code detect an icon again.
+Arcwright Code detect an icon again.
 
 # Add product context
 
@@ -181,6 +197,6 @@ In Source Control, enable **Automatically pull** to keep the default-branch chec
 with its configured upstream. Choose an environment to set the default or a project to override it.
 On mobile, use **Settings → Source control** to change selected environment defaults or project overrides.
 
-T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
+Arcwright Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.

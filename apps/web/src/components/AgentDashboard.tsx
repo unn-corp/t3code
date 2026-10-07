@@ -677,8 +677,8 @@ function DashboardEmptyState() {
         </EmptyMedia>
         <EmptyTitle>No repositories yet</EmptyTitle>
         <EmptyDescription>
-          Add a project to T3 Code and it will appear here with its branch, worktrees, and agent
-          threads.
+          Add a project to Arcwright Code and it will appear here with its branch, worktrees, and
+          agent threads.
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
@@ -918,7 +918,7 @@ export function AgentDashboard() {
           stackedThreadToast({
             type: "error",
             title: "Add this repository first",
-            description: `No T3 Code project is configured for ${record.repositoryPath || record.projectName}.`,
+            description: `No Arcwright Code project is configured for ${record.repositoryPath || record.projectName}.`,
           }),
         );
         return;
@@ -946,7 +946,7 @@ export function AgentDashboard() {
           stackedThreadToast({
             type: "error",
             title: "Add this repository first",
-            description: `No T3 Code project is configured for ${update.workspaceRoot || update.projectName}.`,
+            description: `No Arcwright Code project is configured for ${update.workspaceRoot || update.projectName}.`,
           }),
         );
         return;

@@ -348,8 +348,8 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
-      name: "T3 Code",
-      title: "T3 Code",
+      name: "Arcwright Code",
+      title: "Arcwright Code",
       version: packageJson.version,
     },
     capabilities: {
@@ -523,7 +523,7 @@ const makePendingCodexProvider = (
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Codex is disabled in T3 Code settings.",
+          message: "Codex is disabled in Arcwright Code settings.",
         },
       });
     }
@@ -611,7 +611,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex is disabled in T3 Code settings.",
+        message: "Codex is disabled in Arcwright Code settings.",
       },
     });
   }

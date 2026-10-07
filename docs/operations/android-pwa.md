@@ -144,7 +144,7 @@ and accept the computer's debugging authorization on the unlocked phone:
 
 ```bash
 adb devices
-# First finish phone browser commands, uploads, and dialogs; background T3 Code for two minutes.
+# First finish phone browser commands, uploads, and dialogs; background Arcwright Code for two minutes.
 adb install -r release/android-pwa/t3-code-pwa.apk
 ```
 
@@ -342,7 +342,7 @@ a person's **Install**, and a native **Recovery** request; nothing waives any ro
 
 | Condition                                                                                            | Blocks as             |
 | ---------------------------------------------------------------------------------------------------- | --------------------- |
-| No T3 Code screen (shell or recovery) is open, and it has been out for 2 minutes                     | `idle-window`         |
+| No Arcwright Code screen (shell or recovery) is open, and it has been out for 2 minutes              | `idle-window`         |
 | No phone browser command or unfinished page navigation is running                                    | `commands`            |
 | No web upload or voice input pipeline is in flight (reported by the shell)                           | `uploads`             |
 | No file picker, save, permission, or Android Settings screen is open                                 | `input-active`        |
@@ -425,7 +425,7 @@ notification. It lists cached recovery builds Android would accept now, download
 published one, requests a chosen build (pinning it), shows install permission, and resumes updates.
 A recovery request is the `recovery` intent above: it waits for two minutes outside the app and for
 phone work to finish like any install, so leave the screen after requesting. It never uninstalls or
-clears data, so pairings, drafts, and queues stay in place. **Continue to T3 Code** resets the launch counter and is available when no installation
+clears data, so pairings, drafts, and queues stay in place. **Continue to Arcwright Code** resets the launch counter and is available when no installation
 is pending. While Android is replacing the app, phone work remains fenced.
 
 The process retains Android's immutable confirmation `PendingIntent` even if its notification is
@@ -465,7 +465,7 @@ make room.
 
 If neither the app nor its recovery screen works, install a signed recovery APK from outside.
 External installers and ADB cannot enforce the native guard: finish browser automation, uploads,
-and picker/permission dialogs, then leave T3 Code backgrounded for two minutes before replacing it:
+and picker/permission dialogs, then leave Arcwright Code backgrounded for two minutes before replacing it:
 
 1. Download the release's recovery asset (`t3-code-android-recovery-VERSION.apk`) and the release
    JSON. Check the asset's SHA-256 against the JSON.

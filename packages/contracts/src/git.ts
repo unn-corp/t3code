@@ -119,6 +119,13 @@ export const VcsStatusInput = Schema.Struct({
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 
+export const VcsRefreshStatusInput = Schema.Struct({
+  ...VcsStatusInput.fields,
+  /** Focus/visibility refreshes obey background policy; explicit Refresh remains available. */
+  automatic: Schema.optionalKey(Schema.Boolean),
+});
+export type VcsRefreshStatusInput = typeof VcsRefreshStatusInput.Type;
+
 // Exclusive data excludes reflink-shared extents; allocated estimates can count them twice.
 export const WorktreeStorageUsage = Schema.Struct({
   bytes: Schema.Number,
@@ -236,6 +243,9 @@ const VcsStatusChangeRequest = Schema.Struct({
 });
 
 const VcsStatusLocalShape = {
+  automaticRefreshPaused: Schema.optionalKey(
+    Schema.NullOr(Schema.Literals(["disabled", "io-pressure", "low-space"])),
+  ),
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
   hasPrimaryRemote: Schema.Boolean,

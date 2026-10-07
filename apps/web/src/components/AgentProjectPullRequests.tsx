@@ -525,8 +525,8 @@ export function AgentProjectPullRequests({
           <DialogHeader>
             <DialogTitle>Merge PR #{selectedPullRequest?.number}</DialogTitle>
             <DialogDescription>
-              Confirm the target and merge strategy. T3 will refuse the merge if the head commit
-              changed after this review.
+              Confirm the target and merge strategy. Arcwright Code will refuse the merge if the
+              head commit changed after this review.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="grid gap-4">

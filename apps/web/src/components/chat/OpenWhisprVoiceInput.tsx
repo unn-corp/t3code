@@ -208,7 +208,7 @@ export function OpenWhisprVoiceInput({
       toastManager.add({
         type: "error",
         title: "Microphone recording is unavailable",
-        description: "Use a browser with microphone access to dictate into T3.",
+        description: "Use a browser with microphone access to dictate into Arcwright Code.",
       });
       return;
     }
@@ -247,7 +247,7 @@ export function OpenWhisprVoiceInput({
         toastManager.add({
           type: "warning",
           title: "Selected microphone is unavailable",
-          description: "T3 is using the system default microphone for this recording.",
+          description: "Arcwright Code is using the system default microphone for this recording.",
         });
       }
       const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg"].find((candidate) =>

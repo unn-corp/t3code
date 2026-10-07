@@ -202,8 +202,8 @@ function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean, wslOnly: boo
   const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
   const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
   const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
-  const title = wslOnly ? "Connecting to WSL…" : "Starting T3 Code…";
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{box-sizing:border-box;padding:28px;background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;text-align:center;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.title{font-size:16px;color:${accent}}.details{font-size:13px;line-height:1.5}</style></head><body><div class="title">${title}</div><div class="details">First-time upgrades can take several minutes for large histories.<br>Keep this window open. T3 Code will open automatically when ready.</div></body></html>`;
+  const title = wslOnly ? "Connecting to WSL…" : "Starting Arcwright Code…";
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{box-sizing:border-box;padding:28px;background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;text-align:center;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.title{font-size:16px;color:${accent}}.details{font-size:13px;line-height:1.5}</style></head><body><div class="title">${title}</div><div class="details">First-time upgrades can take several minutes for large histories.<br>Keep this window open. Arcwright Code will open automatically when ready.</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 

@@ -1,15 +1,15 @@
-# Threads from older T3 Code versions
+# Threads from older Arcwright Code versions
 
-On your first V2 launch, T3 Code copies the V1 database, `state.sqlite`, into `statev2.sqlite`
+On your first V2 launch, Arcwright Code copies the V1 database, `state.sqlite`, into `statev2.sqlite`
 in the same data directory and migrates the copy. Your threads appear automatically, with full
 transcripts imported as needed. You do not need to run an import command.
 
 The desktop opens a startup window while preparing the database. This first upgrade can take
-several minutes for large histories. Keep T3 Code open and allow space for a second copy of your
+several minutes for large histories. Keep Arcwright Code open and allow space for a second copy of your
 database on the machine hosting the environment. After the app opens, conversation restoration
 continues in the background. Its notice shows completed conversations; you can keep working.
-If you close T3 Code, unfinished restoration resumes the next time it starts. A conversation that
-could not be restored can be retried by opening it, or by restarting T3 Code when convenient.
+If you close Arcwright Code, unfinished restoration resumes the next time it starts. A conversation that
+could not be restored can be retried by opening it, or by restarting Arcwright Code when convenient.
 
 V1 continues using its original database while V2 uses the copy. The database import can run while
 V1 is open. Opening V2 again resumes your V2 history. The copy happens only once: later conversations
@@ -21,7 +21,7 @@ over from V1. You may need to sign in again to websites opened inside the app.
 
 The migrated thread keeps its title, project, provider and model selection, permission and
 interaction modes, branch or worktree, archive state, settlement state, snooze and pin state, and
-linked pull request. T3 Code also brings over user and assistant messages, their timestamps, and
+linked pull request. Arcwright Code also brings over user and assistant messages, their timestamps, and
 supported attachments. Large histories may appear in stages while the server imports transcripts.
 
 The migration does not recreate the old provider's live session. It also does not convert old run
@@ -31,7 +31,7 @@ present.
 
 ## Continuing a migrated thread
 
-The first new message starts a fresh provider session. T3 Code selects intact user and assistant
+The first new message starts a fresh provider session. Arcwright Code selects intact user and assistant
 messages using the same [handoff budget](./portable-handoffs.md) as a provider switch. Omitted text
 remains in the thread and can be retrieved by the agent. The migration retains its separate
 32,000-character recovery excerpt; neither that excerpt nor the handoff replaces the full imported

@@ -24,13 +24,22 @@ function notificationCopy(event: AgentNotificationEvent, revealNames: boolean) {
   if (!revealNames) {
     switch (event.kind) {
       case "input_required":
-        return { title: "T3 Code needs your input", body: "Open T3 Code to continue." };
+        return {
+          title: "Arcwright Code needs your input",
+          body: "Open Arcwright Code to continue.",
+        };
       case "agent_failed":
-        return { title: "T3 Code agent failed", body: "Open T3 Code to review the task." };
+        return {
+          title: "Arcwright Code agent failed",
+          body: "Open Arcwright Code to review the task.",
+        };
       case "plan_ready":
-        return { title: "T3 Code plan ready", body: "Open T3 Code to review it." };
+        return { title: "Arcwright Code plan ready", body: "Open Arcwright Code to review it." };
       case "agent_completed":
-        return { title: "T3 Code agent finished", body: "Open T3 Code to review the task." };
+        return {
+          title: "Arcwright Code agent finished",
+          body: "Open Arcwright Code to review the task.",
+        };
     }
   }
 
