@@ -94,6 +94,10 @@ and [NotificationCredentials.java](../../apps/android-pwa/app/src/main/java/com/
 own permission, alert lifecycle, and encrypted credentials. The
 [Android notification runbook](./android-pwa.md#background-alerts) covers operational limits.
 
+Connection-service refreshes must not repost healthy status notifications. The
+[connection status tests](../../apps/android-pwa/app/src/test/java/com/devotek/t3code/pwa/ConnectionNotificationStateTest.java)
+cover repeated refresh, healthy host changes, loss/recovery, and required service startup.
+
 **Verification and coupling.** Test completion/input/failure while locked, notification tap to the
 correct environment/thread, denied permission, lost connectivity, and duplicate suppression.
 [NetworkNotificationPresenceTest](../../apps/android-pwa/app/src/test/java/com/devotek/t3code/pwa/NetworkNotificationPresenceTest.java),

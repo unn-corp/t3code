@@ -209,6 +209,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       pwa("UpdateEngineRecoveryReadinessTest"),
       pwa("UpdateEngineStatusTargetTest"),
       pwa("VersionLabelsTest"),
+      pwa("ConnectionNotificationStateTest"),
       pwa("NetworkNotificationPresenceTest"),
       pwa("PhoneAlertQueueTest"),
       pwa("ThreadAlertStateTest"),

@@ -285,7 +285,12 @@ interactive display state, and keyguard, including its recovery activity and unf
 windows. This suppression applies to automatic agent alerts, not updater confirmations or Send test.
 
 The service uses Android's foreground-service notification to remain connected while the shell
-is closed or the phone is locked. Tailscale and the host must remain reachable. Android power
+is closed or the phone is locked. Its low-importance connection channel has badges disabled;
+the notification is explicitly silent and hides its timestamp. `ConnectionNotificationState`
+prevents app/credential refreshes from restarting the foreground notification or reposting an
+unchanged status, including after Android allows a user to dismiss it. A new service instance
+still posts the notification Android requires. Agent alerts remain on their separate channels.
+Tailscale and the host must remain reachable. Android power
 saving can delay connections; force-stop prevents delivery until the app opens again, and the
 app must be opened once after reboot. Historical completions are not replayed on first activation.
 See the [notification setup](../user/android-fork.md#notifications) for the phone's settings.

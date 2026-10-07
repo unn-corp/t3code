@@ -24,6 +24,7 @@ public final class AgentNotificationService extends Service {
     private final Map<String, Connection> connections = new HashMap<>();
     private final NetworkNotificationPresence presence = new NetworkNotificationPresence();
     private final PhoneAlertQueue pendingAlerts = new PhoneAlertQueue();
+    private final ConnectionNotificationState notificationState = new ConnectionNotificationState();
     private final OkHttpClient http = new OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS).pingInterval(30, TimeUnit.SECONDS)
         .followRedirects(false).followSslRedirects(false).build();
@@ -46,9 +47,12 @@ public final class AgentNotificationService extends Service {
         if (!MainActivity.visible && !NativeNotifications.store(this).getBoolean("background", false)) {
             stopSelf(); return START_NOT_STICKY;
         }
-        android.app.Notification notification = ongoing("Connecting to your environments");
-        if (Build.VERSION.SDK_INT >= 29) startForeground(ONGOING_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
-        else startForeground(ONGOING_ID, notification);
+        // Refreshing credentials or opening the app must not repost a dismissed healthy status.
+        if (notificationState.start()) {
+            android.app.Notification notification = ongoing("Connecting to your environments");
+            if (Build.VERSION.SDK_INT >= 29) startForeground(ONGOING_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+            else startForeground(ONGOING_ID, notification);
+        }
         worker.execute(this::sync);
         return START_STICKY;
     }
@@ -57,6 +61,8 @@ public final class AgentNotificationService extends Service {
         return new NotificationCompat.Builder(this, NativeNotifications.CONNECTION)
             .setSmallIcon(R.drawable.notification_icon).setContentTitle("Arcwright Code background alerts").setContentText(text)
             .setOnlyAlertOnce(true).setOngoing(true).setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW).setShowWhen(false)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
             .setContentIntent(NativeNotifications.tap(this, "/settings"))
             .addAction(0, "Stop background alerts", stop).build();
     }
@@ -64,8 +70,8 @@ public final class AgentNotificationService extends Service {
         if (destroyed) return;
         long live = connections.values().stream().filter(connection -> connection.connected).count();
         NativeNotifications.store(this).edit().putInt("connectedCount", (int) live).apply();
-        getSystemService(android.app.NotificationManager.class).notify(ONGOING_ID,
-            ongoing(live + " of " + connections.size() + " environments connected"));
+        String changed = notificationState.changedStatus((int) live, connections.size());
+        if (changed != null) getSystemService(android.app.NotificationManager.class).notify(ONGOING_ID, ongoing(changed));
     }
     private void sync() {
         if (destroyed) return;
