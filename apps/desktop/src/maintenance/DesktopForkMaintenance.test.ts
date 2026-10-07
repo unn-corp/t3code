@@ -328,11 +328,14 @@ async function makeDevice() {
   const nextHandoff = () => new Promise<void>((resolve) => void handoffSeen.push(resolve));
   /** Starts an install and resolves when the helper was launched; a refusal fails the test with the reason instead of timing out. */
   const installUntilHandoff = async (core: DesktopMaintenance, digest: string) => {
+    const staged = await core.status();
     const launched = nextHandoff();
     const refused = core.install(digest).then(
       () => new Promise<never>(() => undefined),
       (error: { reason?: string }) => {
-        throw new Error(`install refused: ${error.reason ?? String(error)}`);
+        throw new Error(
+          `install refused: ${error.reason ?? String(error)}; staging phase: ${staged.phase}; staging error: ${staged.lastError ?? "none"}`,
+        );
       },
     );
     await Promise.race([launched, refused]);
