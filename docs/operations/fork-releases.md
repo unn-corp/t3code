@@ -295,6 +295,9 @@ interaction still blocks publication.
   arbitrates runs with different range lengths; a crash or losing race leaves its full range burned.
   **Never delete reservation tags.** Assembly checks each APK against the uploaded allocation
   receipt. Codes are checked against the 2,147,483,647 maximum.
+  The allocator reads all reservation tags with GitHub's unpaginated matching-refs API; do not
+  apply release-list pagination to it. Once 100 tags exist, that would repeatedly read the same
+  response and stall allocation. The REST adapter regression tests cover both 100 and 101 tags.
 - **Recovery APKs.** The manifest retains the primary predecessor plus the newest two eligible exact
   normal-build identities per channel, the verified updater baseline, and a required promotion source, deduplicated by version and
   commit. Each is rebuilt with `--kind recovery` and a unique code above the release normal code.

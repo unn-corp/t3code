@@ -707,6 +707,32 @@ describe("GitHub REST client", () => {
     );
   });
 
+  it.each([100, 101])(
+    "reads all %i reservation refs without repeating the unpaged request",
+    async (count) => {
+      const refs = Array.from({ length: count }, (_, i) => ({
+        ref: `refs/tags/fork-android-code-${ANDROID_BASELINE_VERSION_CODE + i + 1}`,
+      }));
+      const api = createGitHubApi({
+        token: "tok",
+        repository: "unn-corp/t3code",
+        fetch: respond(() => ({
+          status: recorded.length === 1 ? 200 : 500,
+          body: refs,
+        })),
+      });
+      assert.deepStrictEqual(
+        await api.listTags("fork-android-code-"),
+        refs.map(({ ref }) => ref.slice("refs/tags/".length)),
+      );
+      assert.equal(recorded.length, 1);
+      assert.equal(
+        recorded[0]!.url,
+        "https://api.github.com/repos/unn-corp/t3code/git/matching-refs/tags/fork-android-code-",
+      );
+    },
+  );
+
   it("treats a duplicate ref as a lost race and a missing tag as absent, but surfaces real errors", async () => {
     const api = createGitHubApi({
       token: "tok",

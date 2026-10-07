@@ -163,7 +163,12 @@ export const createGitHubApi = (input: {
         ).arrayBuffer(),
       ),
     listTags: async (prefix) => {
-      const refs = await paged<{ ref: string }>(`/git/matching-refs/tags/${prefix}`);
+      // GitHub's matching-refs endpoint returns all matches and has no page
+      // parameters. Paging it repeats the same response forever once we have
+      // 100 reservation tags. Keep pagination only for endpoints that support it.
+      const refs = await json<Array<{ ref: string }>>(
+        await request("GET", `${repo}/git/matching-refs/tags/${prefix}`),
+      );
       return refs.map((ref) => ref.ref.slice("refs/tags/".length));
     },
     createTag: async (name, commit) => {
