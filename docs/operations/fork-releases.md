@@ -467,6 +467,9 @@ Do these in order. Each is outside the repository.
    builds cannot demonstrate unattended desktop recovery; establish a baseline containing the
    restored-startup fix and prove a subsequent candidate can revert to it before enabling delivery.
    A rescue copy and held fence demonstrate data protection, not completed recovery.
+   Disable [fixture automation](./development.md#fixture-automation) before launching a packaged
+   desktop against isolated data. Pruned database schedules do not disable default repository
+   reviews; unintended test work can consume provider usage and block maintenance admission.
 7. Set `FORK_RELEASES_ENABLED` to `true`. Scheduled runs then publish, and a manual run publishes only
    with the `publish` input. Withdraw any bad release (below) and keep the variable unset to stop
    automatic publication.

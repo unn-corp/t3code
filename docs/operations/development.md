@@ -33,6 +33,25 @@ The main checkout defaults to `~/.t3/dev/userdata`. An explicit `--home-dir` win
 Never run a development server against the live `~/.t3/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
+#### Fixture automation
+
+Database pruning removes recorded schedules and pending work, but a packaged desktop can create
+new repository-review work from its default settings. Before launching an isolated fixture, set
+these sections in that fixture's `userdata/settings.json`, preserving any other settings needed
+by the test:
+
+```json
+{
+  "repositoryReview": { "enabled": false },
+  "continuousImprovement": { "enabled": false },
+  "productOpportunityDiscovery": { "enabled": false }
+}
+```
+
+Set them before startup; editing the file does not update a running settings cache. Check that
+provider turns remain stopped before testing maintenance admission. Tests of these schedulers
+must enable only the automation under test and use their own provider fixtures.
+
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
 different preference when needed.
