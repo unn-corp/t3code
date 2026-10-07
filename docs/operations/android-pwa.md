@@ -391,7 +391,12 @@ check is repeated after writing the installer session, immediately before OS com
 ### State, pins, and restart verification
 
 Updater state is one JSON file in app-private no-backup storage, written to a temp file, fsynced,
-and renamed, with the previous file kept as a backup. It holds the policy (channel, automatic
+and atomically renamed over the primary, with the previous committed state separately written,
+fsynced, and atomically replaced as a backup first. Never rename or delete the primary to rotate
+the backup: package replacement can kill the process between those operations. An interrupted
+write leaves the previous primary readable and preserves its installer fence and recovery pin.
+`UpdateStoreTest.processDeathBeforeReplacementKeepsThePrimaryAndInstallerFence` verifies this
+boundary. It holds the policy (channel, automatic
 installation), the pin, the running build's identity (source commit and version, kept apart from
 the installation code), the pending installation, the staged download, cached recovery builds, and
 health counters. Any unreadable primary file, even when its older backup is readable, turns

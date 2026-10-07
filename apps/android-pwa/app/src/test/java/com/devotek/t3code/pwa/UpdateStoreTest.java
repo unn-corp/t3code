@@ -53,6 +53,40 @@ public final class UpdateStoreTest {
         catch (IllegalStateException expected) { }
         assertEquals("stable", UpdateStore.open(dir).snapshot().channel);
     }
+    @Test public void processDeathBeforeReplacementKeepsThePrimaryAndInstallerFence() throws Exception {
+        File dir = folder.newFolder("interrupted-commit");
+        UpdateStore.open(dir).mutate(state -> {
+            state.channel = "nightly";
+            state.pending = new UpdateState.Pending(); state.pending.transactionId = "committed-install";
+            state.pending.sessionId = 83;
+            state.pin = new UpdateState.Pin(); state.pin.reason = "rollback";
+        });
+        UpdateStore interrupted = UpdateStore.open(dir, () -> {
+            assertTrue("The committed primary must never disappear", new File(dir, "state.json").isFile());
+            throw new IOException("Process died after backup, before replacement");
+        });
+        try { interrupted.mutate(state -> { state.pending = null; state.pin = null; }); fail(); }
+        catch (IOException expected) { }
+        UpdateState reopened = UpdateStore.open(dir).snapshot();
+        assertFalse("An interrupted write must not manufacture a corruption hold", reopened.recoveredFromCorruption);
+        assertEquals("committed-install", reopened.pending.transactionId);
+        assertEquals(83, reopened.pending.sessionId);
+        assertEquals("rollback", reopened.pin.reason);
+        // Stale temp bytes never win over the committed primary, and the next write can finish normally.
+        UpdateStore.open(dir).mutate(state -> state.pending = null);
+        assertNull(UpdateStore.open(dir).snapshot().pending);
+    }
+    @Test public void backupWriteFailureDoesNotRemoveTheCommittedPrimary() throws Exception {
+        File dir = folder.newFolder("backup-failure");
+        UpdateStore store = UpdateStore.open(dir);
+        store.mutate(state -> state.channel = "stable");
+        assertTrue(new File(dir, "state.json.bak.tmp").mkdir());
+        try { store.mutate(state -> state.channel = "nightly"); fail(); }
+        catch (IOException expected) { }
+        UpdateState reopened = UpdateStore.open(dir).snapshot();
+        assertEquals("stable", reopened.channel);
+        assertFalse(reopened.recoveredFromCorruption);
+    }
     @Test public void recoversFromABackupWhenTheMainFileIsDamaged() throws Exception {
         File dir = folder.newFolder("state");
         UpdateStore store = UpdateStore.open(dir);

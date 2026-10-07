@@ -276,6 +276,12 @@ The native Android recovery screen also opens a pending Android installation con
 normal and recovery APKs, including a dismissed notification and a restarted app process; the
 button must open the existing app-owned installer session and must never submit another install.
 
+Android updater persistence belongs to `UpdateStore`. Its backup must be written separately while
+the committed primary stays readable, then the new primary is atomically renamed over it. Package
+replacement can terminate any lifecycle write; moving the primary away before committing the new
+file produces a false corruption hold. `UpdateStoreTest` verifies interrupted commits preserve the
+installer session and recovery pin. See [state and restart verification](./android-pwa.md#state-pins-and-restart-verification).
+
 **Verification.** [forkMaintenanceAdmission.test.ts](../../packages/shared/src/forkMaintenanceAdmission.test.ts),
 [forkMaintenanceStore.test.ts](../../packages/shared/src/forkMaintenanceStore.test.ts), and
 [forkMaintenanceTransaction.test.ts](../../packages/shared/src/forkMaintenanceTransaction.test.ts) cover stale/unknown

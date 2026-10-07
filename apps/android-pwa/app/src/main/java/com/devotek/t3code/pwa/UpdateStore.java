@@ -15,17 +15,26 @@ import org.json.JSONObject;
  */
 final class UpdateStore {
     interface Mutation { void apply(UpdateState state); }
+    interface BeforeCommit { void run() throws IOException; }
 
-    private final File file, backup, temp;
+    private final File file, backup, temp, backupTemp;
+    private final BeforeCommit beforeCommit;
     private UpdateState state;
 
-    private UpdateStore(File directory) {
+    private UpdateStore(File directory, BeforeCommit beforeCommit) {
         file = new File(directory, "state.json"); backup = new File(directory, "state.json.bak"); temp = new File(directory, "state.json.tmp");
+        backupTemp = new File(directory, "state.json.bak.tmp");
+        this.beforeCommit = beforeCommit;
     }
 
     static UpdateStore open(File directory) throws IOException {
+        return open(directory, () -> { });
+    }
+
+    /** The checkpoint lets process-death tests interrupt the write without changing filesystem semantics. */
+    static UpdateStore open(File directory, BeforeCommit beforeCommit) throws IOException {
         if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Cannot create updater storage");
-        UpdateStore store = new UpdateStore(directory);
+        UpdateStore store = new UpdateStore(directory, beforeCommit);
         UpdateState loaded = read(store.file);
         if (loaded == null) {
             boolean uncertain = store.file.exists() || store.backup.exists();
@@ -60,13 +69,26 @@ final class UpdateStore {
         byte[] bytes;
         try { bytes = next.toJson().toString().getBytes(StandardCharsets.UTF_8); }
         catch (JSONException error) { throw new IOException("Cannot encode updater state", error); }
-        try (FileOutputStream output = new FileOutputStream(temp)) {
-            output.write(bytes); output.flush(); output.getFD().sync();
+        writeAndSync(temp, bytes);
+        if (file.exists()) {
+            // Never move the primary away: Android kills this process during replacement, including
+            // lifecycle writes. Keep the committed primary readable until one atomic rename replaces it.
+            // Encode the last committed state so a recovered, damaged primary cannot overwrite a good backup.
+            try { writeAndSync(backupTemp, state.toJson().toString().getBytes(StandardCharsets.UTF_8)); }
+            catch (JSONException error) { throw new IOException("Cannot encode updater backup", error); }
+            if (!backupTemp.renameTo(backup)) throw new IOException("Cannot commit updater backup");
         }
-        if (file.exists() && !file.renameTo(backup)) { backup.delete(); if (!file.renameTo(backup)) throw new IOException("Cannot rotate updater state"); }
+        beforeCommit.run();
+        // Same-directory POSIX rename replaces the existing file atomically on Android. No delete fallback.
         if (!temp.renameTo(file)) throw new IOException("Cannot commit updater state");
         state = next;
         return next.copy();
+    }
+
+    private static void writeAndSync(File destination, byte[] bytes) throws IOException {
+        try (FileOutputStream output = new FileOutputStream(destination)) {
+            output.write(bytes); output.flush(); output.getFD().sync();
+        }
     }
 
     /** Match ownership while holding the same lock as persistence. A stale callback has no effects. */
