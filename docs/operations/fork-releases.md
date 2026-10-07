@@ -461,7 +461,12 @@ Do these in order. Each is outside the repository.
    On real Windows/Linux desktops, verify that active registered agents defer installation; let work
    finish normally before updating. On the phone, verify the foreground and local-operation guards.
    Exercise both in-product update and native/external recovery, preserving connections and data.
-   This is the proof no automated check here provides.
+   This is the proof no automated check here provides. Test recovery into the actual retained
+   predecessor, not only a fixture installer. Commissioning found that earlier updater-equipped
+   desktops resumed restored health checks before configuring the backend port. Those immutable
+   builds cannot demonstrate unattended desktop recovery; establish a baseline containing the
+   restored-startup fix and prove a subsequent candidate can revert to it before enabling delivery.
+   A rescue copy and held fence demonstrate data protection, not completed recovery.
 7. Set `FORK_RELEASES_ENABLED` to `true`. Scheduled runs then publish, and a manual run publishes only
    with the `publish` input. Withdraw any bad release (below) and keep the variable unset to stop
    automatic publication.
@@ -495,6 +500,12 @@ Releases are never deleted or overwritten.
 
 Artifacts are kept 7 days (candidate, receipts) and 1 day (JS bundle). Releases and reservation tags
 are kept indefinitely. Devices keep two previous verified builds and their restore points.
+
+Windows validation discovers the one installed application executable under the isolated NSIS
+installation directory. Both legacy `T3` names and current `Arcwright Code` names are accepted;
+uninstallers and ambiguous matches are rejected. Keep this discovery aligned with desktop product
+branding and retain the focused executable-discovery tests in
+[`fork-release-validate.test.ts`](../../scripts/fork-release-validate.test.ts).
 
 Windows may briefly lock the cached recovery runtime after its self-test.
 [`forkRecoveryCache.ts`](../../packages/shared/src/forkRecoveryCache.ts) retries the same staging

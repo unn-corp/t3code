@@ -658,6 +658,7 @@ describe("DesktopForkMaintenance", () => {
 
     device.startProcess(102);
     const store = await CoordinatorStore.open(device.coordinator, device.identity, 102);
+    let restoredRuntimeStarts = 0;
     const previous = device.makeCore({
       pid: 102,
       version: "1.0.0",
@@ -667,6 +668,7 @@ describe("DesktopForkMaintenance", () => {
           stopRuntimes: async () => undefined,
           // The previous build's backend starts under the one-use capability and records its "restored" receipt.
           startRuntimes: async () => {
+            restoredRuntimeStarts += 1;
             const [journal] = await store.listJournals();
             const capability = JSON.parse(
               (await previous.trialEnv({ kind: "windows" }))[MAINTENANCE_TRIAL_ENV]!,
@@ -687,8 +689,13 @@ describe("DesktopForkMaintenance", () => {
         },
       },
     });
-    // The transaction is finished inside start: a launch that returns idle has a released fence and verified restored runtimes.
-    expect((await previous.start()).kind).toBe("idle");
+    // Bootstrap must configure exposure before starting the restored runtime.
+    // The restored boundary still holds every home until its health receipt arrives.
+    expect((await previous.start()).kind).toBe("trial");
+    expect(restoredRuntimeStarts).toBe(0);
+    expect((await store.status(device.clock.value)).fence).not.toBeNull();
+    await previous.resumeInterrupted();
+    expect(restoredRuntimeStarts).toBe(1);
     const status = await previous.status();
     expect(status.phase).toBe("failed");
     expect(status.automationReviewRequired).toBe(true);

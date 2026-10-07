@@ -21,6 +21,7 @@ import {
   serverInstall,
   serverRecovery,
   serverUpdate,
+  windowsDesktopExecutable,
 } from "./fork-release-validate.ts";
 import { makeManifest } from "./fork-release-fixtures.ts";
 
@@ -83,6 +84,27 @@ process.on("SIGTERM", () => server.close(() => process.exit(0)));
 };
 
 const scratch = (name: string) => NodePath.join(root, name);
+
+describe("isolated Windows executable discovery", () => {
+  it.each([
+    "T3 Code.exe",
+    "T3 Code (Nightly).exe",
+    "Arcwright Code (Alpha).exe",
+    "Arcwright Code (Nightly).exe",
+  ])("finds the application %s while excluding its uninstaller", (name) => {
+    NodeFS.writeFileSync(NodePath.join(root, name), "fixture");
+    NodeFS.writeFileSync(NodePath.join(root, `Uninstall ${name}`), "fixture");
+    assert.equal(windowsDesktopExecutable(root), NodePath.join(root, name));
+  });
+
+  it("refuses ambiguous or missing applications instead of choosing another executable", () => {
+    NodeFS.writeFileSync(NodePath.join(root, "unrelated.exe"), "fixture");
+    assert.throws(() => windowsDesktopExecutable(root), /no unique/);
+    NodeFS.writeFileSync(NodePath.join(root, "T3 Code.exe"), "fixture");
+    NodeFS.writeFileSync(NodePath.join(root, "Arcwright Code (Nightly).exe"), "fixture");
+    assert.throws(() => windowsDesktopExecutable(root), /no unique/);
+  });
+});
 const fail = async (promise: Promise<unknown>): Promise<string> => {
   try {
     await promise;

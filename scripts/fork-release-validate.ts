@@ -502,9 +502,9 @@ export const debRecovery = (
 // Windows
 // ---------------------------------------------------------------------------------------------
 
-const windowsDesktopExecutable = (directory: string): string => {
+export const windowsDesktopExecutable = (directory: string): string => {
   const matches = NodeFS.readdirSync(directory).filter(
-    (name) => /^T3.*\.exe$/i.test(name) && !/uninstall/i.test(name),
+    (name) => /^(?:T3|Arcwright Code).*\.exe$/i.test(name) && !/uninstall/i.test(name),
   );
   if (matches.length !== 1)
     throw new Error("The isolated Windows installation has no unique Arcwright Code executable.");

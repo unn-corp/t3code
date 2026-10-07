@@ -201,6 +201,14 @@ owns any affected home, capacity with rescue copies, verified rescue copies of e
 verifies the restored runtimes, pins the reverted build, holds restored automation for review, and only then releases admission.
 Any failure leaves the fence held.
 
+A matching restored desktop must bootstrap its backend configuration before resuming health
+verification. Treat `restored` as a provisional startup, just like a new-build trial: configure
+exposure and its real port, start the restored runtimes under their one-use capabilities, then
+verify asynchronously. Resuming restoration inside startup admission would call the backend pool
+before exposure is configured, leaving port zero and preventing the very health receipt it awaits.
+This ordering never releases the write fence early. See
+[`maintenanceCore.ts`](../../apps/desktop/src/maintenance/maintenanceCore.ts) and its restored-startup regression.
+
 `recover --desktop-plan <retained install plan>` also replaces a main binary that cannot start, which a data-only restore
 cannot fix. The ordering is the invariant: the plan, both installer payloads and the cached helper/Node pair are verified
 before any data changes (the plan must be the private install plan of that exact journal, written for this coordinator, and agree

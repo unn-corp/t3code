@@ -764,7 +764,12 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
           "A device update holds this device but its journal is missing. Run the recovery helper's `status` command before starting Arcwright Code.",
       };
     const runningTarget = journal.target !== null && isBuild(journal.target);
-    return (journal.phase === "trial" || journal.phase === "verified") && runningTarget
+    // All homes are already restored at this boundary. Bootstrap configures the
+    // backend port before its fenced runtime starts and supplies the restored receipt.
+    // Resuming here instead would start that runtime with the exposure service's port 0.
+    const restoredPrevious = journal.phase === "restored" && isBuild(journal.previous);
+    return ((journal.phase === "trial" || journal.phase === "verified") && runningTarget) ||
+      restoredPrevious
       ? { kind: "trial", transactionId: journal.id }
       : { kind: "resume-first", transactionId: journal.id };
   };
