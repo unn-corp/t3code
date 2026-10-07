@@ -2658,6 +2658,13 @@ export function resolveDesktopProductName(_version: string): string {
   return desktopPackageJson.productName ?? "Arcwright Code";
 }
 
+/** Preserve the relaunch path recorded by existing Windows recovery handoffs. */
+export function resolveWindowsExecutableName(version: string): string {
+  return resolveDesktopUpdateChannel(version) === "nightly"
+    ? "Arcwright Code (Nightly)"
+    : "Arcwright Code (Alpha)";
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2832,10 +2839,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: [target],
       // Existing updater handoffs relaunch this path after NSIS replacement.
       // Rename visible product metadata/shortcuts without breaking those plans.
-      executableName:
-        resolveDesktopUpdateChannel(version) === "nightly"
-          ? "Arcwright Code (Nightly)"
-          : "Arcwright Code (Alpha)",
+      executableName: resolveWindowsExecutableName(version),
       icon: "icon.ico",
       // Resource editing applies the product metadata and icon independently
       // of code signing. Disabling it for local unsigned builds leaves the
@@ -3946,7 +3950,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (options.platform === "win") {
     yield* validateWindowsPackagedPayload({
       stageDistDir,
-      appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
+      appExecutableName: `${resolveWindowsExecutableName(appVersion)}.exe`,
       targetArch: options.arch,
       appVersion,
       expectWslRuntime: bundlesWslRuntime({

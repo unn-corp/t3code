@@ -52,6 +52,7 @@ import {
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
+  resolveWindowsExecutableName,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
   resolveResourceMonitorRustTargets,
@@ -689,6 +690,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       });
       assert.equal(win.productName, "Arcwright Code");
       assert.equal((win.win as Record<string, unknown>).executableName, "Arcwright Code (Alpha)");
+      assert.equal(resolveWindowsExecutableName("1.2.3"), "Arcwright Code (Alpha)");
+      assert.equal(
+        resolveWindowsExecutableName("1.2.4-nightly.20261007.51"),
+        "Arcwright Code (Nightly)",
+      );
       // The Claude SDK platform packages and .bin shims never ship.
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@cursor/sdk-*",
