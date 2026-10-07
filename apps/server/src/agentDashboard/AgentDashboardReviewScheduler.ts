@@ -26,6 +26,11 @@ import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQu
 import * as AgentDashboardCollectors from "./AgentDashboardCollectors.ts";
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import {
+  retryAutomationWork,
+  withAutomationWork,
+  MaintenanceWorkHeld,
+} from "../maintenance/WorkAdmission.ts";
+import {
   AgentDashboardReviewJobService,
   type AgentDashboardReviewJobServiceError,
   parseReviewMetadata,
@@ -73,6 +78,7 @@ export interface AgentDashboardReviewSchedulerService {
     | AgentDashboardReviewSchedulerError
     | AgentDashboardReviewJobServiceError
     | AgentDashboardReviewRunnerError
+    | MaintenanceWorkHeld
   >;
 }
 
@@ -511,6 +517,7 @@ const make = Effect.gen(function* () {
                 yield* Effect.sleep(Duration.seconds(1));
               }
             }).pipe(
+              retryAutomationWork,
               Effect.catchCause((cause) =>
                 Effect.logWarning("Arcwright Code schedule follow-up for review job failed", {
                   runId: enqueued.id,
@@ -543,8 +550,21 @@ const make = Effect.gen(function* () {
       return run;
     });
 
-  const runNow = run(true);
-  const runScheduled = run(false).pipe(Effect.asVoid);
+  const runNow = withAutomationWork(run(true));
+  const runScheduled = Effect.gen(function* () {
+    const automationSettings = yield* settings.getSettings.pipe(
+      Effect.map((current) => current.repositoryReview),
+      Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.repositoryReview),
+    );
+    const state = yield* SynchronizedRef.get(stateRef);
+    const now = yield* DateTime.now;
+    const due =
+      automationSettings.enabled &&
+      state.lastStatus !== "running" &&
+      Date.parse(state.nextRunAt) <= DateTime.toEpochMillis(now);
+    if (!due) return;
+    yield* withAutomationWork(run(false)).pipe(Effect.asVoid);
+  });
 
   const touchHeartbeat = Effect.gen(function* () {
     const automationSettings = yield* settings.getSettings.pipe(
@@ -553,10 +573,20 @@ const make = Effect.gen(function* () {
     );
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
-    yield* modifyPersistedSchedule(stateRef, persist, (current) => [
-      undefined,
-      syncScheduleSettings(current, automationSettings, nowMs),
-    ]);
+    const current = yield* SynchronizedRef.get(stateRef);
+    const synced = syncScheduleSettings(current, automationSettings, nowMs);
+    yield* SynchronizedRef.update(stateRef, (state) => ({
+      ...state,
+      heartbeatAt: synced.heartbeatAt,
+    }));
+    if (
+      current.enabled !== synced.enabled ||
+      current.intervalMinutes !== synced.intervalMinutes ||
+      current.nextRunAt !== synced.nextRunAt
+    )
+      yield* withAutomationWork(
+        modifyPersistedSchedule(stateRef, persist, (_state) => [undefined, synced]),
+      );
   });
 
   const tick = Effect.gen(function* () {

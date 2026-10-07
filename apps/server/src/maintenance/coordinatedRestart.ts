@@ -63,22 +63,23 @@ export const quiesceDeviceForRestart = async (
     throw new DeviceRestartBlocked([...new Set(status.blockers.map((blocker) => blocker.label))]);
 
   const transactionId = `s${now()}-${NodeCrypto.randomUUID().slice(0, 8)}`;
+  const intent = newJournal({
+    id: transactionId,
+    kind: "update",
+    homes: [],
+    previous: { version: "service-restart", artifactSha256: "" },
+    target: null,
+    now: now(),
+  });
   try {
-    await store.freeze(transactionId, now());
+    await store.freeze(transactionId, now(), { intent });
   } catch (cause) {
     throw new DeviceRestartBlocked([cause instanceof Error ? cause.message : String(cause)]);
   }
   /** Nothing changed on disk: a restart is not a data transaction, so its journal is the aborted boundary that lets admission reopen. */
   const release = async () => {
     const journal = {
-      ...newJournal({
-        id: transactionId,
-        kind: "update",
-        homes: [],
-        previous: { version: "service-restart", artifactSha256: "" },
-        target: null,
-        now: now(),
-      }),
+      ...intent,
       phase: "aborted" as const,
       failure: "Operator-requested service stop; no data changed.",
     };

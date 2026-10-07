@@ -77,6 +77,7 @@ interface Behaviour {
   failCapacityIn?: string;
   failRestoreIn?: string;
   unreachable?: Set<string>;
+  oldJournalProtocol?: Set<string>;
 }
 
 /** The distribution answers the way the real CLI would, against its own home and registry. */
@@ -120,9 +121,21 @@ function fakeWsl(
     const parsed = parseFenceOperation(rest);
     if ("error" in parsed)
       return { code: 2, stdout: JSON.stringify({ ok: false, reason: parsed.error }), stderr: "" };
+    const result = await runFenceOperation(target.store, parsed, NOW);
+    if (parsed.op === "status" && result.ok && behaviour.oldJournalProtocol?.has(distro!)) {
+      const { initialJournalProtocol: _unsupported, ...legacyStatus } = result.value as Record<
+        string,
+        unknown
+      >;
+      return {
+        code: 0,
+        stdout: `${JSON.stringify({ ...result, value: legacyStatus })}\n`,
+        stderr: "",
+      };
+    }
     return {
       code: 0,
-      stdout: `${JSON.stringify(await runFenceOperation(target.store, parsed, NOW)).replaceAll(JSON.stringify(target.home), JSON.stringify(target.wireHome))}\n`,
+      stdout: `${JSON.stringify(result).replaceAll(JSON.stringify(target.home), JSON.stringify(target.wireHome))}\n`,
       stderr: "",
     };
   };
@@ -397,6 +410,18 @@ describe("external recovery helper", () => {
     await expect(d.store.beginWork("other-runtime")).rejects.toThrow("holds new work");
   });
 
+  it("refuses recovery before freezing when a WSL member lacks the initial-journal protocol", async () => {
+    const d = await device({ oldJournalProtocol: new Set(["Ubuntu"]) });
+    await expect(
+      recoverCohort({ ...d.context, transactionId: "tx-update", confirm: await d.cutoffs() }),
+    ).rejects.toThrow("older maintenance protocol");
+    expect(d.calls.some((call) => call.includes(":freeze:"))).toBe(false);
+    expect(await d.store.fenceSnapshot()).toBeNull();
+    expect(await d.ubuntuStore.fenceSnapshot()).toBeNull();
+    expect(await readSetting(d.windowsHome)).toBe("windows after update");
+    expect(await readSetting(d.ubuntuHome)).toBe("ubuntu after update");
+  });
+
   it("refuses a confirmation that does not name every home with its exact cutoff, and changes nothing", async () => {
     const d = await device();
     const exact = await d.cutoffs();
@@ -585,7 +610,17 @@ describe("external recovery helper", () => {
       identity,
       7001,
     );
-    await owner.freeze("tx-trial", NOW);
+    await owner.freeze("tx-trial", NOW, {
+      intent: newJournal({
+        id: "tx-trial",
+        kind: "update",
+        homes: [d.windowsHome, d.wslId],
+        previous: { version: "1.0.0", artifactSha256: "a" },
+        target: { version: "1.0.2", artifactSha256: "c" },
+        now: 0,
+        snapshots: (await d.store.readJournal("tx-update"))!.snapshots,
+      }),
+    });
     const trial = {
       ...newJournal({
         id: "tx-trial",
@@ -1008,8 +1043,15 @@ describe("external recovery of the desktop binary (recover --desktop-plan)", () 
       identity,
       7001,
     );
-    await owner.freeze("tx-update-2", NOW);
     const source = (await d.store.readJournal("tx-update"))!;
+    await owner.freeze("tx-update-2", NOW, {
+      intent: {
+        ...source,
+        id: "tx-update-2",
+        phase: "fenced",
+        updatedAt: source.createdAt,
+      },
+    });
     await owner.writeJournal({
       ...source,
       id: "tx-update-2",

@@ -115,6 +115,17 @@ const memberOf = (distro: string, home: string): WslMember => ({
   home,
   executable: "/usr/local/bin/t3",
 });
+const freezeForTest = (store: CoordinatorStore, id: string, now: number) =>
+  store.freeze(id, now, {
+    intent: newJournal({
+      id,
+      kind: "update",
+      homes: [],
+      previous: { version: "test", artifactSha256: "" },
+      target: null,
+      now,
+    }),
+  });
 
 async function cohort() {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-wsl-cohort-"));
@@ -152,6 +163,31 @@ async function cohort() {
 }
 
 describe("explicit Windows/WSL membership", () => {
+  it("refuses a legacy member before sending any freeze verb", async () => {
+    const calls: string[] = [];
+    const legacyFence = {
+      run: async (operation: { readonly op: string }) => {
+        calls.push(operation.op);
+        return { ok: true as const, value: { participants: [] } };
+      },
+    };
+    const member = memberOf("Legacy", "/home/legacy/.t3");
+    const cohort = createCohortFence({
+      parentId: "desktop",
+      members: [{ member, fence: legacyFence }],
+    });
+    const intent = newJournal({
+      id: "legacy-transaction",
+      kind: "update",
+      homes: [wslHomeId(member)],
+      previous: { version: "1", artifactSha256: "a" },
+      target: null,
+      now: 0,
+    });
+    await expect(cohort.freeze(intent.id, intent)).rejects.toThrow("older maintenance protocol");
+    expect(calls).toEqual(["status"]);
+  });
+
   it("accepts only stated members with absolute Linux paths and safe distro names", () => {
     const good = {
       version: 1,
@@ -424,7 +460,7 @@ describe("explicit Windows/WSL membership", () => {
         label: expect.stringContaining("current process activity census"),
       }),
     );
-    await expect(c.windowsStore.freeze("legacy", 600_000)).rejects.toThrow(
+    await expect(freezeForTest(c.windowsStore, "legacy", 600_000)).rejects.toThrow(
       "current process activity census",
     );
   });
@@ -461,7 +497,7 @@ describe("explicit Windows/WSL membership", () => {
       await observeWslMembers({ store: c.windowsStore, parentId: "desktop", members, now });
     }
     expect((await c.windowsStore.status(360_000)).blockers).toEqual([]);
-    await c.windowsStore.freeze("tx1", 360_000);
+    await freezeForTest(c.windowsStore, "tx1", 360_000);
   });
 
   it("holds a member's fence remotely and releases it only against a mirrored terminal journal", async () => {
@@ -481,12 +517,6 @@ describe("explicit Windows/WSL membership", () => {
     await c.ubuntuStore.observe("ubuntu-server", [], 600_000);
     c.clock.value = 600_000;
     const fence = createWslFenceControl(c.ubuntu, c.exec);
-    expect(await fence.run({ op: "freeze", transactionId: "tx1", parent: "desktop" })).toEqual({
-      ok: true,
-      value: true,
-    });
-    // Admission inside the distribution is now fenced, held by the remote parent.
-    await expect(c.ubuntuStore.beginWork("ubuntu-server")).rejects.toThrow("holds new work");
     const journal = newJournal({
       id: "tx1",
       kind: "update",
@@ -495,6 +525,14 @@ describe("explicit Windows/WSL membership", () => {
       target: { version: "1.0.1", artifactSha256: "b" },
       now: 0,
     });
+    expect(
+      await fence.run({ op: "freeze", transactionId: "tx1", parent: "desktop", intent: journal }),
+    ).toEqual({
+      ok: true,
+      value: true,
+    });
+    // Admission inside the distribution is now fenced, held by the remote parent.
+    await expect(c.ubuntuStore.beginWork("ubuntu-server")).rejects.toThrow("holds new work");
     expect(await fence.run({ op: "release", transactionId: "tx1" })).toMatchObject({
       ok: false,
       reason: expect.stringContaining("not at a durable"),
@@ -526,7 +564,15 @@ describe("explicit Windows/WSL membership", () => {
     await c.ubuntuStore.observe("ubuntu-server", [], 600_000);
     c.clock.value = 600_000;
     const fence = createWslFenceControl(c.ubuntu, c.exec);
-    await fence.run({ op: "freeze", transactionId: "tx1", parent: "desktop" });
+    const intent = newJournal({
+      id: "tx1",
+      kind: "update",
+      homes: [wslHomeId(c.ubuntu)],
+      previous: { version: "1.0.0", artifactSha256: "a" },
+      target: null,
+      now: 0,
+    });
+    await fence.run({ op: "freeze", transactionId: "tx1", parent: "desktop", intent });
     const issued = await fence.run({
       op: "issue-trial",
       transactionId: "tx1",
@@ -572,7 +618,15 @@ describe("explicit Windows/WSL membership", () => {
         { member: c.debian, fence: createWslFenceControl(c.debian, c.exec) },
       ],
     });
-    await expect(fence.freeze("tx1")).rejects.toThrow("Debian");
+    const tx1Intent = newJournal({
+      id: "tx1",
+      kind: "update",
+      homes: [c.windowsHome, c.ubuntu.home, c.debian.home],
+      previous: { version: "1", artifactSha256: "a" },
+      target: null,
+      now: 600_000,
+    });
+    await expect(fence.freeze("tx1", tx1Intent)).rejects.toThrow("Debian");
     expect(await c.ubuntuStore.fenceSnapshot()).toBeNull();
     expect(await c.debianStore.fenceSnapshot()).toBeNull();
     await c.debianStore.observe("debian-server", [], 600_000);
@@ -580,7 +634,15 @@ describe("explicit Windows/WSL membership", () => {
     c.clock.value = 900_000;
     await c.ubuntuStore.observe("ubuntu-server", [], 900_000);
     await c.debianStore.observe("debian-server", [], 900_000);
-    await fence.freeze("tx2");
+    const tx2Intent = newJournal({
+      id: "tx2",
+      kind: "update",
+      homes: [c.windowsHome, c.ubuntu.home, c.debian.home],
+      previous: { version: "1", artifactSha256: "a" },
+      target: null,
+      now: 900_000,
+    });
+    await fence.freeze("tx2", tx2Intent);
     expect((await c.ubuntuStore.fenceSnapshot())?.transactionId).toBe("tx2");
     expect((await c.debianStore.fenceSnapshot())?.transactionId).toBe("tx2");
     // A release against a non-terminal mirrored journal is refused; a fresh object after a restart still releases only what it holds.
@@ -647,7 +709,7 @@ describe("explicit Windows/WSL membership", () => {
     expect(
       await fence.run({ op: "receipt", transactionId: "tx1", home: c.ubuntu.home, slot: "trial" }),
     ).toEqual({ ok: true, value: null });
-    await c.ubuntuStore.freeze("tx1", 600_000);
+    await freezeForTest(c.ubuntuStore, "tx1", 600_000);
     const capability = await c.ubuntuStore.issueTrial("tx1", c.ubuntu.home);
     // The runtime that was serving the home has stopped before its replacement starts.
     await c.ubuntuStore.unregister("ubuntu-server");
@@ -725,14 +787,26 @@ describe("explicit Windows/WSL membership", () => {
     ).toMatchObject({ ok: false, reason: expect.stringContaining("DistroRunner") });
   });
 
-  it("rejects malformed verbs from either side", () => {
+  it("rejects malformed verbs from either side", async () => {
     expect(parseFenceOperation(["freeze", "--transaction", "t"])).toEqual({
-      error: "--transaction and --parent are required.",
+      error: "--transaction, --parent and --journal-base64 are required.",
     });
     expect(parseFenceOperation(["journal", "--journal-base64", "!!!"])).toEqual({
       error: "The journal is not valid.",
     });
     expect(parseFenceOperation(["nope"])).toEqual({ error: "Unknown fence operation nope." });
     expect(parseFenceOperation(["confirm-bootstrap"])).toEqual({ op: "confirm-bootstrap" });
+    const c = await cohort();
+    const missingIntent = await runFenceOperation(
+      c.ubuntuStore,
+      { op: "freeze", transactionId: "tx-missing-intent", parent: "desktop" } as Parameters<
+        typeof runFenceOperation
+      >[1],
+      0,
+    );
+    expect(missingIntent).toMatchObject({
+      ok: false,
+      reason: "A remote device fence requires its transaction journal.",
+    });
   });
 });

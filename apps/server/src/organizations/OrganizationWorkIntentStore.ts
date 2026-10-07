@@ -13,7 +13,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { MaintenanceWorkHeld, withAutomationWork } from "../maintenance/WorkAdmission.ts";
 
+const isMaintenanceWorkHeld = Schema.is(MaintenanceWorkHeld);
 const EvidenceJson = Schema.fromJsonString(
   Schema.Array(OrganizationProposalEvidence).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
 );
@@ -410,15 +412,18 @@ const make = Effect.gen(function* () {
       let created = 0;
       let skipped = 0;
       for (const row of rows) {
-        const result = yield* createValidated(
-          {
-            organizationId: row.organization_id as OrganizationId,
-            proposalId: row.proposal_id as OrganizationProposalId,
-            expectedVersion: row.version,
-          },
-          "system:organization-proposal-reconciler",
+        const result = yield* withAutomationWork(
+          createValidated(
+            {
+              organizationId: row.organization_id as OrganizationId,
+              proposalId: row.proposal_id as OrganizationProposalId,
+              expectedVersion: row.version,
+            },
+            "system:organization-proposal-reconciler",
+          ),
         ).pipe(Effect.result);
         if (result._tag === "Success") created++;
+        else if (isMaintenanceWorkHeld(result.failure)) return yield* result.failure;
         else if (
           result.failure.code === "forbidden" ||
           result.failure.code === "conflict" ||

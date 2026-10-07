@@ -68,8 +68,10 @@ code. The normal APK you rolled back from cannot replace its recovery APK.
 If App updates says its safety state was recovered from a backup, restart the phone and review
 the settings. On Android 11 or newer, if an old Android confirmation is missing, open **App updates → Open recovery →
 Review unfinished Android updates**. Review the listed sessions before choosing **Discard**.
-This cancels only inactive, verified Arcwright installations and keeps updates paused; your
-connections stay saved. Return to App updates to review your update preference after the restart.
+This asks Android to cancel the listed, verified Arcwright installations, including ones it still
+marks active. A recorded update is protected. Updates stay paused and your connections stay saved.
+If Android refuses cancellation, the safety hold remains. Return to App updates to review your
+update preference after the restart.
 
 The interface is bundled inside the APK, so updating a host's website does not update the phone's
 interface. Some features also require an updated fork server on each connected host.

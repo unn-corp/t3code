@@ -32,6 +32,7 @@ afterEach(() => {
 describe("the required suites", () => {
   it("name real test files and classes", () => {
     for (const spec of Object.values(SUITES)) {
+      assert.equal(new Set(spec.required).size, spec.required.length, `${spec.id}: duplicate test`);
       for (const required of spec.required) {
         const file =
           spec.results === "vitest"
@@ -65,6 +66,16 @@ describe("the required suites", () => {
     assert.include(SUITES["native-android"].required.join(" "), "UpdateReconcilerTest");
     assert.include(SUITES["client-updates"].required.join(" "), "UpdateRecoveryDialog.test.tsx");
     assert.include(SUITES["client-updates"].required.join(" "), "browserRecordingUpload.test.ts");
+    const runtime = SUITES["host-runtime"].required;
+    for (const file of [
+      "src/agentDashboard/AgentDashboardSecurityScheduler.test.ts",
+      "src/agentDashboard/AgentDashboardReviewJobService.test.ts",
+      "src/agentDashboard/AgentDashboardContinuousImprovement.test.ts",
+      "src/agentDashboard/AgentDashboardPullRequestRollup.test.ts",
+      "src/organizations/OrganizationLiveWorkExecutor.test.ts",
+      "src/discord/Layers/DiscordBridge.integration.test.ts",
+    ])
+      assert.include(runtime, file);
   });
 
   it("gate every check on the coordinator, and update and recovery on both updaters", () => {

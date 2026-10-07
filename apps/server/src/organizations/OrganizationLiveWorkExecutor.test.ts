@@ -11,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { MaintenanceWorkHeld, WorkAdmission } from "../maintenance/WorkAdmission.ts";
 import { OrganizationProviderBudgetError } from "./OrganizationProviderBudget.ts";
 import {
   clearRecoverableOrganizationLiveWorkFailure,
@@ -198,6 +199,39 @@ it.effect("dispatches only selected activated phases and stops at human approval
       ["skipped"],
     );
     assert.equal(calls.includes("attempt:unactivated"), false);
+  }),
+);
+
+it.effect("keeps activated work pending while restored automation awaits review", () =>
+  Effect.gen(function* () {
+    const calls: string[] = [];
+    const executor = makeOrganizationLiveWorkExecutor(
+      {
+        listAfter: () => Effect.succeed([id("held-work")]),
+        read: () => Effect.succeed(snapshot("held-work", "pending")),
+        recordFailure: () => Effect.void,
+        clearRecoverableFailure: () => Effect.void,
+        shouldDeferAuthorityFailure: () => Effect.succeed(false),
+      },
+      {
+        proposeAndAttempt: () => Effect.sync(() => void calls.push("attempt")),
+        candidateAndQA: () => Effect.void,
+        integrateAndComplete: () => Effect.void,
+      },
+    );
+    const result = yield* executor.runOnce().pipe(
+      Effect.provideService(WorkAdmission, {
+        acquire: Effect.succeed(() => Effect.void),
+        acquirePassive: Effect.succeed(() => Effect.void),
+        check: Effect.void,
+        checkAutomation: Effect.fail(new MaintenanceWorkHeld({ cause: "review required" })),
+      }),
+    );
+    assert.deepEqual(
+      result.map(({ outcome }) => outcome),
+      ["waiting"],
+    );
+    assert.deepEqual(calls, []);
   }),
 );
 

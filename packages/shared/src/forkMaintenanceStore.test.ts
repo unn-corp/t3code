@@ -85,12 +85,92 @@ const journalAt = (phase: "committed" | "trial" | "aborted") => ({
   }),
   phase,
 });
+const freezeForTest = (store: CoordinatorStore, id: string, now: number) =>
+  store.freeze(id, now, {
+    intent: newJournal({
+      id,
+      kind: "update",
+      homes: [],
+      previous: { version: "test", artifactSha256: "" },
+      target: null,
+      now,
+    }),
+  });
 const idle = async (store: CoordinatorStore, id: string) => {
   await store.observe(id, [], 0);
   await store.observe(id, [], 600_000);
 };
 
 describe("host coordinator", () => {
+  it("fails closed when an untyped caller omits the transaction journal", async () => {
+    const f = await fixture();
+    const store = await f.open(100);
+    await expect(store.freeze("tx-without-intent", 0, undefined as never)).rejects.toThrow(
+      "A device fence requires its matching transaction journal.",
+    );
+    expect((await store.status(0)).fence).toBeNull();
+  });
+
+  it("publishes a fenced journal before the registry fence and leaves it inert if fence persistence fails", async () => {
+    const f = await fixture();
+    const store = await f.open(100);
+    await store.register(
+      {
+        id: "desktop",
+        label: "Desktop",
+        kind: "desktop",
+        homes: [await f.home("h")],
+        updateTarget: true,
+      },
+      0,
+    );
+    await store.confirmBootstrap();
+    await idle(store, "desktop");
+    const intent = newJournal({
+      id: "tx-crash-window",
+      kind: "update",
+      homes: [await f.home("h2")],
+      previous: { version: "1", artifactSha256: "a" },
+      target: { version: "2", artifactSha256: "b" },
+      now: 600_000,
+    });
+    const saveDescriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(store), "save")!;
+    Object.defineProperty(store, "save", {
+      configurable: true,
+      value: async () => {
+        // Simulates process termination or a failed durable registry publication after the
+        // initial journal rename succeeded, but before the fence could become visible.
+        throw new Error("simulated registry publication crash");
+      },
+    });
+    await expect(store.freeze(intent.id, 600_000, { intent })).rejects.toThrow(
+      "simulated registry publication crash",
+    );
+    Object.defineProperty(store, "save", saveDescriptor);
+
+    const reopened = await f.open(200);
+    expect((await reopened.status(600_000)).fence).toBeNull();
+    expect(await reopened.readJournal(intent.id)).toEqual(intent);
+    await expect(
+      reopened.freeze(intent.id, 600_000, {
+        intent: { ...intent, target: { version: "attacker", artifactSha256: "c" } },
+      }),
+    ).rejects.toThrow("A different transaction journal already exists");
+    expect((await reopened.status(600_000)).fence).toBeNull();
+    // The orphan journal is inert; it did not close admission for a new transaction.
+    await reopened.freeze("tx-after-crash", 600_000, {
+      intent: newJournal({
+        id: "tx-after-crash",
+        kind: "update",
+        homes: [],
+        previous: { version: "1", artifactSha256: "a" },
+        target: null,
+        now: 600_000,
+      }),
+    });
+    expect((await reopened.status(600_000)).fence?.transactionId).toBe("tx-after-crash");
+  });
+
   it("resets idle admission when a registered owner's identity becomes unreadable", async () => {
     const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-maintenance-test-"));
     directories.push(directory);
@@ -126,7 +206,7 @@ describe("host coordinator", () => {
       expect.objectContaining({ participantId: "desktop", reason: "unknown-participant" }),
     );
     expect(status.participants[0]).toMatchObject({ idleSince: null, frozenFor: null });
-    await expect(observer.freeze("tx", 600_000)).rejects.toThrow("could not be verified");
+    await expect(freezeForTest(observer, "tx", 600_000)).rejects.toThrow("could not be verified");
   });
 
   it("does not accept a fresh matching child row after a prior child identity check fails", async () => {
@@ -165,7 +245,7 @@ describe("host coordinator", () => {
       expect.objectContaining({ participantId: "desktop", reason: "unknown-participant" }),
     );
     expect(status.participants[0]?.idleSince).toBeNull();
-    await expect(store.freeze("tx", 600_000)).rejects.toThrow("could not be verified");
+    await expect(freezeForTest(store, "tx", 600_000)).rejects.toThrow("could not be verified");
   });
 
   it("blocks until bootstrap is confirmed and never makes development runtimes update targets", async () => {
@@ -205,19 +285,21 @@ describe("host coordinator", () => {
     await store.confirmBootstrap();
     await idle(store, "desktop");
     const releases = await Promise.all(Array.from({ length: 8 }, () => store.beginWork("desktop")));
-    await expect(store.freeze("tx", 600_000)).rejects.toThrow();
+    await expect(freezeForTest(store, "tx", 600_000)).rejects.toThrow();
     await store.observe("desktop", [], 600_000);
     expect((await store.status(600_000)).blockers[0]?.reason).toBe("background-work");
     await Promise.all(releases.map((release) => release()));
     await store.observe("desktop", [], 600_000);
     await store.observe("desktop", [], 900_000);
-    await store.freeze("tx", 900_000);
+    await freezeForTest(store, "tx", 900_000);
     await expect(store.beginWork("desktop")).rejects.toThrow("holds new work");
     await expect(store.assertAdmitting("desktop")).rejects.toThrow("holds new work");
     await expect(store.recheck("tx", 900_000)).rejects.toThrow("acknowledged");
     await store.observe("desktop", [], 900_000);
     expect(await store.recheck("tx", 900_000)).toHaveLength(1);
-    await expect(store.freeze("duplicate", 900_000)).rejects.toThrow("Another device transaction");
+    await expect(freezeForTest(store, "duplicate", 900_000)).rejects.toThrow(
+      "Another device transaction",
+    );
   });
 
   it("keeps a passive diagnostic write inside the fence without resetting observed agent idleness", async () => {
@@ -252,10 +334,10 @@ describe("host coordinator", () => {
     const participant = (await store.status(600_001)).participants[0]!;
     expect(participant.blockers).toEqual([]);
     expect(participant.idleSince).toBe(0);
-    await expect(store.freeze("tx", 600_001)).rejects.toThrow("Local operations");
+    await expect(freezeForTest(store, "tx", 600_001)).rejects.toThrow("Local operations");
 
     await release();
-    await store.freeze("tx", 600_001);
+    await freezeForTest(store, "tx", 600_001);
     await expect(store.beginPassiveWork("desktop")).rejects.toThrow("holds new work");
   });
 
@@ -280,13 +362,13 @@ describe("host coordinator", () => {
     );
     await observer.confirmBootstrap();
     await idle(observer, "desktop");
-    await expect(observer.freeze("tx", 600_000)).rejects.toThrow("local operation");
+    await expect(freezeForTest(observer, "tx", 600_000)).rejects.toThrow("local operation");
     f.processes.table.delete(200);
     await observer.observe("desktop", [], 600_000);
     // Clearing the dead lease restarts the five-minute stopped window.
-    await expect(observer.freeze("tx", 600_000)).rejects.toThrow("five minutes");
+    await expect(freezeForTest(observer, "tx", 600_000)).rejects.toThrow("five minutes");
     await observer.observe("desktop", [], 900_000);
-    await observer.freeze("tx", 900_000);
+    await freezeForTest(observer, "tx", 900_000);
   });
 
   it("treats a reused PID as a different, exited process", async () => {
@@ -478,7 +560,7 @@ describe("host coordinator", () => {
     );
     await store.confirmBootstrap();
     await idle(store, "desktop");
-    await store.freeze("tx", 600_000);
+    await freezeForTest(store, "tx", 600_000);
     await expect(store.releaseFence("tx")).rejects.toThrow("not at a durable");
     await store.writeJournal(journalAt("trial"));
     await expect(store.releaseFence("tx")).rejects.toThrow("not at a durable");
@@ -502,7 +584,7 @@ describe("host coordinator", () => {
     );
     await parent.confirmBootstrap();
     await idle(parent, "desktop");
-    await parent.freeze("tx", 600_000);
+    await freezeForTest(parent, "tx", 600_000);
     const late = await f.open(200);
     // The runtime may have read "no fence" an instant earlier: register itself must refuse.
     await expect(
@@ -533,7 +615,7 @@ describe("host coordinator", () => {
     );
     await parent.confirmBootstrap();
     await idle(parent, "desktop");
-    await parent.freeze("tx", 600_000);
+    await freezeForTest(parent, "tx", 600_000);
     const canonicalA = await NodeFSP.realpath(homeA);
     const capability = await parent.issueTrial("tx", canonicalA);
     f.processes.table.delete(100);
@@ -602,7 +684,7 @@ describe("host coordinator", () => {
         label: expect.stringContaining("2 processes started by Desktop server"),
       }),
     ]);
-    await expect(observer.freeze("tx", 600_000)).rejects.toThrow("2 processes");
+    await expect(freezeForTest(observer, "tx", 600_000)).rejects.toThrow("2 processes");
     // One exits, and a reused PID with a different start time is not the original process.
     f.processes.table.delete(4242);
     f.processes.table.set(4243, "boot:reused");
@@ -748,7 +830,7 @@ describe("host coordinator", () => {
         reason: "unknown-participant",
       }),
     );
-    await expect(observer.freeze("tx", 600_000)).rejects.toThrow("could not be read");
+    await expect(freezeForTest(observer, "tx", 600_000)).rejects.toThrow("could not be read");
     const replacement = await f.open(300);
     await replacement.register(
       {
@@ -880,7 +962,7 @@ describe("host coordinator", () => {
     await runtime.confirmBootstrap();
     await runtime.observe("desktop", [], 0);
     await runtime.observe("desktop", [], 600_000);
-    await runtime.freeze("active-tx", 600_000);
+    await freezeForTest(runtime, "active-tx", 600_000);
     const owner = runtime.owner;
     await runtime.observe(
       "desktop",
@@ -986,7 +1068,7 @@ describe("host coordinator", () => {
     );
     await owner.confirmBootstrap();
     await idle(owner, "service");
-    await owner.freeze("tx", 600_000);
+    await freezeForTest(owner, "tx", 600_000);
     f.processes.table.delete(100);
     const successor = await f.open(200);
     await successor.register(
@@ -1010,7 +1092,7 @@ describe("host coordinator", () => {
     );
     await owner.confirmBootstrap();
     await idle(owner, "desktop");
-    await owner.freeze("tx", 600_000);
+    await freezeForTest(owner, "tx", 600_000);
     const other = await f.open(200);
     await expect(
       other.register(

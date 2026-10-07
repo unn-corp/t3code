@@ -17,6 +17,7 @@ import {
   type FilesystemCapacity,
 } from "./forkMaintenanceAdmission.ts";
 import {
+  INITIAL_JOURNAL_PROTOCOL,
   runFenceOperation,
   type FenceOperation,
   type FenceOperationResult,
@@ -26,7 +27,7 @@ import {
   type HomeOperation,
   type HomeOperationResult,
 } from "./forkMaintenanceHomeOperations.ts";
-import { newJournal, type MaintenanceJournal } from "./forkMaintenanceJournal.ts";
+import { type MaintenanceJournal } from "./forkMaintenanceJournal.ts";
 import type { CoordinatorStore } from "./forkMaintenanceStore.ts";
 
 export const WslMember = Schema.Struct({
@@ -165,6 +166,8 @@ export const fenceOperationArgs = (operation: FenceOperation): ReadonlyArray<str
         operation.transactionId,
         "--parent",
         operation.parent,
+        "--journal-base64",
+        Buffer.from(JSON.stringify(operation.intent)).toString("base64"),
         ...(operation.forRecovery === true ? ["--for-recovery", "true"] : []),
       ];
     case "recheck":
@@ -195,6 +198,27 @@ export interface HomeControl {
 }
 export interface FenceControl {
   readonly run: (operation: FenceOperation) => Promise<FenceOperationResult>;
+}
+
+/** Refuse old WSL machine verbs before sending a freeze they may ignore unsafe new flags on. */
+export async function assertInitialJournalProtocol(
+  members: ReadonlyArray<{
+    readonly member: Pick<WslMember, "distro">;
+    readonly fence: FenceControl;
+  }>,
+): Promise<void> {
+  for (const { member, fence } of members) {
+    const status = await fence.run({ op: "status" });
+    if (!status.ok)
+      throw new Error(
+        `${member.distro} could not attest its maintenance protocol: ${status.reason}`,
+      );
+    const value = status.value as { readonly initialJournalProtocol?: unknown };
+    if (value.initialJournalProtocol !== INITIAL_JOURNAL_PROTOCOL)
+      throw new Error(
+        `${member.distro} uses an older maintenance protocol that cannot safely join updates. Update or bootstrap that runtime before retrying.`,
+      );
+  }
 }
 
 export const createLocalHomeControl = (home: string, store?: CoordinatorStore): HomeControl => ({
@@ -410,24 +434,19 @@ export function createCohortFence(input: {
   const fences = input.members.map((entry) => entry.fence);
   const frozen: FenceControl[] = [];
   return {
-    freeze: async (transactionId: string) => {
+    freeze: async (transactionId: string, intent: MaintenanceJournal) => {
+      await assertInitialJournalProtocol(input.members);
       for (const { member, fence } of input.members) {
         const result = await fence.run({
           op: "freeze",
           transactionId,
           parent: input.parentId,
+          intent,
           ...(input.forRecovery === true ? { forRecovery: true } : {}),
         });
         if (!result.ok) {
           const aborted = {
-            ...newJournal({
-              id: transactionId,
-              kind: "update",
-              homes: [],
-              previous: { version: "0", artifactSha256: "" },
-              target: null,
-              now: Date.now(),
-            }),
+            ...intent,
             phase: "aborted" as const,
             failure: "A member could not be fenced.",
           };

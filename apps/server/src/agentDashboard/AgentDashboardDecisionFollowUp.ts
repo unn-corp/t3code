@@ -27,6 +27,7 @@ import * as OrchestrationEngine from "../agentDashboard/AutomationOrchestration.
 import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { withAutomationWork } from "../maintenance/WorkAdmission.ts";
 
 export const DECISION_FOLLOW_UP_KIND = "decision-follow-up";
 const POLL_INTERVAL = Duration.seconds(30);
@@ -377,7 +378,7 @@ const make = Effect.gen(function* () {
             catch: () => false,
           }).pipe(Effect.orElseSucceed(() => false));
           if (!stable) return;
-          yield* launchConversation(candidate, settings.modelSelection);
+          yield* withAutomationWork(launchConversation(candidate, settings.modelSelection));
           launched += 1;
         }).pipe(
           Effect.catchCause((cause) =>

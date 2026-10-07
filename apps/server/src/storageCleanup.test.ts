@@ -307,6 +307,7 @@ effectIt.effect(
           acquire: Effect.fail(new MaintenanceWorkHeld({ cause: "maintenance fence" })),
           acquirePassive: Effect.fail(new MaintenanceWorkHeld({ cause: "maintenance fence" })),
           check: Effect.fail(new MaintenanceWorkHeld({ cause: "maintenance fence" })),
+          checkAutomation: Effect.void,
         };
         const fencedSweep = yield* Effect.exit(
           cleanup.sweep().pipe(Effect.provideService(WorkAdmission, fencedAdmission)),

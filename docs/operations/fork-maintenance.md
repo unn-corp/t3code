@@ -176,9 +176,16 @@ not evidence that equivalent upstream surfaces exist.
 
 **Verification and coupling.** Domain tests cover durable authorization, budgets, stopped work,
 reconciliation, review/implementation scheduling, and credential redaction. Test new schedulers
-against device maintenance fencing. Provider-role/model defaults and upstream orchestration event
-changes require reviewing adapters and contracts. Restoring old data must not silently replay
-schedules, queues, or standing work authorization.
+against device maintenance fencing and the persisted restored-automation review hold; the server
+runtime context must carry its singleton admission service into server-scoped layers. Keep the
+[automatic security scheduler](../../apps/server/src/agentDashboard/AgentDashboardSecurityScheduler.test.ts),
+[review worker](../../apps/server/src/agentDashboard/AgentDashboardReviewJobService.test.ts),
+[activated Organization work](../../apps/server/src/organizations/OrganizationLiveWorkExecutor.test.ts),
+and [maintenance policy](../../apps/server/src/maintenance/MaintenanceCoordinator.test.ts)
+regressions with their domain suites.
+Provider-role/model defaults and upstream orchestration event changes require reviewing adapters
+and contracts. Restoring old data must not silently replay schedules, queues, or standing work
+authorization.
 
 ## Checkpoints and model compatibility
 
@@ -227,6 +234,29 @@ cover conversation ownership, upload retries, archive and age policies, busy-thr
 and safe cleanup boundaries. Deleted conversations remain eligible for age cleanup. Removing
 files invalidates their evidence links; unarchiving cannot restore them. Uploaded message
 attachments, conversation history, and project files remain outside these policies.
+
+## Discord bridge
+
+**Delivery and entry.** The host server can mirror linked agent threads to Discord and accept
+messages from configured author IDs. It is configured only through the server's
+`discordBridge` settings and secret store; there is no client Settings screen. The bridge runs in
+the server process, including when the operator reaches that host over Tailscale. The
+[Discord guide](../internals/discord-bridge.md) documents token storage, channel permissions,
+allowlists, REST polling, and the activity data sent to Discord.
+
+**Ownership.** [DiscordBridge.ts](../../apps/server/src/discord/Layers/DiscordBridge.ts) observes
+committed v2 events and runs the inbound poller; [DiscordRestClient.ts](../../apps/server/src/discord/DiscordRestClient.ts)
+owns REST requests; [DiscordBridgeLinks.ts](../../apps/server/src/persistence/DiscordBridgeLinks.ts)
+persists thread links, message chunks, and inbound cursors. The bridge applies the shared
+maintenance and restored-automation admission policy to each outbound write and inbound message.
+Outbound events waiting on maintenance are retained only in the serial in-memory queue and are
+lost if the host process restarts before they run.
+
+**Verification and coupling.** [DiscordBridge.integration.test.ts](../../apps/server/src/discord/Layers/DiscordBridge.integration.test.ts)
+uses the actual SQLite link repository to verify the durable cursor survives dispatch failure,
+maintenance holds block both inbound and outbound writes, and a held outbound item retries after
+admission reopens. Keep oldest-first polling from moving the cursor past an unconsumed message.
+This is host functionality, not an APK or cloud-push feature.
 
 ## Updates and recovery
 
@@ -283,7 +313,9 @@ ownership, label tests, and release-title cleanup rules.
 
 **Implementation and commissioning.** Coordinator services, multi-home transactions, desktop
 and Android controllers, shared UI controls, native recovery, external recovery helpers, and fork
-release workflows are implemented with focused verification. A complete signed manual baseline is
+release workflows are implemented with focused verification. The initial fenced journal is durably
+written under the coordinator lock before the registry publishes its fence; a journal left by an
+interrupted fence acquisition is inert, and an unexplained fence remains blocked. A complete signed manual baseline is
 available; automatic publishing and production rollout remain uncommissioned. The release rehearsal and hardware update/recovery checks must pass
 before enabling automatic publishing. Existing installations need the known-good updater baseline
 and explicit device bootstrap before participating. A successful source test is not a hardware

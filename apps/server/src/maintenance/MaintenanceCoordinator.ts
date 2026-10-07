@@ -1,4 +1,4 @@
-// @effect-diagnostics preferSchemaOverJson:off — the receipt is an opaque string compared byte-for-byte by the coordinator.
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off — maintenance coordinates host files; receipts are opaque byte-for-byte data.
 import { type ForkActivityBlocker, type ForkMaintenanceCapability } from "@t3tools/contracts";
 import type { CoordinatorStatus } from "@t3tools/shared/forkMaintenanceStore";
 import * as Clock from "effect/Clock";
@@ -6,6 +6,8 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -361,6 +363,46 @@ const make = Effect.gen(function* () {
   return { host, status, recordHealth };
 });
 
+/** Reads the durable restored-automation hold. Missing policy is the legacy default; corruption holds autonomous work. */
+export const automationReviewAdmissionFor = (
+  host:
+    | { readonly mode: "disabled" | "unavailable" }
+    | { readonly mode: "active"; readonly home: string },
+) =>
+  host.mode !== "active"
+    ? Effect.void
+    : Effect.tryPromise({
+        try: async () => {
+          let raw: string;
+          try {
+            raw = await NodeFSP.readFile(
+              NodePath.join(host.home, "maintenance", "policy.json"),
+              "utf8",
+            );
+          } catch (cause) {
+            if (
+              typeof cause === "object" &&
+              cause !== null &&
+              "code" in cause &&
+              cause.code === "ENOENT"
+            )
+              return;
+            throw cause;
+          }
+          const policy: unknown = JSON.parse(raw);
+          if (
+            typeof policy !== "object" ||
+            policy === null ||
+            !("automationReviewRequired" in policy) ||
+            typeof policy.automationReviewRequired !== "boolean"
+          )
+            throw new Error("Maintenance automation review policy is invalid.");
+          if (policy.automationReviewRequired)
+            throw new Error("Restored automation is held for person review.");
+        },
+        catch: (cause) => new MaintenanceWorkHeld({ cause }),
+      });
+
 /** Admission that every external-write path shares. */
 export const workAdmissionFor = (host: MaintenanceHost) => ({
   acquire:
@@ -392,6 +434,7 @@ export const workAdmissionFor = (host: MaintenanceHost) => ({
           try: () => host.store.assertAdmitting(host.participantId),
           catch: (cause) => new MaintenanceWorkHeld({ cause }),
         }),
+  checkAutomation: automationReviewAdmissionFor(host),
 });
 
 export const layer = Layer.effectContext(

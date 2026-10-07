@@ -12,6 +12,7 @@ import {
 } from "./forkMaintenanceController.ts";
 import { forkAssetFor, type ForkReleaseRecord } from "./forkMaintenance.ts";
 import { CoordinatorStore } from "./forkMaintenanceStore.ts";
+import { newJournal } from "./forkMaintenanceJournal.ts";
 
 const sha = (seed: string) => seed.repeat(64).slice(0, 64);
 const commit = (seed: string) => seed.repeat(40).slice(0, 40);
@@ -762,8 +763,16 @@ describe("fork maintenance controller", () => {
       const h = await harness();
       h.table.set(400, "boot:400");
       const owner = await h.open(400);
-      await owner.freeze("tx-resume", h.clock.value);
-      const { newJournal } = await import("./forkMaintenanceJournal.ts");
+      await owner.freeze("tx-resume", h.clock.value, {
+        intent: newJournal({
+          id: "tx-resume",
+          kind: "update",
+          homes: [h.homeA, h.homeB],
+          previous: { version: "1.0.0", artifactSha256: CURRENT.artifactSha256 },
+          target: { version: "1.0.1", artifactSha256: sha("2") },
+          now: h.clock.value,
+        }),
+      });
       const journal = {
         ...newJournal({
           id: "tx-resume",

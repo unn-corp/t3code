@@ -36,6 +36,7 @@ interface Job {
   readonly uses?: string;
   readonly "runs-on"?: string;
   readonly permissions?: Record<string, string>;
+  readonly concurrency?: { group: string; "cancel-in-progress": boolean; queue?: string };
   readonly secrets?: Record<string, string>;
   readonly with?: Record<string, unknown>;
   readonly strategy?: { matrix?: { include?: Array<Record<string, string>> } };
@@ -101,6 +102,20 @@ describe("fork-release.yml structure", () => {
       queue: "max",
     });
     assert.notEqual(withdraw.concurrency.group, release.concurrency.group);
+    assert.equal(withdraw.concurrency.queue, "max");
+  });
+
+  it("serializes only final release-state transitions with withdrawal and restore", () => {
+    const publishStateLock = release.jobs.publish!.concurrency;
+    const withdrawalStateLock = withdraw.jobs.withdrawal!.concurrency;
+    assert.deepStrictEqual(publishStateLock, {
+      group: "fork-release-state",
+      "cancel-in-progress": false,
+      queue: "max",
+    });
+    assert.deepStrictEqual(withdrawalStateLock, publishStateLock);
+    assert.isUndefined(release.jobs.assemble!.concurrency);
+    assert.isUndefined(release.jobs.validate!.concurrency);
   });
 
   it("forms an acyclic graph rooted at the plan, and every other job refuses to run on a skipped plan", () => {
@@ -164,6 +179,7 @@ describe("fork-release.yml structure", () => {
       android: /^FORK_ANDROID_/,
       android_recovery_extras: /^FORK_ANDROID_/,
       desktop_win_x64: /^AZURE_/,
+      publish: /^FORK_RELEASE_PUBLISH_TOKEN$/,
     };
     for (const [name, job] of Object.entries(release.jobs)) {
       for (const secret of secretsIn(job)) {

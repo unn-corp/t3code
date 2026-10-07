@@ -70,6 +70,7 @@ import {
   type FenceControl,
   type WslMember,
 } from "./forkMaintenanceWsl.ts";
+import { INITIAL_JOURNAL_PROTOCOL } from "./forkMaintenanceFenceOperations.ts";
 import {
   decodeHandoffPlan,
   defaultHandoffIo,
@@ -601,12 +602,17 @@ export async function recoverCohort(input: RecoverCohortInput): Promise<Readonly
         `${member.distro} could not be checked over its control channel: ${answer.reason}`,
       );
     const view = answer.value as {
+      initialJournalProtocol?: unknown;
       participants: ReadonlyArray<{
         label: string;
         homes: ReadonlyArray<string>;
         orphaned: boolean;
       }>;
     };
+    if (view.initialJournalProtocol !== INITIAL_JOURNAL_PROTOCOL)
+      throw new Error(
+        `${member.distro} uses an older maintenance protocol that cannot safely join recovery. Update or bootstrap that runtime first.`,
+      );
     const memberOwner = view.participants.find((participant) =>
       participant.homes.includes(member.home),
     );
@@ -618,6 +624,7 @@ export async function recoverCohort(input: RecoverCohortInput): Promise<Readonly
 
   let journalId: string;
   const mode = option.mode;
+  let freezeIntent: MaintenanceJournal;
   if (mode === "resume-held") {
     if (status.fence === null || status.fence.transactionId !== source.id)
       throw new Error("The device transaction is no longer held.");
@@ -627,13 +634,29 @@ export async function recoverCohort(input: RecoverCohortInput): Promise<Readonly
       );
     await store.takeOverAbandonedFence(source.id);
     journalId = source.id;
+    freezeIntent = source;
   } else {
     journalId = `r${now}-${NodeCrypto.randomUUID().slice(0, 8)}`;
+    freezeIntent = newJournal({
+      id: journalId,
+      kind: "recovery",
+      homes: source.homes,
+      previous: source.previous,
+      target: null,
+      now: input.now(),
+      snapshots: source.snapshots,
+    });
     // Admission for the whole device: every participant must have been idle for five minutes, with nothing orphaned.
-    await store.freeze(journalId, now, { forRecovery: true });
+    await store.freeze(journalId, now, { forRecovery: true, intent: freezeIntent });
   }
   // Members freeze under the same transaction, held remotely by this helper. A member that cannot freeze aborts the cohort.
   const frozenMembers: FenceControl[] = [];
+  if (mode === "resume-held") {
+    // A surviving member may have missed the last journal mirror before its owner exited.
+    // Bring every member to the authoritative source journal before an unfenced member is
+    // re-fenced; CoordinatorStore then requires an exact journal match.
+    await mirrorJournalToMembers(source, fences);
+  }
   /** Before any file is replaced a new recovery is simply abandoned: nothing changed, so admission is released. */
   const abandon = async () => {
     if (mode === "resume-held") return;
@@ -671,6 +694,7 @@ export async function recoverCohort(input: RecoverCohortInput): Promise<Readonly
         op: "freeze",
         transactionId: journalId,
         parent: helperId,
+        intent: freezeIntent,
         forRecovery: true,
       });
       if (!frozen.ok) throw new Error(`A WSL member could not be fenced: ${frozen.reason}`);

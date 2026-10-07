@@ -28,9 +28,15 @@ import * as AgentDashboardReviewJobService from "./AgentDashboardReviewJobServic
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import {
   AgentDashboardReviewRunner,
+  AgentDashboardReviewRunnerError,
   type AgentDashboardReviewRunResult,
 } from "./AgentDashboardReviewRunner.ts";
 import * as AgentDashboardReviewScheduler from "./AgentDashboardReviewScheduler.ts";
+import {
+  MaintenanceWorkHeld,
+  WorkAdmission,
+  type WorkAdmissionShape,
+} from "../maintenance/WorkAdmission.ts";
 
 const PROJECT_ID = ProjectId.make("project-review-1");
 const THREAD_ID = ThreadId.make("thread-review-1");
@@ -402,8 +408,9 @@ const jobServiceLayer = (input: {
   readonly runner: AgentDashboardReviewRunner["Service"];
   readonly getThreadDetailById: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getThreadDetailById"];
   readonly getShellSnapshot?: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]["getShellSnapshot"];
-}) =>
-  AgentDashboardReviewJobService.layerWithoutDefaults.pipe(
+  readonly workAdmission?: WorkAdmissionShape;
+}) => {
+  const layer = AgentDashboardReviewJobService.layerWithoutDefaults.pipe(
     Layer.provide(Layer.succeed(AgentDashboardReviewRunner, input.runner)),
     Layer.provide(
       Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
@@ -418,8 +425,75 @@ const jobServiceLayer = (input: {
     Layer.provideMerge(TestClock.layer()),
     Layer.provideMerge(NodeServices.layer),
   );
+  return input.workAdmission
+    ? layer.pipe(Layer.provide(Layer.succeed(WorkAdmission, input.workAdmission)))
+    : layer;
+};
 
 describe("AgentDashboardReviewJobService lifecycle", () => {
+  it.effect("records each failed review once across repeated detached coverage writes", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* makeTempStateDir();
+      yield* Effect.gen(function* () {
+        const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        const first = yield* jobService.enqueueReview({
+          trigger: "manual",
+          projectId: PROJECT_ID,
+          idempotencyKey: "coverage-failure-first",
+        });
+        expect((yield* waitForTerminal(jobService, first.id, 100))?.status).toBe("failed");
+
+        const second = yield* jobService.enqueueReview({
+          trigger: "manual",
+          projectId: PROJECT_ID,
+          idempotencyKey: "coverage-failure-second",
+        });
+        expect((yield* waitForTerminal(jobService, second.id, 100))?.status).toBe("failed");
+
+        const third = yield* jobService.enqueueReview({
+          trigger: "manual",
+          projectId: PROJECT_ID,
+          idempotencyKey: "coverage-failure-third",
+        });
+        expect((yield* waitForTerminal(jobService, third.id, 100))?.status).toBe("failed");
+
+        // Coverage writes are detached. Wait until the newest terminal run reaches disk.
+        let coverage = yield* AgentDashboardStore.getStore(NodePath.join(baseDir, "userdata"))
+          .readRepositoryCoverage;
+        for (let step = 0; step < 100 && coverage[0]?.lastTerminalRunId !== third.id; step += 1) {
+          yield* Effect.yieldNow;
+          yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+          coverage = yield* AgentDashboardStore.getStore(NodePath.join(baseDir, "userdata"))
+            .readRepositoryCoverage;
+        }
+        expect(coverage).toHaveLength(1);
+        expect(coverage[0]).toMatchObject({
+          consecutiveFailures: 3,
+          lastRunId: third.id,
+          lastTerminalRunId: third.id,
+        });
+      }).pipe(
+        Effect.provide(
+          jobServiceLayer({
+            baseDir,
+            runner: {
+              runReview: () =>
+                Effect.fail(
+                  new AgentDashboardReviewRunnerError({
+                    operation: "run review",
+                    message: "review dispatch failed",
+                  }),
+                ),
+              runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
+            },
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
+
   it.effect("acquires with historical reviews before command readiness", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -881,34 +955,47 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
     }),
   );
 
-  it.effect("reconnects interrupted runs from disk on service start", () =>
+  it.effect("keeps interrupted runs durable until startup reconnection is admitted", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
+      const held = yield* Ref.make(true);
+      const admissionChecked = yield* Deferred.make<void>();
+      const workAdmission: WorkAdmissionShape = {
+        acquire: Effect.succeed(() => Effect.void),
+        acquirePassive: Effect.succeed(() => Effect.void),
+        check: Effect.void,
+        checkAutomation: Effect.gen(function* () {
+          yield* Deferred.succeed(admissionChecked, undefined);
+          if (yield* Ref.get(held)) {
+            return yield* Effect.fail(new MaintenanceWorkHeld({ cause: "review required" }));
+          }
+        }),
+      };
       const configLayer = ServerConfig.layerTest(process.cwd(), baseDir).pipe(
         Layer.provideMerge(NodeServices.layer),
       );
 
+      const interrupted: AgentDashboardAutomationRun = {
+        id: "run-interrupted",
+        status: "running",
+        trigger: "scheduled",
+        kind: "repository-review",
+        repository: { projectId: PROJECT_ID },
+        target: "t3code",
+        threadId: THREAD_ID,
+        jobId: "job-interrupted",
+        model: "gpt-5.6-luna",
+        retryCount: 0,
+        findingCount: 0,
+        costUnits: null,
+        error: null,
+        createdAt: "2026-08-10T00:00:00.000Z",
+        startedAt: "2026-08-10T00:00:01.000Z",
+        updatedAt: "2026-08-10T00:00:01.000Z",
+        completedAt: null,
+      };
       yield* Effect.gen(function* () {
         const store = yield* AgentDashboardRunHistory.AgentDashboardRunHistory;
-        const interrupted: AgentDashboardAutomationRun = {
-          id: "run-interrupted",
-          status: "running",
-          trigger: "scheduled",
-          kind: "repository-review",
-          repository: { projectId: PROJECT_ID },
-          target: "t3code",
-          threadId: THREAD_ID,
-          jobId: "job-interrupted",
-          model: "gpt-5.6-luna",
-          retryCount: 0,
-          findingCount: 0,
-          costUnits: null,
-          error: null,
-          createdAt: "2026-08-10T00:00:00.000Z",
-          startedAt: "2026-08-10T00:00:01.000Z",
-          updatedAt: "2026-08-10T00:00:01.000Z",
-          completedAt: null,
-        };
         yield* store.upsert(interrupted);
       }).pipe(
         Effect.provide(Layer.provideMerge(AgentDashboardRunHistory.layer, configLayer)),
@@ -917,6 +1004,16 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
+        yield* Deferred.await(admissionChecked);
+        yield* Effect.yieldNow;
+        const stillInterrupted = (yield* jobService.listRuns).find(
+          (item) => item.id === "run-interrupted",
+        );
+        expect(stillInterrupted?.status).toBe("running");
+        expect(stillInterrupted?.updatedAt).toBe(interrupted.updatedAt);
+
+        yield* Ref.set(held, false);
+        yield* TestClock.adjust(Duration.seconds(1));
         const terminal = yield* waitForTerminal(jobService, "run-interrupted", 200);
         expect(terminal?.id).toBe("run-interrupted");
         expect(terminal?.status).toBe("succeeded");
@@ -925,6 +1022,7 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
         Effect.provide(
           jobServiceLayer({
             baseDir,
+            workAdmission,
             runner: {
               runReview: () => Effect.succeed(reviewResult),
               runRandomReview: Effect.succeed(reviewResult),

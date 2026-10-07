@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -33,6 +34,11 @@ import {
 import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  MaintenanceWorkHeld,
+  retryAutomationWork,
+  withAutomationWork,
+} from "../maintenance/WorkAdmission.ts";
 
 /** Server-scoped concurrency for repository reviews. */
 export const MAX_CONCURRENT_REVIEW_RUNS = 1;
@@ -83,6 +89,8 @@ export class AgentDashboardReviewJobServiceError extends Schema.TaggedError<Agen
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+const isMaintenanceWorkHeld = Schema.is(MaintenanceWorkHeld);
 
 export interface EnqueueReviewInput {
   readonly trigger: AgentDashboardAutomationRunTrigger;
@@ -494,10 +502,24 @@ const make = Effect.gen(function* () {
   // In-memory mirror for concurrency decisions without thrashing disk on every claim.
   const runsRef = yield* Ref.make<ReadonlyArray<AgentDashboardAutomationRun>>([]);
   const workerSlots = yield* Ref.make(0);
-  // Coverage writes are best-effort so disk latency cannot stall lifecycle
-  // transitions, but they remain ordered so an older heartbeat cannot overwrite
-  // a newer terminal result.
-  const coverageTail = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+  // A single consumer keeps best-effort coverage writes ordered without replaying
+  // the prior lazy Effect chain on every update.
+  const coverageQueue = yield* Queue.unbounded<AgentDashboardAutomationRun>();
+  const coverageWorker = Effect.forever(
+    Effect.gen(function* () {
+      const saved = yield* Queue.take(coverageQueue);
+      yield* retryAutomationWork(dashboardStore.recordAutomationRun(saved)).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("Arcwright Code repository review coverage persistence failed", {
+            runId: saved.id,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
+    }),
+  );
+  yield* coverageWorker.pipe(Effect.forkIn(scope), Effect.asVoid);
 
   const randomId = crypto.randomUUIDv4.pipe(
     Effect.mapError(
@@ -518,28 +540,7 @@ const make = Effect.gen(function* () {
           return [saved, ...without];
         }),
       ),
-      Effect.tap((saved) =>
-        Ref.modify(coverageTail, (previous) => {
-          const next = previous.pipe(
-            Effect.flatMap(() =>
-              dashboardStore.recordAutomationRun(saved).pipe(
-                Effect.tapError((cause) =>
-                  Effect.logWarning(
-                    "Arcwright Code repository review coverage persistence failed",
-                    {
-                      runId: saved.id,
-                      cause,
-                    },
-                  ),
-                ),
-                Effect.orElseSucceed(() => undefined),
-              ),
-            ),
-            Effect.asVoid,
-          );
-          return [next, next] as const;
-        }).pipe(Effect.flatMap((next) => next.pipe(Effect.forkIn(scope), Effect.asVoid))),
-      ),
+      Effect.tap((saved) => Queue.offer(coverageQueue, saved).pipe(Effect.asVoid)),
       Effect.mapError(
         (cause) =>
           new AgentDashboardReviewJobServiceError({
@@ -574,7 +575,7 @@ const make = Effect.gen(function* () {
         run.kind === REVIEW_KIND && run.threadId !== null ? [run.threadId] : [],
       ),
       (threadId) =>
-        runner.hideReviewThread?.(threadId).pipe(
+        retryAutomationWork(runner.hideReviewThread?.(threadId) ?? Effect.void).pipe(
           Effect.tapError((cause) =>
             Effect.logWarning(
               "Arcwright Code could not hide a historical repository review session",
@@ -585,7 +586,7 @@ const make = Effect.gen(function* () {
             ),
           ),
           Effect.ignore,
-        ) ?? Effect.void,
+        ),
       { concurrency: 4, discard: true },
     ).pipe(Effect.forkIn(scope));
   }
@@ -874,7 +875,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const executeRun = (run: AgentDashboardAutomationRun): Effect.Effect<void, never> =>
+  const executeRunAdmitted = (run: AgentDashboardAutomationRun): Effect.Effect<void, never> =>
     Effect.gen(function* () {
       // Wait for a concurrency slot without busy-polling wall clocks.
       while (true) {
@@ -995,6 +996,18 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  const executeRun = (run: AgentDashboardAutomationRun): Effect.Effect<void, never> =>
+    Effect.gen(function* () {
+      while (true) {
+        const exit = yield* Effect.exit(withAutomationWork(executeRunAdmitted(run)));
+        if (Exit.isSuccess(exit)) return;
+        const failure = Cause.squash(exit.cause);
+        if (!isMaintenanceWorkHeld(failure)) return;
+        // Keep durable queued work pending while either the device fence or person review is held.
+        yield* Effect.sleep(MONITOR_POLL_INTERVAL);
+      }
+    });
 
   const enqueueReview: AgentDashboardReviewJobServiceService["enqueueReview"] = (input) =>
     Effect.gen(function* () {
@@ -1140,15 +1153,27 @@ const make = Effect.gen(function* () {
           );
           if (run.threadId === null || !project) {
             return Effect.gen(function* () {
-              const failedAt = yield* nowIso;
-              yield* persist({
-                ...run,
-                status: "failed",
-                error:
-                  "Arcwright Code restarted and could not reconnect this repository review to its durable thread and project.",
-                updatedAt: failedAt,
-                completedAt: failedAt,
-              }).pipe(Effect.ignore);
+              while (true) {
+                const exit = yield* Effect.exit(
+                  withAutomationWork(
+                    Effect.gen(function* () {
+                      const failedAt = yield* nowIso;
+                      yield* persist({
+                        ...run,
+                        status: "failed",
+                        error:
+                          "Arcwright Code restarted and could not reconnect this repository review to its durable thread and project.",
+                        updatedAt: failedAt,
+                        completedAt: failedAt,
+                      }).pipe(Effect.ignore);
+                    }),
+                  ),
+                );
+                if (Exit.isSuccess(exit)) return;
+                const failure = Cause.squash(exit.cause);
+                if (!isMaintenanceWorkHeld(failure)) return;
+                yield* Effect.sleep(MONITOR_POLL_INTERVAL);
+              }
             });
           }
           const review: AgentDashboardReviewRunResult = {
@@ -1159,7 +1184,7 @@ const make = Effect.gen(function* () {
             threadId: run.threadId,
             startedAt: run.startedAt ?? run.createdAt,
           };
-          return Effect.gen(function* () {
+          const resumeAdmitted = Effect.gen(function* () {
             while (true) {
               const claimed = yield* Ref.modify(workerSlots, (active) => {
                 if (active >= MAX_CONCURRENT_REVIEW_RUNS) return [false, active] as const;
@@ -1169,6 +1194,7 @@ const make = Effect.gen(function* () {
               yield* Effect.sleep(MONITOR_POLL_INTERVAL);
             }
             try {
+              // Keep the durable interrupted row intact until restored automation is admitted.
               const resumedAt = yield* nowIso;
               const resumed = yield* persist({
                 ...run,
@@ -1181,7 +1207,26 @@ const make = Effect.gen(function* () {
             } finally {
               yield* Ref.update(workerSlots, (active) => Math.max(0, active - 1));
             }
-          }).pipe(Effect.forkIn(scope), Effect.asVoid);
+          });
+          const waitForAdmission = Effect.gen(function* () {
+            while (true) {
+              const exit = yield* Effect.exit(withAutomationWork(resumeAdmitted));
+              if (Exit.isSuccess(exit)) return;
+              const failure = Cause.squash(exit.cause);
+              if (!isMaintenanceWorkHeld(failure)) {
+                yield* Effect.logWarning(
+                  "Arcwright Code could not reconnect an interrupted repository review",
+                  {
+                    runId: run.id,
+                    cause: exit.cause,
+                  },
+                );
+                return;
+              }
+              yield* Effect.sleep(MONITOR_POLL_INTERVAL);
+            }
+          });
+          return waitForAdmission.pipe(Effect.forkIn(scope), Effect.asVoid);
         },
         { concurrency: 1, discard: true },
       );

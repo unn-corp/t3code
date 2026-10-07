@@ -236,7 +236,6 @@ describe("launcher-managed service installer", () => {
   it("asks the launcher for the update with a one-use capability for this home, and a launcher refusal aborts as unchanged", async () => {
     const d = await device();
     const installer = createServiceInstaller(d.input);
-    await d.store.freeze("tx-1", d.clock.value);
     const journal = {
       ...(await import("@t3tools/shared/forkMaintenanceJournal")).newJournal({
         id: "tx-1",
@@ -247,6 +246,7 @@ describe("launcher-managed service installer", () => {
         now: 0,
       }),
     };
+    await d.store.freeze("tx-1", d.clock.value, { intent: journal });
     await installer.startTrial(journal);
     expect(d.events).toEqual(["launcher:1.0.1:tx-1"]);
     const fence = await d.store.fenceSnapshot();

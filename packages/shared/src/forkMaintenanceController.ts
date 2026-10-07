@@ -150,7 +150,7 @@ export interface ForkInstallerPorts extends Omit<
    * releases them before the local fence. A member that cannot be fenced aborts the whole transaction.
    */
   readonly cohort?: {
-    readonly freeze: (transactionId: string) => Promise<void>;
+    readonly freeze: (transactionId: string, intent: MaintenanceJournal) => Promise<void>;
     readonly mirrorJournal: (journal: MaintenanceJournal) => Promise<void>;
     readonly release: (transactionId: string) => Promise<void>;
   };
@@ -450,11 +450,6 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
     kind: MaintenanceJournal["kind"],
     snapshots?: Readonly<Record<string, string>>,
   ) => {
-    try {
-      await store.freeze(transactionId, ports.now());
-    } catch (cause) {
-      throw fail(`Installation is blocked: ${messageOf(cause)}`, await coordinatorBlockers());
-    }
     const journal = newJournal({
       id: transactionId,
       kind,
@@ -475,10 +470,14 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
       now: ports.now(),
       ...(snapshots === undefined ? {} : { snapshots }),
     });
-    await store.writeJournal(journal);
+    try {
+      await store.freeze(transactionId, ports.now(), { intent: journal });
+    } catch (cause) {
+      throw fail(`Installation is blocked: ${messageOf(cause)}`, await coordinatorBlockers());
+    }
     if (installer.cohort !== undefined) {
       try {
-        await installer.cohort.freeze(transactionId);
+        await installer.cohort.freeze(transactionId, journal);
         await installer.cohort.mirrorJournal(journal);
       } catch (cause) {
         // A member that cannot be fenced means the cohort cannot be quiet: abandon before anything changed.

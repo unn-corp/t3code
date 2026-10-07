@@ -12,7 +12,14 @@ public final class InstallerSessionsTest {
     private List<InstallerSessions.Session> selected() { return List.of(session(83, 123, OWN, OWN, false)); }
     @Test public void exactInactiveAppOwnedSessionIsAccepted() { assertNull(InstallerSessions.refusal(selected(), selected(), OWN, false)); }
     @Test public void aRecordedInstallationIsNeverDiscarded() { assertNotNull(InstallerSessions.refusal(selected(), selected(), OWN, true)); }
-    @Test public void anActiveSessionIsNeverDiscarded() { assertNotNull(InstallerSessions.refusal(selected(), List.of(session(83, 123, OWN, OWN, true)), OWN, false)); }
+    @Test public void explicitlyConfirmedActiveOrphanCanBeCancelled() {
+        List<InstallerSessions.Session> active = List.of(session(83, 123, OWN, OWN, true));
+        assertNull(InstallerSessions.refusal(active, active, OWN, false));
+        assertNotNull(InstallerSessions.refusal(active, active, OWN, true));
+    }
+    @Test public void changingActivityRequiresFreshConfirmation() {
+        assertNotNull(InstallerSessions.refusal(selected(), List.of(session(83, 123, OWN, OWN, true)), OWN, false));
+    }
     @Test public void changedSessionIdentityInvalidatesConfirmation() {
         assertNotNull(InstallerSessions.refusal(selected(), List.of(session(84, 123, OWN, OWN, false)), OWN, false));
         assertNotNull(InstallerSessions.refusal(selected(), List.of(session(83, 124, OWN, OWN, false)), OWN, false));

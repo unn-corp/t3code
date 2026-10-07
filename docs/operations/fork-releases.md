@@ -112,7 +112,15 @@ kept, a publisher never cancelled):
    if any check is false.
 7. **publish** is the only job that writes releases (with code reservation). It creates a complete
    draft, downloads every asset back and compares it with the manifest, rechecks that the tag,
-   commit, and source nightly are still eligible, and only then publishes.
+   commit, and source nightly are still eligible, and only then publishes. Its job-level state lock
+   is shared with withdrawal/restore, without holding that lock during the build and validation jobs.
+
+The shared lock serializes the GitHub workflow jobs only. Direct CLI `draft`, `publish`, `withdraw`,
+and `restore` commands, GitHub's release UI, and other external tools do not participate in it.
+Maintainers must serialize those state-changing operations against each other and against the
+workflow jobs; prefer the workflow withdrawal path for routine release-state changes. GitHub's
+release API has no compare-and-swap operation, so concurrent external writers can still race the
+eligibility recheck.
 
 Orchestration scripts always run from the commit that defines the workflow. Builds, the recovery
 helper, and the safety suites run from the pinned commit, and each confirms its checkout is exactly
@@ -511,9 +519,11 @@ enable scheduled runs; stable publication still requires the commissioned gate.
 **Withdraw or restore.** Actions, Fork release withdrawal, with the version and a reason. Withdrawing
 rewrites only the release notes (a marker line) so devices and installers stop offering it; the tag,
 assets, and manifest are untouched, and installations that already took it are not rolled back. A
-publish in progress rechecks eligibility immediately before publishing, so a withdrawal made during the
-build takes effect. Restore removes the marker only after every asset re-verifies against the manifest.
-Releases are never deleted or overwritten.
+long build does not hold up a withdrawal: only the final verification/publication job shares a
+state-transition lock with withdrawal and restore. That lock closes the race between the publisher's
+last eligibility check and GitHub making the release public; GitHub's release API has no
+compare-and-swap operation. Restore removes the marker only after every asset re-verifies against the
+manifest. Releases are never deleted or overwritten.
 
 **Diagnosing a failed run.**
 

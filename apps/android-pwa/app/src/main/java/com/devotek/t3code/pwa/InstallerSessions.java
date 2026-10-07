@@ -25,7 +25,10 @@ final class InstallerSessions {
             for (Session entry : fresh) if (entry.id == selected.id) current = entry;
             if (current == null || current.createdAt != selected.createdAt) return "The unfinished installation list changed. Review it again.";
             if (!ownPackage.equals(current.installer) || !ownPackage.equals(current.target)) return "The installation does not belong to Arcwright Code.";
-            if (current.active) return "Android is still using that installation. Wait for it to finish.";
+            if (current.active != selected.active) return "The installation activity changed. Review it again.";
+            // This is explicit local cancellation of an unrecorded session, not automatic cleanup.
+            // Android may keep isActive=true after commit while its user-confirmation prompt is lost.
+            // abandonSession is the owning installer's cancellation API; any OS refusal keeps the hold.
         }
         return null;
     }

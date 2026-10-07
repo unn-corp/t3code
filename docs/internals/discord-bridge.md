@@ -8,24 +8,27 @@ subscribes, nothing polls, and no table is read.
 
 ## Shape
 
-A post-commit observer, wired as one more reactor in `OrchestrationReactor`:
+`server.ts` composes and starts `DiscordBridgeLive` in the host runtime. The
+bridge observes committed v2 events through
+`ThreadManagementService.streamDomainEvents`.
 
 ```
-OrchestrationEngine
-  └─ commits transaction  (OrchestrationEngine.ts:169-213)
-  └─ publishes to PubSub  (OrchestrationEngine.ts:217)
-       └─ DiscordBridge stream fiber  → worker.enqueue only, no I/O
-            └─ DrainableWorker (serial) → DiscordRestClient → Discord
+server.ts
+  └─ DiscordBridgeLive / DiscordBridge.start
+       ├─ v2 committed-domain-event stream → enqueue only
+       │    └─ DrainableWorker (serial) → retryAutomationWork → Discord REST
+       └─ REST history poll → per-message withAutomationWork
+            └─ OrchestrationEngineService.dispatch → durable link cursor
 ```
 
-The bridge **cannot** affect orchestration. That is structural, not a
-convention:
-
-1. The publish at `OrchestrationEngine.ts:217` is strictly after the commit.
-2. `PubSub.unbounded` never blocks a publisher on a slow subscriber.
-3. The stream fiber only calls `worker.enqueue`; all I/O happens on the worker.
-4. Every work item is wrapped in `Effect.catchCause`, re-failing only on
-   interrupt and otherwise logging a warning.
+Outbound events are post-commit observations and never block their producer.
+The serial worker gates each write through the shared maintenance and
+restored-automation admission policy. Held work stays at the queue head and
+retries after admission reopens. Inbound dispatch intentionally enters the
+orchestrator; on admission or dispatch failure, the bridge does not react with
+✅ or advance its persisted cursor, so the same Discord message is retried.
+Admission is acquired only for a non-empty inbound message, not for each idle
+poll.
 
 `makeDrainableWorker` processes items one at a time, so Discord writes are
 globally ordered and naturally rate-limited.
@@ -50,34 +53,22 @@ the shared token.
 
 ## Events
 
-Authoritative list: `OrchestrationEventType` in
-`packages/contracts/src/orchestration.ts`. Past tense = event, imperative =
-command; they are different unions.
+The v2 `eventToWork` mapper in
+[`DiscordBridge.ts`](../../apps/server/src/discord/Layers/DiscordBridge.ts)
+routes committed domain events as follows:
 
-| Event                                                                  | Bridge action                                              |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `thread.created`                                                       | Post header embed, start a Discord thread, insert the link |
-| `thread.meta-updated`, `thread.runtime-mode-set`, `thread.session-set` | Re-render the header, rename the Discord thread            |
-| `thread.message-sent`                                                  | Flush the message (see below)                              |
-| `thread.activity-appended` and friends                                 | Post a one-line activity note (when `mirrorActivity`)      |
-| `thread.archived` / `unarchived` / `deleted`                           | Archive or unarchive the Discord thread                    |
+| Event                                                                                                                           | Bridge action                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `thread.created`                                                                                                                | Create the Discord starter and thread, then persist the link.                                             |
+| `message.updated`                                                                                                               | Read authoritative thread detail through `ProjectionSnapshotQuery` and flush that message's current text. |
+| `thread.metadata-updated`, `thread.runtime-mode-updated`, `thread.provider-switched`, `run.updated`, `provider-session.updated` | Refresh the linked thread header.                                                                         |
+| `runtime-request.updated`, `plan.updated`                                                                                       | Post a short activity note when `mirrorActivity` is enabled.                                              |
+| `thread.archived`, `thread.unarchived`, `thread.deleted`                                                                        | Update linked Discord thread/archive state.                                                               |
 
-### `thread.message-sent` is not "here is a message"
-
-There is no `assistant.delta` / `assistant.complete` **event** — those are
-commands, and the decider folds both into `thread.message-sent`:
-
-- streaming fragment → `text` is **a delta**, `streaming: true` (`decider.ts:1047`)
-- completion → `text` is **`""`**, `streaming: false` (`decider.ts:1142`)
-
-So the event payload is never the message body. The bridge reads the
-authoritative text from `ProjectionThreadMessageRepository.getByMessageId`,
-which is written in the same transaction as the event and is therefore already
-complete by the time the bridge observes it. Do not reintroduce a local
-fragment buffer — it drifts and breaks restart recovery.
-
-There is also no turn-finished event; a finished turn is a `thread.session-set`
-whose status leaves `running` (`projector.ts:552`).
+The `message.updated` event payload is not used as the complete body. The
+bridge looks up the current `OrchestrationThread` detail, then records Discord
+message chunks in `discord_bridge_messages` so later streaming updates edit
+only the tail chunk. This is a snapshot-backed mirror, not a local delta buffer.
 
 ## Chunking and edits
 
@@ -121,15 +112,17 @@ Poll `GET /channels/{thread}/messages?after={cursor}`, oldest first:
 2. Enforce `allowedAuthorIds` by exact `author.id` match. An **empty list denies
    everyone** — fail closed. Rejected messages get ❌ rather than silence.
 3. If the session is `running`/`starting`, react ⏳ and **do not advance the
-   cursor**, so the message is re-read after the turn settles. No queue table,
+   cursor or process later messages in that batch**. The oldest message is
+   re-read after the turn settles, so a later bot or ignored message cannot
+   move the cursor past it. No queue table is needed; the Discord history
    survives restart.
 4. Dispatch `thread.turn.start` with `commandId = "discord:<snowflake>"`.
+   Only a successful dispatch receives ✅ and advances the durable cursor.
    Redelivery short-circuits on the existing command receipt, so dedupe is exact
-   and free.
+   and free. A maintenance hold leaves the message untouched for the next poll.
 
-`runtimeMode` / `interactionMode` on the command are ignored by the decider
-(`decider.ts:819`); the thread's current values are passed so nothing reads as
-an intent to change them.
+The inbound command carries the thread's current runtime and interaction modes
+along with the message, preserving the linked thread's existing behavior.
 
 Echo suppression: injected messages carry `messageId = "discord:<snowflake>"`,
 and the outbound path skips any id with that prefix. A pure string check, with
@@ -165,14 +158,15 @@ creates a Discord thread for every new thread in every project.
 
 ## Failure handling
 
-| Failure               | Behaviour                                                                                                                         |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Disabled / no token   | Log once, stay dormant                                                                                                            |
-| Transport fault, 5xx  | `retryTransient` ×3, then drop. Nothing is lost: `published_length` only advances on success, so the next flush resends the delta |
-| 429                   | Honour `retry_after` exactly, never tighter. A `global` 429 stalls every bucket                                                   |
-| Thread archived       | Unarchive once, else mark `archived`                                                                                              |
-| 404 / unknown channel | Mark `orphaned`. **Never recreate** — a deleted Discord thread means "stop mirroring"                                             |
-| 401 / 403             | Log once and stop hammering                                                                                                       |
+| Failure               | Behaviour                                                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Disabled / no token   | Log once, stay dormant                                                                                                                                 |
+| Maintenance hold      | Keep the current outbound event in the serial in-memory worker and retry after admission reopens; a host process restart discards queued observer work |
+| Transport fault, 5xx  | `retryTransient` ×3, then drop. Chunk `published_length` advances only on success; a later flush can resend the delta                                  |
+| 429                   | Honour `retry_after` exactly, never tighter. A `global` 429 stalls every bucket                                                                        |
+| Thread archived       | Unarchive once, else mark `archived`                                                                                                                   |
+| 404 / unknown channel | Mark `orphaned`. **Never recreate** — a deleted Discord thread means "stop mirroring"                                                                  |
+| 401 / 403             | Log once and stop hammering                                                                                                                            |
 
 ## Security
 

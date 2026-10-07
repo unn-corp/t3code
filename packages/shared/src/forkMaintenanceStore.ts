@@ -1124,11 +1124,21 @@ export class CoordinatorStore {
   async freeze(
     transactionId: string,
     now: number,
-    options: { readonly remote?: string; readonly forRecovery?: boolean } = {},
+    options: {
+      readonly remote?: string;
+      readonly forRecovery?: boolean;
+      /** Required, persisted before the fence while holding the same coordinator lock. */
+      readonly intent: MaintenanceJournal;
+    },
   ): Promise<void> {
     safeName(transactionId);
+    if (options === undefined || options.intent === undefined)
+      throw new Error("A device fence requires its matching transaction journal.");
     await this.locked(async (registry) => {
       if (registry.fence !== null) throw new Error("Another device transaction is in progress.");
+      const intent = options.intent;
+      if (intent.id !== transactionId)
+        throw new Error("A device fence requires its matching transaction journal.");
       const { kept: living } = await this.reconcile(registry);
       // A recovery fences a device whose affected runtimes are all stopped, so a registry with nobody in it is
       // not "unbootstrapped": there is simply nothing running to wait for. Anything registered still must be idle.
@@ -1138,6 +1148,16 @@ export class CoordinatorStore {
       const blockers = emptyForRecovery ? [] : participantBlockers(living, now);
       if (blockers.length > 0) throw new Error(blockers.map((entry) => entry.label).join(" "));
       if ((await this.liveLeases()).length > 0) throw new Error("Local operations are running.");
+      // If this write lands but the registry save below does not, the journal is inert: no caller
+      // may perform a side effect until freeze returns. A published fence therefore always has
+      // a durable record from which startup can safely resume or abort.
+      const existing = await this.readJournal(transactionId);
+      if (existing === null) {
+        if (intent.phase !== "fenced")
+          throw new Error("A new device fence must begin with a fenced transaction journal.");
+        await this.writeJournal(intent);
+      } else if (JSON.stringify(existing) !== JSON.stringify(intent))
+        throw new Error("A different transaction journal already exists for this device fence.");
       await this.save({
         ...registry,
         participants: living,

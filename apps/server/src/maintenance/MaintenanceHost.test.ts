@@ -68,7 +68,16 @@ async function device() {
     await owner.observe("svc", [], 600_000);
     const snapshotId = await createSnapshot(canonical, "tx-1");
     await NodeFSP.writeFile(NodePath.join(home, "userdata", "settings.json"), "after the update");
-    await owner.freeze("tx-1", 600_000);
+    const intent = newJournal({
+      id: "tx-1",
+      kind: "update",
+      homes: [canonical],
+      previous: { version: "1.0.0", artifactSha256: "a" },
+      target: { version: "1.0.1", artifactSha256: "b" },
+      now: 0,
+      snapshots: { [canonical]: snapshotId },
+    });
+    await owner.freeze("tx-1", 600_000, { intent });
     await owner.writeJournal({
       ...newJournal({
         id: "tx-1",
@@ -196,7 +205,16 @@ describe("maintenance host and start gate", () => {
     await owner.confirmBootstrap();
     await owner.observe("svc", [], 0);
     await owner.observe("svc", [], 600_000);
-    await owner.freeze("tx-1", 600_000);
+    await owner.freeze("tx-1", 600_000, {
+      intent: newJournal({
+        id: "tx-1",
+        kind: "update",
+        homes: [d.canonical],
+        previous: { version: "1.0.0", artifactSha256: "a" },
+        target: { version: "1.0.1", artifactSha256: "b" },
+        now: 0,
+      }),
+    });
     const capability = await owner.issueTrial("tx-1", d.canonical);
     const env: NodeJS.ProcessEnv = {
       ...launcherEnv({

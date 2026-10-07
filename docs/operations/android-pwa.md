@@ -269,7 +269,9 @@ The same socket subscribes to `subscribeBackgroundPolicy`; `NetworkNotificationP
 visible activity leases from every enabled paired environment. These leases use server-relative
 expiry and Android monotonic time, with a 45-second maximum. Focus and recent input are deliberately
 ignored. During initial connection, alerts wait up to 45 seconds for all hosts; removed, archived,
-answered, expired, or superseded events are discarded. Suppressed events never replay on minimize.
+answered, expired, or superseded events are discarded. Completion alerts waiting for presence are
+also discarded if delegated work or a runtime input request appears; queue revalidation shares the
+same completion and attention rules as the durable alert watermarks. Suppressed events never replay on minimize.
 `PhoneAlertQueueTest` covers these waiting and consumption boundaries.
 
 Desktop `ClientVisibility` reports real window visibility and observes lock/suspend, Windows session
@@ -435,9 +437,13 @@ If an older backup lost an install confirmation but Android retained its session
 recovery on Android 11 or newer and choose **Review unfinished Android updates**. Earlier versions
 cannot bind creation times through the public installer API and must finish their existing Android
 installer before reviewing settings. The confirmation lists exact session
-IDs and creation times. **Discard** rechecks the entire list, app ownership, target package,
-inactivity, and absence of a recorded pending install before abandoning those sessions. Changed,
-active, unknown, or other-package sessions are refused. This action does not clear the safety hold
+IDs, creation times, and Android's active flag. **Discard** rechecks the entire list, app ownership,
+target package, unchanged activity, and absence of a recorded pending install before asking
+Android to cancel those sessions. An explicit local cancellation can include an active orphan:
+Android's [session API](<https://developer.android.com/reference/android/content/pm/PackageInstaller.SessionInfo#isActive()>)
+does not distinguish a lost confirmation from progress after commit. The installer-owned
+`abandonSession` API cancels the session; an OS refusal leaves the hold in place. Changed, unknown,
+or other-package sessions are refused. This action does not clear the safety hold
 or enable updates: finish the phone restart and explicitly review App updates afterward. The
 `InstallerSessions` policy and its unit tests own this boundary; `UpdateEngine` calls Android's
 app-owned installer API and `RecoveryActivity` owns the confirmation. ADB cannot abandon an

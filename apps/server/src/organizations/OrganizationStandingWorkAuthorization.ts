@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { MaintenanceWorkHeld, withAutomationWork } from "../maintenance/WorkAdmission.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { OrganizationGitTargetPreflight } from "./OrganizationGitTargetPreflight.ts";
 import { OrganizationLiveWorkRuntimeReadiness } from "./OrganizationLiveWorkExecutor.ts";
@@ -23,7 +24,8 @@ import {
   activateOrganizationWorkIntentFromStandingAuthorization,
   selectionSnapshot,
 } from "./OrganizationWorkIntentActivation.ts";
-import { OrganizationWorkIntentStore } from "./OrganizationWorkIntentStore.ts";
+
+const isMaintenanceWorkHeld = Schema.is(MaintenanceWorkHeld);
 
 type GrantRow = {
   authorization_id: string;
@@ -437,15 +439,18 @@ export const reconcileOrganizationStandingWorkAuthorizationsOnce = Effect.gen(fu
       skipped++;
       continue;
     }
-    const result = yield* activateOrganizationWorkIntentFromStandingAuthorization(
-      {
-        organizationId: candidate.organization_id as OrganizationId,
-        intentId: candidate.intent_id,
-        selection: selection.success.selected,
-      },
-      candidate.authorization_id,
+    const result = yield* withAutomationWork(
+      activateOrganizationWorkIntentFromStandingAuthorization(
+        {
+          organizationId: candidate.organization_id as OrganizationId,
+          intentId: candidate.intent_id,
+          selection: selection.success.selected,
+        },
+        candidate.authorization_id,
+      ),
     ).pipe(Effect.result);
     if (result._tag === "Success") activated++;
+    else if (isMaintenanceWorkHeld(result.failure)) return yield* result.failure;
     else if (
       ["invalid", "forbidden", "conflict", "not_found", "unavailable"].includes(result.failure.code)
     )

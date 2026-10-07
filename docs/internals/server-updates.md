@@ -93,6 +93,16 @@ background service, development servers). Constraints that are easy to get wrong
   start hold leases too. Each storage-cleanup sweep takes an active lease at execution time, so
   evidence and worktree removal cannot overlap snapshots or restoration. Maintenance methods are exempt so a fenced device can be observed and recovered.
 
+Server-scoped autonomous work uses this coordinator through the runtime dependency context.
+`WorkAdmission` has a no-op default for isolated domain tests, so production loops must receive the
+singleton runtime context and must not rely on the reference default. Durable review queues wait at
+their worker boundary; periodic schedulers take an active lease only after a read-only due check, so
+idle polling does not reset the five-minute window. Before dispatch or cleanup, they also check the
+persisted `maintenance/policy.json` `automationReviewRequired` bit. A missing policy keeps the legacy
+default; a malformed policy fails closed for autonomous work. Restored automation review is separate
+from transaction admission: clearing it allows held automation to resume, while updates still require
+their own eligibility and confirmation.
+
 The capability (`forkMaintenance` on the environment descriptor) is advertised only by a runtime that
 joined the coordinator. Absence means in-product installation is unavailable, never a legacy install.
 
@@ -181,6 +191,10 @@ invisible to Windows), so its Windows parent drives it only through `wsl.exe -d 
 journal mirroring, trial capability, release). A member that cannot answer fails the whole cohort; none is skipped.
 Journals record WSL homes as `wsl:<distro>:<home>`, and the parent mirrors the journal into each member so its
 remotely held fence can only be released against a durable terminal phase.
+Before sending a freeze, update and recovery controllers require each member's status to attest
+`initialJournalProtocol: 1`. Older machine verbs can ignore an unknown journal argument, so sending
+the new argument alone cannot establish safety. Missing attestation blocks the transaction until
+that runtime is updated or bootstrapped; the intent must be durable before any member publishes its fence.
 
 ## Recovery
 

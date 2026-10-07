@@ -1,11 +1,31 @@
-// @effect-diagnostics globalDate:off - fixed ISO timestamps keep cadence tests deterministic.
+// @effect-diagnostics globalDate:off globalDateInEffect:off nodeBuiltinImport:off preferSchemaOverJson:off - fixed schedule fixtures use a temp state directory.
 import {
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   type OrchestrationProjectShell,
   type SourceControlProjectPullRequest,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+
+import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
+import * as AgentDashboardStore from "./AgentDashboardStore.ts";
+import * as AgentDashboardPullRequestRollup from "./AgentDashboardPullRequestRollup.ts";
+import * as AutomationOrchestration from "../agentDashboard/AutomationOrchestration.ts";
+import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
+import * as ServerConfig from "../config.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import { MaintenanceWorkHeld, WorkAdmission } from "../maintenance/WorkAdmission.ts";
 
 import {
   __testing,
@@ -130,6 +150,150 @@ describe("pull request rollup prompt", () => {
 });
 
 describe("pull request rollup schedule", () => {
+  it.effect(
+    "keeps enablement pending while held, then reserves the newly enabled due schedule",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pr-rollup-admission-")),
+        );
+        const stateDir = NodePath.join(baseDir, "userdata");
+        const schedulePath = NodePath.join(
+          stateDir,
+          "agent-dashboard",
+          "pull-request-rollup-schedule.json",
+        );
+        yield* Effect.promise(() =>
+          NodeFSP.mkdir(NodePath.dirname(schedulePath), { recursive: true }),
+        );
+        const due = {
+          ...__testing.defaultSchedule(Date.now() - 60_000),
+          enabled: false,
+          nextRunAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+          runCount: 7,
+        };
+        const before = `${JSON.stringify(due, null, 2)}\n`;
+        yield* Effect.promise(() => NodeFSP.writeFile(schedulePath, before, "utf8"));
+        const settingsRef = yield* Ref.make({
+          ...DEFAULT_SERVER_SETTINGS,
+          pullRequestRollup: { ...DEFAULT_SERVER_SETTINGS.pullRequestRollup, enabled: true },
+        });
+
+        const held = yield* Ref.make(true);
+        const workAdmission = {
+          acquire: Effect.succeed(() => Effect.void),
+          acquirePassive: Effect.succeed(() => Effect.void),
+          check: Effect.void,
+          checkAutomation: Effect.gen(function* () {
+            if (yield* Ref.get(held)) {
+              return yield* Effect.fail(
+                new MaintenanceWorkHeld({ cause: "restored review required" }),
+              );
+            }
+          }),
+        };
+        const projectScans = yield* Ref.make(0);
+        const layer = AgentDashboardPullRequestRollup.layer.pipe(
+          Layer.provide(
+            Layer.succeed(AgentDashboardStore.AgentDashboardStore, {
+              readRepositoryPolicies: Effect.succeed([]),
+            } as never),
+          ),
+          Layer.provide(Layer.succeed(GitWorkflowService.GitWorkflowService, {} as never)),
+          Layer.provide(
+            Layer.succeed(AgentDashboardRunHistory.AgentDashboardRunHistory, {
+              list: Effect.succeed([]),
+              get: () => Effect.succeed(null),
+              upsert: (run) => Effect.succeed(run),
+              replaceAll: (runs) => Effect.succeed(runs),
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(AutomationOrchestration.OrchestrationEngineService, {} as never),
+          ),
+          Layer.provide(
+            Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+              getShellSnapshot: () =>
+                Ref.update(projectScans, (count) => count + 1).pipe(
+                  Effect.as({ projects: [], threads: [] } as never),
+                ),
+            } as never),
+          ),
+          Layer.provide(
+            Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {} as never),
+          ),
+          Layer.provide(
+            Layer.succeed(ServerSettings.ServerSettingsService, {
+              getSettings: Ref.get(settingsRef),
+            } as never),
+          ),
+          Layer.provide(
+            Layer.succeed(
+              SourceControlRepositoryService.SourceControlRepositoryService,
+              {} as never,
+            ),
+          ),
+          Layer.provide(
+            Layer.succeed(ServerRuntimeStartup.ServerRuntimeStartup, {
+              awaitCommandReady: Effect.never,
+              markHttpListening: Effect.void,
+              enqueueCommand: (effect: Effect.Effect<unknown, never, never>) => effect,
+            } as never),
+          ),
+          Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provide(Layer.succeed(WorkAdmission, workAdmission)),
+        );
+
+        try {
+          yield* Effect.gen(function* () {
+            const service = yield* AgentDashboardPullRequestRollup.AgentDashboardPullRequestRollup;
+            expect(
+              yield* service.runOnce.pipe(Effect.provideService(WorkAdmission, workAdmission)),
+            ).toBeNull();
+            expect(yield* Ref.get(projectScans)).toBe(0);
+            expect(yield* Effect.promise(() => NodeFSP.readFile(schedulePath, "utf8"))).toBe(
+              before,
+            );
+
+            yield* Ref.set(held, false);
+            expect(
+              yield* service.runOnce.pipe(Effect.provideService(WorkAdmission, workAdmission)),
+            ).toBe(0);
+            expect(yield* Ref.get(projectScans)).toBe(1);
+            const updated = JSON.parse(
+              yield* Effect.promise(() => NodeFSP.readFile(schedulePath, "utf8")),
+            ) as {
+              enabled: boolean;
+              runCount: number;
+              lastStatus: string;
+              nextRunAt: string;
+            };
+            expect(updated).toMatchObject({ enabled: true, runCount: 8, lastStatus: "completed" });
+
+            yield* Ref.update(settingsRef, (settings) => ({
+              ...settings,
+              pullRequestRollup: { ...settings.pullRequestRollup, intervalDays: 14 },
+            }));
+            expect(
+              yield* service.runOnce.pipe(Effect.provideService(WorkAdmission, workAdmission)),
+            ).toBeNull();
+            expect(yield* Ref.get(projectScans)).toBe(1);
+            const rescheduled = JSON.parse(
+              yield* Effect.promise(() => NodeFSP.readFile(schedulePath, "utf8")),
+            ) as typeof updated & { intervalDays: number };
+            expect(rescheduled.intervalDays).toBe(14);
+            expect(Date.parse(rescheduled.nextRunAt)).toBeGreaterThan(
+              Date.parse(updated.nextRunAt),
+            );
+            expect(rescheduled.runCount).toBe(8);
+          }).pipe(Effect.scoped, Effect.provide(layer));
+        } finally {
+          yield* Effect.promise(() => NodeFSP.rm(baseDir, { recursive: true, force: true }));
+        }
+      }),
+  );
+
   it("runs immediately when enabled and applies an N-day cadence change", () => {
     const now = Date.parse("2026-08-10T00:00:00.000Z");
     const disabled = {

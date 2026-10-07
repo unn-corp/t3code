@@ -24,6 +24,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
+import { withAutomationWork } from "../maintenance/WorkAdmission.ts";
 
 export interface OrganizationProposalPrincipal {
   readonly subject: string;
@@ -146,6 +148,7 @@ const decodeProposal = (row: ProposalRow, staleReason: string | null) =>
   });
 
 export interface OrganizationProposalStoreShape {
+  readonly hasReconciliationWork: Effect.Effect<boolean, SqlError>;
   readonly getObservationMode: (
     organizationId: OrganizationId,
   ) => Effect.Effect<OrganizationObservationMode, OrganizationProposalError>;
@@ -778,7 +781,24 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+  const hasReconciliationWork = Effect.gen(function* () {
+    const time = yield* now;
+    const pending = yield* sql<{ finding_id: string }>`SELECT f.finding_id
+      FROM organization_intake_findings f
+      JOIN organizations o ON o.organization_id = f.organization_id
+      JOIN organization_proposal_settings s ON s.organization_id = f.organization_id
+      WHERE s.observation_mode_enabled = 1 AND f.created_at >= s.enabled_at
+        AND o.lifecycle IN ('draft', 'active') AND o.published_revision IS NOT NULL
+        AND (NOT EXISTS (SELECT 1 FROM organization_proposal_candidates c
+          WHERE c.finding_id = f.finding_id)
+          OR EXISTS (SELECT 1 FROM organization_proposal_candidates c
+            WHERE c.finding_id = f.finding_id AND c.state = 'pending'
+              AND c.next_attempt_at <= ${time}))
+      LIMIT 1`;
+    return pending.length > 0;
+  });
   return {
+    hasReconciliationWork,
     getObservationMode,
     setObservationMode,
     list,
@@ -794,7 +814,9 @@ export const OrganizationProposalReconciliationLoopLive = Layer.effectDiscard(
     const store = yield* OrganizationProposalStore;
     yield* Effect.forever(
       Effect.gen(function* () {
-        yield* store.reconcileOnce().pipe(Effect.ignoreCause({ log: true }));
+        const due = yield* store.hasReconciliationWork.pipe(Effect.orElseSucceed(() => false));
+        if (due)
+          yield* withAutomationWork(store.reconcileOnce()).pipe(Effect.ignoreCause({ log: true }));
         yield* Effect.sleep("5 seconds");
       }),
     ).pipe(Effect.forkScoped);

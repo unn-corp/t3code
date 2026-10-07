@@ -168,9 +168,10 @@ public final class RecoveryActivity extends Activity {
             }
             String refusal = InstallerSessions.refusal(sessions, sessions, getPackageName(), engine.snapshot().pending != null);
             if (refusal != null) throw new UpdateEngine.UpdateException(refusal);
-            StringBuilder message = new StringBuilder("Discard these unfinished Arcwright Code installations? This cancels their Android prompts and leaves updates paused. Saved connections and app data stay in place.");
+            StringBuilder message = new StringBuilder("Discard these unfinished Arcwright Code installations? This asks Android to cancel each listed installation, including any marked active, and its confirmation prompt. Updates stay paused. Saved connections and app data stay in place.");
             for (InstallerSessions.Session session : sessions)
-                message.append("\nSession ").append(session.id).append(" · ").append(Iso8601.format(session.createdAt));
+                message.append("\nSession ").append(session.id).append(" · ").append(Iso8601.format(session.createdAt))
+                    .append(session.active ? " · Android reports active" : " · inactive");
             new AlertDialog.Builder(this).setTitle("Discard unfinished updates?").setMessage(message.toString())
                 .setNegativeButton("Keep", null)
                 .setPositiveButton("Discard", (dialog, which) -> background("Unfinished updates discarded. Review App updates.", () -> engine.discardUnfinishedInstallations(sessions)))

@@ -20,6 +20,7 @@ import * as AgentDashboardCollectors from "./AgentDashboardCollectors.ts";
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
 import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
+import { MaintenanceWorkHeld, withAutomationWork } from "../maintenance/WorkAdmission.ts";
 
 export const SECURITY_SCHEDULE_ID = "t3-security-collector";
 export const SECURITY_INTERVAL_MINUTES = 120;
@@ -41,7 +42,7 @@ export interface AgentDashboardSecuritySchedulerService {
   /** Runs one local security collection immediately when the schedule is free. */
   readonly runNow: Effect.Effect<
     AgentDashboardSecuritySchedule | null,
-    AgentDashboardSecuritySchedulerError
+    AgentDashboardSecuritySchedulerError | MaintenanceWorkHeld
   >;
 }
 
@@ -319,15 +320,22 @@ const make = Effect.gen(function* () {
       return completed;
     });
 
-  const runNow = run(true);
-  const runScheduled = run(false).pipe(Effect.asVoid);
+  const runNow = withAutomationWork(run(true));
+  const runScheduled = Effect.gen(function* () {
+    const state = yield* Ref.get(stateRef);
+    const now = yield* DateTime.now;
+    const due =
+      state.enabled &&
+      state.lastStatus !== "running" &&
+      Date.parse(state.nextRunAt) <= DateTime.toEpochMillis(now);
+    if (!due) return;
+    yield* withAutomationWork(run(false)).pipe(Effect.asVoid);
+  });
 
   const touchHeartbeat = Effect.gen(function* () {
     const heartbeatAt = yield* nowIso;
     const current = yield* Ref.get(stateRef);
-    const nextState = { ...current, heartbeatAt };
-    yield* Ref.set(stateRef, nextState);
-    yield* persist(nextState);
+    yield* Ref.set(stateRef, { ...current, heartbeatAt });
   });
 
   const tick = Effect.gen(function* () {

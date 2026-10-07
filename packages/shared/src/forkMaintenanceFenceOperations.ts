@@ -9,6 +9,9 @@
 import { decodeJournal, type MaintenanceJournal } from "./forkMaintenanceJournal.ts";
 import type { CoordinatorStore, ReceiptSlot } from "./forkMaintenanceStore.ts";
 
+/** WSL freeze is safe only when the member durably records an intent before its fence. */
+export const INITIAL_JOURNAL_PROTOCOL = 1;
+
 export type FenceOperation =
   | { readonly op: "status" }
   | { readonly op: "confirm-bootstrap" }
@@ -16,6 +19,7 @@ export type FenceOperation =
       readonly op: "freeze";
       readonly transactionId: string;
       readonly parent: string;
+      readonly intent: MaintenanceJournal;
       readonly forRecovery?: boolean;
     }
   | { readonly op: "recheck"; readonly transactionId: string }
@@ -47,6 +51,7 @@ export async function runFenceOperation(
           ok: true,
           value: {
             coordinatorId: status.coordinatorId,
+            initialJournalProtocol: INITIAL_JOURNAL_PROTOCOL,
             bootstrapped: status.bootstrapped,
             fence: status.fence,
             blockers: status.blockers,
@@ -69,8 +74,11 @@ export async function runFenceOperation(
         await store.confirmBootstrap();
         return { ok: true, value: true };
       case "freeze":
+        if (operation.intent === undefined)
+          throw new Error("A remote device fence requires its transaction journal.");
         await store.freeze(operation.transactionId, now, {
           remote: operation.parent,
+          intent: decodeJournal(operation.intent),
           ...(operation.forRecovery === true ? { forRecovery: true } : {}),
         });
         return { ok: true, value: true };
@@ -119,12 +127,22 @@ export function parseFenceOperation(
       return { op };
     case "freeze": {
       const parent = flags.get("parent");
-      return transactionId === undefined || parent === undefined
-        ? { error: "--transaction and --parent are required." }
+      const encodedIntent = flags.get("journal-base64");
+      let intent: MaintenanceJournal | undefined;
+      if (encodedIntent !== undefined) {
+        try {
+          intent = decodeJournal(JSON.parse(Buffer.from(encodedIntent, "base64").toString("utf8")));
+        } catch {
+          return { error: "The initial transaction journal is not valid." };
+        }
+      }
+      return transactionId === undefined || parent === undefined || intent === undefined
+        ? { error: "--transaction, --parent and --journal-base64 are required." }
         : {
             op,
             transactionId,
             parent,
+            intent,
             ...(flags.get("for-recovery") === "true" ? { forRecovery: true } : {}),
           };
     }

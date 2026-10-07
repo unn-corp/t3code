@@ -346,7 +346,8 @@ export function createDesktopInstaller(input: DesktopInstallerInput) {
       (await storage()).discardSnapshot(home, snapshotId),
     rescue: async (home, transactionId) => (await storage()).rescue(home, transactionId),
     cohort: {
-      freeze: async (transactionId) => (await cohortFence(true)).freeze(transactionId),
+      freeze: async (transactionId, intent) =>
+        (await cohortFence(true)).freeze(transactionId, intent),
       mirrorJournal: async (journal) => (await cohortFence(false)).mirrorJournal(journal),
       release: async (transactionId) => (await cohortFence(false)).release(transactionId),
     },

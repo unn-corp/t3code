@@ -44,9 +44,10 @@ final class PhoneAlertQueue {
         if (!current.isNull("archivedAt") || !current.isNull("deletedAt")
                 || (lineage != null && "subagent".equals(lineage.optString("relationshipToParent")))) return false;
         if (!current.optString("latestRunId").equals(alert.thread().optString("latestRunId"))) return false;
-        String status = current.isNull("activityRunStatus") ? current.optString("status") : current.optString("activityRunStatus");
+        String status = ThreadAlertState.effectiveStatus(current);
         switch (alert.kind()) {
-            case "agent_completed": return ("completed".equals(status) || "idle".equals(status))
+            case "agent_completed": return !ThreadAlertState.holdsCompletion(current)
+                && ("completed".equals(status) || "idle".equals(status))
                 && current.optString("latestRunCompletedAt").equals(alert.thread().optString("latestRunCompletedAt"));
             case "agent_failed": return "failed".equals(status);
             case "plan_ready": return current.optBoolean("hasActionableProposedPlan");

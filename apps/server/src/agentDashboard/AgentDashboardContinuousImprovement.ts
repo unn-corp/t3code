@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -37,9 +38,15 @@ import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQu
 import * as ServerConfig from "../config.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  MaintenanceWorkHeld,
+  retryAutomationWork,
+  withAutomationWork,
+} from "../maintenance/WorkAdmission.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 
 const POLL_INTERVAL = Duration.seconds(15);
+const isMaintenanceWorkHeld = Schema.is(MaintenanceWorkHeld);
 const FAILURE_BACKOFF = Duration.minutes(5);
 const IMPLEMENTATION_MONITOR_INTERVAL = Duration.seconds(10);
 const IMPLEMENTATION_NUDGE_DELAYS = [
@@ -969,77 +976,81 @@ const make = Effect.gen(function* () {
             });
             if (staleOutcome === null) return;
 
-            const resolution = yield* store.resolveStaleFindingReservation({
-              id: finding.id,
-              projectId: finding.repository.projectId,
-              threadId: thread.id,
-              reason: staleOutcome.reason,
-            });
-            if (resolution !== "applied") return;
-
-            const completedAt = yield* nowIso;
-            const relatedRun = findContinuousImprovementRunForStaleResolution({
-              runs,
-              findingId: finding.id,
-              threadId: thread.id,
-            });
-            if (relatedRun && relatedRun.status !== "succeeded") {
-              yield* persistRun(
-                transitionContinuousImprovementRun(relatedRun, {
-                  state: "finding-dismissed",
-                  at: completedAt,
-                }),
-              );
-            }
-            yield* store
-              .appendExternalAction({
-                id: `action:continuous-improvement-stale:${thread.id}:${staleOutcome.assistantMessageId}`,
-                kind: "other",
-                status: "succeeded",
-                actor: "continuous-improvement",
-                targetId: finding.id,
-                targetUrl: null,
-                findingId: finding.id,
-                runId: relatedRun?.id ?? null,
-                result: `Finding dismissed after the implementation agent confirmed it was stale: ${staleOutcome.reason}`,
-                occurredAt: completedAt,
-              })
-              .pipe(Effect.ignore);
-
-            const project = shell.projects.find(
-              (candidate) => candidate.id === finding.repository.projectId,
-            );
-            if (project === undefined || thread.branch === null || thread.worktreePath === null)
-              return;
-            yield* runner
-              .settleCompletedFinding({
-                finding,
-                project,
-                result: {
-                  findingId: finding.id,
+            yield* withAutomationWork(
+              Effect.gen(function* () {
+                const resolution = yield* store.resolveStaleFindingReservation({
+                  id: finding.id,
                   projectId: finding.repository.projectId,
                   threadId: thread.id,
-                  branch: thread.branch,
-                  baseBranch: thread.branch,
-                  worktreePath: thread.worktreePath,
-                },
-                runId: relatedRun?.id ?? "continuous-improvement-reconciliation",
-                removeCompletedWorktree: automationSettings.removeCompletedWorktrees,
-                outcome: { kind: "finding-stale", reason: staleOutcome.reason },
-              })
-              .pipe(
-                Effect.tapError((cause) =>
-                  Effect.logWarning(
-                    "Continuous improvement could not stop a reconciled stale-finding session",
-                    {
+                  reason: staleOutcome.reason,
+                });
+                if (resolution !== "applied") return;
+
+                const completedAt = yield* nowIso;
+                const relatedRun = findContinuousImprovementRunForStaleResolution({
+                  runs,
+                  findingId: finding.id,
+                  threadId: thread.id,
+                });
+                if (relatedRun && relatedRun.status !== "succeeded") {
+                  yield* persistRun(
+                    transitionContinuousImprovementRun(relatedRun, {
+                      state: "finding-dismissed",
+                      at: completedAt,
+                    }),
+                  );
+                }
+                yield* store
+                  .appendExternalAction({
+                    id: `action:continuous-improvement-stale:${thread.id}:${staleOutcome.assistantMessageId}`,
+                    kind: "other",
+                    status: "succeeded",
+                    actor: "continuous-improvement",
+                    targetId: finding.id,
+                    targetUrl: null,
+                    findingId: finding.id,
+                    runId: relatedRun?.id ?? null,
+                    result: `Finding dismissed after the implementation agent confirmed it was stale: ${staleOutcome.reason}`,
+                    occurredAt: completedAt,
+                  })
+                  .pipe(Effect.ignore);
+
+                const project = shell.projects.find(
+                  (candidate) => candidate.id === finding.repository.projectId,
+                );
+                if (project === undefined || thread.branch === null || thread.worktreePath === null)
+                  return;
+                yield* runner
+                  .settleCompletedFinding({
+                    finding,
+                    project,
+                    result: {
                       findingId: finding.id,
+                      projectId: finding.repository.projectId,
                       threadId: thread.id,
-                      cause,
+                      branch: thread.branch,
+                      baseBranch: thread.branch,
+                      worktreePath: thread.worktreePath,
                     },
-                  ),
-                ),
-                Effect.ignore,
-              );
+                    runId: relatedRun?.id ?? "continuous-improvement-reconciliation",
+                    removeCompletedWorktree: automationSettings.removeCompletedWorktrees,
+                    outcome: { kind: "finding-stale", reason: staleOutcome.reason },
+                  })
+                  .pipe(
+                    Effect.tapError((cause) =>
+                      Effect.logWarning(
+                        "Continuous improvement could not stop a reconciled stale-finding session",
+                        {
+                          findingId: finding.id,
+                          threadId: thread.id,
+                          cause,
+                        },
+                      ),
+                    ),
+                    Effect.ignore,
+                  );
+              }),
+            ).pipe(Effect.catchTag("MaintenanceWorkHeld", () => Effect.void));
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Continuous improvement could not reconcile a stale finding", {
@@ -1115,13 +1126,15 @@ const make = Effect.gen(function* () {
         at: startedAt,
       });
       yield* persistRun(working);
-      yield* monitorImplementation({
-        run: working,
-        result: launchResult.success,
-        project: input.project,
-        finding: input.finding,
-        automationSettings: input.automationSettings,
-      }).pipe(Effect.forkIn(scope));
+      yield* retryAutomationWork(
+        monitorImplementation({
+          run: working,
+          result: launchResult.success,
+          project: input.project,
+          finding: input.finding,
+          automationSettings: input.automationSettings,
+        }),
+      ).pipe(Effect.forkIn(scope));
       return launchResult.success;
     });
 
@@ -1206,12 +1219,17 @@ const make = Effect.gen(function* () {
       });
       if (!stable) return null;
 
-      return yield* launchSelection({
-        ...selected,
-        automationSettings: currentSettings.continuousImprovement,
-        trigger: "scheduled",
-        retryCount: 0,
-      }).pipe(Effect.mapError(mapLaunchError));
+      return yield* withAutomationWork(
+        launchSelection({
+          ...selected,
+          automationSettings: currentSettings.continuousImprovement,
+          trigger: "scheduled",
+          retryCount: 0,
+        }),
+      ).pipe(
+        Effect.catchTag("MaintenanceWorkHeld", () => Effect.succeed(null)),
+        Effect.mapError(mapLaunchError),
+      );
     }).pipe(
       Effect.tap(() => Ref.set(lastFailureAt, null)),
       Effect.tapError(() => Ref.set(lastFailureAt, nowMs)),
@@ -1369,7 +1387,8 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.ensuring(SynchronizedRef.set(busy, false)));
     });
 
-  const resumeInterruptedImplementations = Effect.gen(function* () {
+  const recoveryComplete = yield* Ref.make(false);
+  const resumeInterruptedImplementationsAdmitted = Effect.gen(function* () {
     const activeRuns = (yield* history.list).filter(
       (run) =>
         run.kind === CONTINUOUS_IMPROVEMENT_RUN_KIND &&
@@ -1412,21 +1431,23 @@ const make = Effect.gen(function* () {
     yield* Effect.forEach(
       recoveries,
       ({ run, finding, project, result }) =>
-        Effect.gen(function* () {
-          const working = transitionContinuousImprovementRun(run, {
-            state: "working",
-            result,
-            at: resumedAt,
-          });
-          yield* persistRun(working);
-          yield* monitorImplementation({
-            run: working,
-            result,
-            project,
-            finding,
-            automationSettings: currentSettings.continuousImprovement,
-          });
-        }),
+        retryAutomationWork(
+          Effect.gen(function* () {
+            const working = transitionContinuousImprovementRun(run, {
+              state: "working",
+              result,
+              at: resumedAt,
+            });
+            yield* persistRun(working);
+            yield* monitorImplementation({
+              run: working,
+              result,
+              project,
+              finding,
+              automationSettings: currentSettings.continuousImprovement,
+            });
+          }),
+        ),
       { concurrency: "unbounded", discard: true },
     ).pipe(Effect.ensuring(SynchronizedRef.set(busy, false)), Effect.forkIn(scope), Effect.asVoid);
   }).pipe(
@@ -1437,9 +1458,19 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const resumeInterruptedImplementations = Effect.gen(function* () {
+    if (yield* Ref.get(recoveryComplete)) return;
+    const result = yield* Effect.exit(withAutomationWork(resumeInterruptedImplementationsAdmitted));
+    if (Exit.isSuccess(result)) yield* Ref.set(recoveryComplete, true);
+    else if (!isMaintenanceWorkHeld(Cause.squash(result.cause)))
+      yield* Effect.logWarning("Continuous Improvement Mode could not resume interrupted agents", {
+        cause: result.cause,
+      });
+  });
+
   yield* resumeInterruptedImplementations;
 
-  const tick = runOnce.pipe(
+  const tick = resumeInterruptedImplementations.pipe(Effect.andThen(runOnce)).pipe(
     Effect.tap((result) =>
       result
         ? Effect.logInfo("Continuous Improvement Mode started an implementation agent", {

@@ -1,12 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Ref from "effect/Ref";
 import {
   assertAdmitting,
   isPassiveDiagnosticWrite,
   MaintenanceWorkHeld,
+  retryAutomationWork,
   WorkAdmission,
   withPassiveWork,
+  withAutomationWork,
   withWork,
 } from "./WorkAdmission.ts";
 
@@ -26,6 +30,9 @@ const admission = (log: string[], held = false) => ({
         log.push("acquire-passive");
         return () => Effect.sync(() => void log.push("release-passive"));
       }),
+  checkAutomation: held
+    ? Effect.fail(new MaintenanceWorkHeld({ cause: "automation review required" }))
+    : Effect.void,
 });
 
 describe("work admission", () => {
@@ -76,6 +83,47 @@ describe("work admission", () => {
       expect(exit._tag).toBe("MaintenanceWorkHeld");
       expect(exit.message).toContain("holding new work");
       expect(log).toEqual([]);
+    }),
+  );
+
+  it.effect("holds autonomous work until restored schedules and queues are reviewed", () =>
+    Effect.gen(function* () {
+      const log: string[] = [];
+      const exit = yield* withAutomationWork(Effect.sync(() => void log.push("work"))).pipe(
+        Effect.provideService(WorkAdmission, admission(log, true)),
+        Effect.flip,
+      );
+      expect(exit._tag).toBe("MaintenanceWorkHeld");
+      expect(log).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps a detached autonomous monitor leased after its launcher returns", () =>
+    Effect.gen(function* () {
+      const leases = yield* Ref.make(0);
+      const monitorStarted = yield* Deferred.make<void>();
+      const finishMonitor = yield* Deferred.make<void>();
+      const workAdmission = {
+        ...admission([]),
+        acquire: Ref.update(leases, (count) => count + 1).pipe(
+          Effect.as(() => Ref.update(leases, (count) => Math.max(0, count - 1))),
+        ),
+      };
+      const child = yield* Effect.forkChild(
+        retryAutomationWork(
+          Deferred.succeed(monitorStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(finishMonitor)),
+          ),
+        ).pipe(Effect.provideService(WorkAdmission, workAdmission)),
+        { startImmediately: true },
+      );
+
+      yield* Deferred.await(monitorStarted);
+      // The launcher has returned, but the monitor owns an independent lease.
+      expect(yield* Ref.get(leases)).toBe(1);
+      yield* Deferred.succeed(finishMonitor, undefined);
+      yield* Fiber.join(child);
+      expect(yield* Ref.get(leases)).toBe(0);
     }),
   );
 

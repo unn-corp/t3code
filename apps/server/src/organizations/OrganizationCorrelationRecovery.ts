@@ -11,6 +11,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { withAutomationWork } from "../maintenance/WorkAdmission.ts";
 import {
   ORGANIZATION_INTAKE_CORRELATION_SUBJECT,
   OrganizationCorrelationCoordinator,
@@ -51,6 +52,8 @@ const errorCode = (cause: unknown) =>
     : "unavailable";
 
 export interface OrganizationCorrelationRecoveryShape {
+  /** Read-only preflight keeps an idle recovery poll from taking a work lease. */
+  readonly hasDue: Effect.Effect<boolean, SqlError>;
   /** Process at most 32 due observations. Safe to repeat after process restart. */
   readonly runOnce: () => Effect.Effect<
     { claimed: number; completed: number; retried: number; terminal: number },
@@ -170,7 +173,16 @@ const make = Effect.gen(function* () {
       }
       return counts;
     });
-  return { runOnce, markFromResult } satisfies OrganizationCorrelationRecoveryShape;
+  const hasDue = Effect.gen(function* () {
+    const currentIso = DateTime.formatIso(yield* DateTime.now);
+    const rows = yield* sql<{ observation_id: string }>`SELECT observation_id
+      FROM organization_intake_correlation_jobs
+      WHERE (state = 'pending' AND next_attempt_at <= ${currentIso})
+        OR (state = 'leased' AND lease_expires_at <= ${currentIso})
+      LIMIT 1`;
+    return rows.length > 0;
+  });
+  return { hasDue, runOnce, markFromResult } satisfies OrganizationCorrelationRecoveryShape;
 });
 
 export const OrganizationCorrelationRecoveryLayer = Layer.effect(
@@ -186,7 +198,9 @@ export const OrganizationCorrelationRecoveryLoopLive = Layer.effectDiscard(
     const recovery = yield* OrganizationCorrelationRecovery;
     yield* Effect.forever(
       Effect.gen(function* () {
-        yield* recovery.runOnce().pipe(Effect.ignoreCause({ log: true }));
+        const due = yield* recovery.hasDue.pipe(Effect.orElseSucceed(() => false));
+        if (due)
+          yield* withAutomationWork(recovery.runOnce()).pipe(Effect.ignoreCause({ log: true }));
         yield* Effect.sleep(POLL_INTERVAL);
       }),
     ).pipe(Effect.forkScoped);

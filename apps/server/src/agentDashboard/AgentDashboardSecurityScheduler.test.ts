@@ -10,9 +10,11 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId, type OrchestrationProjectShell } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { MaintenanceWorkHeld, WorkAdmission } from "../maintenance/WorkAdmission.ts";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
@@ -83,6 +85,65 @@ const makeProjection = (project: OrchestrationProjectShell) =>
   });
 
 describe("AgentDashboardSecurityScheduler", () => {
+  it.effect("does not start its automatic collector under the restored-automation hold", () =>
+    Effect.promise(async () => {
+      const baseDir = await NodeFSP.mkdtemp(
+        NodePath.join(NodeOS.tmpdir(), "t3-security-scheduler-held-"),
+      );
+      const schedulePath = NodePath.join(
+        baseDir,
+        "userdata",
+        "agent-dashboard",
+        "security-schedule.json",
+      );
+      await NodeFSP.mkdir(NodePath.dirname(schedulePath), { recursive: true });
+      await NodeFSP.writeFile(
+        schedulePath,
+        JSON.stringify({
+          id: "t3-security-collector",
+          enabled: true,
+          nextRunAt: "2000-01-01T00:00:00.000Z",
+          lastStatus: "idle",
+          runCount: 0,
+        }),
+      );
+      try {
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            const attempted = yield* Deferred.make<void>();
+            const workAdmission = {
+              acquire: Effect.succeed(() => Effect.void),
+              acquirePassive: Effect.succeed(() => Effect.void),
+              check: Effect.void,
+              checkAutomation: Deferred.succeed(attempted, undefined).pipe(
+                Effect.andThen(Effect.fail(new MaintenanceWorkHeld({ cause: "review required" }))),
+              ),
+            };
+            const schedulerLayer = AgentDashboardSecurityScheduler.layer.pipe(
+              Layer.provide(makeProjection(makeProject(baseDir))),
+              Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+              Layer.provideMerge(NodeServices.layer),
+              Layer.provide(Layer.succeed(WorkAdmission, workAdmission)),
+            );
+            yield* Effect.gen(function* () {
+              yield* Deferred.await(attempted);
+              const schedule = JSON.parse(
+                yield* Effect.promise(() => NodeFSP.readFile(schedulePath, "utf8")),
+              ) as { runCount: number };
+              expect(schedule.runCount).toBe(0);
+              const findings = yield* AgentDashboardStore.getStore(
+                NodePath.join(baseDir, "userdata"),
+              ).readFindings;
+              expect(findings).toEqual([]);
+            }).pipe(Effect.scoped, Effect.provide(schedulerLayer));
+          }),
+        );
+      } finally {
+        await NodeFSP.rm(baseDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it("recovers an interrupted run and makes it immediately due", () => {
     const recovered = AgentDashboardSecurityScheduler.__testing.normalizeSchedule(
       {
@@ -157,6 +218,26 @@ describe("AgentDashboardSecurityScheduler", () => {
           Effect.gen(function* () {
             const scheduler =
               yield* AgentDashboardSecurityScheduler.AgentDashboardSecurityScheduler;
+            const held = yield* Effect.exit(
+              scheduler.runNow.pipe(
+                Effect.provideService(WorkAdmission, {
+                  acquire: Effect.succeed(() => Effect.void),
+                  acquirePassive: Effect.succeed(() => Effect.void),
+                  check: Effect.void,
+                  checkAutomation: Effect.fail(
+                    new MaintenanceWorkHeld({ cause: "automation review required" }),
+                  ),
+                }),
+              ),
+            );
+            expect(held._tag).toBe("Failure");
+            expect(held._tag === "Failure" ? String(held.cause) : "").toContain(
+              "MaintenanceWorkHeld",
+            );
+            const heldSchedule = JSON.parse(
+              yield* Effect.promise(() => NodeFSP.readFile(securitySchedulePath, "utf8")),
+            ) as { runCount: number };
+            expect(heldSchedule.runCount).toBe(0);
             const status = yield* scheduler.runNow;
             expect(status?.lastStatus).toBe("completed");
             expect(status?.runCount).toBe(1);

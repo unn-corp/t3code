@@ -1194,6 +1194,12 @@ jobs:
     name: Publish release
     needs: [plan, manifest]
     if: "!cancelled() && needs.plan.result == 'success' && needs.manifest.result == 'success' && needs.plan.outputs.skip == 'false' && needs.plan.outputs.publish == 'true'"
+    # GitHub's release update API has no compare-and-swap. Share this short state-transition lock
+    # with withdrawal/restore so eligibility cannot change between the final recheck and publish.
+    concurrency:
+      group: fork-release-state
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:

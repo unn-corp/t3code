@@ -41,6 +41,22 @@ public class PhoneAlertQueueTest {
             .put("thread", thread("running").put("latestRunId", "next")));
         assertEquals(0, queue.take(1, false, true).length());
     }
+    @Test public void waitingCompletionDoesNotAlertWhenDelegatedWorkAppears() throws Exception {
+        PhoneAlertQueue queue = new PhoneAlertQueue();
+        queue.offer("host", thread("completed"), "agent_completed", 0);
+        queue.reconcile("host", new JSONObject().put("kind", "thread.updated")
+            .put("thread", thread("completed").put("pendingBackgroundTasks", new JSONArray()
+                .put(new JSONObject().put("kind", "delegated_task")))));
+        assertEquals(0, queue.take(1, false, true).length());
+    }
+    @Test public void waitingCompletionDoesNotAlertWhenInputIsRequested() throws Exception {
+        PhoneAlertQueue queue = new PhoneAlertQueue();
+        queue.offer("host", thread("completed"), "agent_completed", 0);
+        queue.reconcile("host", new JSONObject().put("kind", "thread.updated")
+            .put("thread", thread("completed").put("pendingRuntimeRequest", new JSONObject()
+                .put("id", "request").put("kind", "user_input"))));
+        assertEquals(0, queue.take(1, false, true).length());
+    }
     @Test public void answeredApprovalAndArchivedThreadDoNotAlertLater() throws Exception {
         PhoneAlertQueue queue = new PhoneAlertQueue();
         queue.offer("host", thread("waiting").put("pendingRuntimeRequest", new JSONObject().put("id", "request").put("kind", "command_approval")), "input_required", 0);

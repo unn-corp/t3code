@@ -95,7 +95,16 @@ async function setup(overrides: Partial<HandoffPlan> = {}) {
   await originalStore.confirmBootstrap();
   await originalStore.observe("desktop", [], 0);
   await originalStore.observe("desktop", [], 600_000);
-  await originalStore.freeze(plan.transactionId, 600_000);
+  await originalStore.freeze(plan.transactionId, 600_000, {
+    intent: newJournal({
+      id: plan.transactionId,
+      kind: "update",
+      homes: [root],
+      previous: { version: "1.0.0", artifactSha256: sha("previous build") },
+      target: { version: "1.0.1", artifactSha256: sha("target build") },
+      now: 600_000,
+    }),
+  });
   const journal = {
     ...newJournal({
       id: plan.transactionId,

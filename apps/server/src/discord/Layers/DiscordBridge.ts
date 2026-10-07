@@ -23,6 +23,7 @@ import { ProjectionSnapshotQuery } from "../../agentDashboard/AutomationSnapshot
 import { OrchestrationEngineService } from "../../agentDashboard/AutomationOrchestration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { retryAutomationWork, withAutomationWork } from "../../maintenance/WorkAdmission.ts";
 import {
   DiscordRestClient,
   isArchivedError,
@@ -96,23 +97,12 @@ export const eventToWork = (
   }
 };
 
-/** Best-effort one-line summary of an activity payload for the mirror. */
-const describeActivity = (payload: unknown): string => {
-  const activity = (payload as { readonly activity?: Record<string, unknown> }).activity;
-  if (activity === undefined) {
-    return "• activity";
-  }
-  const kind = typeof activity.kind === "string" ? activity.kind : "activity";
-  const title = typeof activity.title === "string" ? activity.title : "";
-  return title === "" ? `• ${kind}` : `• ${kind}: ${title}`;
-};
-
 const statusOf = (thread: OrchestrationThread): HeaderStatus => {
   const status = thread.session?.status;
   return status === undefined || status === null ? "idle" : (status as HeaderStatus);
 };
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const links = yield* DiscordBridgeLinkRepository;
   const threads = yield* ThreadManagementService;
@@ -122,8 +112,6 @@ const make = Effect.gen(function* () {
 
   /** messageId -> epoch millis of the last successful flush. */
   const lastFlushAt = yield* Ref.make(new Map<string, number>());
-  /** Discord message ids we are holding until the turn settles. */
-  const deferredInbound = yield* Ref.make(new Map<string, ReadonlyArray<string>>());
 
   const readConfig = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.discordBridge),
@@ -167,7 +155,9 @@ const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       if (isGoneError(error)) {
         // A deleted Discord thread means "stop mirroring this". Never recreate.
-        yield* links.setState({ threadId, state: "orphaned", updatedAt: now }).pipe(Effect.ignore);
+        yield* withAutomationWork(
+          links.setState({ threadId, state: "orphaned", updatedAt: now }).pipe(Effect.ignore),
+        );
         yield* Effect.logInfo("discord bridge orphaned a link", { threadId });
         return;
       }
@@ -413,11 +403,11 @@ const make = Effect.gen(function* () {
    * The bridge is a post-commit observer. Any failure here is logged and
    * swallowed so it can never propagate back toward orchestration.
    */
-  const processWorkSafely = (work: BridgeWork) =>
-    processWork(work).pipe(
+  const processWorkSafely = (work: BridgeWork): Effect.Effect<void> =>
+    retryAutomationWork(processWork(work)).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
+          return Effect.interrupt;
         }
         return Effect.logWarning("discord bridge failed to process work", {
           kind: work.kind,
@@ -428,6 +418,16 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processWorkSafely);
+  const enqueueEvent: DiscordBridgeShape["enqueueEvent"] = (event) =>
+    readConfig.pipe(
+      Effect.flatMap((config) => {
+        if (config === null || !config.enabled || config.channelId === "") {
+          return Effect.void;
+        }
+        const work = eventToWork(event, config.mirrorActivity);
+        return work === null ? Effect.void : worker.enqueue(work).pipe(Effect.asVoid);
+      }),
+    );
 
   const dispatchInbound = (
     threadId: ThreadId,
@@ -457,6 +457,54 @@ const make = Effect.gen(function* () {
       });
     });
 
+  const processInboundMessage = (
+    threadId: ThreadId,
+    discordThreadId: string,
+    message: DiscordMessage,
+    config: DiscordBridgeSettings,
+  ) =>
+    Effect.gen(function* () {
+      const isSelf = message.author.id === config.applicationId || message.author.bot === true;
+      const isWebhook = message.webhook_id !== undefined;
+      if (isSelf || isWebhook) {
+        yield* advanceCursor(threadId, message.id);
+        return true;
+      }
+      if (!config.allowedAuthorIds.includes(message.author.id)) {
+        yield* Effect.logWarning("discord bridge rejected unauthorized author", {
+          threadId,
+          authorId: message.author.id,
+        });
+        yield* react(discordThreadId, message.id, "❌");
+        yield* advanceCursor(threadId, message.id);
+        return true;
+      }
+      if (message.content.trim() === "") {
+        yield* react(discordThreadId, message.id, "⚠️");
+        yield* advanceCursor(threadId, message.id);
+        return true;
+      }
+
+      const detail = yield* threadDetail(threadId);
+      if (Option.isNone(detail)) {
+        yield* advanceCursor(threadId, message.id);
+        return true;
+      }
+      const status = statusOf(detail.value);
+      if (status === "running" || status === "starting") {
+        // Keep the durable cursor in place; the next poll rereads this message.
+        yield* react(discordThreadId, message.id, "⏳");
+        return false;
+      }
+
+      // Dispatch must succeed before the bridge acknowledges or persists the cursor.
+      // Its deterministic command id makes retries safe if the process stops between these steps.
+      yield* dispatchInbound(threadId, detail.value, message);
+      yield* react(discordThreadId, message.id, "✅");
+      yield* advanceCursor(threadId, message.id);
+      return true;
+    });
+
   const pollThread = (
     link: {
       readonly threadId: string;
@@ -475,54 +523,12 @@ const make = Effect.gen(function* () {
       const ordered = batch.toReversed();
 
       for (const message of ordered) {
-        const isSelf = message.author.id === config.applicationId || message.author.bot === true;
-        const isWebhook = message.webhook_id !== undefined;
-        if (isSelf || isWebhook) {
-          yield* advanceCursor(threadId, message.id);
-          continue;
-        }
-        if (!config.allowedAuthorIds.includes(message.author.id)) {
-          yield* Effect.logWarning("discord bridge rejected unauthorized author", {
-            threadId,
-            authorId: message.author.id,
-          });
-          yield* react(link.discordThreadId, message.id, "❌");
-          yield* advanceCursor(threadId, message.id);
-          continue;
-        }
-        if (message.content.trim() === "") {
-          yield* react(link.discordThreadId, message.id, "⚠️");
-          yield* advanceCursor(threadId, message.id);
-          continue;
-        }
-
-        const detail = yield* threadDetail(threadId);
-        if (Option.isNone(detail)) {
-          yield* advanceCursor(threadId, message.id);
-          continue;
-        }
-        const status = statusOf(detail.value);
-        if (status === "running" || status === "starting") {
-          // Hold the cursor so the message is re-read after the turn settles.
-          yield* react(link.discordThreadId, message.id, "⏳");
-          yield* Ref.update(deferredInbound, (map) => {
-            const next = new Map(map);
-            next.set(threadId, [...(next.get(threadId) ?? []), message.id]);
-            return next;
-          });
-          return;
-        }
-
-        yield* dispatchInbound(threadId, detail.value, message).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("discord bridge inbound dispatch failed", {
-              threadId,
-              cause: String(error),
-            }),
-          ),
+        const consumed = yield* withAutomationWork(
+          processInboundMessage(threadId, link.discordThreadId, message, config),
         );
-        yield* react(link.discordThreadId, message.id, "✅");
-        yield* advanceCursor(threadId, message.id);
+        // Do not let a later bot/ignored message move the cursor past this
+        // oldest allowed message while its thread is still busy.
+        if (!consumed) return;
       }
     });
 
@@ -532,9 +538,11 @@ const make = Effect.gen(function* () {
   const advanceCursor = (threadId: ThreadId, discordMessageId: string) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
-      yield* links
-        .setLastSeen({ threadId, lastSeenDiscordMessageId: discordMessageId, updatedAt: now })
-        .pipe(Effect.ignore);
+      yield* links.setLastSeen({
+        threadId,
+        lastSeenDiscordMessageId: discordMessageId,
+        updatedAt: now,
+      });
     });
 
   const pollOnce = Effect.gen(function* () {
@@ -545,10 +553,16 @@ const make = Effect.gen(function* () {
     const active = yield* links.listActive().pipe(Effect.orElseSucceed(() => []));
     for (const link of active) {
       yield* pollThread(link, config).pipe(
-        Effect.catch((error) => handleRestError(link.threadId as ThreadId, error)),
+        Effect.catchTag("DiscordResponseError", (error) =>
+          handleRestError(link.threadId as ThreadId, error),
+        ),
+        Effect.catchTag("DiscordRequestError", (error) =>
+          handleRestError(link.threadId as ThreadId, error),
+        ),
+        Effect.catchTag("MaintenanceWorkHeld", () => Effect.void),
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
-            ? Effect.failCause(cause)
+            ? Effect.interrupt
             : Effect.logWarning("discord bridge poll failed", {
                 threadId: link.threadId,
                 cause: Cause.pretty(cause),
@@ -579,15 +593,7 @@ const make = Effect.gen(function* () {
       mirrorActivity: config.mirrorActivity,
     });
 
-    yield* forkParked(
-      Stream.runForEach(threads.streamDomainEvents, (event) => {
-        const work = eventToWork(event, config.mirrorActivity);
-        if (work === null) {
-          return Effect.void;
-        }
-        return worker.enqueue(work);
-      }),
-    );
+    yield* forkParked(Stream.runForEach(threads.streamDomainEvents, enqueueEvent));
 
     yield* forkParked(Effect.forever(pollOnce.pipe(Effect.andThen(Effect.sleep(POLL_INTERVAL)))));
   });
@@ -595,6 +601,14 @@ const make = Effect.gen(function* () {
   return {
     start,
     drain: worker.drain,
+    pollOnce: pollOnce.pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("discord bridge poll failed", { cause: Cause.pretty(cause) }),
+      ),
+    ),
+    enqueueEvent,
   } satisfies DiscordBridgeShape;
 });
 

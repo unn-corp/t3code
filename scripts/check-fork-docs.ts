@@ -12,6 +12,7 @@ const documents = [
   "docs/user/android-fork.md",
   "docs/user/updating.md",
   "docs/internals/server-updates.md",
+  "docs/internals/discord-bridge.md",
 ];
 function headingAnchors(text: string): Set<string> {
   const anchors = new Set<string>();
@@ -40,8 +41,8 @@ export function checkForkDocs(repositoryRoot = root): string[] {
       continue;
     }
     const text = NodeFS.readFileSync(path, "utf8");
-    for (const match of text.matchAll(/\[[^\]]*\]\(([^\s)]+)(?:\s+"[^"]*")?\)/g)) {
-      const target = match[1]!;
+    for (const match of text.matchAll(/\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))(?:\s+"[^"]*")?\)/g)) {
+      const target = match[1] ?? match[2]!;
       if (/^(?:https?:|mailto:)/.test(target)) continue;
       const withoutAnchor = decodeURIComponent(target.split("#")[0]!);
       const destination = withoutAnchor

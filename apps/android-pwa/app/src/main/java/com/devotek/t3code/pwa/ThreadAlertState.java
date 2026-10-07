@@ -44,27 +44,32 @@ final class ThreadAlertState {
         states.keys().forEachRemaining(id -> { if (!ids.contains(id)) removed.add(id); });
         for (String id : removed) states.remove(id);
     }
+    static String effectiveStatus(JSONObject thread) {
+        JSONObject pending = thread.optJSONObject("pendingRuntimeRequest");
+        if (pending != null && !"auth_refresh".equals(pending.optString("kind")))
+            return "user_input".equals(pending.optString("kind")) ? "input" : "approval";
+        return thread.isNull("activityRunStatus") ? thread.optString("status") : thread.optString("activityRunStatus");
+    }
+    static boolean holdsCompletion(JSONObject thread) {
+        JSONArray background = thread.optJSONArray("pendingBackgroundTasks");
+        if (background != null) for (int i = 0; i < background.length(); i++) {
+            JSONObject task = background.optJSONObject(i);
+            if (task != null && !"command".equals(task.optString("kind"))) return true;
+        }
+        return false;
+    }
     String update(JSONObject thread) throws JSONException {
         String id = thread.getString("id");
         JSONObject previous = states.optJSONObject(id);
         JSONObject pending = thread.optJSONObject("pendingRuntimeRequest");
-        String status = thread.isNull("activityRunStatus") ? thread.optString("status") : thread.optString("activityRunStatus");
-        if (pending != null && !"auth_refresh".equals(pending.optString("kind"))) {
-            status = "user_input".equals(pending.optString("kind")) ? "input" : "approval";
-        }
+        String status = effectiveStatus(thread);
         String attention = "";
         if ("input".equals(status) || "approval".equals(status) || "failed".equals(status)) {
             attention = thread.optString("latestRunId") + ":" + status
                 + (pending == null ? "" : ":" + pending.optString("id"));
         }
         String completed = previous == null ? "" : previous.optString("completed");
-        boolean holdsCompletion = false;
-        JSONArray background = thread.optJSONArray("pendingBackgroundTasks");
-        if (background != null) for (int i = 0; i < background.length(); i++) {
-            JSONObject task = background.optJSONObject(i);
-            if (task != null && !"command".equals(task.optString("kind"))) holdsCompletion = true;
-        }
-        if (("completed".equals(status) || "idle".equals(status)) && !holdsCompletion
+        if (("completed".equals(status) || "idle".equals(status)) && !holdsCompletion(thread)
                 && !thread.isNull("latestRunId") && !thread.isNull("latestRunCompletedAt")) {
             completed = thread.optString("latestRunId") + ":" + thread.optString("latestRunCompletedAt");
         }

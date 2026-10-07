@@ -5,9 +5,9 @@ name: Fork release withdrawal
 # offering a withdrawn release; installations that already took it are not rolled back by this
 # workflow (see docs/operations/fork-releases.md, Withdrawal).
 #
-# It has its own concurrency group so a withdrawal never queues behind a long build. A build that
-# is about to publish rechecks eligibility immediately before publishing, so a withdrawal made
-# while it runs still takes effect.
+# It has its own workflow concurrency group so withdrawals never queue behind long builds. Only
+# the final publish and withdrawal/restore jobs share a state-transition lock; GitHub's release API
+# has no compare-and-swap to make the eligibility check and publish atomic.
 
 on:
   workflow_dispatch:
@@ -32,6 +32,7 @@ on:
 concurrency:
   group: fork-release-withdrawal
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
@@ -40,6 +41,10 @@ jobs:
   withdrawal:
     name: ${{ inputs.action }} ${{ inputs.version }}
     if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: fork-release-state
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

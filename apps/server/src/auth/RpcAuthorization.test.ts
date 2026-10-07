@@ -184,6 +184,7 @@ describe("RPC scope middleware", () => {
             ? Effect.fail(new MaintenanceWorkHeld({ cause: "fenced" }))
             : Effect.sync(() => void log.push("check")),
         ),
+        checkAutomation: Effect.void,
       };
       return Effect.gen(function* () {
         const writeStarted = yield* Deferred.make<void>();

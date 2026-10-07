@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { withAutomationWork } from "../maintenance/WorkAdmission.ts";
 import { OrganizationProviderBudgetError } from "./OrganizationProviderBudget.ts";
 import {
   coordinateOrganizationGitCandidate,
@@ -341,9 +342,13 @@ export function makeOrganizationLiveWorkExecutor<RS, RA, RQ, RI>(
         cursor = workId;
         if (inFlight.has(workId) || failedInProcess.has(workId)) continue;
         inFlight.add(workId);
-        const result = yield* Effect.exit(runWork(workId)).pipe(
-          Effect.ensuring(Effect.sync(() => inFlight.delete(workId))),
-        );
+        const result = yield* Effect.exit(
+          withAutomationWork(runWork(workId)).pipe(
+            Effect.catchTag("MaintenanceWorkHeld", () =>
+              Effect.succeed({ workId, phase: "skipped", outcome: "waiting" } as const),
+            ),
+          ),
+        ).pipe(Effect.ensuring(Effect.sync(() => inFlight.delete(workId))));
         if (Exit.isSuccess(result)) results.push(result.value);
         else results.push({ workId, phase: "skipped", outcome: "failed" });
       }

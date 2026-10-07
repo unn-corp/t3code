@@ -25,6 +25,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectionSnapshotQuery from "../agentDashboard/AutomationSnapshotQuery.ts";
 import * as AgentDashboardRunHistory from "./AgentDashboardRunHistory.ts";
 import * as AgentDashboardStore from "./AgentDashboardStore.ts";
+import { MaintenanceWorkHeld, withAutomationWork } from "../maintenance/WorkAdmission.ts";
 
 const AUTOMATION_KIND = "inactive-worktree-cleanup";
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -62,7 +63,10 @@ export class AgentDashboardInactiveWorktreeCleanupError extends Schema.TaggedErr
 
 export interface AgentDashboardInactiveWorktreeCleanupService {
   /** Runs one due cleanup scan. Null means disabled or not yet due. */
-  readonly runOnce: Effect.Effect<number | null, AgentDashboardInactiveWorktreeCleanupError>;
+  readonly runOnce: Effect.Effect<
+    number | null,
+    AgentDashboardInactiveWorktreeCleanupError | MaintenanceWorkHeld
+  >;
 }
 
 export class AgentDashboardInactiveWorktreeCleanup extends Context.Service<
@@ -300,86 +304,88 @@ const make = Effect.gen(function* () {
     yield* Effect.forEach(
       candidates,
       (candidate) =>
-        Effect.gen(function* () {
-          const preflight = yield* Effect.tryPromise({
-            try: () =>
-              inspectWorktreeRemoteSafety({
-                repositoryRoot: candidate.project.workspaceRoot,
+        withAutomationWork(
+          Effect.gen(function* () {
+            const preflight = yield* Effect.tryPromise({
+              try: () =>
+                inspectWorktreeRemoteSafety({
+                  repositoryRoot: candidate.project.workspaceRoot,
+                  worktreePath: candidate.path,
+                }),
+              catch: (cause) =>
+                new AgentDashboardInactiveWorktreeCleanupError({
+                  operation: "inspect worktree",
+                  message: "Arcwright Code could not inspect the inactive worktree safely.",
+                  cause,
+                }),
+            });
+            if (preflight.remoteName === null) return;
+            yield* git.fetchRemote({
+              cwd: candidate.path,
+              remoteName: preflight.remoteName,
+            });
+            const verified = yield* Effect.tryPromise({
+              try: () =>
+                inspectWorktreeRemoteSafety({
+                  repositoryRoot: candidate.project.workspaceRoot,
+                  worktreePath: candidate.path,
+                }),
+              catch: (cause) =>
+                new AgentDashboardInactiveWorktreeCleanupError({
+                  operation: "verify worktree",
+                  message:
+                    "Arcwright Code could not verify the inactive worktree after fetching its remote.",
+                  cause,
+                }),
+            });
+            if (
+              !verified.registered ||
+              !verified.clean ||
+              verified.branch === null ||
+              verified.remoteName === null ||
+              verified.upstream === null ||
+              !verified.headSavedOnRemote ||
+              verified.lastCommitAtMs === null ||
+              verified.lastCommitAtMs > cutoffMs
+            ) {
+              return;
+            }
+            yield* git.removeWorktree({
+              cwd: candidate.project.workspaceRoot,
+              path: candidate.path,
+              forceIfClean: true,
+            });
+            removed += 1;
+            const completedAt = DateTime.formatIso(yield* DateTime.now);
+            yield* history.upsert({
+              id: `${AUTOMATION_KIND}:${String(candidate.project.id)}:${nowMs}:${removed}`,
+              status: "succeeded",
+              trigger: "scheduled",
+              kind: AUTOMATION_KIND,
+              repository: { projectId: candidate.project.id },
+              target: candidate.path,
+              threadId: null,
+              jobId: null,
+              model: null,
+              retryCount: 0,
+              findingCount: 0,
+              costUnits: null,
+              error: null,
+              createdAt: completedAt,
+              startedAt: completedAt,
+              updatedAt: completedAt,
+              completedAt,
+            });
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Inactive worktree cleanup skipped a candidate", {
+                projectId: candidate.project.id,
                 worktreePath: candidate.path,
-              }),
-            catch: (cause) =>
-              new AgentDashboardInactiveWorktreeCleanupError({
-                operation: "inspect worktree",
-                message: "Arcwright Code could not inspect the inactive worktree safely.",
                 cause,
               }),
-          });
-          if (preflight.remoteName === null) return;
-          yield* git.fetchRemote({
-            cwd: candidate.path,
-            remoteName: preflight.remoteName,
-          });
-          const verified = yield* Effect.tryPromise({
-            try: () =>
-              inspectWorktreeRemoteSafety({
-                repositoryRoot: candidate.project.workspaceRoot,
-                worktreePath: candidate.path,
-              }),
-            catch: (cause) =>
-              new AgentDashboardInactiveWorktreeCleanupError({
-                operation: "verify worktree",
-                message:
-                  "Arcwright Code could not verify the inactive worktree after fetching its remote.",
-                cause,
-              }),
-          });
-          if (
-            !verified.registered ||
-            !verified.clean ||
-            verified.branch === null ||
-            verified.remoteName === null ||
-            verified.upstream === null ||
-            !verified.headSavedOnRemote ||
-            verified.lastCommitAtMs === null ||
-            verified.lastCommitAtMs > cutoffMs
-          ) {
-            return;
-          }
-          yield* git.removeWorktree({
-            cwd: candidate.project.workspaceRoot,
-            path: candidate.path,
-            forceIfClean: true,
-          });
-          removed += 1;
-          const completedAt = DateTime.formatIso(yield* DateTime.now);
-          yield* history.upsert({
-            id: `${AUTOMATION_KIND}:${String(candidate.project.id)}:${nowMs}:${removed}`,
-            status: "succeeded",
-            trigger: "scheduled",
-            kind: AUTOMATION_KIND,
-            repository: { projectId: candidate.project.id },
-            target: candidate.path,
-            threadId: null,
-            jobId: null,
-            model: null,
-            retryCount: 0,
-            findingCount: 0,
-            costUnits: null,
-            error: null,
-            createdAt: completedAt,
-            startedAt: completedAt,
-            updatedAt: completedAt,
-            completedAt,
-          });
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Inactive worktree cleanup skipped a candidate", {
-              projectId: candidate.project.id,
-              worktreePath: candidate.path,
-              cause,
-            }),
+            ),
           ),
-        ),
+        ).pipe(Effect.catchTag("MaintenanceWorkHeld", (held) => Effect.fail(held))),
       { concurrency: 1, discard: true },
     );
     yield* Ref.set(lastRunAt, nowMs);

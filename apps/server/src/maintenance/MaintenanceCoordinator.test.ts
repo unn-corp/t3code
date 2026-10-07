@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - This test checks the host-owned policy file format directly.
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
@@ -6,6 +7,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type { TerminalSummary } from "@t3tools/contracts";
 import * as ProcessDiagnostics from "../diagnostics/ProcessDiagnostics.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -13,7 +17,11 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as IdleProcessRoots from "./IdleProcessRoots.ts";
-import { collectActivity, receiptSlotFor } from "./MaintenanceCoordinator.ts";
+import {
+  automationReviewAdmissionFor,
+  collectActivity,
+  receiptSlotFor,
+} from "./MaintenanceCoordinator.ts";
 
 const terminal = (overrides: Partial<TerminalSummary> = {}): TerminalSummary => ({
   threadId: "thread-1",
@@ -122,6 +130,71 @@ describe("device activity sources", () => {
       });
     }),
   );
+
+  describe("restored automation admission", () => {
+    it.effect("holds autonomous work when durable person review is pending", () =>
+      Effect.gen(function* () {
+        const home = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-maintenance-policy-")),
+        );
+        yield* Effect.promise(() =>
+          NodeFSP.mkdir(NodePath.join(home, "maintenance"), { recursive: true }),
+        );
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            NodePath.join(home, "maintenance", "policy.json"),
+            JSON.stringify({ automationReviewRequired: true }),
+          ),
+        );
+        try {
+          const held = yield* automationReviewAdmissionFor({ mode: "active", home }).pipe(
+            Effect.flip,
+          );
+          expect(held._tag).toBe("MaintenanceWorkHeld");
+        } finally {
+          yield* Effect.promise(() => NodeFSP.rm(home, { recursive: true, force: true }));
+        }
+      }),
+    );
+
+    it.effect(
+      "allows legacy and explicit false policies but fails closed on corrupted values",
+      () =>
+        Effect.gen(function* () {
+          const home = yield* Effect.promise(() =>
+            NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-maintenance-policy-")),
+          );
+          const policyPath = NodePath.join(home, "maintenance", "policy.json");
+          yield* Effect.promise(() =>
+            NodeFSP.mkdir(NodePath.dirname(policyPath), { recursive: true }),
+          );
+          try {
+            const missing = yield* Effect.exit(
+              automationReviewAdmissionFor({ mode: "active", home }),
+            );
+            expect(missing._tag).toBe("Success");
+
+            yield* Effect.promise(() =>
+              NodeFSP.writeFile(policyPath, JSON.stringify({ automationReviewRequired: false })),
+            );
+            const explicitlyAllowed = yield* Effect.exit(
+              automationReviewAdmissionFor({ mode: "active", home }),
+            );
+            expect(explicitlyAllowed._tag).toBe("Success");
+
+            for (const raw of ["{broken", JSON.stringify({ automationReviewRequired: "false" })]) {
+              yield* Effect.promise(() => NodeFSP.writeFile(policyPath, raw));
+              const corrupt = yield* Effect.exit(
+                automationReviewAdmissionFor({ mode: "active", home }),
+              );
+              expect(corrupt._tag).toBe("Failure");
+            }
+          } finally {
+            yield* Effect.promise(() => NodeFSP.rm(home, { recursive: true, force: true }));
+          }
+        }),
+    );
+  });
 
   it.effect("counts a running terminal command, but not a shell waiting at its prompt", () =>
     Effect.gen(function* () {

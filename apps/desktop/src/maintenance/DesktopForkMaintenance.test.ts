@@ -17,6 +17,7 @@ import {
   runHomeOperation,
 } from "@t3tools/shared/forkMaintenanceHomeOperations";
 import { CoordinatorStore } from "@t3tools/shared/forkMaintenanceStore";
+import { newJournal } from "@t3tools/shared/forkMaintenanceJournal";
 import { CURRENT_ACTIVITY_PROTOCOL } from "@t3tools/shared/forkMaintenanceAdmission";
 
 import { readVerifiedArtifact } from "./artifactCache.ts";
@@ -788,7 +789,18 @@ describe("DesktopForkMaintenance", () => {
       (await store.status(device.clock.value)).participants.find((p) => p.id === desktop.id)
         ?.blockers,
     ).toContainEqual(expect.objectContaining({ reason: "unknown-participant" }));
-    await expect(store.freeze("unknown-desktop", device.clock.value)).rejects.toThrow();
+    await expect(
+      store.freeze("unknown-desktop", device.clock.value, {
+        intent: newJournal({
+          id: "unknown-desktop",
+          kind: "update",
+          homes: [],
+          previous: { version: "test", artifactSha256: "" },
+          target: null,
+          now: device.clock.value,
+        }),
+      }),
+    ).rejects.toThrow();
   });
 
   it("registers a confirmed WSL member as a child of the desktop and relays the distribution's own activity as blockers", async () => {

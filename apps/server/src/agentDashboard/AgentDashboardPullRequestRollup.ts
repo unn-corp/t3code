@@ -45,6 +45,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import { retryAutomationWork, withAutomationWork } from "../maintenance/WorkAdmission.ts";
 
 const SCHEDULE_ID = "pull-request-rollup";
 const RUN_KIND = "pull-request-rollup";
@@ -352,8 +353,6 @@ const make = Effect.gen(function* () {
       const [result, next] = transition(current);
       return persistSchedule(next).pipe(Effect.as([result, next] as const));
     });
-
-  yield* persistSchedule(yield* SynchronizedRef.get(stateRef));
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomId = crypto.randomUUIDv4.pipe(
@@ -752,14 +751,16 @@ const make = Effect.gen(function* () {
           (run.status === "queued" || run.status === "running" || run.status === "ingesting"),
       ),
       (run) =>
-        history.upsert({
-          ...run,
-          status: "failed",
-          error:
-            "Arcwright Code restarted before it could verify the pull request rollup. Open the generated work session to inspect it.",
-          updatedAt: recoveredAt,
-          completedAt: recoveredAt,
-        }),
+        retryAutomationWork(
+          history.upsert({
+            ...run,
+            status: "failed",
+            error:
+              "Arcwright Code restarted before it could verify the pull request rollup. Open the generated work session to inspect it.",
+            updatedAt: recoveredAt,
+            completedAt: recoveredAt,
+          }),
+        ).pipe(Effect.forkIn(scope), Effect.asVoid),
       { concurrency: 1, discard: true },
     );
   }).pipe(Effect.catchCause(() => Effect.void));
@@ -780,157 +781,193 @@ const make = Effect.gen(function* () {
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
     const startedAt = DateTime.formatIso(now);
-    yield* updateSchedule((current) => [
-      undefined,
-      syncScheduleSettings(current, currentSettings, nowMs),
-    ]);
-    const claimed = yield* updateSchedule((current) => {
-      if (
-        !currentSettings.enabled ||
-        current.lastStatus === "running" ||
-        Date.parse(current.nextRunAt) > nowMs
-      ) {
-        return [false, current] as const;
+    const scheduleBeforeSync = yield* SynchronizedRef.get(stateRef);
+    const schedulePreflight = syncScheduleSettings(scheduleBeforeSync, currentSettings, nowMs);
+    const settingsChanged =
+      scheduleBeforeSync.enabled !== schedulePreflight.enabled ||
+      scheduleBeforeSync.intervalDays !== schedulePreflight.intervalDays ||
+      scheduleBeforeSync.nextRunAt !== schedulePreflight.nextRunAt;
+    if (
+      !currentSettings.enabled ||
+      schedulePreflight.lastStatus === "running" ||
+      Date.parse(schedulePreflight.nextRunAt) > nowMs
+    ) {
+      if (settingsChanged && schedulePreflight.lastStatus !== "running") {
+        yield* withAutomationWork(
+          updateSchedule((current) => [
+            undefined,
+            syncScheduleSettings(current, currentSettings, nowMs),
+          ]),
+        ).pipe(Effect.catchTag("MaintenanceWorkHeld", () => Effect.void));
       }
-      return [
-        true,
-        {
-          ...current,
-          enabled: true,
-          intervalDays: currentSettings.intervalDays,
-          lastRunAt: startedAt,
-          lastStatus: "running" as const,
-          lastError: null,
-          heartbeatAt: startedAt,
-          runCount: current.runCount + 1,
-        },
-      ] as const;
-    });
-    if (!claimed) return null;
-
-    const cycle = yield* Effect.result(
-      Effect.gen(function* () {
-        const [shell, existingRuns, policies] = yield* Effect.all([
-          projection.getShellSnapshot(),
-          history.list,
-          dashboardStore.readRepositoryPolicies,
-        ]);
-        const activeProjectIds = new Set(
-          existingRuns
-            .filter(
-              (run) =>
-                run.kind === RUN_KIND &&
-                (run.status === "queued" || run.status === "running" || run.status === "ingesting"),
-            )
-            .map((run) => String(run.repository.projectId)),
-        );
-        const attempts = yield* Effect.forEach(
-          shell.projects.filter(
-            (project) =>
-              !activeProjectIds.has(String(project.id)) &&
-              AgentDashboardStore.repositoryAutomationsEnabled(
-                policies,
-                project.id,
-                "pull-request-rollup",
-              ),
-          ),
-          (project) =>
-            Effect.gen(function* () {
-              const stable = yield* Effect.tryPromise({
-                try: () => AgentDashboardStore.isStableRepositoryPath(project.workspaceRoot),
-                catch: (cause) =>
-                  new AgentDashboardPullRequestRollupError({
-                    operation: "inspect repository path",
-                    message: `Arcwright Code could not inspect the repository path for ${project.title}.`,
-                    cause,
-                  }),
-              });
-              if (!stable) return null;
-              const repository = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
-                project.repositoryIdentity?.locator.remoteUrl ?? null,
-              );
-              if (!repository) return null;
-              const { baseBranch } = yield* resolveBaseBranch(
-                project,
-                currentSettings.targetBranch,
-              );
-              const pullRequests = yield* sourceControl.listProjectPullRequests({
-                cwd: project.workspaceRoot,
-                repository,
-                limit: 100,
-                ...(project.githubAccountId ? { githubAccountId: project.githubAccountId } : {}),
-              });
-              const eligible = filterPullRequestsForRollup({
-                pullRequests,
-                settings: currentSettings,
-                baseBranch,
-                nowMs,
-              });
-              if (eligible.length === 0) return null;
-              const launched = yield* launch({
-                project,
-                repository,
-                baseBranch,
-                pullRequests: eligible,
-                settings: currentSettings,
-              });
-              yield* monitor({
-                ...launched,
-                project,
-                settings: currentSettings,
-              }).pipe(Effect.forkIn(scope));
-              return launched;
-            }).pipe(Effect.result),
-          { concurrency: 2 },
-        );
-        return {
-          launched: attempts.filter(Result.isSuccess).filter((item) => item.success !== null)
-            .length,
-          errors: attempts
-            .filter(Result.isFailure)
-            .map((item) =>
-              item.failure instanceof Error ? item.failure.message : "A repository scan failed.",
-            ),
-        };
-      }),
-    );
-
-    const completedAt = yield* nowIso;
-    const intervalMs = currentSettings.intervalDays * DAY_MS;
-    if (Result.isFailure(cycle)) {
-      const message =
-        cycle.failure instanceof Error
-          ? cycle.failure.message
-          : "The pull request rollup scan failed.";
-      yield* updateSchedule((current) => [
-        undefined,
-        {
-          ...current,
-          lastStatus: "failed" as const,
-          lastError: message,
-          lastCompletedAt: completedAt,
-          nextRunAt: isoAt(nowMs + intervalMs),
-          heartbeatAt: completedAt,
-        },
-      ]);
-      return yield* new AgentDashboardPullRequestRollupError({
-        operation: "run cycle",
-        message,
-        cause: cycle.failure,
-      });
+      return null;
     }
-    yield* updateSchedule((current) => [
-      undefined,
-      {
-        ...current,
-        lastStatus: cycle.success.errors.length > 0 ? ("failed" as const) : ("completed" as const),
-        lastError: cycle.success.errors.length > 0 ? cycle.success.errors.join(" ") : null,
-        lastCompletedAt: completedAt,
-        nextRunAt: isoAt(nowMs + intervalMs),
-        heartbeatAt: completedAt,
-      },
-    ]);
-    return cycle.success.launched;
+    return yield* withAutomationWork(
+      Effect.gen(function* () {
+        yield* updateSchedule((current) => [
+          undefined,
+          syncScheduleSettings(current, currentSettings, nowMs),
+        ]);
+        const claimed = yield* updateSchedule((current) => {
+          if (
+            !currentSettings.enabled ||
+            current.lastStatus === "running" ||
+            Date.parse(current.nextRunAt) > nowMs
+          ) {
+            return [false, current] as const;
+          }
+          return [
+            true,
+            {
+              ...current,
+              enabled: true,
+              intervalDays: currentSettings.intervalDays,
+              lastRunAt: startedAt,
+              lastStatus: "running" as const,
+              lastError: null,
+              heartbeatAt: startedAt,
+              runCount: current.runCount + 1,
+            },
+          ] as const;
+        });
+        if (!claimed) return null;
+
+        const cycle = yield* Effect.result(
+          Effect.gen(function* () {
+            const [shell, existingRuns, policies] = yield* Effect.all([
+              projection.getShellSnapshot(),
+              history.list,
+              dashboardStore.readRepositoryPolicies,
+            ]);
+            const activeProjectIds = new Set(
+              existingRuns
+                .filter(
+                  (run) =>
+                    run.kind === RUN_KIND &&
+                    (run.status === "queued" ||
+                      run.status === "running" ||
+                      run.status === "ingesting"),
+                )
+                .map((run) => String(run.repository.projectId)),
+            );
+            const attempts = yield* Effect.forEach(
+              shell.projects.filter(
+                (project) =>
+                  !activeProjectIds.has(String(project.id)) &&
+                  AgentDashboardStore.repositoryAutomationsEnabled(
+                    policies,
+                    project.id,
+                    "pull-request-rollup",
+                  ),
+              ),
+              (project) =>
+                Effect.gen(function* () {
+                  const stable = yield* Effect.tryPromise({
+                    try: () => AgentDashboardStore.isStableRepositoryPath(project.workspaceRoot),
+                    catch: (cause) =>
+                      new AgentDashboardPullRequestRollupError({
+                        operation: "inspect repository path",
+                        message: `Arcwright Code could not inspect the repository path for ${project.title}.`,
+                        cause,
+                      }),
+                  });
+                  if (!stable) return null;
+                  const repository = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+                    project.repositoryIdentity?.locator.remoteUrl ?? null,
+                  );
+                  if (!repository) return null;
+                  const { baseBranch } = yield* resolveBaseBranch(
+                    project,
+                    currentSettings.targetBranch,
+                  );
+                  const pullRequests = yield* sourceControl.listProjectPullRequests({
+                    cwd: project.workspaceRoot,
+                    repository,
+                    limit: 100,
+                    ...(project.githubAccountId
+                      ? { githubAccountId: project.githubAccountId }
+                      : {}),
+                  });
+                  const eligible = filterPullRequestsForRollup({
+                    pullRequests,
+                    settings: currentSettings,
+                    baseBranch,
+                    nowMs,
+                  });
+                  if (eligible.length === 0) return null;
+                  const launched = yield* withAutomationWork(
+                    launch({
+                      project,
+                      repository,
+                      baseBranch,
+                      pullRequests: eligible,
+                      settings: currentSettings,
+                    }),
+                  );
+                  yield* retryAutomationWork(
+                    monitor({
+                      ...launched,
+                      project,
+                      settings: currentSettings,
+                    }),
+                  ).pipe(Effect.forkIn(scope));
+                  return launched;
+                }).pipe(Effect.result),
+              { concurrency: 2 },
+            );
+            return {
+              launched: attempts.filter(Result.isSuccess).filter((item) => item.success !== null)
+                .length,
+              errors: attempts
+                .filter(Result.isFailure)
+                .map((item) =>
+                  item.failure instanceof Error
+                    ? item.failure.message
+                    : "A repository scan failed.",
+                ),
+            };
+          }),
+        );
+
+        const completedAt = yield* nowIso;
+        const intervalMs = currentSettings.intervalDays * DAY_MS;
+        if (Result.isFailure(cycle)) {
+          const message =
+            cycle.failure instanceof Error
+              ? cycle.failure.message
+              : "The pull request rollup scan failed.";
+          yield* updateSchedule((current) => [
+            undefined,
+            {
+              ...current,
+              lastStatus: "failed" as const,
+              lastError: message,
+              lastCompletedAt: completedAt,
+              nextRunAt: isoAt(nowMs + intervalMs),
+              heartbeatAt: completedAt,
+            },
+          ]);
+          return yield* new AgentDashboardPullRequestRollupError({
+            operation: "run cycle",
+            message,
+            cause: cycle.failure,
+          });
+        }
+        yield* updateSchedule((current) => [
+          undefined,
+          {
+            ...current,
+            lastStatus:
+              cycle.success.errors.length > 0 ? ("failed" as const) : ("completed" as const),
+            lastError: cycle.success.errors.length > 0 ? cycle.success.errors.join(" ") : null,
+            lastCompletedAt: completedAt,
+            nextRunAt: isoAt(nowMs + intervalMs),
+            heartbeatAt: completedAt,
+          },
+        ]);
+        return cycle.success.launched;
+      }),
+    ).pipe(Effect.catchTag("MaintenanceWorkHeld", () => Effect.succeed(null)));
   });
 
   const tick = runOnce.pipe(
