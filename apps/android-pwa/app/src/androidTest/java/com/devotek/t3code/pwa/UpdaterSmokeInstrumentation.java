@@ -38,6 +38,13 @@ public final class UpdaterSmokeInstrumentation extends Instrumentation {
             engine.addListener(health);
             activity = startActivitySync(new Intent(Intent.ACTION_MAIN).setClassName(getTargetContext(), MainActivity.class.getName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             require(rendered.await(30, TimeUnit.SECONDS), "A fresh unpaired shell failed to report actual render health");
+            final Activity launched = activity;
+            runOnMainSync(() -> {
+                WebView webView = findWebView(launched.getWindow().getDecorView());
+                require(webView != null, "Launcher did not create a shell");
+                require("https://appassets.androidplatform.net/".equals(webView.getUrl()),
+                    "Launcher must open the conversation workspace, not Connections: " + webView.getUrl());
+            });
             require(engine.snapshot().unhealthyLaunches == 0, "Working onboarding must not enter recovery after repeated launches");
             getTargetContext().getSharedPreferences("updater-smoke", 0).edit().putString("connection-marker", "fixture-only").commit();
             engine.configure("nightly", false);
@@ -205,6 +212,14 @@ public final class UpdaterSmokeInstrumentation extends Instrumentation {
         if (view instanceof WebView) return true;
         if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++) if (hasWebView(group.getChildAt(i))) return true;
         return false;
+    }
+    private static WebView findWebView(View view) {
+        if (view instanceof WebView webView) return webView;
+        if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++) {
+            WebView webView = findWebView(group.getChildAt(i));
+            if (webView != null) return webView;
+        }
+        return null;
     }
     private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
 }

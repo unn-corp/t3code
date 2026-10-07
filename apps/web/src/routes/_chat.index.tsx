@@ -5,12 +5,12 @@ import { LinkIcon, PlusIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
-import { isElectron } from "../env";
+import { isAndroidPwa, isElectron } from "../env";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
-import { SidebarInset } from "../components/ui/sidebar";
+import { SidebarInset, useSidebar } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
@@ -31,7 +31,37 @@ function ChatIndexRouteView() {
     if (environments.length === 0) return <HostedStaticOnboardingState />;
   }
 
-  return <IndexDraftLanding />;
+  return isAndroidPwa ? <AndroidConversationLanding /> : <IndexDraftLanding />;
+}
+
+function AndroidConversationLanding() {
+  const { setOpenMobile } = useSidebar();
+  const projects = useProjects();
+  const bootstrapped = useAllEnvironmentShellsBootstrapped();
+
+  // The APK's launcher is a conversation picker, rather than implicitly creating a draft.
+  // Set this once on entry, including on an unfolded screen; folding preserves the list.
+  useEffect(() => {
+    setOpenMobile(true);
+  }, [setOpenMobile]);
+
+  if (bootstrapped && projects.length === 0) return <NoProjectsHero />;
+
+  return (
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
+      <WorkspacePageHeader className="border-b border-border">
+        <span className="text-sm font-medium">Conversations</span>
+      </WorkspacePageHeader>
+      <Empty className="flex-1">
+        <EmptyHeader>
+          <EmptyTitle>Your conversations</EmptyTitle>
+          <EmptyDescription>
+            Choose a conversation from the sidebar, or start a new thread.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    </SidebarInset>
+  );
 }
 
 /**

@@ -30,7 +30,10 @@ the clean product name. Do not change those executable paths without a handoff m
 It keeps environment pairing on the phone and primarily reaches hosts over Tailscale. Android does
 not run the coding-agent server or a Tailscale daemon inside the APK.
 
-**Entry points.** Launch Arcwright Code; use Settings → Connections to pair each host. The Android
+**Entry points.** The Android launcher opens the conversation workspace and its mobile thread list;
+the web index route keeps this APK behavior separate from the desktop's automatic draft landing.
+Explicit notification routes and Android activity restoration retain their destinations.
+Use Settings → Connections to pair each host. The Android
 [guide](../user/android-fork.md) covers installation and everyday routes. The
 [runbook](./android-pwa.md) owns signing, build commands, editing, and isolated verification.
 

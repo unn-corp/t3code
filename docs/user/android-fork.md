@@ -97,6 +97,11 @@ replace that authorization. Generate a fresh one-time pairing link for each devi
 Connections screen remains available without a host connection, so you can add or change hosts
 while others are offline.
 
+Opening the app from its icon takes you to your conversations, with the thread list open. It
+reconnects to your saved computers without opening Connections or creating a new draft. Notification
+taps still open the conversation they refer to. To add or change a computer, use **Settings →
+Connections**; a new installation with no saved computers shows connection setup first.
+
 The phone is a client of the selected environment. Agents, terminals, repositories, provider
 credentials, and conversation history stay on that environment's computer. The APK does not
 run its own T3 server or automatically discover and gain access to every machine in the tailnet.

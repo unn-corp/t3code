@@ -155,8 +155,9 @@ public final class MainActivity extends ComponentActivity {
 
     private static String notificationRoute(Intent intent) {
         String route = intent == null ? null : intent.getStringExtra(NativeNotifications.ROUTE);
+        // Launcher opens the conversation workspace; only an explicit notification selects Settings.
         return route != null && (route.equals("/settings") || route.matches("/[A-Za-z0-9_%-]+/[A-Za-z0-9_%-]+"))
-            ? route : "/settings/connections";
+            ? route : "/";
     }
     boolean chooseFile(ValueCallback<Uri[]> callback, WebChromeClient.FileChooserParams params) {
         try { PhoneOperations.shared().begin("file-chooser", "picker", PhoneOperations.UNTIL_ENDED); }
