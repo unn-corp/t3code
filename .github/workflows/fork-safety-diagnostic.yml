@@ -1,4 +1,4 @@
-name: Fork Windows safety diagnostic
+name: Fork safety diagnostic
 
 on:
   workflow_dispatch:
@@ -15,12 +15,13 @@ permissions:
 jobs:
   safety:
     if: github.repository == 'unn-corp/t3code' && github.ref == 'refs/heads/main' && inputs.scope != 'helper'
-    runs-on: windows-2025
+    runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
         suite: ${{ fromJSON(inputs.scope == 'desktop-updater' && '["desktop-updater"]' || inputs.scope == 'host-runtime' && '["host-runtime"]' || '["coordinator","host-runtime","desktop-updater"]') }}
+        platform: ${{ fromJSON(inputs.scope == 'host-runtime' && '[{"target":"windows-x64","runner":"windows-2025"},{"target":"linux-x64","runner":"ubuntu-24.04"}]' || '[{"target":"windows-x64","runner":"windows-2025"}]') }}
     steps:
       - name: Checkout diagnostic source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -46,6 +47,7 @@ jobs:
         shell: bash
         env:
           SUITE: ${{ matrix.suite }}
+          TARGET: ${{ matrix.platform.target }}
         run: |
           node --input-type=module <<'JS'
           import { SUITES } from './scripts/fork-release-suites.ts';
@@ -53,7 +55,7 @@ jobs:
           import { resolve } from 'node:path';
           import { spawnSync } from 'node:child_process';
           const spec = SUITES[process.env.SUITE];
-          if (!spec?.targets.includes('windows-x64')) throw new Error('Unsupported diagnostic suite');
+          if (!spec?.targets.includes(process.env.TARGET)) throw new Error('Unsupported diagnostic suite');
           mkdirSync('diagnostics', { recursive: true });
           const report = resolve('diagnostics', `${spec.id}.json`);
           const [program, ...args] = spec.command.map(arg => arg.replaceAll('<OUT>', report));
@@ -68,7 +70,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: windows-safety-diagnostic-${{ matrix.suite }}
+          name: ${{ matrix.platform.target }}-safety-diagnostic-${{ matrix.suite }}
           path: diagnostics/*.json
           if-no-files-found: error
           retention-days: 3

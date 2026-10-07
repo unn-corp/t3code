@@ -405,6 +405,22 @@ const awaitRunWrite = (
     }
   });
 
+const awaitTerminalRunWrite = (writes: Queue.Queue<AgentDashboardAutomationRun>, runId: string) =>
+  Effect.gen(function* () {
+    while (true) {
+      const run = yield* Queue.take(writes);
+      if (
+        run.id === runId &&
+        (run.status === "succeeded" ||
+          run.status === "partial" ||
+          run.status === "failed" ||
+          run.status === "cancelled")
+      ) {
+        return run;
+      }
+    }
+  });
+
 const observeCoverageWrites = (
   stateDir: string,
   writes: Queue.Queue<AgentDashboardAutomationRun>,
@@ -426,35 +442,6 @@ const observeCoverageWrites = (
     }),
     (restore) => Effect.sync(restore),
   );
-
-const waitForTerminal = (
-  jobService: AgentDashboardReviewJobService.AgentDashboardReviewJobService["Service"],
-  runId: string,
-  maxSteps = 200,
-) =>
-  Effect.gen(function* () {
-    for (let step = 0; step < maxSteps; step += 1) {
-      const runs = yield* jobService.listRuns;
-      const run = runs.find((item) => item.id === runId);
-      if (
-        run &&
-        (run.status === "succeeded" ||
-          run.status === "partial" ||
-          run.status === "failed" ||
-          run.status === "cancelled")
-      ) {
-        return run;
-      }
-      yield* TestClock.adjust(Duration.seconds(1));
-      yield* Effect.yieldNow;
-      // Durable finding ingestion uses real filesystem promises. Give the
-      // Node event loop a turn after advancing TestClock so this test waits
-      // for the worker receipt rather than sampling the intermediate state.
-      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
-    }
-    const runs = yield* jobService.listRuns;
-    return runs.find((item) => item.id === runId) ?? null;
-  });
 
 const jobServiceLayer = (input: {
   readonly baseDir: string;
@@ -623,19 +610,21 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
   it.effect("completes a scheduled no-op when no repository is due", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
+      const history = yield* makeObservedRunHistory(baseDir);
       const dispatchCount = yield* Ref.make(0);
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
         const enqueued = yield* jobService.enqueueReview({ trigger: "scheduled" });
-        const terminal = yield* waitForTerminal(jobService, enqueued.id, 200);
-        expect(terminal?.status).toBe("succeeded");
-        expect(terminal?.target).toBe("No repository due");
+        const terminal = yield* awaitRunWrite(history.writes, enqueued.id, "succeeded");
+        expect(terminal.status).toBe("succeeded");
+        expect(terminal.target).toBe("No repository due");
         expect(yield* Ref.get(dispatchCount)).toBe(0);
       }).pipe(
         Effect.provide(
           jobServiceLayer({
             baseDir,
+            runHistory: history.service,
             runner: {
               selectNextProject: () => Effect.succeed(null),
               runReview: () =>
@@ -653,10 +642,14 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
   it.effect("dispatches through ingestion and succeeds only after findings persist", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
+      const history = yield* makeObservedRunHistory(baseDir);
       const workspaceRoot = NodePath.join(baseDir, "repo");
       yield* Effect.tryPromise(() => NodeFSP.mkdir(workspaceRoot, { recursive: true }));
 
       const turnComplete = yield* Ref.make(false);
+      const reviewStarted = yield* Deferred.make<void>();
+      const projectionStarted = yield* Deferred.make<void>();
+      const allowProjection = yield* Deferred.make<void>();
       const dispatchCount = yield* Ref.make(0);
       const hiddenThreadCount = yield* Ref.make(0);
 
@@ -668,16 +661,16 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
           idempotencyKey: "test-success",
         });
         expect(enqueued.status).toBe("queued");
-
-        yield* TestClock.adjust(Duration.seconds(1));
-        yield* Effect.yieldNow;
-
+        yield* awaitRunWrite(history.writes, enqueued.id, "running");
+        yield* Deferred.await(reviewStarted);
+        yield* Deferred.await(projectionStarted);
         yield* Ref.set(turnComplete, true);
-        const terminal = yield* waitForTerminal(jobService, enqueued.id, 1_000);
-        expect(terminal?.status).toBe("succeeded");
-        expect(terminal?.findingCount).toBe(1);
-        expect(terminal?.threadId).toEqual(THREAD_ID);
-        expect(terminal?.error).toBeNull();
+        yield* Deferred.succeed(allowProjection, undefined);
+        const terminal = yield* awaitRunWrite(history.writes, enqueued.id, "succeeded");
+        expect(terminal.status).toBe("succeeded");
+        expect(terminal.findingCount).toBe(1);
+        expect(terminal.threadId).toEqual(THREAD_ID);
+        expect(terminal.error).toBeNull();
         expect(yield* Ref.get(dispatchCount)).toBe(1);
         expect(yield* Ref.get(hiddenThreadCount)).toBe(1);
         const findings = yield* AgentDashboardStore.getStore(NodePath.join(baseDir, "userdata"))
@@ -688,35 +681,36 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
         Effect.provide(
           jobServiceLayer({
             baseDir,
+            runHistory: history.service,
             runner: {
               runReview: () =>
-                Ref.updateAndGet(dispatchCount, (count) => count + 1).pipe(
-                  Effect.as({
-                    ...reviewResult,
-                    workspaceRoot,
-                  }),
-                ),
+                Effect.gen(function* () {
+                  yield* Ref.update(dispatchCount, (count) => count + 1);
+                  yield* Deferred.succeed(reviewStarted, undefined);
+                  return { ...reviewResult, workspaceRoot };
+                }),
               hideReviewThread: () => Ref.update(hiddenThreadCount, (count) => count + 1),
               runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot }),
             },
             getThreadDetailById: () =>
-              Ref.get(turnComplete).pipe(
-                Effect.map((done) =>
-                  Option.some({
-                    latestTurn: {
-                      turnId: "turn-1",
-                      state: done ? "completed" : "running",
-                      assistantMessageId: done ? ASSISTANT_ID : null,
-                      requestedAt: "2026-08-10T00:00:00.000Z",
-                      startedAt: "2026-08-10T00:00:00.000Z",
-                      completedAt: done ? "2026-08-10T00:00:10.000Z" : null,
-                    },
-                    messages: done
-                      ? [{ id: ASSISTANT_ID, role: "assistant", text: sampleFindingMetadata }]
-                      : [],
-                  } as never),
-                ),
-              ),
+              Effect.gen(function* () {
+                yield* Deferred.succeed(projectionStarted, undefined);
+                yield* Deferred.await(allowProjection);
+                const done = yield* Ref.get(turnComplete);
+                return Option.some({
+                  latestTurn: {
+                    turnId: "turn-1",
+                    state: done ? "completed" : "running",
+                    assistantMessageId: done ? ASSISTANT_ID : null,
+                    requestedAt: "2026-08-10T00:00:00.000Z",
+                    startedAt: "2026-08-10T00:00:00.000Z",
+                    completedAt: done ? "2026-08-10T00:00:10.000Z" : null,
+                  },
+                  messages: done
+                    ? [{ id: ASSISTANT_ID, role: "assistant", text: sampleFindingMetadata }]
+                    : [],
+                } as never);
+              }),
           }),
         ),
         Effect.scoped,
@@ -727,7 +721,10 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
   it.effect("returns the in-flight run for the same idempotency key", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
-      const hang = yield* Ref.make(true);
+      const history = yield* makeObservedRunHistory(baseDir);
+      const reviewStarted = yield* Deferred.make<void>();
+      const releaseReview = yield* Deferred.make<void>();
+      const reviewReturned = yield* Deferred.make<void>();
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
@@ -735,8 +732,8 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
           trigger: "manual",
           idempotencyKey: "manual:repository-review",
         });
-        yield* TestClock.adjust(Duration.seconds(1));
-        yield* Effect.yieldNow;
+        yield* awaitRunWrite(history.writes, first.id, "running");
+        yield* Deferred.await(reviewStarted);
 
         const second = yield* jobService.enqueueReview({
           trigger: "manual",
@@ -744,18 +741,19 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
         });
         expect(second.id).toBe(first.id);
 
-        yield* Ref.set(hang, false);
-        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Deferred.succeed(releaseReview, undefined);
+        yield* Deferred.await(reviewReturned);
       }).pipe(
         Effect.provide(
           jobServiceLayer({
             baseDir,
+            runHistory: history.service,
             runner: {
               runReview: () =>
                 Effect.gen(function* () {
-                  while (yield* Ref.get(hang)) {
-                    yield* Effect.sleep(Duration.seconds(1));
-                  }
+                  yield* Deferred.succeed(reviewStarted, undefined);
+                  yield* Deferred.await(releaseReview);
+                  yield* Deferred.succeed(reviewReturned, undefined);
                   return { ...reviewResult, workspaceRoot: baseDir };
                 }),
               runRandomReview: Effect.succeed(reviewResult),
@@ -841,7 +839,9 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
   it.effect("nudges a settled review once when its structured output is missing", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
+      const history = yield* makeObservedRunHistory(baseDir);
       const nudgeCount = yield* Ref.make(0);
+      const nudgeSent = yield* Deferred.make<void>();
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
@@ -851,16 +851,22 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
           idempotencyKey: "correction-case",
         });
 
-        const terminal = yield* waitForTerminal(jobService, enqueued.id, 200);
-        expect(terminal?.status).toBe("succeeded");
+        yield* Deferred.await(nudgeSent);
+        yield* TestClock.adjust(AgentDashboardReviewJobService.MONITOR_POLL_INTERVAL);
+        const terminal = yield* awaitRunWrite(history.writes, enqueued.id, "succeeded");
+        expect(terminal.status).toBe("succeeded");
         expect(yield* Ref.get(nudgeCount)).toBe(1);
       }).pipe(
         Effect.provide(
           jobServiceLayer({
             baseDir,
+            runHistory: history.service,
             runner: {
               runReview: () => Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
-              nudgeReview: () => Ref.update(nudgeCount, (count) => count + 1),
+              nudgeReview: () =>
+                Ref.update(nudgeCount, (count) => count + 1).pipe(
+                  Effect.tap(() => Deferred.succeed(nudgeSent, undefined)),
+                ),
               runRandomReview: Effect.succeed({ ...reviewResult, workspaceRoot: baseDir }),
             },
             getThreadDetailById: () =>
@@ -949,9 +955,24 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
   it.effect("bounds concurrent execution to one active worker", () =>
     Effect.gen(function* () {
       const baseDir = yield* makeTempStateDir();
+      const history = yield* makeObservedRunHistory(baseDir);
       const active = yield* Ref.make(0);
       const peak = yield* Ref.make(0);
-      const release = yield* Ref.make(false);
+      const invocationCount = yield* Ref.make(0);
+      const firstStarted = yield* Deferred.make<void>();
+      const secondAdmissionChecked = yield* Deferred.make<void>();
+      const admissionChecks = yield* Ref.make(0);
+      const releaseFirst = yield* Deferred.make<void>();
+      const secondStarted = yield* Deferred.make<void>();
+      const workAdmission: WorkAdmissionShape = {
+        acquire: Effect.succeed(() => Effect.void),
+        acquirePassive: Effect.succeed(() => Effect.void),
+        check: Effect.void,
+        checkAutomation: Effect.gen(function* () {
+          const count = yield* Ref.updateAndGet(admissionChecks, (value) => value + 1);
+          if (count === 2) yield* Deferred.succeed(secondAdmissionChecked, undefined);
+        }),
+      };
 
       yield* Effect.gen(function* () {
         const jobService = yield* AgentDashboardReviewJobService.AgentDashboardReviewJobService;
@@ -967,36 +988,37 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
         });
         expect(first.id).not.toBe(second.id);
 
-        // Drain the forked workers enough for the first to claim the slot.
-        for (let step = 0; step < 10 && (yield* Ref.get(peak)) === 0; step += 1) {
-          yield* TestClock.adjust(Duration.seconds(1));
-          yield* Effect.yieldNow;
-        }
+        yield* Deferred.await(firstStarted);
+        yield* Deferred.await(secondAdmissionChecked);
         expect(yield* Ref.get(peak)).toBe(1);
         expect(yield* Ref.get(active)).toBe(1);
 
-        yield* Ref.set(release, true);
-        for (let step = 0; step < 10; step += 1) {
-          yield* TestClock.adjust(Duration.seconds(1));
-          yield* Effect.yieldNow;
-        }
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* awaitTerminalRunWrite(history.writes, first.id);
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Deferred.await(secondStarted);
+        yield* awaitTerminalRunWrite(history.writes, second.id);
         expect(yield* Ref.get(peak)).toBe(1);
+        expect(yield* Ref.get(active)).toBe(0);
       }).pipe(
         Effect.provide(
           jobServiceLayer({
             baseDir,
+            runHistory: history.service,
+            workAdmission,
             runner: {
               runReview: () =>
                 Effect.gen(function* () {
+                  const invocation = yield* Ref.updateAndGet(invocationCount, (count) => count + 1);
                   const current = yield* Ref.updateAndGet(active, (count) => count + 1);
                   yield* Ref.update(peak, (value) => Math.max(value, current));
-                  while (!(yield* Ref.get(release))) {
-                    yield* Effect.sleep(Duration.seconds(1));
-                  }
+                  if (invocation === 1) yield* Deferred.succeed(firstStarted, undefined);
+                  if (invocation === 2) yield* Deferred.succeed(secondStarted, undefined);
+                  if (invocation === 1) yield* Deferred.await(releaseFirst);
                   yield* Ref.update(active, (count) => Math.max(0, count - 1));
                   return {
                     ...reviewResult,
-                    threadId: ThreadId.make(`thread-${current}`),
+                    threadId: ThreadId.make(`thread-${invocation}`),
                     workspaceRoot: baseDir,
                   };
                 }),

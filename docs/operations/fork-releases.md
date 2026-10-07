@@ -143,10 +143,12 @@ permissions and an isolated home; its result is diagnostic evidence, not a relea
 The smoke probe requires an actual HTTP 200 within 90 seconds on a clean Windows runner or 30 seconds
 on Linux. It reports startup elapsed time and redacts pairing credentials from failed startup output;
 this cold-start allowance does not change coordinator activity or ownership deadlines.
-Use **Fork Windows safety diagnostic** on `main` to rerun all three required Windows safety suites
+Use **Fork safety diagnostic** on `main` to rerun all three required Windows safety suites
 with individual assertion failures retained for three days, plus the recovery helper's real
 snapshot/restore proof. Select `scope: helper` to diagnose just that proof, or
-`scope: desktop-updater` or `scope: host-runtime` for that Windows suite alone. Controller fixture installation refusals
+`scope: desktop-updater` for that Windows suite alone. Select `scope: host-runtime` to run the
+complete required host-runtime suite on both Windows and Linux before rebuilding packages.
+Controller fixture installation refusals
 include the preceding staging phase and error so a failed download or helper proof is visible.
 The workflow has read-only permissions, produces no eligibility receipts, and does not allocate Android codes or rebuild
 application payloads. Windows directory ACL setup has a bounded 30-second cold-start allowance;
