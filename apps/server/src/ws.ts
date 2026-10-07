@@ -559,6 +559,9 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 const CoreWsRpcGroup = WsRpcGroup.omit(
+  WS_METHODS.codexCloudRead,
+  WS_METHODS.codexCloudCommand,
+  WS_METHODS.codexCloudWorkerSetup,
   WS_METHODS.threadExport,
   WS_METHODS.codexSessionsList,
   WS_METHODS.codexSessionsResume,

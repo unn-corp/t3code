@@ -1,4 +1,5 @@
 import { ComposerContextLabel } from "./ComposerContextLabel";
+import { CodexCloudLauncher } from "./codexCloud/CodexCloudPanel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
@@ -644,6 +645,12 @@ export const BranchToolbar = memo(function BranchToolbar({
             {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
           />
         ) : null}
+        {activeProjectRef && panelSection !== "branch" && (
+          <CodexCloudLauncher
+            environmentId={activeProjectRef.environmentId}
+            projectId={activeProjectRef.projectId}
+          />
+        )}
       </div>
     );
   }
@@ -754,6 +761,12 @@ export const BranchToolbar = memo(function BranchToolbar({
           {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
         />
       ) : null}
+      {activeProjectRef && (
+        <CodexCloudLauncher
+          environmentId={activeProjectRef.environmentId}
+          projectId={activeProjectRef.projectId}
+        />
+      )}
     </ComposerSurface.ContextStrip>
   );
 });

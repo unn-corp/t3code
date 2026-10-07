@@ -232,6 +232,27 @@ Provider-role/model defaults and upstream orchestration event changes require re
 and contracts. Restoring old data must not silently replay schedules, queues, or standing work
 authorization.
 
+## Experimental Codex Cloud integration
+
+**Behavior and delivery.** Projects can bind cloud tasks to a configured Codex
+account and published environment. A separate outbound worker experiment supports
+successive Codex/Claude jobs in an ephemeral checkout. This is source delivery with
+fixture verification; live cloud/account commissioning remains required. Existing
+local conversations and checkpoints do not become cloud sessions. See the
+[user setup](../user/providers-codex.md#run-work-in-codex-cloud) and
+[network boundary](../internals/remote.md#ephemeral-cloud-workers).
+
+**Ownership and verification.** The [cloud service](../../apps/server/src/codexCloud)
+owns account isolation, submission records, credentials, and worker job lifecycle.
+The [shared panel](../../apps/web/src/components/codexCloud) supplies web, desktop,
+and fork APK controls; upstream native mobile has no panel. RPC permissions,
+MCP caller limits, and maintenance admission apply to cloud commands. Preserve the
+optional `codexCloudTasks` descriptor capability for mixed-version connections.
+Run the focused cloud CLI/service/worker tests and the shared command-permission
+suite when changing these paths. Provider login changes must not redirect existing
+jobs, and worker reconnection must not replay uncertain edits. Do not commission by
+starting a development server against the installed T3 data home.
+
 ## Checkpoints and model compatibility
 
 **Behavior and reason.** Fork fixes avoid rehashing Git LFS files while capturing checkpoints,

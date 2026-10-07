@@ -6,6 +6,32 @@ Tailscale, SSH, and T3 Connect change how the client reaches that server; they d
 not introduce another execution model. See
 [remote access](../user/remote-access.md) for setup.
 
+## Ephemeral cloud workers
+
+Codex Cloud's outbound network access cannot accept a normal inbound T3 server or
+SSH connection. The experimental cloud worker therefore polls the owning server
+over HTTP/HTTPS, honoring the cloud proxy environment. It is not a T3 environment
+connection: cloud runs belong to the controller's project, while files, subprocesses,
+and provider conversation sessions remain in the task VM. Do not route local thread
+file/checkpoint commands to those cloud sessions. See
+[cloud setup](../user/providers-codex.md#run-work-in-codex-cloud).
+
+The [cloud service](../../apps/server/src/codexCloud/CodexCloudService.ts) persists
+submission intent before calling the external CLI. A timeout or lost response must
+not cause automatic resubmission, since the cloud CLI has no idempotency contract.
+Cloud jobs capture their account identity and environment; worker credentials also
+bind to that identity and one process, so account changes and VM restarts cannot
+silently replay commands. The HTTP worker and RPC/MCP transports must share the
+same service lock. External cloud launches run outside that lock to keep worker
+heartbeats available. Worker secrets live in the controller secret store, never in
+the state file or the downloadable source.
+
+The `codexCloudTasks` descriptor capability gates clients against older servers.
+The CLI cloud catalog and newly published environments may differ: account API
+connectivity is not proof of an environment's launch compatibility. Commission the
+chosen account and environment with a harmless live task before treating it as a
+usable execution backend.
+
 ## Identity is independent of the route
 
 An environment keeps its ID across server restarts and endpoint changes. Saved

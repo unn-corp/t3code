@@ -228,6 +228,7 @@ export const make = Effect.gen(function* () {
     serverVersion: APP_VERSION,
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     capabilities: {
+      codexCloudTasks: true,
       ...(forkMaintenance === undefined ? {} : { forkMaintenance }),
       repositoryIdentity: true,
       connectionProbe: true,

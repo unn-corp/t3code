@@ -97,6 +97,8 @@ export const ServerSelfUpdateCapability = Schema.Literals([
 export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
+  /** Account-bound cloud tasks and outbound experimental workers. Absent on older servers. */
+  codexCloudTasks: Schema.optionalKey(Schema.Boolean),
   forkMaintenance: Schema.optionalKey(ForkMaintenanceCapability),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
