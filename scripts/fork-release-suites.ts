@@ -109,6 +109,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/maintenance/MaintenanceOperatorHttp.test.ts",
       "src/maintenance/WorkAdmission.test.ts",
       "src/maintenance/coordinatedRestart.test.ts",
+      "src/cli/update.test.ts",
       "src/maintenance/restartGate.test.ts",
       "src/maintenance/serviceInstaller.test.ts",
       "src/serviceLauncherMaintenance.test.ts",

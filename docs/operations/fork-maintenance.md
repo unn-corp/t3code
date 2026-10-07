@@ -310,6 +310,12 @@ Use isolated data/coordinator namespaces and Luna agents for delegated testing a
 
 ## Copy-on-write worktrees
 
+The CLI `t3 update` adapter in
+[`coordinatedUpdate.ts`](../../apps/server/src/maintenance/coordinatedUpdate.ts) uses the running
+home's operator credential and maintenance controller. It cannot install from an unrelated release
+index, repoint a launcher independently, or use a legacy service restart as a fallback. Maintain
+[`CLI admission tests`](../../apps/server/src/cli/update.test.ts) in the host-runtime release suite.
+
 **Delivery.** Implemented in source; desktop and APK release delivery has not been commissioned.
 
 **Behavior and entry.** Settings → Source control → Space-efficient worktrees is an opt-in

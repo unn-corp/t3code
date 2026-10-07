@@ -166,7 +166,7 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
 
 const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe(
   Command.withDescription(
-    "Restart the background service. Picks up a version installed by `t3 update` that was not restarted at the time.",
+    "Restart the background service after stopped-device admission. Updates use the maintenance controller.",
   ),
   Command.withHandler((flags) =>
     runServiceCommand(

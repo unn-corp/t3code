@@ -52,6 +52,18 @@ Connections to the same replacement target share a request. Offline or
 blocked devices report their own result. Keep the client open to see status;
 closing it does not authorize a bypass of the host's admission checks.
 
+## Updating from a terminal
+
+Run `t3 update` for the running server's home, or pass `--base-dir` for another home.
+It requests the same maintenance controller as App updates, prints waiting reasons, and
+never bypasses agent admission. `--channel nightly` changes that home's saved channel;
+a pin remains until explicitly resumed. An optional version must match the freshly verified
+staged target. `--yes` does not skip safety or operating-system approval, and
+`--allow-downgrade` cannot replace the recorded recovery process.
+
+Standalone, development, and older installations need the manual stopped-work bootstrap
+procedure; this command does not rewrite their executable or restart them as a fallback.
+
 ## Why installation waits
 
 All agent work in registered fork runtimes belonging to that local OS user must be stopped,

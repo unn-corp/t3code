@@ -23,7 +23,7 @@ const ACK_ATTEMPTS = 40;
 
 /**
  * Quiesces the whole device for an operator-driven stop of a background service (`t3 service restart`,
- * `t3 update` with a restart, `t3 service uninstall`). It is the same admission an update takes: every
+ * `t3 service install` repair, `t3 service uninstall`). It is the same admission an update takes: every
  * registered participant must have been idle for five minutes, nothing may be orphaned, the fence is taken,
  * and every participant must acknowledge it before anything is stopped. Unknown activity, an empty
  * registry or an unreadable coordinator blocks. Work cannot start between the check and the stop because
