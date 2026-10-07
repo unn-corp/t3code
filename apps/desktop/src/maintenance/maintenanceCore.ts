@@ -88,6 +88,9 @@ export interface DesktopMaintenanceInput {
   readonly namespace?: string | undefined;
   readonly baseDir: string;
   readonly version: string;
+  readonly provenance?:
+    | Pick<ForkBuildIdentity, "upstreamVersion" | "upstreamCommit" | "forkBuildNumber">
+    | undefined;
   readonly commit: string | null;
   readonly platform: ForkPlatformKey | null;
   readonly packaging: Exclude<ForkPackaging, "service"> | null;
@@ -199,8 +202,11 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
     heldReason = reason;
     return { kind: "blocked", reason };
   };
-  const decorate = (status: ForkUpdateStatus): ForkUpdateStatus =>
-    heldReason === null
+  const decorate = (rawStatus: ForkUpdateStatus): ForkUpdateStatus => {
+    const status = input.provenance
+      ? { ...rawStatus, currentBuild: { ...rawStatus.currentBuild, ...input.provenance } }
+      : rawStatus;
+    return heldReason === null
       ? status
       : {
           ...status,
@@ -212,6 +218,7 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
             { participantId: "coordinator", reason: "transaction", label: heldReason },
           ],
         };
+  };
 
   const policyStore = createFilePolicyStore(paths.policy);
   const isBuild = (build: { readonly version: string; readonly commit?: string | undefined }) =>

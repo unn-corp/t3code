@@ -83,6 +83,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/forkMaintenanceSnapshot.test.ts",
       "src/forkMaintenanceTransaction.test.ts",
       "src/forkMaintenanceController.test.ts",
+      "src/buildVersion.test.ts",
       "src/forkRecoveryHelper.test.ts",
       "src/forkDesktopHandoff.test.ts",
       "src/forkRecoveryCache.test.ts",
@@ -160,6 +161,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/components/settings/UpdateRecoveryDialog.test.tsx",
       "src/components/settings/UpdateSafetyReviewDialog.test.tsx",
       "src/android/updates.test.ts",
+      "src/versionSkew.test.ts",
       "src/lib/attachmentUploadQueue.test.ts",
       "src/browser/browserRecordingUpload.test.ts",
     ],
@@ -187,6 +189,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       pwa("UpdateReconcilerTest"),
       pwa("UpdateStoreTest"),
       pwa("UpdateEngineRecoveryReadinessTest"),
+      pwa("VersionLabelsTest"),
     ],
     prepare: {
       workdir: "apps/web",

@@ -14,20 +14,47 @@ and recovery-helper checks still must all pass; missing or failed safety evidenc
 
 ## What a release is
 
-| Item           | Rule                                                                                                                                                      |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tag            | `fork-v<version>`. Never `v*`: upstream's release workflow triggers on `v*`.                                                                              |
-| Stable version | Independent of upstream. First `1.0.0`, then the next patch. A version is consumed by a draft or withdrawn release too and is never reused.               |
-| Nightly        | `<next stable>-nightly.<YYYYMMDD>.<run>`, for example `1.0.1-nightly.20261006.42`. Semver orders it below the stable it leads to.                         |
-| Schedule       | Nightly daily at 07:23 UTC. Stable Sundays at 08:23 UTC.                                                                                                  |
-| Stable source  | The newest nightly whose four checks were all true at least 24 hours ago and that is newer than the nightly the previous stable came from. Not telemetry. |
-| Stable build   | Rebuilds the nightly's exact commit under the stable version; it does not rename the nightly's binaries.                                                  |
-| Commit pin     | Nightly builds `github.sha`, fixed by GitHub when the run is triggered. A queued run keeps its own commit. Stable takes the commit from its source.       |
+| Item               | Rule                                                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tag                | `fork-v<version>`. Never `v*`: upstream's release workflow triggers on `v*`.                                                                                 |
+| Installer identity | Retained independent sequence: first `1.0.0`, then the next patch. Consumed draft/withdrawn versions are never reused. This is not the displayed T3 version. |
+| Nightly            | `<next stable>-nightly.<YYYYMMDD>.<run>`, for example `1.0.1-nightly.20261006.42`. Semver orders it below the stable it leads to.                            |
+| Schedule           | Nightly daily at 07:23 UTC. Stable Sundays at 08:23 UTC.                                                                                                     |
+| Stable source      | The newest nightly whose four checks were all true at least 24 hours ago and that is newer than the nightly the previous stable came from. Not telemetry.    |
+| Stable build       | Rebuilds the nightly's exact commit under the stable version; it does not rename the nightly's binaries.                                                     |
+| Commit pin         | Nightly builds `github.sha`, fixed by GitHub when the run is triggered. A queued run keeps its own commit. Stable takes the commit from its source.          |
+
+### Version provenance and history
+
+Display **T3 Code 0.0.45 · Arcwright build 35 · Nightly** (or Stable), using the
+upstream source actually included. Update [`fork-upstream.json`](../../fork-upstream.json)
+in the same change as an upstream integration, recording that base's package version and
+full commit. Do not substitute today's upstream main. The build helper embeds this
+provenance in web, server, desktop, and native Android; release manifests carry it
+additively. Nightly build counters come from their exact release version, and stable
+build counters come from `ARCWRIGHT_BUILD_NUMBER` (the fork workflow run number).
+Recovery builds read their predecessor's source; unknown historical provenance stays unknown.
+
+[`buildVersion.ts`](../../packages/shared/src/buildVersion.ts) owns shared presentation;
+Android's [`VersionLabels.java`](../../apps/android-pwa/app/src/main/java/com/devotek/t3code/pwa/VersionLabels.java)
+provides the pre-WebView recovery equivalent. About exposes the exact installer release
+and upstream/fork commits. Host compatibility compares included upstream bases, while
+the maintenance feed separately decides whether an Arcwright release is available.
+
+Keep the existing `1.x` installer series, `fork-v` tags, asset names, source identities,
+digests, and Android codes for ordering and recovery. Never rewrite published payloads
+or reuse tags to clean a label. Release titles may be relabelled Arcwright only after
+verifying each release's included base from its recorded source. Keep withdrawal markers
+and historical recovery records intact. Legacy `0.0.45-fork.4` hosts are displayed as
+`0.0.45 · Arcwright build 4 · Legacy`; this does not change their binary identity.
+
+Verification: shared build-label and build-provenance tests, web version-skew and Android
+bridge tests, native `VersionLabelsTest`, and release assembly/publication tests.
 
 ### Assets
 
 Every release carries exactly these, all listed with `sha256` and `bytes` in `fork-release.json`
-(the exact schema in `packages/contracts/src/forkRelease.ts`, which this pipeline never changes):
+(the exact schema in `packages/contracts/src/forkRelease.ts`):
 
 - Windows x64 NSIS installer (`T3-Code-<v>-x64.exe`), its blockmap, and the channel feed
   (`latest.yml` or `nightly.yml`).

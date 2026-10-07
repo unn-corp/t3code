@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
-import { APP_BUILD_LABEL, APP_VERSION } from "../../branding";
+import { APP_BUILD_IDENTITY, APP_BUILD_LABEL, APP_VERSION } from "../../branding";
+import { formatBuildVersion } from "@t3tools/shared/buildVersion";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
@@ -248,13 +249,13 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
         <TooltipTrigger
           render={
             <p className="truncate px-2 text-[10px] leading-4 text-muted-foreground/70 group-data-[collapsible=icon]:hidden">
-              Version {APP_VERSION}
+              {formatBuildVersion(APP_BUILD_IDENTITY)}
               {APP_BUILD_LABEL ? ` · ${APP_BUILD_LABEL}` : null}
             </p>
           }
         />
         <TooltipPopup side="top">
-          T3 Code version {APP_VERSION}
+          T3 Code {formatBuildVersion(APP_BUILD_IDENTITY)}. Installer release: {APP_VERSION}
           {APP_BUILD_LABEL ? `, ${APP_BUILD_LABEL}` : null}
         </TooltipPopup>
       </Tooltip>

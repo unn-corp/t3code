@@ -1001,6 +1001,9 @@ final class UpdateEngine {
                 .put("commit", identity == null ? BuildConfig.SOURCE_COMMIT : identity.commit).put("versionCode", runningVersionCode())
                 .put("channel", identity == null ? "stable" : identity.channel).put("artifactSha256", identity == null ? "" : identity.artifactSha256)
                 .put("installationSequence", identity == null ? 0 : identity.sequence).put("recovery", BuildConfig.RECOVERY_BUILD);
+            if (!BuildConfig.UPSTREAM_VERSION.isEmpty()) current.put("upstreamVersion", BuildConfig.UPSTREAM_VERSION);
+            if (!BuildConfig.UPSTREAM_COMMIT.isEmpty()) current.put("upstreamCommit", BuildConfig.UPSTREAM_COMMIT);
+            if (BuildConfig.FORK_BUILD_NUMBER > 0) current.put("forkBuildNumber", BuildConfig.FORK_BUILD_NUMBER);
             List<InstallGuard.Blocker> blockers = ok ? blockers(state) : new ArrayList<>();
             JSONArray blockerJson = new JSONArray();
             for (InstallGuard.Blocker blocker : blockers)

@@ -1,4 +1,5 @@
 import type { ForkRecoveryOption } from "@t3tools/contracts";
+import { formatBuildVersion } from "@t3tools/shared/buildVersion";
 import { useState } from "react";
 import type { ForkUpdateController } from "../../state/forkUpdates";
 import { recoveryFingerprint } from "../forkUpdatePresentation";
@@ -71,8 +72,8 @@ export function UpdateRecoveryDialog({
         <DialogHeader>
           <DialogTitle>Recover {device}</DialogTitle>
           <DialogDescription>
-            Current build: {reviewedBuild?.version ?? "Unknown"}. Target: {option.build.version} (
-            {option.build.commit.slice(0, 12)}).
+            Current build: {reviewedBuild ? formatBuildVersion(reviewedBuild) : "Unknown"}. Target:{" "}
+            {formatBuildVersion(option.build)} ({option.build.commit.slice(0, 12)}).
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

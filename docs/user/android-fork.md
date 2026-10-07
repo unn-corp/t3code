@@ -4,6 +4,11 @@ This fork includes a standalone Android app, package `com.devotek.t3code.pwa`. I
 web interface in an Android app with native notifications, file pickers, and a phone browser.
 The APK is built from `apps/android-pwa`; the upstream Google Play app is a separate product.
 
+**Settings → General → About** identifies the included T3 version and separate
+**Arcwright build** number, followed by Nightly or Stable. Exact source commits and
+installer identity remain available for diagnosis. The Android installation sequence
+orders APK replacements and is separate from that visible version.
+
 ## Install and update
 
 Build a signed APK using the [Android runbook](../operations/android-pwa.md#build-a-signed-apk),

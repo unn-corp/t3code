@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import * as Effect from "effect/Effect";
+import { forkUpstreamIdentity } from "./lib/build-identity.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   ANDROID_METADATA_FILE,
@@ -108,6 +109,17 @@ if (plan.recovery) {
 }
 
 const android = NodePath.join(plan.sourceDir, "apps/android-pwa");
+const provenance = forkUpstreamIdentity(
+  NodeURL.pathToFileURL(NodePath.join(plan.sourceDir, "fork-upstream.json")),
+);
+// Stable recovery sources may have no recorded workflow counter. Do not label them
+// with this release's counter; nightly predecessors carry theirs in their exact version.
+const forkBuildNumber = Number(
+  /-nightly\.\d{8}\.(\d+)$/.exec(plan.versionName)?.[1] ??
+    (plan.recovery ? "0" : (process.env.ARCWRIGHT_BUILD_NUMBER ?? "0")),
+);
+if (!Number.isSafeInteger(forkBuildNumber) || forkBuildNumber < 0 || forkBuildNumber > 2147483647)
+  throw new Error("Invalid Arcwright build number.");
 const webAssets = NodePath.join(android, "app/build/generated/web-assets");
 NodeChildProcess.execFileSync("vp", ["build", "--outDir", webAssets, "--emptyOutDir"], {
   cwd: NodePath.join(plan.sourceDir, "apps/web"),
@@ -117,6 +129,7 @@ NodeChildProcess.execFileSync("vp", ["build", "--outDir", webAssets, "--emptyOut
     VITE_ANDROID_PWA: "1",
     APP_VERSION: plan.versionName,
     APP_BUILD_COMMIT: plan.sourceCommit === "unknown" ? "" : plan.sourceCommit,
+    ARCWRIGHT_BUILD_NUMBER: String(forkBuildNumber),
     T3CODE_WEB_SOURCEMAP: "0",
   },
 });
@@ -132,6 +145,7 @@ NodeChildProcess.execFileSync(
     `-PpwaSourceVersion=${plan.versionName}`,
     `-PpwaSourceCommit=${plan.sourceCommit}`,
     `-PpwaRecovery=${plan.recovery}`,
+    `-PpwaForkBuildNumber=${forkBuildNumber}`,
   ],
   {
     cwd: android,
@@ -182,7 +196,7 @@ if (plan.emitsReleaseMetadata) {
   });
   NodeFS.writeFileSync(
     NodePath.join(output, ANDROID_METADATA_FILE),
-    `${JSON.stringify(metadata, null, 2)}\n`,
+    `${JSON.stringify({ ...metadata, ...provenance, ...(forkBuildNumber > 0 ? { forkBuildNumber } : {}) }, null, 2)}\n`,
   );
   log(
     `Wrote ${ANDROID_METADATA_FILE} for ${assetName} (${plan.kind}, code ${plan.versionCode}, source ${plan.sourceCommit}).`,

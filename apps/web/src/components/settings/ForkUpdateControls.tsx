@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { formatBuildVersion } from "@t3tools/shared/buildVersion";
 import type { EnvironmentId, ForkRecoveryOption } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { ForkUpdateController, useForkUpdates } from "../../state/forkUpdates";
@@ -57,12 +58,12 @@ export function ForkUpdateControls({
     <>
       <SettingsRow
         title={device}
-        description={`Installed source: ${status.currentBuild.version} · ${status.currentBuild.commit.slice(0, 12) || "unknown"}${status.currentBuild.installationSequence === undefined ? "" : ` · Installation sequence ${status.currentBuild.installationSequence}`}`}
+        description={`Installed: ${formatBuildVersion(status.currentBuild)} · ${status.currentBuild.commit.slice(0, 12) || "unknown"}${status.currentBuild.installationSequence === undefined ? "" : ` · Installation sequence ${status.currentBuild.installationSequence}`}`}
         status={
           <div role="status" aria-live="polite">
             <p>
               {forkPhaseLabels[status.phase]}
-              {status.targetBuild ? ` · ${status.targetBuild.version}` : ""}
+              {status.targetBuild ? ` · ${formatBuildVersion(status.targetBuild)}` : ""}
             </p>
             {detail ? <p className="whitespace-normal break-words">{detail}</p> : null}
             {status.lastError ? (

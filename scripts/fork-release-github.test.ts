@@ -206,6 +206,10 @@ describe("drafting a candidate", () => {
     const stored = github.releases.get(draft.id)!;
     assert.equal(stored.draft, true);
     assert.equal(stored.prerelease, true);
+    assert.equal(
+      stored.name,
+      `T3 Code Arcwright build ${candidate.plan.version.split(".").at(-1)} · Nightly`,
+    );
     assert.include(
       stored.body,
       `<!-- t3-fork-release:candidate commit=${candidate.plan.commit} channel=nightly -->`,

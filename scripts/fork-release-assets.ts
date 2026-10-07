@@ -102,10 +102,14 @@ export const parseApksignerCerts = singleSignerDigest;
 
 /**
  * Sidecar the Android build helper writes beside each APK. It is a claim, never proof: every
- * field except `updaterProtocol` is compared against what the APK itself reports.
+ * Installation facts are compared against the APK. Presentation provenance comes from
+ * the pinned source checkout; APK badging does not prove the included upstream base.
  */
 export interface AndroidBuildMetadata {
   readonly format: 1;
+  readonly upstreamVersion?: string;
+  readonly upstreamCommit?: string;
+  readonly forkBuildNumber?: number;
   readonly packageName: string;
   readonly versionName: string;
   readonly versionCode: number;
@@ -135,7 +139,13 @@ export const parseAndroidBuildMetadata = (raw: unknown): AndroidBuildMetadata =>
     !isHex(value.apkSha256, 64) ||
     (value.kind !== undefined && value.kind !== "normal" && value.kind !== "recovery") ||
     (value.assetName !== undefined && typeof value.assetName !== "string") ||
-    (value.bytes !== undefined && !Number.isInteger(value.bytes))
+    (value.bytes !== undefined && !Number.isInteger(value.bytes)) ||
+    (value.upstreamVersion !== undefined &&
+      (typeof value.upstreamVersion !== "string" ||
+        !/^\d+\.\d+\.\d+$/.test(value.upstreamVersion))) ||
+    (value.upstreamCommit !== undefined && !isHex(value.upstreamCommit, 40)) ||
+    (value.forkBuildNumber !== undefined &&
+      (!Number.isSafeInteger(value.forkBuildNumber) || Number(value.forkBuildNumber) <= 0))
   ) {
     throw new Error("Android build metadata does not match format 1.");
   }
@@ -144,6 +154,9 @@ export const parseAndroidBuildMetadata = (raw: unknown): AndroidBuildMetadata =>
 
 export interface VerifiedAndroidApk {
   readonly asset: string;
+  readonly upstreamVersion?: string;
+  readonly upstreamCommit?: string;
+  readonly forkBuildNumber?: number;
   readonly versionCode: number;
   readonly sourceVersion: string;
   readonly sourceCommit: string;
@@ -212,6 +225,9 @@ export const verifyAndroidApk = (input: {
     asset: input.assetName,
     versionCode: facts.versionCode,
     sourceVersion: facts.versionName,
+    ...(metadata.upstreamVersion ? { upstreamVersion: metadata.upstreamVersion } : {}),
+    ...(metadata.upstreamCommit ? { upstreamCommit: metadata.upstreamCommit } : {}),
+    ...(metadata.forkBuildNumber ? { forkBuildNumber: metadata.forkBuildNumber } : {}),
     sourceCommit: metadata.sourceCommit,
     packageName: FORK_ANDROID_PACKAGE,
     signerSha256: input.signerSha256,
@@ -807,6 +823,15 @@ export const composeManifest = (input: {
     format: 1,
     repository: "unn-corp/t3code",
     version: input.version,
+    ...(input.android.normal.upstreamVersion
+      ? { upstreamVersion: input.android.normal.upstreamVersion }
+      : {}),
+    ...(input.android.normal.upstreamCommit
+      ? { upstreamCommit: input.android.normal.upstreamCommit }
+      : {}),
+    ...(input.android.normal.forkBuildNumber
+      ? { forkBuildNumber: input.android.normal.forkBuildNumber }
+      : {}),
     commit: input.commit,
     channel: input.channel,
     releasedAt: input.releasedAt,

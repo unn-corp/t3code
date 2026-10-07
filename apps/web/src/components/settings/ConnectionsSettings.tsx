@@ -1,6 +1,7 @@
 import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import { ComposerHostMaintenanceStatus } from "../chat/ComposerHostMaintenanceStatus";
 import { HostUpdateSettings } from "./HostUpdateSettings";
+import { formatBuildVersion } from "@t3tools/shared/buildVersion";
 import {
   ChevronRightIcon,
   ChevronsLeftRightEllipsisIcon,
@@ -1561,7 +1562,9 @@ function SavedBackendListRow({
       isConnected && prepared._tag === "Some" ? prepared.value.target : null,
     ),
     resumingServerUpdate ? "Restarting" : status.text,
-    enabled && versionMismatch ? serverVersion : null,
+    enabled && serverVersion
+      ? formatBuildVersion(environment.serverConfig?.buildIdentity ?? { version: serverVersion })
+      : null,
     environment.serverConfig?.buildIdentity?.commit?.slice(0, 12) ?? null,
     environment.serverConfig?.buildIdentity?.dirty ? "Local changes" : null,
   ]
@@ -1579,7 +1582,7 @@ function SavedBackendListRow({
         : "Switched off"
   }${
     versionMismatch
-      ? `\nUpdate available: ${versionMismatch.serverVersion} → ${versionMismatch.clientVersion}`
+      ? `\nHost version differs from this client: ${formatBuildVersion(environment.serverConfig?.buildIdentity ?? { version: versionMismatch.serverVersion })}`
       : ""
   }${environment.serverConfig?.buildIdentity?.commit ? `\nCommit: ${environment.serverConfig.buildIdentity.commit}` : ""}${environment.serverConfig?.buildIdentity?.builtAt ? `\nBuilt: ${environment.serverConfig.buildIdentity.builtAt}` : ""}`;
 

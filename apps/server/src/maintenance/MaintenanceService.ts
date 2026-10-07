@@ -76,6 +76,9 @@ const readOnlyStatus = (reason: string, coordinator: MaintenanceCoordinator["Ser
     ];
     const current = deriveBuildIdentity({
       version: APP_VERSION,
+      upstreamVersion: BUILD_IDENTITY.upstreamVersion,
+      upstreamCommit: BUILD_IDENTITY.upstreamCommit,
+      forkBuildNumber: BUILD_IDENTITY.forkBuildNumber,
       commit: BUILD_IDENTITY.commit,
       recordedArtifactSha256: null,
     });
@@ -179,6 +182,9 @@ const make = Effect.gen(function* () {
   const platformKey = forkPlatformKey(platform, arch);
   const currentBuild = deriveBuildIdentity({
     version: APP_VERSION,
+    upstreamVersion: BUILD_IDENTITY.upstreamVersion,
+    upstreamCommit: BUILD_IDENTITY.upstreamCommit,
+    forkBuildNumber: BUILD_IDENTITY.forkBuildNumber,
     commit: BUILD_IDENTITY.commit,
     recordedArtifactSha256: null,
   });

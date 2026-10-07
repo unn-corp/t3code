@@ -34,6 +34,9 @@ T3 Code has 3 key app surfaces: **web**, **desktop**, and **mobile**.
 
 ## Fork maintenance invariants
 
+- Keep `fork-upstream.json` tied to the upstream commit actually included whenever integrating
+  upstream. Show the T3 base and separate **Arcwright build** counter; retain exact installer
+  identities for ordering/recovery. See [version provenance](docs/operations/fork-releases.md#version-provenance-and-history).
 - Maintain [fork feature ownership](docs/operations/fork-maintenance.md) and the affected user,
   operations, and architecture guides in the same change as behavior, UI routes, build requirements,
   or compatibility. Describe implemented behavior; label uncommissioned delivery explicitly.

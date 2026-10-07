@@ -218,6 +218,15 @@ client's canonical update control; About shows identity. Browser cache reload be
 hidden in the APK because it cannot replace native code. Release history and CLI installers target
 this fork.
 
+**Arcwright version ownership.** The displayed T3 base comes from
+[`fork-upstream.json`](../../fork-upstream.json); the separate Arcwright counter identifies
+our build. [`buildVersion.ts`](../../packages/shared/src/buildVersion.ts) owns shared labels,
+with the native equivalent in `VersionLabels.java`. Keep compatibility checks separate from
+installer ordering and fork release availability. Maintain provenance when integrating upstream,
+and retain immutable historical installer identities. See
+[version provenance and history](./fork-releases.md#version-provenance-and-history) for build
+ownership, label tests, and release-title cleanup rules.
+
 **Implementation and commissioning.** Coordinator services, multi-home transactions, desktop
 and Android controllers, shared UI controls, native recovery, external recovery helpers, and fork
 release workflows are implemented with focused verification. A complete signed manual baseline is

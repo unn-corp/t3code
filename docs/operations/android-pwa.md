@@ -91,6 +91,13 @@ Changing only `--version-name` does not make an APK an update. A normal build de
 recovery to the next code. Additional recovery builds use separately reserved `--version-code R`
 values greater than their paired `--normal-version-code`; never reuse an Android version code.
 
+Visible versions use the included T3 base from `fork-upstream.json` and a separate
+**Arcwright build** counter. The helper passes `pwaForkBuildNumber` to Gradle; nightlies
+derive it from the exact source version, normal stable builds use `ARCWRIGHT_BUILD_NUMBER`.
+Recovery uses the predecessor's provenance and never borrows the current release's counter.
+Unknown historical stable counters are omitted. Keep raw source versions and installation codes
+for verification and ordering. See [version provenance](./fork-releases.md#version-provenance-and-history).
+
 Keep `VITE_HTTP_URL` and `VITE_WS_URL` unset. The app chooses remote hosts through Connections;
 embedding a localhost origin in its web bundle breaks use from the phone.
 

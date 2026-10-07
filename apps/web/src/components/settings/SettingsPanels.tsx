@@ -90,6 +90,7 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_BUILD_IDENTITY, APP_VERSION } from "../../branding";
+import { formatBuildVersion } from "@t3tools/shared/buildVersion";
 
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -312,19 +313,21 @@ function backgroundActivityProfileSettings(profile: BackgroundActivityProfile) {
 
 function AboutVersionTitle() {
   return (
-    <span className="inline-flex items-baseline gap-2">
+    <span className="inline-flex min-w-0 flex-wrap items-baseline gap-2">
       <span>Version</span>
       <Tooltip>
         <TooltipTrigger
           render={<code tabIndex={0} className="text-2xs font-medium text-muted-foreground" />}
         >
-          {APP_VERSION}
-          {APP_BUILD_IDENTITY.commit
-            ? ` · ${APP_BUILD_IDENTITY.commit.slice(0, 12)}${APP_BUILD_IDENTITY.dirty ? " + local changes" : ""}`
-            : " · commit unknown"}
+          {formatBuildVersion(APP_BUILD_IDENTITY)}
         </TooltipTrigger>
         <TooltipPopup>
+          {APP_BUILD_IDENTITY.upstreamVersion
+            ? `Included upstream T3: ${APP_BUILD_IDENTITY.upstreamVersion} · ${APP_BUILD_IDENTITY.upstreamCommit ?? "commit unknown"}. `
+            : ""}
+          Installer release: {APP_VERSION}. Fork commit:{" "}
           {APP_BUILD_IDENTITY.commit ?? "Commit unknown"}
+          {APP_BUILD_IDENTITY.dirty ? " · local changes" : ""}
           {APP_BUILD_IDENTITY.builtAt ? ` · Built ${APP_BUILD_IDENTITY.builtAt}` : ""}
           {APP_BUILD_IDENTITY.label ? ` · ${APP_BUILD_IDENTITY.label}` : ""}
         </TooltipPopup>

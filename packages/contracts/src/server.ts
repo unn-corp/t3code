@@ -605,6 +605,9 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
 
 export const BuildIdentity = Schema.Struct({
   version: Schema.String,
+  upstreamVersion: Schema.optionalKey(Schema.String),
+  upstreamCommit: Schema.optionalKey(Schema.String),
+  forkBuildNumber: Schema.optionalKey(Schema.Int),
   commit: Schema.NullOr(Schema.String),
   dirty: Schema.Boolean,
   builtAt: Schema.NullOr(Schema.String),

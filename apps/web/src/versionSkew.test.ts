@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 // Pinned so the direction cases below read as fixed versions instead of
 // arithmetic on whatever version this checkout happens to be at.
-const branding = vi.hoisted(() => ({ APP_VERSION: "0.0.34" }));
+const branding = vi.hoisted(() => ({
+  APP_VERSION: "0.0.34",
+  APP_BUILD_IDENTITY: { upstreamVersion: undefined as string | undefined },
+}));
 vi.mock("./branding", () => branding);
 
 import { APP_VERSION } from "./branding";
@@ -44,6 +47,7 @@ describe("versionSkew", () => {
   });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
+    branding.APP_BUILD_IDENTITY.upstreamVersion = undefined;
   });
 
   it("dismisses only the current failed attempt without clearing its retry state", () => {
@@ -81,6 +85,17 @@ describe("versionSkew", () => {
 
   it("does not warn when versions match", () => {
     expect(resolveVersionMismatch(APP_VERSION)).toBeNull();
+  });
+
+  it("does not advertise a server update solely because fork installer numbers start at 1.x", () => {
+    branding.APP_VERSION = "1.0.1-nightly.20261007.35";
+    branding.APP_BUILD_IDENTITY.upstreamVersion = "0.0.45";
+    expect(resolveVersionMismatch("0.0.45-fork.4")).toBeNull();
+    expect(resolveVersionMismatch("1.0.0", "0.0.45")).toBeNull();
+    expect(resolveVersionMismatch("0.0.44-fork.3")).toMatchObject({
+      clientVersion: branding.APP_VERSION,
+      serverVersion: "0.0.44-fork.3",
+    });
   });
 
   it("returns a mismatch when the server is behind the client", () => {

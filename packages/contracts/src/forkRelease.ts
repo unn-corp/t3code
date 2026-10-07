@@ -36,6 +36,9 @@ export const ForkAndroidReleaseArtifact = Schema.Struct({
 });
 export const ForkReleaseManifest = Schema.Struct({
   format: Schema.Literal(1),
+  upstreamVersion: Schema.optionalKey(Schema.String),
+  upstreamCommit: Schema.optionalKey(ForkSourceCommit),
+  forkBuildNumber: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   repository: Schema.Literal(FORK_RELEASE_REPOSITORY),
   version: Schema.String,
   commit: ForkSourceCommit,

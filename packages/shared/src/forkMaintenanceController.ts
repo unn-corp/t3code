@@ -219,6 +219,15 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
   const targetDigest = () => (target === null ? null : artifactDigest(target.manifest));
   const buildOf = (selection: ForkTargetSelection): ForkBuildIdentity => ({
     version: selection.manifest.version,
+    ...(selection.manifest.upstreamVersion
+      ? { upstreamVersion: selection.manifest.upstreamVersion }
+      : {}),
+    ...(selection.manifest.upstreamCommit
+      ? { upstreamCommit: selection.manifest.upstreamCommit }
+      : {}),
+    ...(selection.manifest.forkBuildNumber
+      ? { forkBuildNumber: selection.manifest.forkBuildNumber }
+      : {}),
     commit: selection.manifest.commit,
     channel: selection.manifest.channel,
     artifactSha256: artifactDigest(selection.manifest) ?? "",
@@ -852,12 +861,18 @@ export { forkPlatformKey };
  */
 export function deriveBuildIdentity(input: {
   readonly version: string;
+  readonly upstreamVersion?: string | undefined;
+  readonly upstreamCommit?: string | undefined;
+  readonly forkBuildNumber?: number | undefined;
   readonly commit: string | null;
   readonly recordedArtifactSha256: string | null;
 }): ForkBuildIdentity {
   const parsed = parseForkVersion(input.version);
   return {
     version: input.version,
+    ...(input.upstreamVersion ? { upstreamVersion: input.upstreamVersion } : {}),
+    ...(input.upstreamCommit ? { upstreamCommit: input.upstreamCommit } : {}),
+    ...(input.forkBuildNumber === undefined ? {} : { forkBuildNumber: input.forkBuildNumber }),
     commit: input.commit ?? "",
     channel: parsed?.channel ?? "nightly",
     artifactSha256:

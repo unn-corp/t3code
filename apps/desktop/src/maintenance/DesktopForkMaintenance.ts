@@ -1,5 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off processEnv:off — the controller talks to the fork's release origin and the host registry.
 import * as NodeFSP from "node:fs/promises";
+declare const __T3CODE_FORK_PROVENANCE__:
+  | { upstreamVersion?: string; upstreamCommit?: string; forkBuildNumber?: number }
+  | undefined;
 import {
   ForkMaintenanceError,
   type DesktopMaintenanceOperation,
@@ -223,6 +226,8 @@ export const make = Effect.gen(function* () {
     namespace: process.env.T3CODE_MAINTENANCE_NAMESPACE,
     baseDir: environment.baseDir,
     version: environment.appVersion,
+    provenance:
+      typeof __T3CODE_FORK_PROVENANCE__ === "undefined" ? undefined : __T3CODE_FORK_PROVENANCE__,
     commit,
     platform,
     packaging: desktopPackaging,

@@ -20,6 +20,13 @@ continue to block installation.
 **Settings → General → About** shows the client identity and links to App updates.
 Android displays its source version separately from its installation sequence.
 
+The main label is **T3 Code 0.0.45 · Arcwright build 35 · Nightly**, for example.
+The T3 version identifies the upstream code included; the Arcwright number identifies
+our build. About retains the exact upstream and Arcwright commits and the installer
+release for diagnosis. Android's installation sequence is separate: recovery installs
+older source using a higher Android code. Historical builds with unknown upstream
+provenance show only their Arcwright counter rather than guessing a T3 version.
+
 Desktop sidebar update controls and **Check for Updates** in the application
 menu open this same status surface. Downloads are not ready to install until
 verification completes. Release history links to this fork.
@@ -35,6 +42,9 @@ Conversation update notices identify the host. A protocol mismatch requires
 updating the side named by the notice. Available releases, waiting, installation,
 verification, and failure are different states. Stop remains an agent action;
 an updater never stops work to obtain an installation window.
+Compatibility notices compare the included T3 versions, independently of Arcwright
+release availability. An internal `1.x` installer number does not make a `0.0.45`
+host incompatible by itself.
 
 **Update all** groups explicit coordinator identities. One device's replacement
 targets are requested separately and serialized while independent devices can progress.

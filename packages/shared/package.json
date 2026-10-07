@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./buildVersion": {
+      "types": "./src/buildVersion.ts",
+      "import": "./src/buildVersion.ts"
+    },
     "./forkMaintenanceWsl": {
       "types": "./src/forkMaintenanceWsl.ts",
       "import": "./src/forkMaintenanceWsl.ts"

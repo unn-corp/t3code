@@ -39,6 +39,9 @@ export const ForkWaitingReason = Schema.Literals([
 ]);
 export const ForkBuildIdentity = Schema.Struct({
   version: Schema.String,
+  upstreamVersion: Schema.optionalKey(Schema.String),
+  upstreamCommit: Schema.optionalKey(Schema.String),
+  forkBuildNumber: Schema.optionalKey(Schema.Int),
   commit: Schema.String,
   channel: ForkUpdateChannel,
   artifactSha256: Schema.String,

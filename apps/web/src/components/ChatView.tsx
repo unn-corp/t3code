@@ -3003,11 +3003,9 @@ export default function ChatView(props: ChatViewProps) {
     isVersionMismatchDismissed(versionMismatchDismissKey);
   const showVersionMismatchBanner =
     versionMismatch !== null && versionMismatchDismissKey !== null && !versionMismatchDismissed;
-  const hasMultipleRegisteredEnvironments = environments.length > 1;
-  const versionMismatchServerLabel =
-    hasMultipleRegisteredEnvironments && activeThread
-      ? `${environmentById.get(activeThread.environmentId)?.label ?? serverConfig?.environment.label ?? activeThread.environmentId} server`
-      : "server";
+  const versionMismatchServerLabel = activeThread
+    ? `${environmentById.get(activeThread.environmentId)?.label ?? serverConfig?.environment.label ?? activeThread.environmentId} server`
+    : "server";
   const handleDismissVersionMismatch = useCallback(() => {
     if (!versionMismatchDismissKey) return;
     dismissVersionMismatch(versionMismatchDismissKey);
@@ -3103,7 +3101,7 @@ export default function ChatView(props: ChatViewProps) {
                     type="button"
                     className="block max-w-full cursor-help truncate rounded-sm text-left"
                   >
-                    Server update available
+                    {versionMismatchServerLabel} is older than this app
                   </button>
                 }
               />
@@ -3113,7 +3111,7 @@ export default function ChatView(props: ChatViewProps) {
               </TooltipPopup>
             </Tooltip>
           ) : (
-            "Server update available"
+            `${versionMismatchServerLabel} is older than this app`
           ),
         description:
           !updateInProgress &&

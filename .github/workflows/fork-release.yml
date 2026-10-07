@@ -54,6 +54,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  ARCWRIGHT_BUILD_NUMBER: ${{ github.run_number }}
+
 jobs:
   # Fixes every identity the run needs. Later jobs read these outputs and never re-select.
   plan:

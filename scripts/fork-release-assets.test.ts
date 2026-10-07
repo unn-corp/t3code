@@ -146,6 +146,22 @@ describe("Android APK verification", () => {
     assert.equal(result.updaterProtocol, 1);
   });
 
+  it("retains optional pinned-source provenance without changing installation identity", () => {
+    const result = call({
+      metadata: parseAndroidBuildMetadata({
+        ...metadata,
+        upstreamVersion: "0.0.45",
+        upstreamCommit: sha("upstream"),
+        forkBuildNumber: 35,
+      }),
+    });
+    assert.equal(result.upstreamVersion, "0.0.45");
+    assert.equal(result.upstreamCommit, sha("upstream"));
+    assert.equal(result.forkBuildNumber, 35);
+    assert.equal(result.sourceVersion, facts.versionName);
+    assert.equal(result.versionCode, facts.versionCode);
+  });
+
   it("rejects each way an APK can differ from what the release promised", () => {
     assert.throws(() => call({ facts: { ...facts, packageName: "com.example.other" } }), /package/);
     assert.throws(() => call({ facts: { ...facts, debuggable: true } }), /debuggable/);
@@ -168,6 +184,9 @@ describe("Android APK verification", () => {
     assert.throws(() => parseAndroidBuildMetadata({ format: 2 }));
     assert.throws(() => parseAndroidBuildMetadata({ ...metadata, signerSha256: "short" }));
     assert.throws(() => parseAndroidBuildMetadata(null));
+    assert.throws(() => parseAndroidBuildMetadata({ ...metadata, upstreamVersion: "latest" }));
+    assert.throws(() => parseAndroidBuildMetadata({ ...metadata, upstreamCommit: "main" }));
+    assert.throws(() => parseAndroidBuildMetadata({ ...metadata, forkBuildNumber: -1 }));
   });
 });
 

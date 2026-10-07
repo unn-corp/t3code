@@ -314,6 +314,7 @@ export const writeFixtureTree = (inputDir: string, options: FixtureOptions = {})
 
 interface StoredRelease {
   id: number;
+  name?: string;
   tag_name: string;
   draft: boolean;
   prerelease: boolean;
@@ -420,6 +421,7 @@ export class FakeGitHub implements GitHubApi {
   async createDraftRelease(input: CreateReleaseInput) {
     const release: StoredRelease = {
       id: this.counter++,
+      name: input.name,
       tag_name: input.tagName,
       draft: true,
       prerelease: input.prerelease,

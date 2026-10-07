@@ -1,5 +1,6 @@
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
+import { buildIdentity } from "../../scripts/lib/build-identity.ts";
 
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
@@ -14,7 +15,9 @@ const repoEnv = loadRepoEnv();
 const isMainProcessExternal = (id: string) =>
   id === "electron" || id.startsWith("electron/") || isDesktopRuntimeExternalDependency(id);
 const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
+const { upstreamVersion, upstreamCommit, forkBuildNumber } = buildIdentity("");
 const publicConfigDefine = {
+  __T3CODE_FORK_PROVENANCE__: JSON.stringify({ upstreamVersion, upstreamCommit, forkBuildNumber }),
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
     repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),

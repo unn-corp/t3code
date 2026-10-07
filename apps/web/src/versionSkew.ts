@@ -6,9 +6,10 @@ import type {
 } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
+import { includedUpstreamVersion } from "@t3tools/shared/buildVersion";
 import * as Schema from "effect/Schema";
 
-import { APP_VERSION } from "./branding";
+import { APP_BUILD_IDENTITY, APP_VERSION } from "./branding";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
 export interface VersionMismatch {
@@ -51,7 +52,9 @@ function versionCore(version: string): string {
  * The skew a user can act on: the connected server runs an older T3 Code than
  * this client, so the server is the side that needs updating.
  *
- * Two nightly builds compare their full versions, including the date and run.
+ * Fork builds compare their recorded included upstream bases, not installer counters.
+ * Fork release availability belongs to the maintenance controller instead.
+ * Without provenance, two nightly builds compare their full versions, including the date and run.
  * Other combinations compare their core `major.minor.patch` only, so a stable
  * build and a nightly build with the same core do not cause an update warning.
  * A server ahead of the client does not need an update. Versions that do not
@@ -59,6 +62,7 @@ function versionCore(version: string): string {
  */
 export function resolveVersionMismatch(
   serverVersion: string | null | undefined,
+  serverUpstreamVersion?: string,
 ): VersionMismatch | null {
   const normalizedClientVersion = normalizeVersion(APP_VERSION);
   const normalizedServerVersion = normalizeVersion(serverVersion);
@@ -66,18 +70,26 @@ export function resolveVersionMismatch(
     return null;
   }
 
-  const clientCore = versionCore(normalizedClientVersion);
-  const serverCore = versionCore(normalizedServerVersion);
+  // Independent installer numbering is not the T3 compatibility version. Keep raw versions
+  // in the result for exact update/dismissal identity, and compare the included upstream bases.
+  const comparableClient = APP_BUILD_IDENTITY?.upstreamVersion ?? normalizedClientVersion;
+  const comparableServer =
+    includedUpstreamVersion({
+      version: normalizedServerVersion,
+      ...(serverUpstreamVersion ? { upstreamVersion: serverUpstreamVersion } : {}),
+    }) ?? normalizedServerVersion;
+  const clientCore = versionCore(comparableClient);
+  const serverCore = versionCore(comparableServer);
   const compareNightlyBuilds =
-    parseSemver(normalizedClientVersion)?.prerelease[0] === "nightly" &&
-    parseSemver(normalizedServerVersion)?.prerelease[0] === "nightly";
+    parseSemver(comparableClient)?.prerelease[0] === "nightly" &&
+    parseSemver(comparableServer)?.prerelease[0] === "nightly";
   const serverIsBehind =
     parseSemver(clientCore) && parseSemver(serverCore)
       ? compareSemverVersions(
-          compareNightlyBuilds ? normalizedServerVersion : serverCore,
-          compareNightlyBuilds ? normalizedClientVersion : clientCore,
+          compareNightlyBuilds ? comparableServer : serverCore,
+          compareNightlyBuilds ? comparableClient : clientCore,
         ) < 0
-      : normalizedServerVersion !== normalizedClientVersion;
+      : comparableServer !== comparableClient;
   if (!serverIsBehind) {
     return null;
   }
@@ -90,9 +102,15 @@ export function resolveVersionMismatch(
 }
 
 export function resolveServerConfigVersionMismatch(
-  serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
+  serverConfig:
+    | (Pick<ServerConfig, "environment"> & Pick<ServerConfig, "buildIdentity">)
+    | null
+    | undefined,
 ): VersionMismatch | null {
-  return resolveVersionMismatch(serverConfig?.environment.serverVersion);
+  return resolveVersionMismatch(
+    serverConfig?.environment.serverVersion,
+    serverConfig?.buildIdentity?.upstreamVersion,
+  );
 }
 
 /** The update path the connected server offers, or null when it only

@@ -7,6 +7,14 @@ def versionNameValue = providers.gradleProperty('pwaVersionName').getOrElse('1.0
 // Source identity travels separately from the installation code: the code only orders installs.
 def sourceVersion = providers.gradleProperty('pwaSourceVersion').getOrElse(versionNameValue)
 def sourceCommit = providers.gradleProperty('pwaSourceCommit').getOrElse('unknown')
+// This is the source actually included, not the latest upstream main or the installer version.
+def provenanceFile = file('../../../fork-upstream.json')
+def provenance = provenanceFile.exists() ? new groovy.json.JsonSlurper().parse(provenanceFile) : [:]
+def upstreamVersion = provenance.upstreamVersion ?: ''
+def upstreamCommit = provenance.upstreamCommit ?: ''
+def forkBuildNumber = providers.gradleProperty('pwaForkBuildNumber').getOrElse('0').toInteger()
+if (upstreamVersion && !(upstreamVersion ==~ /^\d+\.\d+\.\d+$/)) throw new GradleException('Invalid included upstream version.')
+if (upstreamCommit && !(upstreamCommit ==~ /^[a-f0-9]{40}$/)) throw new GradleException('Invalid included upstream commit.')
 def recoveryBuild = providers.gradleProperty('pwaRecovery').getOrElse('false')
 if (!(sourceVersion ==~ /^[A-Za-z0-9][A-Za-z0-9._+-]*$/)) throw new GradleException('pwaSourceVersion must be a plain version string.')
 if (!(sourceCommit ==~ /^([a-f0-9]{40}|unknown)$/)) throw new GradleException('pwaSourceCommit must be a full 40-character commit or unknown.')
@@ -40,6 +48,9 @@ android {
         buildConfigField 'String', 'FORK_RELEASE_MANIFEST_ASSET', '"' + manifestAssetName + '"'
         buildConfigField 'String', 'SOURCE_COMMIT', "\"${sourceCommit}\""
         buildConfigField 'String', 'SOURCE_VERSION', "\"${sourceVersion}\""
+        buildConfigField 'String', 'UPSTREAM_VERSION', "\"${upstreamVersion}\""
+        buildConfigField 'String', 'UPSTREAM_COMMIT', "\"${upstreamCommit}\""
+        buildConfigField 'int', 'FORK_BUILD_NUMBER', "${forkBuildNumber}"
         buildConfigField 'boolean', 'RECOVERY_BUILD', recoveryBuild
         buildConfigField 'int', 'UPDATER_PROTOCOL', '1'
         manifestPlaceholders = [pwaTargetPackage: packageName, sourceCommit: sourceCommit, sourceVersion: sourceVersion, recoveryBuild: recoveryBuild, updaterProtocol: '1']

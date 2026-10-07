@@ -161,6 +161,12 @@ it("maps native state into the shared maintenance status", async () => {
   const { toForkUpdateStatus, ANDROID_UPDATER_COORDINATOR_ID } = await import("./updates");
   const mapped = toForkUpdateStatus(
     status({
+      current: {
+        ...status().current,
+        upstreamVersion: "0.0.45",
+        upstreamCommit: "f".repeat(40),
+        forkBuildNumber: 35,
+      },
       policy: {
         channel: "stable",
         automaticInstallation: false,
@@ -178,7 +184,13 @@ it("maps native state into the shared maintenance status", async () => {
     coordinatorId: ANDROID_UPDATER_COORDINATOR_ID,
     phase: "waiting",
     policy: { channel: "stable", automaticInstallation: false, pinnedBuild: "e".repeat(64) },
-    currentBuild: { version: "1.0.0", installationSequence: 3 },
+    currentBuild: {
+      version: "1.0.0",
+      installationSequence: 3,
+      upstreamVersion: "0.0.45",
+      upstreamCommit: "f".repeat(40),
+      forkBuildNumber: 35,
+    },
     targetBuild: { version: "1.0.1", commit: "c".repeat(40) },
     automationReviewRequired: false,
   });

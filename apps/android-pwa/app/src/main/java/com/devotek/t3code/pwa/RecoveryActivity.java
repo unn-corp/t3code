@@ -86,14 +86,14 @@ public final class RecoveryActivity extends Activity {
             + "nothing here uninstalls the app or clears its data.", 15, false));
         if (current != null) {
             String commit = current.optString("commit");
-            content.addView(text("Installed build: " + current.optString("version") + " (code " + current.optLong("versionCode") + ", source "
+            content.addView(text("Installed: " + VersionLabels.format(current.optString("version"), current.optString("upstreamVersion"), current.optInt("forkBuildNumber")) + " (Android code " + current.optLong("versionCode") + ", source "
                 + (commit.length() > 8 ? commit.substring(0, 8) : commit) + ")", 15, false));
         }
         if (policy != null) {
             JSONObject pin = policy.optJSONObject("pin");
             content.addView(text("Channel: " + policy.optString("channel") + ". Automatic installation: "
                 + (policy.optBoolean("automaticInstallation") ? "on" : "off") + ".", 15, false));
-            if (pin != null) content.addView(text("Updates are pinned to " + pin.optString("version") + " until you resume them.", 15, false));
+            if (pin != null) content.addView(text("Updates are pinned to " + VersionLabels.format(pin.optString("version"), "", 0) + " until you resume them.", 15, false));
         }
         if (!status.isNull("lastError")) content.addView(text(status.optString("lastError"), 14, false));
         UpdateState state = engine.snapshot();
@@ -105,7 +105,7 @@ public final class RecoveryActivity extends Activity {
 
         if (state != null && state.pending != null && "awaiting-confirmation".equals(state.pending.installerResult)) {
             String transaction = state.pending.transactionId;
-            content.addView(text("Android needs your approval to replace T3 Code with " + state.pending.targetVersion + ".", 15, true));
+            content.addView(text("Android needs your approval to replace T3 Code with " + VersionLabels.format(state.pending.targetVersion, "", 0) + ".", 15, true));
             Button confirmation = button("Open Android update confirmation", view -> {
                 try { engine.openInstallConfirmation(transaction); }
                 catch (UpdateEngine.UpdateException error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); render(); }
@@ -137,7 +137,7 @@ public final class RecoveryActivity extends Activity {
             List<UpdateState.Recovery> builds = engine.installableRecovery();
             if (builds.isEmpty()) content.addView(text("No verified recovery build is cached for this installation.", 15, false));
             for (UpdateState.Recovery build : builds) {
-                content.addView(button("Request recovery build " + build.version + " (code " + build.versionCode + ")",
+                content.addView(button("Request recovery " + VersionLabels.format(build.version, "", 0) + " (Android code " + build.versionCode + ")",
                     view -> confirmInstall(build)));
             }
             content.addView(button("Download the latest recovery build", view -> background("Recovery build downloaded and verified.", engine::fetchRecovery)));
@@ -152,7 +152,7 @@ public final class RecoveryActivity extends Activity {
 
     private void confirmInstall(UpdateState.Recovery build) {
         new AlertDialog.Builder(this).setTitle("Request this recovery build?")
-            .setMessage("This asks to replace the installed build with " + build.version + " and pin it, so no automatic update replaces it until you resume updates. "
+            .setMessage("This asks to replace the installed build with " + VersionLabels.format(build.version, "", 0) + " and pin it, so no automatic update replaces it until you resume updates. "
                 + "Like every install it waits until T3 Code has been out of the foreground for 2 minutes and no phone work is running. "
                 + "App data and pairings are kept. Android may ask you to confirm.")
             .setPositiveButton("Request", (dialog, which) -> background("Requested. Leave T3 Code for 2 minutes and it will install.",

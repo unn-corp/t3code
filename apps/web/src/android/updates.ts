@@ -29,6 +29,9 @@ export type AndroidUpdateBlockerReason =
 
 export interface AndroidUpdateBuild {
   readonly version: string;
+  readonly upstreamVersion?: string;
+  readonly upstreamCommit?: string;
+  readonly forkBuildNumber?: number;
   readonly commit: string;
   readonly versionCode: number;
   readonly channel: ForkUpdateChannel;
@@ -287,6 +290,9 @@ const COMMIT = /^[a-f0-9]{40}$/;
 function toBuildIdentity(build: AndroidUpdateBuild): ForkBuildIdentity {
   return {
     version: build.version,
+    ...(build.upstreamVersion ? { upstreamVersion: build.upstreamVersion } : {}),
+    ...(build.upstreamCommit ? { upstreamCommit: build.upstreamCommit } : {}),
+    ...(build.forkBuildNumber === undefined ? {} : { forkBuildNumber: build.forkBuildNumber }),
     commit: COMMIT.test(build.commit) ? build.commit : build.commit || "unknown",
     channel: build.channel,
     artifactSha256: build.artifactSha256,
