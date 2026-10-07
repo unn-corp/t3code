@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests use local filesystem fixtures.
 // @effect-diagnostics preferSchemaOverJson:off - These tests persist a small fixture document.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -848,9 +849,10 @@ describe("Continuous Improvement scheduler enablement", () => {
           };
           const projectShell = {
             ...project("alpha"),
-            workspaceRoot: process.cwd(),
+            workspaceRoot: baseDir,
           } satisfies OrchestrationProjectShell;
 
+          yield* Effect.sync(() => NodeChildProcess.execFileSync("git", ["init", "-q", baseDir]));
           yield* Effect.promise(() =>
             NodeFSP.mkdir(NodePath.dirname(findingsPath), { recursive: true }),
           );

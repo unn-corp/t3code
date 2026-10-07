@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - File-backed SQLite concurrency fixtures need temporary filesystem paths.
 import { assert, it } from "@effect/vitest";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { OrganizationBindingId, OrganizationId, ProjectId } from "@t3tools/contracts";
 import { OrganizationIntakeSourceId } from "../../../../packages/contracts/src/organizationIntake.ts";
@@ -302,7 +303,9 @@ layer("Organization work intent", (it) => {
 
 it.effect("two SQLite clients converge on one intent for the same proposal", () =>
   Effect.gen(function* () {
-    const directory = yield* Effect.promise(() => NodeFSP.mkdtemp("/tmp/t3-work-intent-"));
+    const directory = yield* Effect.promise(() =>
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-work-intent-")),
+    );
     const filename = NodePath.join(directory, "state.sqlite");
     const fileLayer = () =>
       Layer.fresh(

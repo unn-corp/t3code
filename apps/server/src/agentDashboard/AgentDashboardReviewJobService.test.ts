@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -374,6 +375,56 @@ const unusedProjection = {
 const makeTempStateDir = () =>
   Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-adw-03-")));
 
+const openDirectoryWatcher = (directory: string) => {
+  let notificationPending = false;
+  let closed = false;
+  let watcherError: Error | null = null;
+  let waiter: { readonly resolve: () => void; readonly reject: (cause: Error) => void } | null =
+    null;
+  const watcher = NodeFS.watch(directory, () => {
+    if (waiter !== null) {
+      const current = waiter;
+      waiter = null;
+      current.resolve();
+    } else {
+      notificationPending = true;
+    }
+  });
+  watcher.on("error", (cause) => {
+    watcherError = cause;
+    const current = waiter;
+    waiter = null;
+    current?.reject(cause);
+  });
+  return {
+    waitForChange: () => {
+      if (watcherError !== null) return Promise.reject(watcherError);
+      if (closed) return Promise.resolve();
+      if (notificationPending) {
+        notificationPending = false;
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve, reject) => {
+        waiter = { resolve, reject };
+      });
+    },
+    close: () => {
+      if (closed) return;
+      closed = true;
+      watcher.close();
+      const current = waiter;
+      waiter = null;
+      current?.resolve();
+    },
+  };
+};
+
+const directoryWatcher = (directory: string) =>
+  Effect.acquireRelease(
+    Effect.sync(() => openDirectoryWatcher(directory)),
+    (watcher) => Effect.sync(() => watcher.close()),
+  );
+
 const waitForTerminal = (
   jobService: AgentDashboardReviewJobService.AgentDashboardReviewJobService["Service"],
   runId: string,
@@ -402,6 +453,50 @@ const waitForTerminal = (
     const runs = yield* jobService.listRuns;
     return runs.find((item) => item.id === runId) ?? null;
   });
+
+const waitForPersistedTerminal = (baseDir: string, runId: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const stateDir = NodePath.join(baseDir, "userdata");
+      const historyDir = NodePath.join(stateDir, "agent-dashboard");
+      yield* Effect.promise(() => NodeFSP.mkdir(historyDir, { recursive: true }));
+      const watcher = yield* directoryWatcher(historyDir);
+      while (true) {
+        const runs = yield* AgentDashboardRunHistory.readPersistedRuns(stateDir);
+        const run = runs.find((item) => item.id === runId);
+        if (
+          run &&
+          (run.status === "succeeded" ||
+            run.status === "partial" ||
+            run.status === "failed" ||
+            run.status === "cancelled")
+        ) {
+          return run;
+        }
+        // Advance monitor timers, then wait for an actual atomic history-file update.
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Effect.yieldNow;
+        yield* Effect.promise(watcher.waitForChange);
+      }
+    }),
+  );
+
+const waitForPersistedCoverageTerminal = (baseDir: string, runId: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const stateDir = NodePath.join(baseDir, "userdata");
+      const dashboardDir = NodePath.join(stateDir, "agent-dashboard");
+      yield* Effect.promise(() => NodeFSP.mkdir(dashboardDir, { recursive: true }));
+      const watcher = yield* directoryWatcher(dashboardDir);
+      const store = AgentDashboardStore.getStore(stateDir);
+      while (true) {
+        const coverage = yield* store.readRepositoryCoverage;
+        if (coverage[0]?.lastTerminalRunId === runId) return coverage;
+        // The single coverage worker signals completion by atomically replacing this document.
+        yield* Effect.promise(watcher.waitForChange);
+      }
+    }),
+  );
 
 const jobServiceLayer = (input: {
   readonly baseDir: string;
@@ -441,31 +536,23 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
           projectId: PROJECT_ID,
           idempotencyKey: "coverage-failure-first",
         });
-        expect((yield* waitForTerminal(jobService, first.id, 100))?.status).toBe("failed");
+        expect((yield* waitForPersistedTerminal(baseDir, first.id)).status).toBe("failed");
 
         const second = yield* jobService.enqueueReview({
           trigger: "manual",
           projectId: PROJECT_ID,
           idempotencyKey: "coverage-failure-second",
         });
-        expect((yield* waitForTerminal(jobService, second.id, 100))?.status).toBe("failed");
+        expect((yield* waitForPersistedTerminal(baseDir, second.id)).status).toBe("failed");
 
         const third = yield* jobService.enqueueReview({
           trigger: "manual",
           projectId: PROJECT_ID,
           idempotencyKey: "coverage-failure-third",
         });
-        expect((yield* waitForTerminal(jobService, third.id, 100))?.status).toBe("failed");
+        expect((yield* waitForPersistedTerminal(baseDir, third.id)).status).toBe("failed");
 
-        // Coverage writes are detached. Wait until the newest terminal run reaches disk.
-        let coverage = yield* AgentDashboardStore.getStore(NodePath.join(baseDir, "userdata"))
-          .readRepositoryCoverage;
-        for (let step = 0; step < 100 && coverage[0]?.lastTerminalRunId !== third.id; step += 1) {
-          yield* Effect.yieldNow;
-          yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
-          coverage = yield* AgentDashboardStore.getStore(NodePath.join(baseDir, "userdata"))
-            .readRepositoryCoverage;
-        }
+        const coverage = yield* waitForPersistedCoverageTerminal(baseDir, third.id);
         expect(coverage).toHaveLength(1);
         expect(coverage[0]).toMatchObject({
           consecutiveFailures: 3,
@@ -833,8 +920,8 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
           idempotencyKey: "correction-dispatch-failure",
         });
 
-        const terminal = yield* waitForTerminal(jobService, enqueued.id, 200);
-        expect(terminal?.status).toBe("failed");
+        const terminal = yield* waitForPersistedTerminal(baseDir, enqueued.id);
+        expect(terminal.status).toBe("failed");
         expect(terminal?.error).toContain("missing structured findings metadata");
       }).pipe(
         Effect.provide(
@@ -1014,10 +1101,10 @@ describe("AgentDashboardReviewJobService lifecycle", () => {
 
         yield* Ref.set(held, false);
         yield* TestClock.adjust(Duration.seconds(1));
-        const terminal = yield* waitForTerminal(jobService, "run-interrupted", 200);
-        expect(terminal?.id).toBe("run-interrupted");
-        expect(terminal?.status).toBe("succeeded");
-        expect(terminal?.error).toBeNull();
+        const terminal = yield* waitForPersistedTerminal(baseDir, "run-interrupted");
+        expect(terminal.id).toBe("run-interrupted");
+        expect(terminal.status).toBe("succeeded");
+        expect(terminal.error).toBeNull();
       }).pipe(
         Effect.provide(
           jobServiceLayer({
