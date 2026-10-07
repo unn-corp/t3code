@@ -263,6 +263,14 @@ before enabling automatic publishing. Existing installations need the known-good
 and explicit device bootstrap before participating. A successful source test is not a hardware
 installation receipt.
 
+Desktop activity reporting is owned by
+[maintenancePolling.ts](../../apps/desktop/src/maintenance/maintenancePolling.ts), started by
+`DesktopForkMaintenance`. Its observation loop must remain independent of serialized updater
+actions: installation waits for a fresh post-fence observation from the desktop itself. The
+[polling regression tests](../../apps/desktop/src/maintenance/maintenancePolling.test.ts) hold
+the controller busy beyond the stale threshold and verify both acknowledgement and detection of
+new work. Include this scenario when changing updater scheduling or admission.
+
 The native Android recovery screen also opens a pending Android installation confirmation directly.
 `RecoveryActivity`, `UpdateEngine`, and `UpdateNotifications` own this route. Verify it with both
 normal and recovery APKs, including a dismissed notification and a restarted app process; the
