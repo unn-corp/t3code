@@ -15,13 +15,13 @@ import { expect } from "vite-plus/test";
 
 import * as AgentDashboardReviewScheduler from "./AgentDashboardReviewScheduler.ts";
 
-it("starts consolidated portfolio coverage immediately on a two-hour cadence", () => {
+it("defaults the persisted schedule paused while keeping its two-hour cadence", () => {
   const now = Date.parse("2026-08-09T23:00:00.000Z");
   const schedule = AgentDashboardReviewScheduler.__testing.defaultSchedule(now);
 
   expect(AgentDashboardReviewScheduler.__testing.intervalMs).toBe(2 * 60 * 60 * 1_000);
   expect(schedule).toMatchObject({
-    enabled: true,
+    enabled: false,
     intervalMinutes: 120,
     nextRunAt: "2026-08-09T23:00:00.000Z",
     lastStatus: "idle",

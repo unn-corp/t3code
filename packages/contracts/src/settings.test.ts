@@ -447,9 +447,9 @@ describe("ServerSettings continuous improvement", () => {
     });
   });
 
-  it("defaults scheduled reviews to their existing model policy", () => {
+  it("defaults scheduled reviews off while keeping their model policy", () => {
     expect(decodeServerSettings({}).repositoryReview).toEqual({
-      enabled: true,
+      enabled: false,
       intervalMinutes: 120,
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
@@ -457,6 +457,22 @@ describe("ServerSettings continuous improvement", () => {
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       },
     });
+  });
+
+  it("defaults every top-level automatic-work policy off and preserves explicit opt-ins", () => {
+    const defaults = decodeServerSettings({});
+    expect([
+      defaults.continuousImprovement.enabled,
+      defaults.pullRequestRollup.enabled,
+      defaults.inactiveWorktreeCleanup.enabled,
+      defaults.repositoryReview.enabled,
+      defaults.productOpportunityDiscovery.enabled,
+      defaults.decisionFollowUp.enabled,
+    ]).toEqual([false, false, false, false, false, false]);
+
+    expect(
+      decodeServerSettings({ repositoryReview: { enabled: true } }).repositoryReview.enabled,
+    ).toBe(true);
   });
 
   it("keeps product opportunity discovery and decision follow-up opt-in", () => {

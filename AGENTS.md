@@ -48,6 +48,10 @@ T3 Code has 3 key app surfaces: **web**, **desktop**, and **mobile**.
   before admission. Never restore an older database silently after writes have been admitted.
 - Preserve signing/package identity, pairing, drafts, queued work, rescue copies, pinned builds,
   and recovery-referenced WSL runtimes. Restored automation requires separate explicit review.
+- Keep all six automatic-work policies off by default: repository review, continuous improvement,
+  opportunity discovery, decision follow-up, pull-request rollup, and inactive-worktree cleanup.
+  Preserve explicit saved choices and manual actions. Upstream merges, updates, and recovery must
+  never silently enable automation or bypass review of restored automation.
 - Use isolated fixture data and `T3CODE_MAINTENANCE_NAMESPACE` for integration tests. Use Luna for
   delegated test conversations. Never enable automatic publishing before update/recovery validation.
 

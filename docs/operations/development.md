@@ -35,16 +35,18 @@ See [test data](../../AGENTS.md#test-data) for copying a consistent database sna
 
 #### Fixture automation
 
-Database pruning removes recorded schedules and pending work, but a packaged desktop can create
-new repository-review work from its default settings. Before launching an isolated fixture, set
-these sections in that fixture's `userdata/settings.json`, preserving any other settings needed
-by the test:
+Automatic work is disabled by default. An isolated fixture can still carry an explicit saved
+opt-in, so set these sections in that fixture's `userdata/settings.json` before launching it,
+preserving any other settings needed by the test:
 
 ```json
 {
   "repositoryReview": { "enabled": false },
   "continuousImprovement": { "enabled": false },
-  "productOpportunityDiscovery": { "enabled": false }
+  "productOpportunityDiscovery": { "enabled": false },
+  "decisionFollowUp": { "enabled": false },
+  "pullRequestRollup": { "enabled": false },
+  "inactiveWorktreeCleanup": { "enabled": false }
 }
 ```
 

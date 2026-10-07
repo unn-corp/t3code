@@ -1366,7 +1366,7 @@ export type RepositoryReviewIntervalMinutes = typeof RepositoryReviewIntervalMin
 
 /** Model policy for the scheduled, read-only repository review automation. */
 export const RepositoryReviewSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   intervalMinutes: RepositoryReviewIntervalMinutes.pipe(
     Schema.withDecodingDefault(Effect.succeed(120)),
   ),

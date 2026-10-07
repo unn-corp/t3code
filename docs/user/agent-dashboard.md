@@ -36,7 +36,7 @@ To consolidate related work, select two or more PRs in the same project that tar
 
 Use **Collect findings** to start the local research, engineering, and security collectors and request a repository review. Collector availability remains visible so an unavailable integration is not mistaken for a clean result. If the research watchlist is missing, select **Set up research**, choose a repository, and add a topic or source; T3 saves and collects it immediately.
 
-The same complete cycle runs automatically while T3 is open. Open **Settings**, then **Automation** to enable or pause scheduled discovery and qualification, choose a cadence from 15 minutes to one day, and choose its provider account, model, and effort. The default cadence is every two hours.
+Select **Collect findings** to run this cycle manually at any time. Scheduled discovery and qualification is off by default. Open **Settings**, then **Automation** to opt in, choose a cadence from 15 minutes to one day, and choose its provider account, model, and effort. Once enabled, the first scheduled cycle starts immediately; the default cadence is every two hours.
 The schedule strip reports when collection last finished, when it will run again, and how many
 finding types were attempted versus completed. Missing optional research watchlists are shown separately from collectors
 that need attention. Repository sections remain closed until you choose one to inspect.

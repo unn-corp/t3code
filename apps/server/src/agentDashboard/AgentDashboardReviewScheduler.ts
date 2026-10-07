@@ -113,7 +113,7 @@ const statusValue = (value: unknown): AgentDashboardReviewScheduleStatus =>
 
 const defaultSchedule = (now = Date.now()): AgentDashboardReviewSchedule => ({
   id: SCHEDULE_ID,
-  enabled: true,
+  enabled: false,
   intervalMinutes: REVIEW_INTERVAL_MINUTES,
   nextRunAt: isoAt(now),
   lastRunAt: null,
@@ -420,7 +420,7 @@ const make = Effect.gen(function* () {
       const startedAt = DateTime.formatIso(startedAtTime);
       const claimed = yield* modifyPersistedSchedule(stateRef, persist, (state) => {
         if (
-          !automationSettings.enabled ||
+          (!automationSettings.enabled && !force) ||
           state.lastStatus === "running" ||
           (!force && Date.parse(state.nextRunAt) > startedAtMs)
         ) {
@@ -442,7 +442,7 @@ const make = Effect.gen(function* () {
             lastError: null,
             heartbeatAt: startedAt,
             runCount: state.runCount + 1,
-            enabled: true,
+            enabled: automationSettings.enabled,
             intervalMinutes: automationSettings.intervalMinutes,
           },
         ] as const;

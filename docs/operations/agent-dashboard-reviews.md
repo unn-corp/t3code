@@ -1,7 +1,9 @@
 # Agent Dashboard findings operations
 
 The T3-owned findings portfolio scheduler is the source of truth for automatic collection. It
-wakes every 30 seconds and runs immediately after first startup, then maintains a two-hour cadence.
+wakes every 30 seconds, but scheduled collection is disabled by default. When a user opts in, it
+runs immediately and then maintains a two-hour cadence unless configured otherwise. Manual
+**Collect findings** runs remain available while scheduled collection is disabled.
 Each cycle scans every stable project with the research, engineering, operations, and security
 collectors before enqueueing one rotating deep repository review. That review evaluates bugs,
 security, research opportunities, improvements, operational risks, and general review findings.

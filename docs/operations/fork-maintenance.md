@@ -214,6 +214,11 @@ not evidence that equivalent upstream surfaces exist.
 [organizations](../../apps/server/src/organizations) and
 [agentDashboard](../../apps/server/src/agentDashboard).
 
+Top-level automatic-work policies in Settings → Automation default off, including scheduled
+repository review, Continuous Improvement, product opportunity discovery, Decision Follow-up,
+pull request rollups, and inactive worktree cleanup. Preserve explicitly saved opt-ins when
+decoding settings; manual dashboard actions remain available while scheduled automation is off.
+
 **Verification and coupling.** Domain tests cover durable authorization, budgets, stopped work,
 reconciliation, review/implementation scheduling, and credential redaction. Test new schedulers
 against device maintenance fencing and the persisted restored-automation review hold; the server

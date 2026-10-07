@@ -173,6 +173,7 @@ describe("AgentDashboardReviewScheduler portfolio collection", () => {
             expect((yield* scheduler.runNow)?.status).toBe("succeeded");
             const status = yield* scheduler.getStatus;
             expect(status).toMatchObject({
+              enabled: false,
               lastStatus: "completed",
               lastCoveredTypes: [
                 "bug",
