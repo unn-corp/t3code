@@ -118,6 +118,13 @@ Orchestration scripts always run from the commit that defines the workflow. Buil
 helper, and the safety suites run from the pinned commit, and each confirms its checkout is exactly
 that commit.
 
+Package and safety-suite job retries replace their own temporary receipt artifact. The manifest
+must never pick between a failed receipt and a passing receipt with the same name. Job logs retain
+the earlier failure; this replacement applies only to Actions receipts, never published payloads
+or tags. For an older workflow that retained duplicate receipt artifacts, archive both receipts,
+verify the newer receipt covers the same pinned commit and complete suite, remove only the
+superseded Actions artifact by its exact ID, then rerun the failed manifest job.
+
 If the Windows CLI archive smoke check fails, the fork retains a `diagnostic-cli-win-x64` workflow
 artifact for one day. Use it to reproduce the failed standalone binary in an isolated fixture;
 it is excluded from release assembly, and the failed check still prevents publication. The artifact

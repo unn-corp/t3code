@@ -1022,6 +1022,8 @@ jobs:
         with:
           name: receipts-${{ matrix.target }}
           path: receipts/*.json
+          # Retries must replace this job's scratch receipt, not leave an ambiguous failed copy.
+          overwrite: true
           if-no-files-found: error
 
   # The safety suites a release cannot do without, run from a clean checkout of the exact commit
@@ -1123,6 +1125,7 @@ jobs:
         with:
           name: suite-receipts-${{ matrix.suite }}-${{ matrix.target }}
           path: tooling/receipts/*.json
+          overwrite: true
           if-no-files-found: error
 
   # Reads the receipts and writes fork-release.json. A check is true only where package receipts
