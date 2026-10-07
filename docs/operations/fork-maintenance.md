@@ -32,6 +32,11 @@ Published migration IDs are compatibility identities. Follow the
 assign different schemas to the same ID, and retain the history-preservation and failure tests.
 Never renumber installed fork history to make an upstream merge appear current.
 
+The vendored `.repos` trees stay outside fork release checkouts. If an upstream reference tree
+contains Git submodule entries, preserve their root-relative registration in `.gitmodules`, with
+initialization disabled. GitHub checkout's credential cleanup traverses these entries even during
+a sparse checkout; missing root metadata can stop every build before dependency installation.
+
 ## Product branding
 
 The fork is named **Arcwright Code** across web, Electron, the standalone Android APK, and

@@ -1,0 +1,11 @@
+# These gitlinks belong to the vendored Alchemy reference tree. Register their
+# root-relative paths so checkout/auth cleanup can traverse the repository.
+# Ordinary checkouts and builds must not initialize these external references.
+[submodule "vendored-alchemy-distilled"]
+	path = .repos/alchemy-effect/submodules/distilled
+	url = https://github.com/alchemy-run/distilled.git
+	update = none
+[submodule "vendored-alchemy-floci"]
+	path = .repos/alchemy-effect/submodules/floci
+	url = https://github.com/alchemy-run/floci.git
+	update = none
