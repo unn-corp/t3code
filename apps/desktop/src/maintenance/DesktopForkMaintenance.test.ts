@@ -691,6 +691,16 @@ describe("DesktopForkMaintenance", () => {
     });
     // Bootstrap must configure exposure before starting the restored runtime.
     // The restored boundary still holds every home until its health receipt arrives.
+    // A successful update leaves the newer installed identity outside the restored userdata tree.
+    await NodeFSP.writeFile(
+      device.paths.installedBuild,
+      JSON.stringify({
+        version: "1.1.0",
+        commit: NEW.record.manifest!.commit,
+        artifactSha256: NEW_DIGEST,
+        installationSequence: 8,
+      }),
+    );
     expect((await previous.start()).kind).toBe("trial");
     expect(restoredRuntimeStarts).toBe(0);
     expect((await store.status(device.clock.value)).fence).not.toBeNull();
@@ -698,6 +708,13 @@ describe("DesktopForkMaintenance", () => {
     expect(restoredRuntimeStarts).toBe(1);
     const status = await previous.status();
     expect(status.phase).toBe("failed");
+    expect(status.currentBuild.installationSequence).toBe(9);
+    expect(status.currentBuild.artifactSha256).toBe(authorized!.previous.artifactSha256);
+    expect(JSON.parse(await NodeFSP.readFile(device.paths.installedBuild, "utf8"))).toMatchObject({
+      version: "1.0.0",
+      artifactSha256: authorized!.previous.artifactSha256,
+      installationSequence: 9,
+    });
     expect(status.automationReviewRequired).toBe(true);
     expect((await store.status(device.clock.value)).fence).toBeNull();
     expect((await store.readJournal((await store.listJournals())[0]!.id))?.phase).toBe(

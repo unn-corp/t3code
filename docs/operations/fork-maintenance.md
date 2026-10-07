@@ -271,6 +271,11 @@ actions: installation waits for a fresh post-fence observation from the desktop 
 the controller busy beyond the stale threshold and verify both acknowledgement and detection of
 new work. Include this scenario when changing updater scheduling or admission.
 
+`maintenanceCore` also records both committed updates and verified recoveries in the installed-build
+identity. Recovery must adopt the journal's predecessor digest and increment the installation sequence;
+the record is outside restored userdata. Verify that the current digest matches the recovery pin and
+that Resume retains the separate automation-review hold.
+
 The native Android recovery screen also opens a pending Android installation confirmation directly.
 `RecoveryActivity`, `UpdateEngine`, and `UpdateNotifications` own this route. Verify it with both
 normal and recovery APKs, including a dismissed notification and a restarted app process; the

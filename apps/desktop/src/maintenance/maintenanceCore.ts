@@ -433,29 +433,35 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
     throw new ForkMaintenanceError({ reason: unavailable ?? "Device maintenance is not running." });
   };
 
-  /** Records the identity of a build whose update committed, and prunes what no transaction or recovery still needs. */
+  /** Records verified installation/recovery identity, and prunes what no transaction or recovery still needs. */
   const housekeeping = async () => {
     if (store === null || installerPorts === null) return;
     try {
       const journals = await store.listJournals();
-      const committed = journals.findLast(
+      const verified = journals.findLast(
         (journal) =>
-          journal.kind === "update" &&
-          journal.phase === "committed" &&
-          journal.target !== null &&
-          isBuild(journal.target),
+          (journal.kind === "update" &&
+            journal.phase === "committed" &&
+            journal.target !== null &&
+            isBuild(journal.target)) ||
+          (journal.phase === "restore-verified" && isBuild(journal.previous)),
       );
+      // A successful rollback is an installation too. The old binary must replace the newer
+      // identity record with the journal's verified predecessor digest, rather than derive one
+      // from its version/commit and lose its installation sequence and matching recovery pin.
+      const verifiedBuild =
+        verified?.phase === "restore-verified" ? verified.previous : verified?.target;
       const recorded = await readRecordedBuild(paths.installedBuild);
       if (
-        committed?.target != null &&
+        verifiedBuild != null &&
         (recorded === null ||
-          recorded.artifactSha256 !== committed.target.artifactSha256 ||
+          recorded.artifactSha256 !== verifiedBuild.artifactSha256 ||
           recorded.version !== input.version)
       ) {
         await writeRecordedBuild(paths.installedBuild, {
           version: input.version,
           commit: commit ?? "",
-          artifactSha256: committed.target.artifactSha256,
+          artifactSha256: verifiedBuild.artifactSha256,
           installationSequence: (recorded?.installationSequence ?? 0) + 1,
         });
         current = resolveCurrentBuild({

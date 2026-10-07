@@ -133,6 +133,12 @@ restore-verified`. `aborted` is a pre-trial boundary: nothing live changed.
   is only ever restored by explicit recovery.
 - A target whose install failed on this device is remembered by artifact digest and never retried
   automatically, and restored schedules and queues stay held until a person reviews them.
+- Desktop installation identity is recorded from the latest completed transaction matching the
+  running version and commit: `committed` adopts its target, and `restore-verified` adopts its
+  predecessor. Recovery increments the local installation sequence too. The identity record lives
+  outside restored userdata, so leaving the newer record in place would lose the restored artifact
+  digest and disagree with its recovery pin. `maintenanceCore` owns this bookkeeping; the failed-trial
+  recovery regression also verifies replacement of a newer identity record.
 - Manual installation is bound to the digest the person reviewed, rechecks eligibility against fresh release
   data at install time, and uses the same blockers as automatic installation.
 
