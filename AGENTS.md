@@ -40,7 +40,7 @@ T3 Code has 3 key app surfaces: **web**, **desktop**, and **mobile**.
 - Maintain [fork feature ownership](docs/operations/fork-maintenance.md) and the affected user,
   operations, and architecture guides in the same change as behavior, UI routes, build requirements,
   or compatibility. Describe implemented behavior; label uncommissioned delivery explicitly.
-- In-product installation and recovery must use the device's maintenance coordinator. Registered
+- Desktop/server installation and recovery must use the device's maintenance coordinator. Registered
   standalone/development runtimes block installation but are never automatic binary-update targets.
   Unknown activity or missing safety capability blocks installation; never stop agents for an update.
 - Separate activity participants from affected data homes. Snapshot every affected Windows/WSL home
@@ -80,10 +80,14 @@ below. An upstream merge must preserve our fork's working behavior across all su
   on every affected client and connection mode and updating its ownership documentation and tests.
   If a feature cannot be preserved, report the specific loss and obtain a user decision before
   removing it or publishing the regression. Routine compatible adapters need no extra approval.
-- Every install/recovery entry point must retain coordinator admission, activity checks, launch/write
+- Every desktop/server install/recovery entry point must retain coordinator admission, activity checks, launch/write
   fencing, affected-home snapshots, health receipts, rescue copies, and explicit restored-automation
   review. Missing capability or unknown activity must block; never restore legacy unsafe fallbacks
   or stop working agents to make an update possible. Preserve Windows/WSL recovery runtime retention.
+- APK installation and recovery must retain the native phone guard: two backgrounded minutes and
+  completed phone-local browser automation, uploads, and native operations. Remote host agents may
+  continue. Preserve saved connections, Android installation confirmation, and exact artifact/recovery
+  binding. PWA cache reload must never claim to replace native APK code.
 - Keep maintenance authorization bound to the exact action, artifact, transaction, and snapshot.
   Retain APK origin restrictions and secret/backup privacy. Preserve fork release ownership for
   discovery, downloads, feeds, history links, and installers; keep upstream publishing jobs guarded.
