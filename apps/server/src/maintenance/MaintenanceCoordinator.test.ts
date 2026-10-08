@@ -10,7 +10,17 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type { TerminalSummary } from "@t3tools/contracts";
+import {
+  EventId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+  type TerminalSummary,
+} from "@t3tools/contracts";
+import * as NodeChildProcess from "node:child_process";
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ProcessDiagnostics from "../diagnostics/ProcessDiagnostics.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { layerMemory } from "../persistence/Sqlite.ts";
@@ -39,6 +49,8 @@ const terminal = (overrides: Partial<TerminalSummary> = {}): TerminalSummary => 
 });
 
 interface Sources {
+  readonly nativeRoots?: boolean;
+  readonly sqlProjections?: boolean;
   readonly terminals?: ReadonlyArray<TerminalSummary>;
   readonly clones?: ReadonlyArray<{ readonly phase: string }>;
   readonly processes?: ReadonlyArray<{
@@ -80,7 +92,7 @@ const processRead = (sources: Sources) =>
   );
 const layer = (sources: Sources = {}) =>
   Layer.mergeAll(
-    ProjectionStore.layerMemory,
+    sources.sqlProjections ? ProjectionStore.layer : ProjectionStore.layerMemory,
     Layer.succeed(TerminalManager.TerminalManager, {
       subscribeMetadata: (
         listener: (event: {
@@ -98,26 +110,28 @@ const layer = (sources: Sources = {}) =>
     Layer.succeed(ProcessDiagnostics.ProcessDiagnostics, {
       read: processRead(sources),
     } as never),
-    Layer.succeed(IdleProcessRoots.IdleProcessRoots, {
-      register: () => Effect.succeed(Effect.void),
-      snapshot: Effect.succeed(sources.roots ?? []),
-      identify: (pids: ReadonlyArray<number>) =>
-        Promise.resolve(
-          pids.map((pid: number) => {
-            const state = sources.identities?.[pid] ?? "present";
-            return state === "present"
-              ? {
-                  kind: "present" as const,
-                  identity: String(
-                    sources.processes?.find((entry) => entry.pid === pid)?.startTimeMs ?? pid,
-                  ),
-                }
-              : state === "absent"
-                ? { kind: "absent" as const }
-                : { kind: "unreadable" as const, cause: new Error("unreadable") };
-          }),
-        ),
-    } as never),
+    sources.nativeRoots
+      ? IdleProcessRoots.layer
+      : Layer.succeed(IdleProcessRoots.IdleProcessRoots, {
+          register: () => Effect.succeed(Effect.void),
+          snapshot: Effect.succeed(sources.roots ?? []),
+          identify: (pids: ReadonlyArray<number>) =>
+            Promise.resolve(
+              pids.map((pid: number) => {
+                const state = sources.identities?.[pid] ?? "present";
+                return state === "present"
+                  ? {
+                      kind: "present" as const,
+                      identity: String(
+                        sources.processes?.find((entry) => entry.pid === pid)?.startTimeMs ?? pid,
+                      ),
+                    }
+                  : state === "absent"
+                    ? { kind: "absent" as const }
+                    : { kind: "unreadable" as const, cause: new Error("unreadable") };
+              }),
+            ),
+        } as never),
   ).pipe(Layer.provideMerge(layerMemory));
 
 describe("device activity sources", () => {
@@ -129,6 +143,144 @@ describe("device activity sources", () => {
         descendantsKnown: true,
       });
     }),
+  );
+
+  it.effect.each([false, true])(
+    "counts session work without treating a ready session as active (SQLite: %s)",
+    (sqlProjections) =>
+      Effect.gen(function* () {
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:maintenance:ready");
+        const providerInstanceId = ProviderInstanceId.make("codex");
+        const driver = ProviderDriverKind.make("codex");
+        yield* projections.apply({
+          id: EventId.make("event:maintenance:thread"),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project:maintenance"),
+            title: "Ready session",
+            providerInstanceId,
+            modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        for (const status of [
+          "ready",
+          "starting",
+          "running",
+          "waiting",
+          "stopped",
+          "error",
+        ] as const) {
+          yield* projections.apply({
+            id: EventId.make(`event:maintenance:session:${status}`),
+            type: "provider-session.attached",
+            threadId,
+            driver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: ProviderSessionId.make("session:maintenance"),
+              driver,
+              providerInstanceId,
+              status,
+              cwd: "/work",
+              model: "gpt-5.4",
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+          });
+          const active = status === "starting" || status === "running" || status === "waiting";
+          expect(yield* projections.getRecoveryThreadIds("runtime")).toEqual(
+            status === "stopped" || status === "error" ? [] : [threadId],
+          );
+          expect(yield* projections.getRecoveryThreadIds("active-runtime")).toEqual(
+            active ? [threadId] : [],
+          );
+          const result = yield* collectActivity("participant");
+          expect(result.blockers).toEqual(
+            active ? [expect.objectContaining({ reason: "active-agents", threadId })] : [],
+          );
+        }
+      }).pipe(Effect.provide(layer({ sqlProjections }))),
+  );
+
+  it.effect(
+    "shares exact native root registration with the collector while preserving unregistered children",
+    () =>
+      Effect.gen(function* () {
+        const child = yield* Effect.sync(() =>
+          NodeChildProcess.spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+            stdio: ["pipe", "ignore", "ignore"],
+          }),
+        );
+        try {
+          const childPid = child.pid;
+          if (childPid === undefined) throw new Error("Fixture child did not start");
+          const program = Effect.gen(function* () {
+            const before = yield* collectActivity("participant");
+            expect(before.blockers.map((blocker) => blocker.reason)).toEqual([
+              "background-work",
+              "background-work",
+            ]);
+            const release = yield* IdleProcessRoots.registerIdleProcessRoot(
+              process.pid,
+              "provider",
+              Effect.succeed(true),
+            );
+            try {
+              const after = yield* collectActivity("participant");
+              expect(after.descendants.map((entry) => entry.pid)).toEqual([process.pid, childPid]);
+              expect(after.blockers).toEqual([
+                expect.objectContaining({ reason: "background-work" }),
+              ]);
+            } finally {
+              yield* release;
+            }
+            expect((yield* collectActivity("participant")).blockers).toHaveLength(2);
+          });
+          yield* program.pipe(
+            Effect.provide(
+              layer({
+                nativeRoots: true,
+                processes: [
+                  { pid: process.pid, startTimeMs: 1, command: "provider fixture root" },
+                  { pid: childPid, startTimeMs: 2, command: "unregistered code-mode fixture" },
+                ],
+              }),
+            ),
+          );
+        } finally {
+          yield* Effect.promise(
+            () =>
+              new Promise<void>((resolve) => {
+                child.once("exit", () => resolve());
+                child.stdin?.end();
+              }),
+          );
+        }
+      }),
   );
 
   describe("restored automation admission", () => {

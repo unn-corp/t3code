@@ -413,6 +413,15 @@ This is host functionality, not an APK or cloud-push feature.
 
 ## Updates and recovery
 
+Maintenance uses the `active-runtime` projection selector; restart recovery keeps
+`runtime`, which also reconciles ready provider sessions. A ready session alone is
+not active work. Keep one shared `IdleProcessRoots` service at server scope so
+spawn sites and the collector use the same exact PID/creation identity registry.
+Only a verified provider root is exempt: terminal shells, unregistered helper
+children (including a lingering code-mode host), reused PIDs, and unknown process
+observations still hold installation. A completed turn does not prove those
+children have exited; never stop sessions or clear their records to obtain admission.
+
 ### Resolve an unknown orphan after offline verification
 
 An orphan created by an incomplete process census can remain blocked even when no child PID was

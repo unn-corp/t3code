@@ -103,6 +103,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
     required: [
       "src/maintenance/MaintenanceHost.test.ts",
       "src/maintenance/MaintenanceCoordinator.test.ts",
+      "src/orchestration-v2/ProjectionRecovery.test.ts",
       "src/maintenance/IdleProcessRoots.test.ts",
       "src/storageCleanup.test.ts",
       "src/diagnostics/ProcessDiagnostics.test.ts",

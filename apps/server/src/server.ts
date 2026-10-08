@@ -695,7 +695,6 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
       Layer.provide(layerTerminal),
       Layer.provide(layerProjectCloneTracker),
       Layer.provide(ProcessDiagnostics.layer.pipe(Layer.provide(layerResourceTelemetry))),
-      Layer.provide(IdleProcessRoots.layer),
     ),
   ),
   // Search, prepare, status inspection, and turn launch share one registry
@@ -1403,6 +1402,8 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(FetchHttpClient.layer),
       // PR reads, Git operations, and WebSocket discovery share one process limiter.
       Layer.provide(VcsProcess.layer),
+      // Spawn sites and maintenance observe the same exact-identity registry.
+      Layer.provideMerge(IdleProcessRoots.layer),
       Layer.provideMerge(layerPlatformServices),
     );
   }),

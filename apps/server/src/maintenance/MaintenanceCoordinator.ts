@@ -136,9 +136,9 @@ export const collectActivity = (participantId: string) =>
         Effect.catchCause(() => Effect.sync(() => void blockers.push(unknown(source)))),
       );
 
-    // Active runs, queued runs not held, approvals/questions awaiting a person, provider sessions and
-    // background tasks, native/subagent children, running commands, and pending outbox effects.
-    yield* guard("Agent", projections.getRecoveryThreadIds("runtime"), (ids) => {
+    // Recovery also reconciles ready sessions after restart. Maintenance counts their actual work,
+    // pending requests and effects; a ready session alone is idle infrastructure.
+    yield* guard("Agent", projections.getRecoveryThreadIds("active-runtime"), (ids) => {
       for (const threadId of ids.slice(0, CAP))
         blockers.push({
           participantId,
@@ -249,9 +249,10 @@ export const collectActivity = (participantId: string) =>
       try: () => identifyDescendants(participantId, descendants, roots, processRoots.identify),
       catch: (cause) => new MaintenanceCoordinatorError({ operation: "process identity", cause }),
     }).pipe(
-      Effect.catchTag("MaintenanceCoordinatorError", () =>
-        Effect.succeed({ descendants: [], complete: false, blockers: [] }),
-      ),
+      Effect.catchTags({
+        MaintenanceCoordinatorError: () =>
+          Effect.succeed({ descendants: [], complete: false, blockers: [] }),
+      }),
     );
     blockers.push(...identified.blockers);
     if (!identified.complete) blockers.push(unknown("Process identity"));

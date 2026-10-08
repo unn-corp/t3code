@@ -42,6 +42,9 @@ Conversation update notices identify the host. A protocol mismatch requires
 updating the side named by the notice. Available releases, waiting, installation,
 verification, and failure are different states. Stop remains an agent action;
 an updater never stops work to obtain an installation window.
+An idle conversation can still show a waiting reason when a provider helper
+process remains alive. The host keeps waiting until that process finishes or
+its ownership and idle state can be verified.
 Compatibility notices compare the included T3 versions, independently of Arcwright
 release availability. An internal `1.x` installer number does not make a `0.0.45`
 host incompatible by itself.

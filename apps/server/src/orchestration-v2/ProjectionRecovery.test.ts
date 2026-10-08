@@ -195,6 +195,32 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       },
     });
 
+    const held = yield* createThread("held-ready");
+    yield* createRun(held, "queued", { queueHeld: true });
+    // A reusable ready session does not erase real requests, effects, runs or tools.
+    for (const threadId of [queued, archived, blocked, background, outboxOnly, requestOnly, held]) {
+      yield* projections.apply({
+        id: EventId.make(`event:${threadId}:ready-session`),
+        type: "provider-session.attached",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: ProviderSessionId.make(`session:${threadId}`),
+          driver,
+          providerInstanceId,
+          status: "ready",
+          cwd: "/workspace",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+    }
+
     // This historical payload cannot be decoded. Candidate discovery must not
     // materialize it while deciding which threads have work to reconcile.
     yield* sql`
@@ -205,9 +231,16 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       UPDATE orchestration_v2_projection_runs SET payload_json = '{broken'
       WHERE thread_id = ${queued} AND ordinal = 1
     `;
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("queued-runs"), [queued]);
+    assert.deepEqual(
+      new Set(yield* projections.getRecoveryThreadIds("queued-runs")),
+      new Set([queued, held]),
+    );
     assert.deepEqual(
       new Set(yield* projections.getRecoveryThreadIds("runtime")),
+      new Set([queued, archived, blocked, background, outboxOnly, requestOnly, held]),
+    );
+    assert.deepEqual(
+      new Set(yield* projections.getRecoveryThreadIds("active-runtime")),
       new Set([queued, archived, blocked, background, outboxOnly, requestOnly]),
     );
     assert.deepEqual(yield* projections.getRecoveryThreadIds("delegated-completions"), [delivery]);
@@ -400,6 +433,11 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
     assert.deepEqual(
       new Set(yield* projections.getRecoveryThreadIds("runtime")),
       new Set([first, second, roster, prepared]),
+    );
+    // Ready bound sessions still need restart recovery, but their idle threads do not block maintenance.
+    assert.deepEqual(
+      new Set(yield* projections.getRecoveryThreadIds("active-runtime")),
+      new Set([roster, prepared]),
     );
     const preparedState = yield* projections.getRuntimeRecoveryProjection(prepared);
     assert.deepEqual(

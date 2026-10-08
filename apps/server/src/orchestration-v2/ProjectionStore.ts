@@ -131,9 +131,11 @@ export const ProjectionStoreV2Error = Schema.Union([
 ]);
 export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
 
+/** Runtime recovery includes idle sessions to reconcile after restart; active-runtime is maintenance work only. */
 export type ProjectionRecoveryKind =
   | "queued-runs"
   | "runtime"
+  | "active-runtime"
   | "subagent-results"
   | "delegated-completions";
 
@@ -524,6 +526,7 @@ function needsRecovery(
       );
     }
     case "runtime":
+    case "active-runtime":
       return (
         projection.runs.some(
           (run) =>
@@ -532,7 +535,10 @@ function needsRecovery(
         ) ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
         projection.providerSessions.some(
-          (session) => session.status !== "stopped" && session.status !== "error",
+          (session) =>
+            session.status !== "stopped" &&
+            session.status !== "error" &&
+            (kind === "runtime" || session.status !== "ready"),
         ) ||
         projection.providerThreads.some(
           (thread) =>
@@ -3510,6 +3516,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ELSE 0 END
               `;
             case "runtime":
+            case "active-runtime":
               return sql`
                 WITH pending_provider_threads AS MATERIALIZED (
                   SELECT provider_thread_id, thread_id, owner_node_id
@@ -3538,6 +3545,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 CROSS JOIN orchestration_v2_projection_provider_session_bindings AS bindings
                   ON bindings.provider_session_id = sessions.provider_session_id
                 WHERE sessions.status NOT IN ('stopped', 'error')
+                  ${kind === "active-runtime" ? sql`AND sessions.status != 'ready'` : sql``}
                 UNION
                 SELECT thread_id FROM pending_provider_threads
                 UNION
