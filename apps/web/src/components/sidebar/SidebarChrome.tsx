@@ -220,7 +220,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
         </>
       )}
-      <SidebarUpdatePill />
     </SidebarMenu>
   );
 });
@@ -231,6 +230,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarThreadUndoNotice />
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
+      <SidebarUpdatePill />
       <SidebarUtilityMenu />
       <Tooltip>
         <TooltipTrigger

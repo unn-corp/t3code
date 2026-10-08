@@ -8,10 +8,12 @@ export function ForkSidebarUpdateStatus() {
     <Link
       to="/settings/general"
       hash="app-updates"
-      className="mx-2 block rounded-md px-2 py-1 text-xs text-sidebar-foreground outline-none hover:bg-sidebar-row-hover focus-visible:ring-2"
+      className="mx-2 block min-w-0 rounded-md px-2 py-1 text-xs text-sidebar-foreground outline-none hover:bg-sidebar-row-hover focus-visible:ring-2"
       title={forkStatusDescription(status)}
     >
-      <span role="status">{forkPhaseLabels[status.phase]}</span>
+      <span className="block truncate" role="status">
+        {forkPhaseLabels[status.phase]}
+      </span>
       {status.blockers.length ? (
         <span className="block truncate text-muted-foreground">{status.blockers[0]?.label}</span>
       ) : null}

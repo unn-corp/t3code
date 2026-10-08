@@ -53,7 +53,9 @@ function UpdateEntry() {
   const { status } = useForkUpdates(localForkUpdateController());
   return (
     <div className="flex min-w-0 items-center gap-1">
-      <ForkSidebarUpdateStatus />
+      <div className="min-w-0 flex-1">
+        <ForkSidebarUpdateStatus />
+      </div>
       <Link
         to="/settings/general"
         hash="app-updates"
@@ -68,7 +70,7 @@ function UpdateEntry() {
           href={getDesktopUpdateReleaseHistoryUrl()}
           target="_blank"
           rel="noreferrer"
-          className="text-xs underline"
+          className="shrink-0 text-xs whitespace-nowrap underline"
         >
           Release notes
         </a>
