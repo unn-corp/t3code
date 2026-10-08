@@ -22,7 +22,7 @@ const composerStyles = NodeFS.readFileSync(new URL("../../index.css", import.met
 
 describe("composer voice halo", () => {
   it("owns the voice phase above the attached drawers and composer shell", () => {
-    const voiceRootIndex = chatViewSource.indexOf("chat-composer-voice-root");
+    const voiceRootIndex = chatViewSource.indexOf("<ComposerSurface.VoiceRoot");
     const composerShellIndex = chatViewSource.indexOf("<ComposerSurface.Shell", voiceRootIndex);
     const bannerDockIndex = chatComposerSource.indexOf("<ComposerBanner.Dock");
     const mainSurfaceIndex = chatComposerSource.indexOf("<ComposerSurface.Main", bannerDockIndex);

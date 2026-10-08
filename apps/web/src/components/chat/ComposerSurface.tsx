@@ -1,6 +1,30 @@
 import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
+import type { VoiceInputPhase } from "./OpenWhisprVoiceInput";
+
+const voicePhaseClasses = {
+  idle: "",
+  recording: "chat-voice-recording-active",
+  transcribing: "chat-voice-transcribing-active",
+  success: "chat-voice-success-active",
+  "no-audio": "chat-voice-no-audio-active",
+} as const satisfies Record<VoiceInputPhase, string>;
+
+/** Share the phase across the input, attached surfaces, and portalled drawers. */
+function VoiceRoot({
+  phase,
+  className,
+  ...props
+}: ComponentProps<"div"> & { phase: VoiceInputPhase }) {
+  return (
+    <div
+      data-composer-voice-phase={phase}
+      className={cn("chat-composer-voice-root", voicePhaseClasses[phase], className)}
+      {...props}
+    />
+  );
+}
 
 /** One glass backdrop until a top attachment needs the composer to cover its overlap. */
 function Shell({
@@ -64,7 +88,7 @@ function Main({ className, ...props }: ComponentProps<"div">) {
     <div
       data-chat-composer-main-surface="true"
       className={cn(
-        "group relative z-10 rounded-3xl p-px",
+        "chat-composer-voice-halo-surface group relative z-10 rounded-3xl p-px",
         // The host also wraps shoulder tabs, so its backdrop would extend above the input.
         "group-data-model-strip-transition/composer-surface:bg-(--chat-composer-glass-surface)/(--glass-opacity) group-data-model-strip-transition/composer-surface:backdrop-blur-(--glass-blur) group-data-model-strip-transition/composer-surface:backdrop-saturate-(--glass-saturation)",
         outlineClasses,
@@ -98,4 +122,4 @@ function ContextStrip({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-export const ComposerSurface = { Shell, Host, Main, ContextStrip };
+export const ComposerSurface = { VoiceRoot, Shell, Host, Main, ContextStrip };

@@ -996,33 +996,22 @@ function composerCommandMenuPositionsEqual(
   );
 }
 
-const COMPOSER_VOICE_PHASE_CLASSES = {
-  idle: "",
-  recording: "chat-voice-recording-active",
-  transcribing: "chat-voice-transcribing-active",
-  success: "chat-voice-success-active",
-  "no-audio": "chat-voice-no-audio-active",
-} as const satisfies Record<VoiceInputPhase, string>;
-
 export function ComposerCommandMenuPortal(props: {
   children?: ReactNode;
   style?: CSSProperties;
   voiceInputPhase: VoiceInputPhase;
 }) {
   return (
-    <div
-      className={cn(
-        "chat-composer-voice-root chat-composer-voice-portal pointer-events-auto fixed z-[70]",
-        COMPOSER_VOICE_PHASE_CLASSES[props.voiceInputPhase],
-      )}
+    <ComposerSurface.VoiceRoot
+      phase={props.voiceInputPhase}
+      className="chat-composer-voice-portal pointer-events-auto fixed z-[70]"
       data-composer-drawer-layer="true"
-      data-composer-voice-phase={props.voiceInputPhase}
       style={props.style}
     >
       <div className="chat-composer-voice-portal-halo relative overflow-visible">
         {props.children}
       </div>
-    </div>
+    </ComposerSurface.VoiceRoot>
   );
 }
 
