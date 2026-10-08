@@ -17,14 +17,26 @@ const decodeCdpReply = Schema.decodeUnknownSync(
 const key = { threadId: "thread-1", tabId: "tab-1" };
 
 /** A tab's webContents and debugger, with the debugger's commands left pending until released. */
-const makeDebuggee = () => {
+const makeDebuggee = (debuggerInsert?: (text: string) => void) => {
   const emitter = new NodeEvents.EventEmitter();
   const pending: Array<() => void> = [];
+  const commands: Array<{
+    method: string;
+    params: Record<string, unknown> | undefined;
+    sessionId: string | undefined;
+  }> = [];
+  let text = "";
   const debuggee = Object.assign(emitter, {
-    sendCommand: (method: string) =>
+    sendCommand: (method: string, params?: Record<string, unknown>, sessionId?: string) =>
       new Promise((resolve) => {
+        commands.push({ method, params, sessionId });
         if (method === "Target.getTargetInfo") {
           resolve({ targetInfo: { targetId: "GUEST" } });
+          return;
+        }
+        if (method === "Input.insertText") {
+          debuggerInsert?.(String(params?.["text"]));
+          resolve({});
           return;
         }
         pending.push(() => resolve({ method }));
@@ -34,6 +46,12 @@ const makeDebuggee = () => {
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
+    insertText: async (inserted: string) => {
+      text += inserted;
+    },
+    focus: () => {
+      throw new Error("Typing must not move desktop focus.");
+    },
   };
   return {
     tab: {
@@ -42,6 +60,8 @@ const makeDebuggee = () => {
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     release: () => pending.splice(0).forEach((resolve) => resolve()),
+    text: () => text,
+    commands,
   };
 };
 
@@ -54,6 +74,107 @@ const takeEvents = (host: DesktopBrowserHost.DesktopBrowserHost["Service"], coun
   );
 
 describe("DesktopBrowserHost", () => {
+  it.effect("types into the requested guest while another guest has desktop focus", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const active = makeDebuggee();
+      // CDP input can follow the embedder's focused guest instead of its target.
+      const requested = makeDebuggee((text) => void active.tab.webContents.insertText(text));
+      const otherKey = { ...key, tabId: "tab-2" };
+      host.attach(key, requested.tab);
+      host.attach(otherKey, active.tab);
+      const reader = yield* takeEvents(host, 3).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: encodeJson({
+            id: 1,
+            method: "Input.insertText",
+            params: { text: "requested repository only" },
+            sessionId: "t3-preview-page",
+          }),
+        }),
+      );
+      const events = yield* Fiber.join(reader);
+      expect(events.at(-1)).toEqual({
+        type: "cdp",
+        ...key,
+        message: encodeJson({ id: 1, result: {}, sessionId: "t3-preview-page" }),
+      });
+      expect(requested.text()).toBe("requested repository only");
+      expect(active.text()).toBe("");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports a failed guest insertion without retrying through focused CDP input", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      let retried = false;
+      const debuggee = makeDebuggee(() => {
+        retried = true;
+      });
+      debuggee.tab.webContents.insertText = async () => {
+        throw new Error("Guest renderer was disposed.");
+      };
+      host.attach(key, debuggee.tab);
+      const reader = yield* takeEvents(host, 2).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: encodeJson({
+            id: 1,
+            method: "Input.insertText",
+            params: { text: "do not send elsewhere" },
+            sessionId: "t3-preview-page",
+          }),
+        }),
+      );
+      const [, reply] = yield* Fiber.join(reader);
+      expect(JSON.parse((reply as { message: string }).message)).toEqual({
+        id: 1,
+        error: { code: -32000, message: "Guest renderer was disposed." },
+        sessionId: "t3-preview-page",
+      });
+      expect(retried).toBe(false);
+      expect(debuggee.text()).toBe("");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("preserves the target debugger session for an iframe insertion", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const reader = yield* takeEvents(host, 2).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: encodeJson({
+            id: 1,
+            method: "Input.insertText",
+            params: { text: "iframe only" },
+            sessionId: "iframe-session",
+          }),
+        }),
+      );
+      yield* Fiber.join(reader);
+      expect(debuggee.commands).toEqual([
+        {
+          method: "Input.insertText",
+          params: { text: "iframe only" },
+          sessionId: "iframe-session",
+        },
+      ]);
+      expect(debuggee.text()).toBe("");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("announces tabs already attached to a backend that starts later", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;

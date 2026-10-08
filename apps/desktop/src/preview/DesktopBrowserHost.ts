@@ -101,10 +101,20 @@ export const make = Effect.gen(function* () {
     const { webContents, debugger: debuggee } = tab.debuggee;
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
-        send: (method, params, sessionId) =>
-          sessionId === undefined
+        send: async (method, params, sessionId) => {
+          if (method === "Input.insertText" && sessionId === undefined) {
+            // A guest's CDP input can follow the embedder's focused webview.
+            // Its own WebContents inserts in this guest without moving desktop
+            // focus. Keep child CDP sessions scoped to their existing frames.
+            const text = params["text"];
+            if (typeof text !== "string") throw new Error("Input.insertText requires text.");
+            await webContents.insertText(text);
+            return {};
+          }
+          return sessionId === undefined
             ? debuggee.sendCommand(method, params)
-            : debuggee.sendCommand(method, params, sessionId),
+            : debuggee.sendCommand(method, params, sessionId);
+        },
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")

@@ -125,6 +125,9 @@ own phone execution. [PreviewView.tsx](../../apps/web/src/components/preview/Pre
 [TemporaryShareProxy.ts](../../apps/server/src/preview/TemporaryShareProxy.ts) own host sharing and
 cleanup. Desktop/headless automation and recordings now use the host's
 [ServerBrowser.ts](../../apps/server/src/preview/ServerBrowser.ts) and desktop CDP channel.
+Desktop page text insertion belongs to the attached tab's WebContents, without switching the
+visible tab or desktop focus. [DesktopBrowserHost.test.ts](../../apps/desktop/src/preview/DesktopBrowserHost.test.ts)
+covers two-tab draft isolation and failed insertion without retrying into another guest.
 The server encodes recordings, enforces the attachment size limit, and persists conversation
 attachments; the retired Electron renderer upload helper is no longer an admission boundary.
 [ServerBrowser.test.ts](../../apps/server/src/preview/ServerBrowser.test.ts) covers broker routing and
