@@ -25,3 +25,12 @@ Clipboard text must come from the Markdown serializer, not DOM text: chip labels
 the source and marker decorations are not content. Structured context records accompany
 that text when available. Paste completes trailing chip delimiters and adds a leading
 boundary when inserting a chip directly after text.
+
+## Composer surface bounds
+
+The shared web composer (including desktop and the fork Android APK) keeps its
+input and workspace/model strip together inside `ComposerSurface.Shell`. The
+shell's glass backdrop and context seam follow those contents. Environment update
+notices, version warnings, progress, and update actions belong in the sidebar;
+they do not add a card to the composer or thread details. Attachments, approvals,
+questions, task progress, and connection errors retain their composer banners.
