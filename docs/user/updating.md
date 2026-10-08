@@ -64,6 +64,66 @@ staged target. `--yes` does not skip safety or operating-system approval, and
 Standalone, development, and older installations need the manual stopped-work bootstrap
 procedure; this command does not rewrite their executable or restart them as a fallback.
 
+## Cloud VM environments
+
+For a fresh Linux cloud VM without systemd, use the fork's
+[cloud setup helper](../../scripts/cloud-environment.py) and keep
+[install.sh](../../scripts/install.sh) beside it. Choose a new private data directory
+and an available loopback port:
+
+```sh
+python3 scripts/cloud-environment.py setup --home /path/to/new-t3-cloud-home --port 13882 --name 'Squidhub (Personal) — Codex Cloud'
+```
+
+See [Codex Cloud setup](./cloud-environments.md) for preparing the reusable image,
+task startup, routing, pairing, and Claude sign-in. `setup` combines initialization
+and launch; use `init` alone when preparing a fresh home without starting it.
+With an exported account list, prefer `--repository owner/repository` plus
+`--accounts --owner-account` to derive `repository (Owner) — Codex Cloud`.
+`--name` saves an explicit label for restarts and updates; use a runtime
+with repository-label support. Initialization installs a verified Nightly release; `--version` selects an exact
+initial release instead. It refuses an existing directory and does not import
+credentials, conversations, or projects. Start runs the managed launcher in the
+foreground, so keep that process alive. Register the VM checkout as a project
+and sign in to its providers through the usual setup. The VM's process home and
+T3 data directory must be writable; all fork runtimes for the same OS user must
+share the device coordinator. Do not create a separate maintenance namespace
+for each environment to avoid its activity checks.
+
+Establish the private HTTP/WebSocket route and pair this environment through
+**Settings → Connections → Add environment**. In Connections, open its **Updates**
+controls, complete **Review installations** for the VM's known fork runtimes, then
+use **Check and download** and **Install**. **Update all** requests updates for the
+connected hosts. Each host retains its own activity checks, channel, pin, and
+recovery state. New cloud homes have **Automatic installation** enabled by default;
+installation still waits for the installations review and all activity checks.
+Use `setup --auto off` or `init --auto off` for manual updates instead. The saved preference survives
+restarts; starting an environment does not change it or an existing home's choice.
+
+From the VM's terminal, the helper exposes the same controller:
+
+```sh
+python3 scripts/cloud-environment.py status --home /path/to/t3-cloud-home
+python3 scripts/cloud-environment.py update --home /path/to/t3-cloud-home
+python3 scripts/cloud-environment.py auto-update --home /path/to/t3-cloud-home --auto on
+```
+
+Use `auto-update` while the managed server is running to change its saved preference;
+`--auto off` disables it and `--auto on` enables it for an existing managed home.
+The host checks and downloads eligible releases periodically even when
+the T3 client is closed. Installation waits for all registered work to finish,
+five idle minutes, and a 15-second countdown. A new turn, tool, background task,
+approval wait, open terminal, or unknown activity blocks installation and resets
+the countdown. Pins and unresolved installation/recovery blockers still apply.
+
+The update command does not reinstall files or force a restart. It follows the
+saved policy and reports waiting reasons. Provider logins outside the T3 home
+still need separate preservation. A cloud task ending can remove its runtime and
+state; this helper does not keep the VM alive or reconnect its private tunnel.
+An existing standalone VM, including the original Squidhub experiment, needs a
+separate stopped-work transition before it can use managed updates. Do not run
+initialization over its home.
+
 ## Why installation waits
 
 All agent work in registered fork runtimes belonging to that local OS user must be stopped,

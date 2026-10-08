@@ -14,13 +14,6 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
-  it("requires cloud support to be explicitly advertised by the selected server", () => {
-    expect(decodeDescriptor(descriptor).capabilities.codexCloudTasks).toBeUndefined();
-    expect(
-      decodeDescriptor({ ...descriptor, capabilities: { codexCloudTasks: true } }).capabilities
-        .codexCloudTasks,
-    ).toBe(true);
-  });
   it("decodes old, recognized and future manual installation descriptors", () => {
     expect(decodeDescriptor(descriptor).capabilities.serverInstallation).toBeUndefined();
     for (const installation of [{ kind: "npx" }, { kind: "npm-global", prefix: "/opt/node" }]) {

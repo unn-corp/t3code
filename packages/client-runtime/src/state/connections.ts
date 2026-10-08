@@ -6,6 +6,11 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
+import {
+  EnvironmentNames,
+  withEnvironmentName,
+  type StoredEnvironmentName,
+} from "../connection/environmentNames.ts";
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -66,9 +71,60 @@ export function createEnvironmentCatalogAtoms<R, E>(
     { initialValue: EMPTY_ENVIRONMENT_CATALOG_STATE },
   );
 
-  const catalogValueAtom = Atom.make((get) =>
-    Option.getOrElse(AsyncResult.value(get(catalogAtom)), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
-  ).pipe(Atom.withLabel("environment-catalog-value"));
+  const namesAtom = runtime.atom(
+    Stream.unwrap(EnvironmentNames.pipe(Effect.map((names) => names.changes))),
+    { initialValue: [] as ReadonlyArray<StoredEnvironmentName> },
+  );
+  const projected = new WeakMap<
+    ConnectionCatalogEntry,
+    { name: string; entry: ConnectionCatalogEntry }
+  >();
+  const catalogValueAtom = Atom.make((get) => {
+    const catalog = Option.getOrElse(
+      AsyncResult.value(get(catalogAtom)),
+      () => EMPTY_ENVIRONMENT_CATALOG_STATE,
+    );
+    const names = new Map(
+      Option.getOrElse(AsyncResult.value(get(namesAtom)), () => []).map((value) => [
+        value.environmentId,
+        value.name,
+      ]),
+    );
+    if (names.size === 0) return catalog;
+    return {
+      ...catalog,
+      entries: new Map(
+        [...catalog.entries].map(([id, entry]) => {
+          const name = names.get(id);
+          if (name === undefined) return [id, entry];
+          let cached = projected.get(entry);
+          if (cached?.name !== name) {
+            cached = { name, entry: withEnvironmentName(entry, name) };
+            projected.set(entry, cached);
+          }
+          return [id, cached.entry];
+        }),
+      ),
+    };
+  }).pipe(Atom.withLabel("environment-catalog-value"));
+  const rename = createRuntimeCommand(runtime, {
+    label: "environment-catalog:rename",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: Effect.fn(function* (input: {
+      readonly environmentId: EnvironmentIdType;
+      readonly name: string | null;
+    }) {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      if (!(yield* SubscriptionRef.get(registry.entries)).has(input.environmentId)) {
+        return yield* new EnvironmentRegistry.EnvironmentNotRegisteredError({
+          environmentId: input.environmentId,
+        });
+      }
+      const names = yield* EnvironmentNames;
+      yield* names.set(input.environmentId, input.name);
+    }),
+  });
 
   const githubRoutingPermissionsAtom = runtime.atom(
     Stream.unwrap(GitHubRoutingPermissions.pipe(Effect.map((permissions) => permissions.changes))),
@@ -207,5 +263,6 @@ export function createEnvironmentCatalogAtoms<R, E>(
     removeRelayEnvironments,
     retryNow,
     setEnabled,
+    rename,
   };
 }

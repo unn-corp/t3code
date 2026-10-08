@@ -10,6 +10,7 @@ import {
 import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import { StoredGitHubRoutingPermission } from "../connection/githubRoutingPermissions.ts";
+import { StoredEnvironmentName } from "../connection/environmentNames.ts";
 
 export const StoredConnectionCredential = Schema.Struct({
   connectionId: Schema.String,
@@ -24,6 +25,7 @@ export const ConnectionCatalogDocument = Schema.Struct({
   credentials: Schema.Array(StoredConnectionCredential),
   remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
   githubRoutingPermissions: Schema.optionalKey(Schema.Array(StoredGitHubRoutingPermission)),
+  environmentNames: Schema.optionalKey(Schema.Array(StoredEnvironmentName)),
   // Saved environments the user switched off. They stay registered with their
   // credentials and cache but never connect until switched back on. Older
   // documents predate the key, so decoding defaults it to none.
@@ -178,6 +180,13 @@ export function removeConnectionFromCatalog(
   const next = setRoutesInCatalog(document, environmentId, []);
   return {
     ...next,
+    ...(next.environmentNames === undefined
+      ? {}
+      : {
+          environmentNames: next.environmentNames.filter(
+            (value) => value.environmentId !== environmentId,
+          ),
+        }),
     remoteDpopTokens: removeCatalogValue(
       next.remoteDpopTokens,
       (value) => value.environmentId,

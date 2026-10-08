@@ -7,7 +7,11 @@ import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessHostname,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -49,11 +53,13 @@ const withHostPlatform = <ROut, E, RIn>(
   layer: Layer.Layer<ROut, E, RIn>,
   platform: NodeJS.Platform,
   hostname: string,
+  environment: NodeJS.ProcessEnv = {},
 ) =>
   Layer.mergeAll(
     layer,
     Layer.succeed(HostProcessPlatform, platform),
     Layer.succeed(HostProcessHostname, hostname),
+    Layer.succeed(HostProcessEnvironment, environment),
   );
 
 afterEach(() => {
@@ -61,6 +67,39 @@ afterEach(() => {
 });
 
 describe("resolveServerEnvironmentLabel", () => {
+  it.effect.each(["linux", "darwin", "win32"] as const)(
+    "uses the configured repository name instead of %s host discovery",
+    (platform) =>
+      Effect.gen(function* () {
+        const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+          cwdBaseName: "workspace",
+        }).pipe(
+          Effect.provide(
+            withHostPlatform(layerTest, platform, "container-id", {
+              T3CODE_ENVIRONMENT_LABEL: "  Squidhub (Personal)  ",
+            }),
+          ),
+        );
+        expect(result).toBe("Squidhub (Personal)");
+        expect(runMock).not.toHaveBeenCalled();
+      }),
+  );
+
+  it.effect("keeps hostname discovery when the configured label is blank", () =>
+    Effect.gen(function* () {
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "workspace",
+      }).pipe(
+        Effect.provide(
+          withHostPlatform(layerTest, "win32", "build-host", {
+            T3CODE_ENVIRONMENT_LABEL: "  ",
+          }),
+        ),
+      );
+      expect(result).toBe("build-host");
+    }),
+  );
+
   it.effect("uses hostname fallback regardless of launch mode", () =>
     Effect.gen(function* () {
       const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({

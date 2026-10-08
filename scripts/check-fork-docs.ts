@@ -11,6 +11,8 @@ const documents = [
   "docs/operations/android-pwa.md",
   "docs/user/android-fork.md",
   "docs/user/updating.md",
+  "docs/user/cloud-environments.md",
+  "docs/user/providers-codex.md",
   "docs/internals/server-updates.md",
   "docs/internals/discord-bridge.md",
 ];

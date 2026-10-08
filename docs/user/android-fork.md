@@ -29,10 +29,10 @@ imported.
 ### Automatic updates
 
 Arcwright Code checks this fork's GitHub releases when it opens and about every six hours on Wi-Fi.
-New versions are downloaded and verified in the background. An update never installs while you
-are using the phone: Arcwright Code waits until it has been in the background for 2 minutes and no
-browser command, file upload, or system dialog is in progress. This applies when you tap
-**Install** too. The tap records your request for exactly the version you reviewed and shows
+New versions are downloaded and verified in the background. Installation waits until Arcwright
+Code, including its recovery screen, has been in the background for 2 minutes and its browser
+commands, uploads, and system dialogs are finished. You can use other apps while it waits.
+This applies when you tap **Install** too. The tap records your request for exactly the version you reviewed and shows
 **Waiting**; leave the app and it installs after the wait, even if automatic installation is off.
 Agents running on your computers are not interrupted, since they run on those computers.
 
@@ -106,6 +106,12 @@ The phone is a client of the selected environment. Agents, terminals, repositori
 credentials, and conversation history stay on that environment's computer. The APK does not
 run its own T3 server or automatically discover and gain access to every machine in the tailnet.
 For host exposure options and pairing details, see [remote access](./remote-access.md#tailscale-https).
+
+For a Codex Cloud VM, follow the [Cloud setup guide](./cloud-environments.md).
+Use `repository (Account) — Codex Cloud` as its saved name. The phone pairs to the
+VM's provisioned private gateway, and the Cloud VM owns its repository and chats.
+Adding the Cloud environment's Tailscale auth key does not create that return
+route or pair the phone. Verify gateway access and use a fresh phone pairing link.
 
 ## Notifications
 

@@ -615,6 +615,43 @@ describe("fork maintenance controller", () => {
   });
 
   describe("automatic installation", () => {
+    it.each(["active-agents", "background-work", "commands", "unknown-participant"] as const)(
+      "resets the headless countdown for %s and requires a fresh five-minute idle window",
+      async (reason) => {
+        const h = await harness({ autoInstall: true });
+        await h.ready();
+        const first = await h.controller.tick();
+        expect(first.countdown).not.toBeNull();
+        h.clock.value += 10_000;
+        await h.idleRuntimes([{ participantId: "desktop-server", reason, label: "Cloud work" }]);
+        const busy = await h.controller.tick();
+        expect(busy.blockers).toEqual(
+          expect.arrayContaining([expect.objectContaining({ reason })]),
+        );
+        expect(busy.countdown).toBeNull();
+        // Even long-running or unknown work never causes a replacement.
+        h.clock.value += 600_000;
+        await h.idleRuntimes([{ participantId: "desktop-server", reason, label: "Cloud work" }]);
+        await h.controller.tick();
+        expect(h.events).toEqual(["stage"]);
+        await h.idleRuntimes();
+        expect((await h.controller.tick()).blockers).toEqual(
+          expect.arrayContaining([expect.objectContaining({ reason: "idle-window" })]),
+        );
+        h.clock.value += 299_999;
+        await h.idleRuntimes();
+        expect((await h.controller.tick()).countdown).toBeNull();
+        h.clock.value += 1;
+        await h.idleRuntimes();
+        const restarted = await h.controller.tick();
+        expect(restarted.countdown).toMatchObject({ installsAt: h.clock.value + 15_000 });
+        expect(h.events).toEqual(["stage"]);
+        h.clock.value += 15_000;
+        await h.idleRuntimes();
+        expect((await h.controller.tick()).phase).toBe("completed");
+      },
+    );
+
     it("waits for input and uploads, then counts down fifteen seconds, then installs", async () => {
       const h = await harness({ autoInstall: true });
       await h.ready();

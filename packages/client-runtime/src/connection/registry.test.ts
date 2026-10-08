@@ -55,6 +55,7 @@ import {
 import * as Persistence from "../platform/persistence.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as EnvironmentRegistry from "./registry.ts";
+import { EnvironmentNames, makeEnvironmentNames } from "./environmentNames.ts";
 import {
   GitHubRoutingPermissions,
   type StoredGitHubRoutingPermission,
@@ -1031,6 +1032,40 @@ describe("EnvironmentRegistry", () => {
         ).toBe(error.message);
         expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
       }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("renaming keeps the connected session and removal forgets the saved name", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET]);
+      const names = yield* makeEnvironmentNames({
+        read: Effect.succeed([]),
+        write: () => Effect.void,
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        const connected = yield* awaitConnectionState(
+          registry,
+          RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        const originalEntry = (yield* SubscriptionRef.get(registry.entries)).get(
+          RELAY_TARGET.environmentId,
+        );
+        yield* names.set(RELAY_TARGET.environmentId, "Squidhub (Personal)");
+        expect(yield* registry.state(RELAY_TARGET.environmentId)).toEqual(connected);
+        expect((yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)).toBe(
+          originalEntry,
+        );
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+        yield* registry.remove(RELAY_TARGET.environmentId);
+        expect(yield* Stream.runHead(names.changes)).toEqual(Option.some([]));
+      }).pipe(
+        Effect.provide(harness.layer),
+        Effect.provideService(EnvironmentNames, names),
+        Effect.scoped,
+      );
     }),
   );
 

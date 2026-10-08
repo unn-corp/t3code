@@ -14,6 +14,8 @@ import {
   CredentialStore,
   ProfileStore,
   GitHubRoutingPermissions,
+  EnvironmentNames,
+  makeEnvironmentNames,
   makeGitHubRoutingPermissions,
 } from "@t3tools/client-runtime/connection";
 import * as Context from "effect/Context";
@@ -42,6 +44,11 @@ function targetPersistenceError(
 export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const catalog = yield* CatalogStore.make();
+    const environmentNames = yield* makeEnvironmentNames({
+      read: catalog.read.pipe(Effect.map((document) => document.environmentNames ?? [])),
+      write: (environmentNames) =>
+        catalog.update((document) => ({ ...document, environmentNames })),
+    });
     const githubRoutingPermissions = yield* makeGitHubRoutingPermissions({
       read: catalog.read.pipe(Effect.map((document) => document.githubRoutingPermissions ?? [])),
       write: (githubRoutingPermissions) =>
@@ -151,6 +158,7 @@ export const layer = Layer.effectContext(
     });
     return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(
       Context.add(GitHubRoutingPermissions, githubRoutingPermissions),
+      Context.add(EnvironmentNames, environmentNames),
       Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),

@@ -1,6 +1,7 @@
 import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import { ComposerHostMaintenanceStatus } from "../chat/ComposerHostMaintenanceStatus";
 import { HostUpdateSettings } from "./HostUpdateSettings";
+import { RenameEnvironmentDialog } from "./RenameEnvironmentDialog";
 import { formatBuildVersion } from "@t3tools/shared/buildVersion";
 import {
   ChevronRightIcon,
@@ -1580,7 +1581,7 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
 /**
  * One added machine in the Environments list. The switch is the main action;
  * the update icon appears only when that machine can take an update; the
- * row menu holds the icon override, trace ID, and removal.
+ * row menu holds renaming, the icon override, trace ID, and removal.
  */
 function SavedBackendListRow({
   environment,
@@ -1589,6 +1590,7 @@ function SavedBackendListRow({
   onRemove,
   onAddRoute,
 }: SavedBackendListRowProps) {
+  const [renameOpen, setRenameOpen] = useState(false);
   const [routesOpen, setRoutesOpen] = useState(false);
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const environmentId = environment.environmentId;
@@ -1711,169 +1713,175 @@ function SavedBackendListRow({
   }${environment.serverConfig?.buildIdentity?.commit ? `\nCommit: ${environment.serverConfig.buildIdentity.commit}` : ""}${environment.serverConfig?.buildIdentity?.builtAt ? `\nBuilt: ${environment.serverConfig.buildIdentity.builtAt}` : ""}`;
 
   return (
-    <EnvironmentRow
-      kind={machineKind}
-      label={environment.label}
-      dimmed={!enabled}
-      subtitle={
-        <span className="flex min-w-0 items-center gap-1">
-          <Tooltip>
-            {/* The status can change while the tooltip is open, and base-ui only
-                re-measures the popup when the trigger's payload changes. */}
-            <TooltipTrigger
-              payload={statusTooltip}
-              render={
-                <span
-                  className={cn(
-                    "min-w-0 truncate",
-                    enabled &&
-                      status.tone === "error" &&
-                      !resumingServerUpdate &&
-                      "text-destructive",
-                  )}
-                />
-              }
-            >
-              {subtitleText}
-            </TooltipTrigger>
-            <TooltipPopup side="top" className="whitespace-pre-wrap">
-              {statusTooltip}
-            </TooltipPopup>
-          </Tooltip>
-          <span aria-hidden className="shrink-0">
-            ·
-          </span>
-          <button
-            type="button"
-            aria-expanded={routesOpen}
-            onClick={() => setRoutesOpen((open) => !open)}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            {routeCount === 1 ? "Routes" : `${routeCount} routes`}
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                routesOpen && "rotate-90",
-              )}
-            />
-          </button>
-        </span>
-      }
-      below={
-        <>
-          {isConnected ? (
-            <ComposerHostMaintenanceStatus
-              environmentId={environmentId}
-              label={environment.label}
-              supported={supportsForkMaintenanceAdmission(
-                environment.serverConfig?.environment.capabilities.forkMaintenance,
-              )}
-            />
-          ) : null}
-          {serverUpdateState.status !== "idle" ? (
-            <div className="mt-1 max-w-md">
-              <ServerUpdateProgress state={serverUpdateState} />
-            </div>
-          ) : null}
-        </>
-      }
-      detail={
-        <>
-          {updatesOpen ? (
-            <HostUpdateSettings
-              environmentId={environmentId}
-              label={environment.label}
-              supported={
-                isConnected &&
-                supportsForkMaintenanceAdmission(
-                  environment.serverConfig?.environment.capabilities.forkMaintenance,
-                )
-              }
-            />
-          ) : null}
-          {routesOpen ? (
-            <EnvironmentRoutesList
-              environment={environment}
-              onAddRoute={() => onAddRoute(environment)}
-            />
-          ) : null}
-        </>
-      }
-    >
-      <Button
-        size="xs"
-        variant="ghost-muted"
-        aria-label={`Updates for ${environment.label}`}
-        aria-expanded={updatesOpen}
-        onClick={() => setUpdatesOpen((open) => !open)}
-      >
-        Updates
-      </Button>
-      {unsupported &&
-      environment.entry.serverUpdateRequired === true &&
-      serverUpdateState.status !== "running" ? (
-        <OutdatedServerUpdateAction
-          environmentId={environmentId}
-          serverLabel={`${environment.label} server`}
-          fromVersion={lastDescriptor?.serverVersion}
-          targetVersion={APP_VERSION}
-          label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
-        />
+    <>
+      {renameOpen ? (
+        <RenameEnvironmentDialog environment={environment} onClose={() => setRenameOpen(false)} />
       ) : null}
-
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Switch
-              size="sm"
-              checked={enabled}
-              disabled={isRemoving || unsupported}
-              aria-label={`${enabled ? "Switch off" : "Switch on"} ${environment.label}`}
-              onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
-            />
-          }
-        />
-        <TooltipPopup side="top">
-          {unsupported ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
-        </TooltipPopup>
-      </Tooltip>
-      <Menu>
-        <MenuTrigger
-          render={
-            <Button
+      <EnvironmentRow
+        kind={machineKind}
+        label={environment.label}
+        dimmed={!enabled}
+        subtitle={
+          <span className="flex min-w-0 items-center gap-1">
+            <Tooltip>
+              {/* The status can change while the tooltip is open, and base-ui only
+                re-measures the popup when the trigger's payload changes. */}
+              <TooltipTrigger
+                payload={statusTooltip}
+                render={
+                  <span
+                    className={cn(
+                      "min-w-0 truncate",
+                      enabled &&
+                        status.tone === "error" &&
+                        !resumingServerUpdate &&
+                        "text-destructive",
+                    )}
+                  />
+                }
+              >
+                {subtitleText}
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="whitespace-pre-wrap">
+                {statusTooltip}
+              </TooltipPopup>
+            </Tooltip>
+            <span aria-hidden className="shrink-0">
+              ·
+            </span>
+            <button
               type="button"
-              variant="ghost-muted"
-              size="icon-xs"
-              disabled={isRemoving}
-              aria-label={`More actions for ${environment.label}`}
-            />
-          }
+              aria-expanded={routesOpen}
+              onClick={() => setRoutesOpen((open) => !open)}
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {routeCount === 1 ? "Routes" : `${routeCount} routes`}
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
+                  routesOpen && "rotate-90",
+                )}
+              />
+            </button>
+          </span>
+        }
+        below={
+          <>
+            {isConnected ? (
+              <ComposerHostMaintenanceStatus
+                environmentId={environmentId}
+                label={environment.label}
+                supported={supportsForkMaintenanceAdmission(
+                  environment.serverConfig?.environment.capabilities.forkMaintenance,
+                )}
+              />
+            ) : null}
+            {serverUpdateState.status !== "idle" ? (
+              <div className="mt-1 max-w-md">
+                <ServerUpdateProgress state={serverUpdateState} />
+              </div>
+            ) : null}
+          </>
+        }
+        detail={
+          <>
+            {updatesOpen ? (
+              <HostUpdateSettings
+                environmentId={environmentId}
+                label={environment.label}
+                supported={
+                  isConnected &&
+                  supportsForkMaintenanceAdmission(
+                    environment.serverConfig?.environment.capabilities.forkMaintenance,
+                  )
+                }
+              />
+            ) : null}
+            {routesOpen ? (
+              <EnvironmentRoutesList
+                environment={environment}
+                onAddRoute={() => onAddRoute(environment)}
+              />
+            ) : null}
+          </>
+        }
+      >
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          aria-label={`Updates for ${environment.label}`}
+          aria-expanded={updatesOpen}
+          onClick={() => setUpdatesOpen((open) => !open)}
         >
-          <EllipsisIcon className="size-3.5" />
-        </MenuTrigger>
-        <MenuPopup align="end">
-          <EnvironmentIconMenu
+          Updates
+        </Button>
+        {unsupported &&
+        environment.entry.serverUpdateRequired === true &&
+        serverUpdateState.status !== "running" ? (
+          <OutdatedServerUpdateAction
             environmentId={environmentId}
-            serverConfig={environment.serverConfig}
+            serverLabel={`${environment.label} server`}
+            fromVersion={lastDescriptor?.serverVersion}
+            targetVersion={APP_VERSION}
+            label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
           />
-          <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
-            <RouteIcon />
-            {routesOpen ? "Hide routes" : "Routes"}
-          </MenuItem>
-          {mcpUrl ? (
-            <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
-          ) : null}
-          {errorTraceId ? (
-            <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
-          ) : null}
-          <MenuSeparator />
-          <MenuItem variant="destructive" onClick={() => onRemove(environment)}>
-            {isRemoving ? "Removing…" : "Remove from this device…"}
-          </MenuItem>
-        </MenuPopup>
-      </Menu>
-    </EnvironmentRow>
+        ) : null}
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Switch
+                size="sm"
+                checked={enabled}
+                disabled={isRemoving || unsupported}
+                aria-label={`${enabled ? "Switch off" : "Switch on"} ${environment.label}`}
+                onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
+              />
+            }
+          />
+          <TooltipPopup side="top">
+            {unsupported ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
+          </TooltipPopup>
+        </Tooltip>
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost-muted"
+                size="icon-xs"
+                disabled={isRemoving}
+                aria-label={`More actions for ${environment.label}`}
+              />
+            }
+          >
+            <EllipsisIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem onClick={() => setRenameOpen(true)}>Rename environment…</MenuItem>
+            <EnvironmentIconMenu
+              environmentId={environmentId}
+              serverConfig={environment.serverConfig}
+            />
+            <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
+              <RouteIcon />
+              {routesOpen ? "Hide routes" : "Routes"}
+            </MenuItem>
+            {mcpUrl ? (
+              <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
+            ) : null}
+            {errorTraceId ? (
+              <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
+            ) : null}
+            <MenuSeparator />
+            <MenuItem variant="destructive" onClick={() => onRemove(environment)}>
+              {isRemoving ? "Removing…" : "Remove from this device…"}
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      </EnvironmentRow>
+    </>
   );
 }
 
@@ -2117,6 +2125,7 @@ function CloudRemoteEnvironmentRows({
 }
 
 export function ConnectionsSettings() {
+  const [renamePrimaryOpen, setRenamePrimaryOpen] = useState(false);
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
@@ -3728,6 +3737,11 @@ export function ConnectionsSettings() {
                     <EllipsisIcon className="size-3.5" />
                   </MenuTrigger>
                   <MenuPopup align="end">
+                    {primaryEnvironment ? (
+                      <MenuItem onClick={() => setRenamePrimaryOpen(true)}>
+                        Rename environment…
+                      </MenuItem>
+                    ) : null}
                     <EnvironmentIconMenu
                       environmentId={primaryEnvironmentId}
                       serverConfig={primaryServerConfig}
@@ -4135,6 +4149,12 @@ export function ConnectionsSettings() {
 
   return (
     <SettingsPageContainer width="wide">
+      {renamePrimaryOpen && primaryEnvironment ? (
+        <RenameEnvironmentDialog
+          environment={primaryEnvironment}
+          onClose={() => setRenamePrimaryOpen(false)}
+        />
+      ) : null}
       {desktopBridge || primaryEnvironment ? primarySettings : null}
       {primaryEnvironmentId && primaryServerConfig ? (
         <SettingsSection title={`Updates for ${primaryEnvironment?.label ?? "This machine"}`}>

@@ -258,24 +258,73 @@ authorization.
 
 ## Experimental Codex Cloud integration
 
-**Behavior and delivery.** Projects can bind cloud tasks to a configured Codex
-account and published environment. A separate outbound worker experiment supports
-successive Codex/Claude jobs in an ephemeral checkout. This is source delivery with
-fixture verification; live cloud/account commissioning remains required. Existing
-local conversations and checkpoints do not become cloud sessions. See the
-[user setup](../user/providers-codex.md#run-work-in-codex-cloud) and
-[network boundary](../internals/remote.md#ephemeral-cloud-workers).
+**Behavior and delivery.** A compatible T3 server inside a Codex Cloud VM supports
+ordinary environment-local conversations through a private HTTP/WebSocket route.
+Live Squidhub commissioning verified Claude and owner-only Personal Codex chats;
+clarity-relay also verified independent Personal sign-in, completed Codex turns,
+and conversation persistence across a Browser reload. Unnamed and Work remain
+uncommissioned. Tunnel provisioning and VM lifecycle remain experimental, and
+pairing a test Browser does not pair the user's desktop profile. See
+[user setup](../user/cloud-environments.md) and
+[network architecture](../internals/remote.md#cloud-vm-environments).
 
-**Ownership and verification.** The [cloud service](../../apps/server/src/codexCloud)
-owns account isolation, submission records, credentials, and worker job lifecycle.
-The [shared panel](../../apps/web/src/components/codexCloud) supplies web, desktop,
-and fork APK controls; upstream native mobile has no panel. RPC permissions,
-MCP caller limits, and maintenance admission apply to cloud commands. Preserve the
-optional `codexCloudTasks` descriptor capability for mixed-version connections.
-Run the focused cloud CLI/service/worker tests and the shared command-permission
-suite when changing these paths. Provider login changes must not redirect existing
-jobs, and worker reconnection must not replay uncertain edits. Do not commission by
-starting a development server against the installed T3 data home.
+The [Linux VM setup helper](../../scripts/cloud-environment.py) initializes only
+a fresh private home with the verified fork installer and runs the native service
+launcher without an OS service manager. It enables existing per-host maintenance
+controls; `setup` combines fresh initialization and managed launch, while
+status/update/auto-update call the same authenticated operator controller.
+`setup/init --repository` with the account list and confirmed owner derives
+`repository (Owner) — Codex Cloud`; `--name` accepts an explicit name instead.
+Both store a repository label, passed as `T3CODE_ENVIRONMENT_LABEL`
+to the launcher and every restarted runtime. Server descriptor naming resolves
+that override before host discovery, leaving the persisted environment ID intact.
+It requires delivery of the updated server label resolver as well as the helper;
+older release archives still publish their discovered hostname.
+`export-accounts` reads a source settings file and exports only Codex provider IDs,
+labels, and enabled preferences. `setup/init --accounts` requires a confirmed
+`--owner-account` ID and seeds only that owner by default, including its new-chat
+and text-generation selections. `--include-account` explicitly opts additional
+IDs into fresh setup; later additions use the existing Providers flow. When the
+default `codex` slot is not selected, its legacy configuration is disabled so
+registry hydration cannot silently add an enabled ambient-login provider. All
+selected entries use a VM-local shared workspace home; separate browser sign-ins and
+the existing protected provider credential stores own their sessions. No host
+paths, environment variables, or credentials are exported. Subsequent starts
+preserve provider changes. The helper's tests cover export privacy, malformed
+lists, owner selection, explicit extras, fresh seeding, and refusal to rewrite
+configured homes. An isolated live Squidhub VM verified owner-only Personal
+selection, independent managed browser sign-in, a completed GPT-6-Luna turn,
+and a follow-up after pairing through the private route. Unnamed, Work, and
+multi-account Codex authentication and inference remain uncommissioned.
+Client environment naming belongs to the shared connection catalog and its
+web/desktop/fork Android Connections menu and upstream mobile details. Overrides
+are device-local presentation data, survive discovery/route refresh, and never
+replace the registry's live connection target. Server naming remains the default
+for clients without an override. Removing a saved environment forgets its name.
+Fresh cloud homes seed the native update policy with automatic installation on
+(or `init --auto off`), without confirming bootstrap review. Later policy changes
+persist through that controller, retain pins and all activity blockers, and are
+never rewritten by a subsequent start. It never
+replaces an existing home, fabricates launcher context, or bypasses activity,
+snapshot, trial, health, or recovery admission. Verify its fresh-home refusal,
+recorded-version selection, duplicate-start lock, and owned-process shutdown with
+`python3 scripts/cloud-environment.test.py`. Initial managed-launch commissioning
+used isolated Linux state; transition of the existing Squidhub server and a live
+cloud binary replacement remain uncommissioned. See
+[cloud environment updates](../user/updating.md#cloud-vm-environments) and the
+[Codex Cloud setup runbook](../user/cloud-environments.md). Reusable image preparation
+and task startup are documented separately; tunnel provisioning, client pairing,
+and account/VM lifecycle automation remain uncommissioned.
+
+**Ownership and verification.** The [managed setup helper](../../scripts/cloud-environment.py)
+owns fresh VM setup and managed launch. Ordinary environment connections and
+provider adapters own pairing, account isolation, conversation execution, and
+maintenance admission. The former Cloud tasks panel, controller worker service,
+and their RPC/MCP transports have been removed. Existing saved controller data
+is not migrated into VM conversations or deleted from installed data homes.
+Run the helper's focused tests and normal connection/provider suites when changing
+these paths. Do not commission by starting a development server against the
+installed T3 data home.
 
 ## Checkpoints and model compatibility
 

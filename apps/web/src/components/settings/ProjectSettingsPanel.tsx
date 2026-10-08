@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { CodexCloudPanel } from "../codexCloud/CodexCloudPanel";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -1120,13 +1119,6 @@ function ProjectDetail({
           />
         </SettingsSection>
 
-        <SettingsSection title="Codex Cloud">
-          <CodexCloudPanel
-            key={`${representative.environmentId}:${representative.id}`}
-            environmentId={representative.environmentId}
-            projectId={representative.id}
-          />
-        </SettingsSection>
         <SettingsSection title="Product context">
           <SettingsRow
             title="Product document"

@@ -59,6 +59,8 @@ export interface ConnectionRoute {
  * with `connectionRoutes`.
  */
 export interface ConnectionCatalogEntry {
+  /** This client's display name, applied only to presentation entries. */
+  readonly nameOverride?: string;
   readonly target: ConnectionTarget;
   readonly profile: Option.Option<ConnectionProfile>;
   readonly alternateRoutes?: ReadonlyArray<ConnectionRoute>;

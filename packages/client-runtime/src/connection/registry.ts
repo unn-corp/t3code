@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ClientCapabilities from "../platform/capabilities.ts";
+import { EnvironmentNames } from "./environmentNames.ts";
 import {
   type ConnectionCatalogEntry,
   type ConnectionCredential,
@@ -213,6 +214,7 @@ export const make = Effect.gen(function* () {
   const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const githubRoutingPermissions = yield* GitHubRoutingPermissions;
+  const environmentNames = yield* EnvironmentNames;
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
@@ -828,6 +830,7 @@ export const make = Effect.gen(function* () {
     const entry = yield* getEntry(environmentId);
 
     yield* githubRoutingPermissions.forget(environmentId);
+    yield* environmentNames.set(environmentId, null);
     yield* registrations.remove(environmentId);
     yield* Ref.update(persistedEnvironmentIds, (current) => {
       const next = new Set(current);

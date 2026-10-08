@@ -1,6 +1,6 @@
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/AppSymbol";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { connectionStatusText, environmentNameError } from "@t3tools/client-runtime/connection";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -20,6 +20,8 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { serverEnvironment } from "../../state/server";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { environmentCatalog } from "../../connection/catalog";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
@@ -47,6 +49,23 @@ export function ConnectionEnvironmentRow(props: {
 }) {
   const [label, setLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
+  const [savingName, setSavingName] = useState(false);
+  const rename = useAtomCommand(environmentCatalog.rename, { reportFailure: false });
+  const saveName = async (name: string | null) => {
+    if (savingName) return;
+    setSavingName(true);
+    const result = await rename({ environmentId: props.environment.environmentId, name });
+    setSavingName(false);
+    if (AsyncResult.isFailure(result)) {
+      const error = Cause.squash(result.cause);
+      Alert.alert(
+        "Could not rename environment",
+        error instanceof Error ? error.message : "The name could not be saved.",
+      );
+    } else if (name === null) {
+      setLabel(serverConfig?.environment.label ?? "");
+    }
+  };
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
@@ -62,7 +81,7 @@ export function ConnectionEnvironmentRow(props: {
       props.environment.connectionState === "reconnecting");
   const handleSave = useCallback(async () => {
     const result = await props.onUpdate(props.environment.environmentId, {
-      label: label.trim(),
+      label: serverConfig?.environment.label ?? props.environment.environmentLabel,
       displayUrl: url.trim(),
     });
     if (AsyncResult.isSuccess(result)) {
@@ -74,7 +93,7 @@ export function ConnectionEnvironmentRow(props: {
       "Could not update environment",
       error instanceof Error ? error.message : "The environment could not be updated.",
     );
-  }, [label, url, props]);
+  }, [url, props, serverConfig]);
 
   return (
     <Animated.View layout={LinearTransition.duration(250)} className="bg-grouped-card">
@@ -154,21 +173,38 @@ export function ConnectionEnvironmentRow(props: {
           exiting={FadeOut.duration(150)}
           className="gap-3 px-4 pb-4"
         >
+          <ConnectionFormField
+            label="Environment name"
+            autoCapitalize="words"
+            autoCorrect={false}
+            placeholder="Squidhub (Personal)"
+            value={label}
+            onChangeText={setLabel}
+          />
+          <Text className="text-xs text-foreground-muted">
+            Saved on this device. Chats keep running.
+          </Text>
+          {environmentNameError(label) ? (
+            <Text className="text-sm text-danger-foreground">{environmentNameError(label)}</Text>
+          ) : null}
+          <View className="flex-row flex-wrap gap-2">
+            <MaterialButton
+              label="Save name"
+              disabled={savingName || environmentNameError(label) !== null}
+              onPress={() => void saveName(label)}
+            />
+            <MaterialButton
+              label="Use server name"
+              disabled={savingName}
+              onPress={() => void saveName(null)}
+            />
+          </View>
           {props.environment.isRelayManaged ? (
             <Text className="text-sm text-foreground-muted">
               Managed by T3 Connect. Tunnel details update automatically.
             </Text>
           ) : (
             <>
-              <ConnectionFormField
-                label="Label"
-                autoCapitalize="words"
-                autoCorrect={false}
-                placeholder="My MacBook"
-                value={label}
-                onChangeText={setLabel}
-              />
-
               <ConnectionFormField
                 label="URL"
                 autoCapitalize="none"

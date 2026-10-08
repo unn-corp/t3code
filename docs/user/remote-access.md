@@ -39,6 +39,19 @@ disconnect an otherwise healthy conversation.
 
 ## Pair over a LAN or private network
 
+To rename a saved environment, open **Settings → Connections**, choose its
+actions menu, and select **Rename environment**. The name is saved on this device
+and appears throughout its environment lists. Chats keep running. Choose
+**Use server name**, or save a blank name, to reset it. On the upstream mobile
+client, expand the environment details and save its **Environment name**.
+
+For a headless server, `T3CODE_ENVIRONMENT_LABEL` sets its display name instead of
+the machine hostname. Set it before launching and keep the same value across
+restarts. The [cloud setup helper](./cloud-environments.md#start-a-task-and-run-the-server)
+derives `Squidhub (Personal) — Codex Cloud` from `--repository` and the owning
+account, or saves an explicit `--name`. Changing the
+label does not change the environment's identity or pair a different machine.
+
 Use direct pairing when the other device can reach the host's network address.
 
 On a desktop host, open **Settings → Connections**, enable **Network access**,

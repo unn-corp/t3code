@@ -22,6 +22,8 @@ import {
   CredentialStore,
   ProfileStore,
   GitHubRoutingPermissions,
+  EnvironmentNames,
+  makeEnvironmentNames,
   StoredGitHubRoutingPermission,
   gitHubRoutingConnectionKey,
   gitHubRoutingPermissionFor,
@@ -608,6 +610,11 @@ export const layer = Layer.effectContext(
     );
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
     const githubRoutingPermissions = makeBrowserGitHubRoutingPermissions();
+    const environmentNames = yield* makeEnvironmentNames({
+      read: catalog.read.pipe(Effect.map((document) => document.environmentNames ?? [])),
+      write: (environmentNames) =>
+        catalog.update((document) => ({ ...document, environmentNames })),
+    });
 
     const targetStore = Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
@@ -911,6 +918,7 @@ export const layer = Layer.effectContext(
 
     return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(
       Context.add(GitHubRoutingPermissions, githubRoutingPermissions),
+      Context.add(EnvironmentNames, environmentNames),
       Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),

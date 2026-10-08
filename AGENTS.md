@@ -157,6 +157,23 @@ The most common defect in this repo is a change that works on the path you teste
 - **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
 - **Docs.** Check whether the change makes existing guidance inaccurate. Apply the [documentation rules](#documentation) before adding anything.
 
+## Codex Cloud environment setup
+
+For requests to provision or connect a Codex Cloud VM, read the
+[setup runbook](docs/user/cloud-environments.md) before commissioning. Use
+`repository (Owning account) — Codex Cloud` as the standard name; the fresh setup
+helper derives it with `--repository`, `--accounts`, and `--owner-account`.
+Keep the published environment, running task, and T3 server identities distinct.
+Collect missing account/default and device choices, and ask whether a local
+checkout exists and selected application variables should be transferred.
+Honor supplied choices, transfer secrets privately only as authorized, help with
+supported provisioning/device controls, and give exact UI steps where access is
+unavailable. Verify the private return route, provider turns, and each device's
+pairing before reporting it ready. Preserve existing custom names and live state.
+Return the runbook's non-secret handoff and per-device results, including pending
+steps, renewal dates, and the resume/work-preservation procedure. Diagnose an
+existing task before replacing it; never reinitialize a working VM to reconnect.
+
 ## Dev servers
 
 - `vp i` installs. Worktrees get this from the t3.json setup script; if module resolution looks broken, it probably did not run.

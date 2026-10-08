@@ -168,6 +168,13 @@ asks the launcher for the update with a one-use trial capability. The launcher p
 that update's trial child, strips any inherited one, and advertises `maintenance-trial` in the child context.
 An older launcher lacks it, so in-product installation is blocked until `t3 service install` upgrades it.
 
+The [Linux cloud setup helper](../../scripts/cloud-environment.py) can start this
+same launcher in a task VM without systemd. It initializes a fresh home using the
+verified fork installer, then leaves swaps and recovery to the native launcher and
+controller. Its terminal update action calls the existing operator endpoint;
+it is not another installer for running homes. VM/tunnel lifecycle and persistence
+remain outside the update transaction.
+
 The launcher's own commit boundary is unchanged and ordered _after_ the receipt: the trial records its health
 receipt, then reports `prepared`, then the launcher commits the version, then the trial's controller commits
 the journal and releases admission. A crash between those steps never loses data: the launcher's database

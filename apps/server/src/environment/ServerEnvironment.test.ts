@@ -198,7 +198,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
-  it.effect("persists the environment id across service restarts", () =>
+  it.effect("persists the environment id across service restarts and label changes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -208,13 +208,25 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       const first = yield* Effect.gen(function* () {
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
         return yield* serverEnvironment.getDescriptor;
-      }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
+      }).pipe(
+        Effect.provide(layerServerEnvironment(baseDir)),
+        Effect.provideService(HostProcessEnvironment, {
+          T3CODE_ENVIRONMENT_LABEL: "Squidhub (Personal)",
+        }),
+      );
       const second = yield* Effect.gen(function* () {
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
         return yield* serverEnvironment.getDescriptor;
-      }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
+      }).pipe(
+        Effect.provide(layerServerEnvironment(baseDir)),
+        Effect.provideService(HostProcessEnvironment, {
+          T3CODE_ENVIRONMENT_LABEL: "Squidhub (Personal) / task 2",
+        }),
+      );
 
       expect(first.environmentId).toBe(second.environmentId);
+      expect(first.label).toBe("Squidhub (Personal)");
+      expect(second.label).toBe("Squidhub (Personal) / task 2");
       expect(second.serverVersion).toBe(APP_VERSION);
       expect(first.orchestrationProtocolVersion).toBe(ORCHESTRATION_PROTOCOL_VERSION);
       expect(second.capabilities.repositoryIdentity).toBe(true);

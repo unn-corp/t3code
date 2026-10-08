@@ -1,5 +1,4 @@
 import * as ThreadExport from "./orchestration-v2/ThreadExportService.ts";
-import * as CodexCloud from "./codexCloud/CodexCloudService.ts";
 import {
   ForkExtraWsRpcGroup,
   ForkMaintenanceError,
@@ -21,7 +20,6 @@ export const makeForkExtraWsRpcLayer = (session: EnvironmentAuth.AuthenticatedSe
   ForkExtraWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const preview = yield* PreviewManager;
-      const cloud = yield* CodexCloud.CodexCloudService;
       const broker = yield* PreviewAutomationBroker;
       const authorize = <A, E, R>(
         method: string,
@@ -41,12 +39,6 @@ export const makeForkExtraWsRpcLayer = (session: EnvironmentAuth.AuthenticatedSe
         Effect.provide(ThreadExport.layer),
       );
       return ForkExtraWsRpcGroup.of({
-        [WS_METHODS.codexCloudRead]: (input) =>
-          authorize(WS_METHODS.codexCloudRead, cloud.read(input.projectId)),
-        [WS_METHODS.codexCloudCommand]: (input) =>
-          authorize(WS_METHODS.codexCloudCommand, cloud.command(input)),
-        [WS_METHODS.codexCloudWorkerSetup]: (input) =>
-          authorize(WS_METHODS.codexCloudWorkerSetup, cloud.setupWorker(input)),
         [WS_METHODS.threadExport]: (input) =>
           authorize(WS_METHODS.threadExport, exporter.exportThread(input)),
         [WS_METHODS.codexSessionsList]: (input) =>

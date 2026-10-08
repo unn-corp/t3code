@@ -502,7 +502,11 @@ Do these in order. Each is outside the repository.
    publish a complete, validated candidate to the trusted GitHub feed. A rehearsal artifact or draft
    cannot be installed through the in-product updater. Keep `FORK_RELEASES_ENABLED` unset or false.
    On real Windows/Linux desktops, verify that active registered agents defer installation; let work
-   finish normally before updating. On the phone, verify the foreground and local-operation guards.
+   finish normally before updating. On the phone, follow the
+   [paired-phone commissioning checklist](./android-pwa.md#paired-phone-commissioning) to capture
+   current device policy, verify foreground/local-operation guards, and preserve saved connections.
+   Notification-service changes also require the
+   [connection notification regression check](./android-pwa.md#connection-notification-regression).
    Exercise both in-product update and native/external recovery, preserving connections and data.
    This is the proof no automated check here provides. Test recovery into the actual retained
    predecessor, not only a fixture installer. Commissioning found that earlier updater-equipped

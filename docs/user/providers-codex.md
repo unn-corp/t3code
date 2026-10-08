@@ -90,70 +90,36 @@ links. The private `auth.json` must remain a real file in the shadow home.
 
 ## Run work in Codex Cloud
 
-This integration is experimental. In **Project settings → Codex Cloud**, select the
-Codex account that owns the repository, enter its published environment ID or settings URL, and save
-the project default. **Cloud tasks** in the conversation's workspace controls opens
-the same panel. Personal, Unnamed, Work, and other configured Codex accounts remain
-separate; existing jobs keep the account and environment they started with.
+Follow [the cloud environment setup guide](./cloud-environments.md) for the
+copyable preparation prompt, Install script/Start skill instructions, single-command
+server setup, automatic account entries, provider sign-in, and readiness checks.
 
-Cloud submissions use that account's existing ChatGPT CLI login. Connecting through
-ChatGPT sharing alone does not grant access to cloud tasks. The installed CLI must
-also support the published environment: a successful account-access check does not
-prove that a newly created environment appears in its cloud catalog. Find the ID by
-opening the environment's settings in ChatGPT and inspecting its settings address.
+For ordinary Claude conversations, run a compatible T3 server inside the task VM
+and connect it through **Settings → Connections → Add environment**. Register the
+VM checkout as a project, choose that project when starting a thread, and select
+Claude. The VM environment owns the conversation, provider session, commands,
+files, and checkpoints. Claude requires its own sign-in inside that VM. Any of your
+Codex accounts can also be connected independently in the same VM, regardless of
+which account owns the published Cloud environment. Reuse a non-secret account
+list with `setup --accounts --owner-account` to prepare only the owner and select
+it as the default. Add other accounts explicitly in Providers when needed, or
+include them during fresh setup with `--include-account`. Each new VM still needs
+browser authorization for each account you want to use there.
 
-Describe the work and run the task, then open its cloud link, check its status, or
-view its changes here. Work runs in the cloud repository checkout; local uncommitted
-files are not uploaded. Review and bring changes back through your normal Git flow.
-If submission is uncertain, check that account's tasks in ChatGPT first. Retrying the
-same request in the open panel does not create another job; **New task** deliberately
-starts a separate request. Cloud task cancellation stays in ChatGPT.
-
-### Claude and interactive worker experiments
-
-Choose **Cloud worker (experimental)** to send successive Codex or Claude prompts to
-a connected cloud checkout and resume its previous conversations. This is a separate
-task panel, not a replacement for the regular local conversation provider.
-
-In **Connect an experimental worker**, enter the HTTPS origin of the T3 server that
-owns this project, prepare a worker, and download its script. The server must run a
-version with cloud support. Connect the cloud environment to your tailnet in its
-ChatGPT network settings, and verify that an HTTPS request from a cloud task can
-reach the controller. The worker needs outbound HTTP/HTTPS access; inbound SSH is
-not part of this setup. Enable the required installer and model API domains too.
-
-Install the agent CLI in the cloud environment before publishing it. Claude needs
-its own supported login or API credentials; your Codex subscription does not sign
-Claude in. Follow [Claude's setup](https://code.claude.com/docs/en/setup) and
-[programmatic usage](https://code.claude.com/docs/en/headless) guidance.
-
-In the running cloud task, save the downloaded script as `t3-cloud-worker.py`. Set
-`T3_CLOUD_CONTROLLER` to the controller origin, `T3_CLOUD_CWD` to the cloud checkout,
-and `T3_CLOUD_TOKEN` to the credential copied separately from the panel. Start it:
-
-```bash
-python3 t3-cloud-worker.py
-```
-
-Supply task credentials after publishing the reusable environment, so its snapshot
-does not contain them. The worker credential expires after 24 hours and binds to
-its first process. It is not an account password or a Tailscale auth key. It is
-removed from agent subprocess environments. Revoke it from this panel to disconnect
-the worker, and prepare a new credential when starting another worker process.
-
-Keep the cloud task and controller running while using the worker. Each worker runs
-one job at a time. **Stop** records cancellation; a connected worker stops the
-process on its next heartbeat. Closing a suspended VM or losing a worker does not
-automatically replay edits. Start a new worker and inspect the checkout before
-continuing. Claude tool execution is enabled for the submitted job, including shell
-commands; interactive approval and browser automation are not provided by this
-worker. The task list shows previews; **View output** retrieves the retained output
-tail, up to 180,000 characters.
-
-The controls are shared by web, desktop, and this fork's Android web client. The
-upstream React Native client has no cloud-task panel yet. Installation, real cloud
-connectivity, and provider authentication must be verified on each deployment;
-fixture tests alone do not establish that a particular cloud account works.
+This remains a manual experiment: Codex Cloud does not expose an inbound T3
+endpoint. An operator must establish a private outbound tunnel carrying both
+HTTP and WebSocket traffic before supplying a pairing URL. Live trials
+verified Claude in Squidhub and owner-only Personal Codex chats and follow-ups
+in Squidhub and clarity-relay through this route.
+Personal used fresh browser authorization in an owner-only managed VM setup;
+Unnamed and Work remain uncommissioned. This does not
+provide automatic VM launch, account switching, or recovery after VM termination.
+For new Linux VMs, the [managed setup helper](./updating.md#cloud-vm-environments)
+enables the existing per-environment update and recovery controls without systemd.
+Saved connections belong to each client profile; pairing a test browser does not
+also pair the desktop app. Keep the VM and tunnel running, and preserve its state
+before replacing the task. Never publish a reusable snapshot containing provider
+logins or client pairing credentials.
 
 ## Answer questions while Codex works
 

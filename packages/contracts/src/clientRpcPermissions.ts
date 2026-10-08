@@ -11,8 +11,6 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
-  [WS_METHODS.codexCloudCommand]: AuthOrchestrationOperateScope,
-  [WS_METHODS.codexCloudWorkerSetup]: AuthAccessWriteScope,
   [WS_METHODS.serverUpdateMaintenancePolicy]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverRunMaintenanceAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverRecoverMaintenance]: AuthAccessWriteScope,

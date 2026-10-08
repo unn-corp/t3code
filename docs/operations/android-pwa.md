@@ -294,6 +294,8 @@ Tailscale and the host must remain reachable. Android power
 saving can delay connections; force-stop prevents delivery until the app opens again, and the
 app must be opened once after reboot. Historical completions are not replayed on first activation.
 See the [notification setup](../user/android-fork.md#notifications) for the phone's settings.
+Verify service-status changes with the
+[connection notification regression check](#connection-notification-regression).
 
 ### Shell insets and folded layouts
 
@@ -565,10 +567,87 @@ The updater's decisions are covered by JVM tests: release JSON parsing, eligibil
 rules, the install guard and fail-closed operation holds, install requests and their digest binding, withdrawal, durable state and its failure modes, the
 persist-before-installer ordering, restart reconciliation, recovery retention, APK and origin
 checks. The `PackageInstaller` hand-off itself, the notification and confirmation flows, WorkManager
-scheduling, and a real signed update need a device: install an updater-equipped build over
-the previous one on a **test** phone with the same key, publish nothing, and confirm the
-persist-before-install order, the post-restart identity check, the recovery screen, and that
-saved connections survive. Do not exercise the updater on a phone that holds live pairings.
+scheduling, and a real signed update need a device. Synthetic updater tests, including corruption,
+interruption, and storage-exhaustion drills, use isolated state on a test device or emulator.
+`UpdaterSmokeInstrumentation` refuses an existing updater identity and must not run against a
+paired production app. An explicitly authorized in-product update or native recovery can commission
+a paired phone using a complete, eligible published release, the same signing key, and the normal
+install guard. Follow the [paired-phone checklist](#paired-phone-commissioning); the
+[release commissioning procedure](./fork-releases.md#commissioning) governs publication.
+
+### Paired-phone commissioning
+
+1. Confirm the intended physical device and its current USB authorization; unlock it for interactive
+   checks. Read the installed build/source, Android installation code, channel, automatic-installation
+   setting, and pin from the current App updates or native recovery screen. Record saved environment
+   registrations and connection status, and the package's `firstInstallTime`, before replacement.
+   Old session notes are evidence of earlier checks, not the current device's state. Automatic APK
+   installation and agent **Automation** policies are separate settings; preserve each saved choice.
+2. Select the exact eligible published candidate and verify its source, package/signing identity,
+   code, and artifact digest. Use **Settings → General → App updates → Check and download** and,
+   for a requested update, **Install when idle**. Confirm that both the normal APK and matching
+   recovery are verified and that the foreground blocks installation. Finish phone browser work,
+   uploads, and dialogs, then background Arcwright Code for the full two-minute guard. Remote host
+   agents may continue; do not stop them or change the updater policy to create a test window.
+3. If Android requires confirmation, use **Open Android update confirmation** on native recovery.
+   Reach it through **Open recovery** in App updates or the **Recovery** launcher shortcut when
+   the notification is unavailable; a pending installation can also open it on app launch. Complete
+   Android's normal confirmation and any Play Protect scan. The button resumes the existing
+   committed installer session; do not create another request to replace a missing prompt.
+4. Reopen Arcwright Code and verify the installed build/source and Android code, completed update
+   status, and installed APK digest against the published manifest. Confirm unchanged
+   `firstInstallTime`, preserved environment registrations, successful reconnection to reachable
+   hosts, and the expected channel/automatic-installation/pin settings. A recovery intentionally
+   pins its restored build; record that instead of silently resuming updates. Verify that the
+   completed install's confirmation notification is removed and conversations remain accessible.
+5. Record unit, emulator, physical update, and physical recovery results separately, with the
+   exact source and artifacts. A successful phone update does not prove physical rollback or that
+   desktops were replaced, and does not authorize enabling scheduled publication. Keep device
+   receipts private and diagnostics redacted; never put pairing tokens, credentials, unrelated
+   notification content, or session scratch files into the repository.
+
+For device interaction, wait for window transitions to settle and obtain fresh semantic references
+before tapping. Foldable or native-screen accessibility bounds can be stale or outside the physical
+display. If a semantic action fails or its bounds are invalid, inspect a fresh screenshot before
+using coordinates from that image with the physical device tools. Do not retry blind taps. Check
+the foreground after transitions and pause if another app or the secure lock screen takes over;
+interact only with Arcwright Code and its installation/permission surfaces.
+
+After authorized layout tests, restore any temporary fold-state, rotation, or display overrides
+and verify that the actual hinge/display state controls resizing again. Remove only the test
+instrumentation package when one was installed; retain the main app and its data. Finish on the
+conversations screen with no temporary test connection or waiting installation left behind.
+If installation or cleanup is blocked, report the remaining action and pending state instead of
+claiming the check is complete.
+
+### Connection notification regression
+
+With background alerts enabled and all registered hosts reachable, wait for **Background agent
+alerts are ready**. Capture the service process and only this package's connection notification
+(ID `9`); the notification key's user and UID vary by device:
+
+```bash
+adb -s SERIAL shell pidof com.devotek.t3code.pwa
+adb -s SERIAL shell cmd notification list | rg '[|]com[.]devotek[.]t3code[.]pwa[|]9[|]'
+adb -s SERIAL shell "cmd notification get 'KEY_FROM_PREVIOUS_COMMAND'"
+```
+
+Keep the key quoted inside the remote command: its `|` characters otherwise become Android shell
+pipes. Record `mUpdateTimeMs` and `mInterruptionTimeMs`, background and reopen the app twice, and
+compare after each return to a stable screen. With the same service process and healthy connections,
+both timestamps must remain unchanged. Check low priority/importance, no sound or vibration,
+`android.showWhen=false`, and the connection channel's disabled badge. Android may still retain
+its required quiet service entry.
+
+A real connection-health change can silently update the status; a recreated service must post its
+required startup notification. Establish a new baseline if the process or health state changes
+rather than treating that post as a refresh regression. Where Android permits dismissing the healthy
+entry, also verify that reopening does not bring it back. Do not interrupt production host connections
+to force an outage: [ConnectionNotificationStateTest](../../apps/android-pwa/app/src/test/java/com/devotek/t3code/pwa/ConnectionNotificationStateTest.java)
+covers loss/recovery and healthy configuration changes. Agent completion/approval alerts and updater
+confirmations use separate channels; this check does not replace their delivery tests.
+
+### Native browser interaction check
 
 The custom `BrowserSmokeInstrumentation` in `app/src/androidTest` exercises the real release
 WebView using a local fixture. Build its test APK with `:app:assembleReleaseAndroidTest` using
