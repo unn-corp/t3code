@@ -1,6 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { formatBuildVersion } from "@t3tools/shared/buildVersion";
-import type { EnvironmentId, ForkRecoveryOption } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ForkMaintenanceActionInput,
+  ForkRecoveryOption,
+  ForkUpdateStatus,
+} from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { ForkUpdateController, useForkUpdates } from "../../state/forkUpdates";
 import {
@@ -8,6 +13,7 @@ import {
   forkPinnedBuildLabel,
   forkStatusDetail,
   forkStatusDisplayBuild,
+  forkWaitingLabels,
 } from "../forkUpdatePresentation";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -30,6 +36,11 @@ export function ForkUpdateControls({
   const [recovery, setRecovery] = useState<ForkRecoveryOption | null>(null);
   const [review, setReview] = useState<"bootstrap" | "automation" | null>(null);
   const [now, setNow] = useState(Date.now);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<{
+    phase: ForkUpdateStatus["phase"];
+    message: string;
+  } | null>(null);
   useEffect(() => {
     if (!status?.countdown) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -37,6 +48,28 @@ export function ForkUpdateControls({
   }, [status?.countdown]);
   const request = (promise: Promise<unknown>) => {
     void promise.catch(() => {});
+  };
+  const requestUpdate = async (input: ForkMaintenanceActionInput) => {
+    setPendingAction(input.action);
+    setActionFeedback(null);
+    try {
+      const result = await controller.action(input);
+      if (result.lastError) return;
+      const target = result.targetBuild ? ` · ${formatBuildVersion(result.targetBuild)}` : "";
+      setActionFeedback({
+        phase: result.phase,
+        message:
+          input.action === "check"
+            ? `Check completed. ${forkPhaseLabels[result.phase]}${target}.`
+            : result.phase === "waiting"
+              ? "Installation has not started. Waiting for this device’s activity and safety checks."
+              : `Install request checked. ${forkPhaseLabels[result.phase]}.`,
+      });
+    } catch {
+      // The controller retains the error across status polling and native status events.
+    } finally {
+      setPendingAction(null);
+    }
   };
   if (!status)
     return (
@@ -61,6 +94,19 @@ export function ForkUpdateControls({
   const detail = forkStatusDetail(status);
   const displayBuild = forkStatusDisplayBuild(status);
   const pinnedBuildLabel = forkPinnedBuildLabel(status);
+  const installUnavailable =
+    status.installable === false || !["staged", "waiting", "failed"].includes(status.phase);
+  const installReason = installUnavailable
+    ? status.blockers.length
+      ? `Installation is waiting: ${[...new Set(status.blockers.map((blocker) => forkWaitingLabels[blocker.reason]))].join("; ")}.`
+      : status.policy.pinnedBuild
+        ? "Resume updates before installing this build."
+        : ["available", "downloaded"].includes(status.phase)
+          ? "Download and verify this update before installing."
+          : working
+            ? "Wait for the current update operation to finish."
+            : "The host has not authorized installation yet. Refresh its update status."
+    : null;
   return (
     <>
       <SettingsRow
@@ -73,6 +119,7 @@ export function ForkUpdateControls({
               {displayBuild ? ` · ${formatBuildVersion(displayBuild)}` : ""}
             </p>
             {detail ? <p className="whitespace-normal break-words">{detail}</p> : null}
+            {actionFeedback?.phase === status.phase ? <p>{actionFeedback.message}</p> : null}
             {status.lastError ? (
               <p role="alert" className="text-destructive">
                 {status.lastError}
@@ -90,9 +137,9 @@ export function ForkUpdateControls({
             size="sm"
             variant="outline"
             disabled={busy || working}
-            onClick={() => request(controller.action({ action: "check" }))}
+            onClick={() => void requestUpdate({ action: "check" })}
           >
-            Check and download
+            {pendingAction === "check" ? "Checking and downloading…" : "Check and download"}
           </Button>
         }
       />
@@ -190,26 +237,23 @@ export function ForkUpdateControls({
       {status.targetBuild ? (
         <SettingsRow
           title="Install verified update"
-          description="The controller rechecks release eligibility, stopped work, and recovery capacity before replacement."
+          description={
+            installReason ??
+            "The controller rechecks release eligibility, stopped work, and recovery capacity before replacement."
+          }
           control={
             <Button
               size="sm"
-              disabled={
-                busy ||
-                working ||
-                status.installable === false ||
-                !["staged", "waiting", "failed"].includes(status.phase)
-              }
+              disabled={busy || working || installUnavailable}
+              title={installReason ?? undefined}
               onClick={() =>
-                request(
-                  controller.action({
-                    action: "install",
-                    targetArtifactSha256: status.targetBuild!.artifactSha256,
-                  }),
-                )
+                void requestUpdate({
+                  action: "install",
+                  targetArtifactSha256: status.targetBuild!.artifactSha256,
+                })
               }
             >
-              Install when idle
+              {pendingAction === "install" ? "Checking installation…" : "Install when idle"}
             </Button>
           }
         />

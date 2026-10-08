@@ -31,6 +31,9 @@ describe("fork update UI controller", () => {
     const failure = { ...idle, phase: "failed" as const, lastError: "Installer permission denied" };
     expect(forkStatusDetail(failure)).toBeNull();
     expect(forkStatusDescription(failure)).toBe("Installer permission denied");
+    expect(forkStatusDetail({ ...waiting, lastError: "GitHub rate limit exceeded" })).toContain(
+      "Development terminal command",
+    );
   });
 
   it("preserves real waiting state without treating a request as installed", async () => {
@@ -90,6 +93,60 @@ describe("fork update UI controller", () => {
     await controller.setPolicy({ pinnedBuild: null });
     expect(policy).toHaveBeenCalledWith({ pinnedBuild: null });
     expect(action).not.toHaveBeenCalled();
+  });
+  it("retains a failed action across polling and native events until an explicit retry", async () => {
+    const action = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Host cannot verify release eligibility"))
+      .mockResolvedValue(waiting);
+    const controller = new ForkUpdateController({
+      status: async () => waiting,
+      policy: async () => waiting,
+      action,
+      recover: async () => waiting,
+    });
+    await expect(controller.action({ action: "check" })).rejects.toThrow(
+      "Host cannot verify release eligibility",
+    );
+    await controller.refresh();
+    controller.accept(waiting);
+    expect(controller.getSnapshot().error).toBe("Host cannot verify release eligibility");
+    await controller.action({ action: "check" });
+    expect(controller.getSnapshot().error).toBeNull();
+  });
+  it("clears a transient polling failure after status becomes readable", async () => {
+    const status = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Disconnected"))
+      .mockResolvedValue(waiting);
+    const controller = new ForkUpdateController({
+      status,
+      policy: async () => waiting,
+      action: async () => waiting,
+      recover: async () => waiting,
+    });
+    await expect(controller.refresh()).rejects.toThrow("Disconnected");
+    await controller.refresh();
+    expect(controller.getSnapshot().error).toBeNull();
+  });
+  it("clears an old action failure when the native controller proves a new installed build", async () => {
+    const controller = new ForkUpdateController({
+      status: async () => waiting,
+      policy: async () => waiting,
+      action: async () => {
+        throw new Error("Check failed");
+      },
+      recover: async () => waiting,
+    });
+    controller.accept(waiting);
+    await expect(controller.action({ action: "check" })).rejects.toThrow("Check failed");
+    controller.accept({
+      ...waiting,
+      phase: "completed",
+      currentBuild: { ...build, artifactSha256: "d".repeat(64) },
+      blockers: [],
+    });
+    expect(controller.getSnapshot().error).toBeNull();
   });
   it("invalidates confirmation when a cutoff or compatibility decision changes", () => {
     const option = {

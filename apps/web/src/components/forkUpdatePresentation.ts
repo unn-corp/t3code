@@ -73,10 +73,10 @@ export function forkStatusDescription(status: ForkUpdateStatus): string {
 }
 /** Settings renders the phase and alert separately; detail should add information rather than repeat either. */
 export function forkStatusDetail(status: ForkUpdateStatus): string | null {
-  const description = forkStatusDescription(status);
-  return description === forkPhaseLabels[status.phase] || description === status.lastError
-    ? null
-    : description;
+  if (!status.blockers.length) return null;
+  return status.blockers
+    .map((blocker) => `${forkWaitingLabels[blocker.reason]}: ${blocker.label}`)
+    .join("; ");
 }
 /** Confirmation identity includes every restore cutoff; an asynchronously changed option is rejected. */
 export function recoveryFingerprint(option: ForkUpdateStatus["recoveryOptions"][number]): string {

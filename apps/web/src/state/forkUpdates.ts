@@ -33,6 +33,7 @@ export class ForkUpdateController {
   private pending: Promise<unknown> = Promise.resolve();
   private watchers = 0;
   private stopWatching: (() => void) | null = null;
+  private actionError: string | null = null;
   readonly adapter: ForkUpdateAdapter;
   constructor(adapter: ForkUpdateAdapter) {
     this.adapter = adapter;
@@ -67,24 +68,37 @@ export class ForkUpdateController {
     };
   };
   accept = (status: ForkUpdateStatus) => {
-    this.view = { ...this.view, status, error: null };
+    if (
+      status.phase === "completed" &&
+      status.currentBuild.artifactSha256 !== this.view.status?.currentBuild.artifactSha256
+    )
+      this.actionError = null;
+    this.view = { ...this.view, status, error: this.actionError };
     this.emit();
   };
   private emit() {
     for (const listener of this.listeners) listener();
   }
-  private request(run: () => Promise<ForkUpdateStatus>): Promise<ForkUpdateStatus> {
+  private request(
+    run: () => Promise<ForkUpdateStatus>,
+    refreshOnly = false,
+  ): Promise<ForkUpdateStatus> {
     const next = this.pending.then(async () => {
-      this.view = { ...this.view, busy: true, error: null };
+      // Polls and native status events must not erase a failed button action.
+      // An explicit new action replaces its result; a successful poll only clears polling errors.
+      if (!refreshOnly) this.actionError = null;
+      this.view = { ...this.view, busy: true, error: this.actionError };
       this.emit();
       try {
         const status = await run();
         this.accept(status);
         return status;
       } catch (error) {
+        const message = error instanceof Error ? error.message : "Update request failed.";
+        if (!refreshOnly) this.actionError = message;
         this.view = {
           ...this.view,
-          error: error instanceof Error ? error.message : "Update request failed.",
+          error: this.actionError ?? message,
         };
         throw error;
       } finally {
@@ -95,7 +109,7 @@ export class ForkUpdateController {
     this.pending = next.catch(() => undefined);
     return next;
   }
-  refresh = () => this.request(() => this.adapter.status());
+  refresh = () => this.request(() => this.adapter.status(), true);
   setPolicy = (patch: ForkUpdatePolicyPatch) => this.request(() => this.adapter.policy(patch));
   action = (input: ForkMaintenanceActionInput) => this.request(() => this.adapter.action(input));
   recover = (request: ForkRecoveryRequest) => this.request(() => this.adapter.recover(request));

@@ -176,6 +176,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
     results: "vitest",
     required: [
       "src/state/forkUpdates.test.ts",
+      "src/components/settings/ForkUpdateControls.test.tsx",
       "src/lib/backgroundActivityReporter.test.ts",
       "src/state/hostForkUpdates.test.ts",
       "src/state/hostUpdateBatcher.test.ts",
