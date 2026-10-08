@@ -45,20 +45,13 @@ describe("desktop preload local environment controls", () => {
     assert.equal(mocks.invoke.mock.calls.length, 0);
   });
 
-  it("forwards normal restart requests and preserves native lifecycle refusals", async () => {
+  it("does not turn an unreadable native local mode into an enabled primary environment", async () => {
+    mocks.sendSync.mockImplementation((channel) => {
+      if (channel === IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL)
+        throw new Error("Native local mode is unavailable");
+      return undefined;
+    });
     const bridge = await loadBridge();
-    assert.isFunction(bridge.setLocalEnvironmentEnabled);
-    await bridge.setLocalEnvironmentEnabled!(false);
-    assert.deepEqual(mocks.invoke.mock.calls.at(-1), [
-      IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL,
-      false,
-    ]);
-    const refused = new Error("Local work must finish before restarting");
-    mocks.invoke.mockRejectedValueOnce(refused);
-    await expect(bridge.setLocalEnvironmentEnabled!(true)).rejects.toThrow(refused.message);
-    assert.deepEqual(mocks.invoke.mock.calls.at(-1), [
-      IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL,
-      true,
-    ]);
+    expect(() => bridge.getLocalEnvironmentEnabled!()).toThrow("Native local mode is unavailable");
   });
 });
