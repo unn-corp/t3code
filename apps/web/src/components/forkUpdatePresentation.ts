@@ -1,5 +1,19 @@
 import type { ForkUpdateStatus } from "@t3tools/contracts";
 import { formatBuildVersion } from "@t3tools/shared/buildVersion";
+
+/** A coordinator may own multiple installations; aliases suppress only an explicitly identical target. */
+export function sameForkReplacementTarget(
+  left: ForkUpdateStatus | null,
+  right: ForkUpdateStatus | null,
+): boolean {
+  return Boolean(
+    left?.coordinatorId &&
+    left.controllerId &&
+    right?.coordinatorId === left.coordinatorId &&
+    right.controllerId === left.controllerId,
+  );
+}
+
 export const forkPhaseLabels: Record<ForkUpdateStatus["phase"], string> = {
   idle: "Up to date",
   checking: "Checking…",

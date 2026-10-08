@@ -38,7 +38,9 @@ both Windows and WSL homes; review the affected homes rather than assuming one
 connection means one database. Standalone and development runtimes participate
 in activity checks but do not replace their own binaries automatically.
 
-Conversation update notices identify the host. A protocol mismatch requires
+Sidebar update notices identify the host and keep update progress outside the
+chat composer. Machine details and **Update all** remain available there when
+choosing an environment. A protocol mismatch requires
 updating the side named by the notice. Available releases, waiting, installation,
 verification, and failure are different states. Stop remains an agent action;
 an updater never stops work to obtain an installation window.

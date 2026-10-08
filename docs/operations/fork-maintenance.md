@@ -543,8 +543,12 @@ serializes distinct replacement targets under their explicit coordinator ID and 
 by the controller's affected-home identity; [its tests](../../apps/web/src/state/hostUpdateBatcher.test.ts)
 cover aliases, separate homes, independent devices, offline results, and retry. Both sidebars
 use [ForkSidebarUpdateStatus.tsx](../../apps/web/src/components/sidebar/ForkSidebarUpdateStatus.tsx),
-and the application menu opens the canonical settings surface. Conversation notices use
-[ComposerHostMaintenanceStatus.tsx](../../apps/web/src/components/chat/ComposerHostMaintenanceStatus.tsx).
+and the application menu opens the canonical settings surface. Host notices and machine
+compatibility/update actions live in the shared sidebar footer through
+[SidebarHostUpdateNotices.tsx](../../apps/web/src/components/sidebar/SidebarHostUpdateNotices.tsx),
+including remote web/APK environments. The composer and conversation details do not render
+update cards. Host notices use the selected thread/draft environment, falling back to the primary
+environment outside a conversation; the machine list retains independent update targets.
 Recovery and restored-automation review have separate dialogs and interaction tests. When these
 surfaces move, update Settings search, navigation, both sidebars, user routes, and the relevant
 interaction tests together. Electron/native/host services retain installation authority; UI adapters

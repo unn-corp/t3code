@@ -1,5 +1,5 @@
 import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
-import { ComposerHostMaintenanceStatus } from "../chat/ComposerHostMaintenanceStatus";
+import { SidebarHostMaintenanceStatus } from "../sidebar/SidebarHostMaintenanceStatus";
 import { HostUpdateSettings } from "./HostUpdateSettings";
 import { RenameEnvironmentDialog } from "./RenameEnvironmentDialog";
 import { formatBuildVersion } from "@t3tools/shared/buildVersion";
@@ -1769,7 +1769,7 @@ function SavedBackendListRow({
         below={
           <>
             {isConnected ? (
-              <ComposerHostMaintenanceStatus
+              <SidebarHostMaintenanceStatus
                 environmentId={environmentId}
                 label={environment.label}
                 supported={supportsForkMaintenanceAdmission(

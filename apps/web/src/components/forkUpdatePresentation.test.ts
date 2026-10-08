@@ -1,6 +1,10 @@
 import { expect, it } from "vite-plus/test";
 import type { ForkUpdateStatus } from "@t3tools/contracts";
-import { forkPinnedBuildLabel, forkStatusDisplayBuild } from "./forkUpdatePresentation";
+import {
+  forkPinnedBuildLabel,
+  forkStatusDisplayBuild,
+  sameForkReplacementTarget,
+} from "./forkUpdatePresentation";
 
 const currentBuild: ForkUpdateStatus["currentBuild"] = {
   version: "1.0.0",
@@ -30,6 +34,28 @@ const status = (overrides: Partial<ForkUpdateStatus> = {}): ForkUpdateStatus => 
   transactionId: null,
   automationReviewRequired: false,
   ...overrides,
+});
+
+it("coalesces local and host notices only for explicitly identical replacement targets", () => {
+  const desktop = status({ coordinatorId: "device-a", controllerId: "desktop" });
+  expect(
+    sameForkReplacementTarget(
+      desktop,
+      status({ coordinatorId: "device-a", controllerId: "desktop" }),
+    ),
+  ).toBe(true);
+  expect(
+    sameForkReplacementTarget(desktop, status({ coordinatorId: "device-a", controllerId: "wsl" })),
+  ).toBe(false);
+  expect(
+    sameForkReplacementTarget(
+      desktop,
+      status({ coordinatorId: "device-b", controllerId: "desktop" }),
+    ),
+  ).toBe(false);
+  expect(sameForkReplacementTarget(desktop, status({ coordinatorId: "device-a" }))).toBe(false);
+  expect(sameForkReplacementTarget(status(), status())).toBe(false);
+  expect(sameForkReplacementTarget(desktop, null)).toBe(false);
 });
 
 it.each(["pinned", "completed"] as const)(

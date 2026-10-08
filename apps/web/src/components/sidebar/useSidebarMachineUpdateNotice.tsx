@@ -2,7 +2,7 @@ import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { Atom } from "effect/reactivity";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import type { EnvironmentPresentation } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
@@ -24,14 +24,21 @@ import {
 } from "../ServerUpdateAction";
 import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import type { ComposerBannerStackItem } from "./ComposerBannerStack";
-import { ComposerHostMaintenanceStatus } from "./ComposerHostMaintenanceStatus";
-import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
+import { SidebarHostMaintenanceStatus } from "../sidebar/SidebarHostMaintenanceStatus";
 
-/** Keep every machine's update visible while auto balance has no single update target. */
-export function useAutoBalanceUpdateBanner(
+interface SidebarMachineUpdateNotice {
+  readonly variant: "error" | "default";
+  readonly title: ReactNode;
+  readonly description: string | undefined;
+  readonly actions: ReactNode;
+  readonly dismissLabel: string;
+  readonly onDismiss?: () => void;
+}
+
+/** Keep each named machine's update available before or after a thread chooses its host. */
+export function useSidebarMachineUpdateNotice(
   environments: readonly EnvironmentPresentation[],
-): ComposerBannerStackItem | null {
+): SidebarMachineUpdateNotice | null {
   const statesAtom = useMemo(
     () =>
       Atom.make((get) =>
@@ -94,14 +101,10 @@ export function useAutoBalanceUpdateBanner(
     (machine) => machine.connected && machine.remoteUpdate && machine.state.status !== "running",
   );
   const count = running || failed || machines.length;
-  const status = running ? "running" : failed ? "failed" : "idle";
   const prefix = running ? "Updating" : failed ? "Could not update" : "Update available for";
   const title = `${prefix} ${count} ${count === 1 ? "machine" : "machines"}`;
   return {
-    id: `auto-balance-server-updates-${dismissedNotices.size}`,
     variant: failed ? "error" : "default",
-    priority: running ? "urgent" : "notice",
-    icon: <ComposerServerUpdateIcon status={status} />,
     title: (
       <Popover>
         <PopoverTrigger
@@ -116,7 +119,7 @@ export function useAutoBalanceUpdateBanner(
             {machines.map((machine) => (
               <div key={machine.environmentId} className="space-y-1">
                 <div className="font-medium">{machine.serverLabel}</div>
-                <ComposerHostMaintenanceStatus
+                <SidebarHostMaintenanceStatus
                   environmentId={machine.environmentId}
                   label={machine.serverLabel}
                   supported={

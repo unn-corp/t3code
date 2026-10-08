@@ -1,6 +1,6 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import { flushSync } from "react-dom";
-import { isElectron } from "../../env";
+import { isAndroidPwa, isElectron } from "../../env";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getArm64IntelBuildWarningDescription,
@@ -42,5 +42,5 @@ function ArchitectureWarning() {
   );
 }
 export function SidebarUpdatePill() {
-  return isElectron ? <ForkSidebarUpdateStatus /> : null;
+  return isElectron || isAndroidPwa ? <ForkSidebarUpdateStatus /> : null;
 }
