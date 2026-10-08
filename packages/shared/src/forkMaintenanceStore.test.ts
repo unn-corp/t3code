@@ -1003,6 +1003,67 @@ describe("host coordinator", () => {
     );
   });
 
+  it("does not clear an unknown orphan or active work when installations are reviewed", async () => {
+    const f = await fixture({ 100: "boot:operator", 200: "boot:old", 300: "boot:live" });
+    const old = await f.open(200);
+    await old.register(
+      {
+        id: "old",
+        label: "Old desktop",
+        kind: "desktop",
+        homes: [await f.home("old")],
+        updateTarget: true,
+      },
+      0,
+    );
+    await old.observe(
+      "old",
+      [
+        {
+          participantId: "old",
+          reason: "unknown-participant",
+          label: "Process activity could not be read.",
+        },
+      ],
+      0,
+      [],
+      { descendantsKnown: false },
+    );
+    f.processes.table.delete(200);
+    const live = await f.open(300);
+    await live.register(
+      {
+        id: "live",
+        label: "Current server",
+        kind: "desktop",
+        homes: [await f.home("live")],
+        updateTarget: true,
+      },
+      1,
+    );
+    await live.observe(
+      "live",
+      [{ participantId: "live", reason: "active-agents", label: "A conversation is working." }],
+      1,
+    );
+    const operator = await f.open(100);
+    expect((await operator.status(2)).blockers.map((entry) => entry.reason)).toEqual(["bootstrap"]);
+    await operator.confirmBootstrap();
+    const reviewed = await operator.status(2);
+    expect(reviewed.participants.find((entry) => entry.id === "old")?.orphaned).toBe(true);
+    expect(reviewed.blockers.map((entry) => entry.reason)).toEqual(
+      expect.arrayContaining(["unknown-participant", "active-agents"]),
+    );
+    await expect(
+      operator.attestOrphanResolved({
+        participantId: "old",
+        owner: old.owner,
+        confirmation: ORPHAN_ATTESTATION_CONFIRMATION,
+      }),
+    ).rejects.toThrow(/still running/i);
+    expect((await operator.status(2)).participants.map((entry) => entry.id)).toContain("old");
+  });
+
   it("clears only the exact orphan after an explicit offline attestation", async () => {
     const f = await fixture({ 100: "boot:1", 200: "boot:2", 300: "boot:3" });
     const target = await recordUnknownRuntime(f, { id: "desktop-a", pid: 200 });

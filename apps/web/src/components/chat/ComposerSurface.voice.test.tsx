@@ -2,7 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Exercise the shipped stylesheet, bypassing Vitest's CSS import stub.
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -51,11 +51,11 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function renderPhase(phase: VoiceInputPhase) {
+async function renderPhase(phase: VoiceInputPhase, notice?: ReactNode) {
   await act(async () => {
     root.render(
       <ComposerSurface.VoiceRoot phase={phase}>
-        <ComposerSurface.Shell>
+        <ComposerSurface.Shell notice={notice}>
           <ComposerSurface.Host>
             <ComposerSurface.Main>
               <VoiceInputWaveform audioSource={null} simulateInputLevel={false} />
@@ -109,6 +109,29 @@ it("shows recording, wraps the waveform into the spinner, then shows success and
   expect(feedbackStyle(".chat-voice-mic-icon").opacity || "1").toBe("1");
 });
 
+it("keeps host update notices outside the glass through every voice phase", async () => {
+  const openUpdates = vi.fn();
+  for (const phase of ["idle", "recording", "transcribing", "success", "no-audio"] as const) {
+    await renderPhase(
+      phase,
+      <div role="status">
+        Host update waiting<button onClick={openUpdates}>Host update details</button>
+      </div>,
+    );
+    const notice = container.querySelector('[role="status"]')!;
+    const glass = container.querySelector('[data-slot="composer-shell"]')!;
+    expect(glass.contains(notice)).toBe(false);
+    expect(notice.textContent).toContain("Host update waiting");
+    const button = notice.querySelector("button")!;
+    await act(async () => {
+      button.focus();
+      button.click();
+    });
+    expect(document.activeElement).toBe(button);
+  }
+  expect(openUpdates).toHaveBeenCalledTimes(5);
+});
+
 it("shows the error result and applies the glow to the actual rounded composer surface", async () => {
   await renderPhase("no-audio");
   expect(feedbackStyle(".chat-voice-error-mark").opacity).toBe("1");
@@ -127,4 +150,16 @@ it("shows the error result and applies the glow to the actual rounded composer s
   expect(
     feedbackStyle(".chat-composer-voice-root").getPropertyValue("--chat-voice-halo-opacity").trim(),
   ).toBe("0.46");
+});
+
+it.each([
+  ["recording", "--chat-voice-blue", "0.62"],
+  ["transcribing", "--chat-voice-blue", "0.62"],
+  ["success", "--chat-voice-green", "0.68"],
+  ["no-audio", "--chat-voice-red", "0.46"],
+] as const)("uses the intended glow for %s", async (phase, color, opacity) => {
+  await renderPhase(phase);
+  const feedback = feedbackStyle(".chat-composer-voice-root");
+  expect(feedback.getPropertyValue("--chat-voice-halo-border")).toContain(color);
+  expect(feedback.getPropertyValue("--chat-voice-halo-opacity").trim()).toBe(opacity);
 });

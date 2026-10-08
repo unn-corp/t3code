@@ -21,6 +21,7 @@ import { newJournal } from "@t3tools/shared/forkMaintenanceJournal";
 import { CURRENT_ACTIVITY_PROTOCOL } from "@t3tools/shared/forkMaintenanceAdmission";
 
 import { readVerifiedArtifact } from "./artifactCache.ts";
+import { recordInstaller } from "./installerIndex.ts";
 import { HandoffPlan } from "./handoff.ts";
 import {
   createDesktopMaintenance,
@@ -442,6 +443,56 @@ describe("DesktopForkMaintenance", () => {
     });
     expect(device.handoffs).toEqual([]);
   });
+
+  it.each(["missing", "wrong identity", "corrupt", "registered"] as const)(
+    "requires the exact local build's recovery installer when its published counterpart has another version (%s)",
+    async (cache) => {
+      const device = await makeDevice();
+      await device.server(9001, "desktop-server");
+      // The published OLD release shares the commit, but is not this local 0.0.45 binary.
+      const core = device.makeCore({ pid: 100, version: "0.0.45", commit: commit("1") });
+      await core.start();
+      const identity = (await core.status()).currentBuild.artifactSha256;
+      const payload = Buffer.from("exact locally built 0.0.45 installer");
+      const digest = sha(payload);
+      if (cache !== "missing") {
+        const directory = NodePath.join(device.paths.artifacts, digest);
+        await NodeFSP.mkdir(directory, { recursive: true });
+        const name = installerName("0.0.45");
+        await NodeFSP.writeFile(
+          NodePath.join(directory, name),
+          cache === "corrupt" ? Buffer.from(payload).fill(0) : payload,
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(directory, "artifact.json"),
+          JSON.stringify({
+            version: "0.0.45",
+            name,
+            sha256: digest,
+            bytes: payload.length,
+            verifiedAt: device.clock.value,
+          }),
+        );
+        await recordInstaller(
+          device.paths.installerIndex,
+          cache === "wrong identity" ? sha("another build") : identity,
+          digest,
+        );
+      }
+      const status = await core.check();
+      expect(status.targetBuild?.artifactSha256).toBe(NEW_DIGEST);
+      if (cache === "registered") {
+        expect(status.lastError).toBeNull();
+        expect(["staged", "waiting"]).toContain(status.phase);
+        const cached = await readVerifiedArtifact(device.paths.artifacts, digest);
+        expect(await NodeFSP.readFile(cached!.path)).toEqual(payload);
+      } else {
+        expect(status.lastError).toContain("could not be cached");
+        expect(status.installable).toBe(false);
+      }
+      expect(device.handoffs).toEqual([]);
+    },
+  );
 
   it("stages the verified installer, the helper and its runtime, and the installer of the running version", async () => {
     const device = await makeDevice();

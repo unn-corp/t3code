@@ -11453,6 +11453,17 @@ export default function ChatView(props: ChatViewProps) {
                   >
                     <ComposerSurface.Shell
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
+                      notice={
+                        serverUpdateEnvironmentId ? (
+                          <ComposerHostMaintenanceStatus
+                            environmentId={serverUpdateEnvironmentId}
+                            label={versionMismatchServerLabel}
+                            supported={supportsForkMaintenanceAdmission(
+                              serverConfig?.environment.capabilities.forkMaintenance,
+                            )}
+                          />
+                        ) : null
+                      }
                     >
                       <ComposerSurface.Host
                         inert={isSavingQueuedEdit}
@@ -11731,17 +11742,6 @@ export default function ChatView(props: ChatViewProps) {
                         </div>
                       </div>
                     </ComposerSurface.Shell>
-                    {/* Keep host notices outside the glass layer so its backdrop
-                        cannot cover the text or grow below the composer. */}
-                    {serverUpdateEnvironmentId ? (
-                      <ComposerHostMaintenanceStatus
-                        environmentId={serverUpdateEnvironmentId}
-                        label={versionMismatchServerLabel}
-                        supported={supportsForkMaintenanceAdmission(
-                          serverConfig?.environment.capabilities.forkMaintenance,
-                        )}
-                      />
-                    ) : null}
                     <div
                       aria-hidden
                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
