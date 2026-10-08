@@ -32,8 +32,10 @@ it("registers native broker commands and enforces the host platform", async () =
         [entry, "maintenance", "scope-broker", "--base-dir", baseDir],
         { encoding: "utf8", timeout: 10_000 },
       );
-      NodeAssert.equal(unsupported.status, 1, unsupported.stderr);
-      NodeAssert.match(unsupported.stderr, /Organization launch broker requires Linux/);
+      // Effect CLI renders structured failures through its console; the diagnostic may use either stream.
+      const unsupportedOutput = `${unsupported.stdout}\n${unsupported.stderr}`;
+      NodeAssert.equal(unsupported.status, 1, unsupportedOutput);
+      NodeAssert.match(unsupportedOutput, /Organization launch broker requires Linux/);
       NodeAssert.deepEqual(await NodeFSP.readdir(baseDir), []);
     } finally {
       await NodeFSP.rm(baseDir, { recursive: true, force: true });
