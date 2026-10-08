@@ -2810,6 +2810,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       desktop: {
         entry: {
           StartupWMClass: "t3code",
+          // AC registers one stable launcher and URL handler itself. Hash/name
+          // integration entries would otherwise be recreated on each rebuild.
+          "X-AppImage-Integrate": "false",
         },
       },
     };
