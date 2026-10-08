@@ -10,6 +10,7 @@ import sharp from "sharp";
 import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
 import {
   lightLettering,
+  renderDesktopIcon,
   renderLogoCanvas,
   renderMacIcon,
   trimLogo,
@@ -27,6 +28,15 @@ const markOnDark = await trimLogo(lightLettering(mark));
 const wordmarkOnLight = await trimLogo(wordmark);
 const wordmarkOnDark = await trimLogo(lightLettering(wordmark));
 const icon = await renderLogoCanvas(markOnDark, 1024);
+const desktopIcon = await renderDesktopIcon(markOnDark);
+const desktopIco = encodePngIco(
+  await Promise.all(
+    WINDOWS_ICON_SIZES.map(async (size) => ({
+      size,
+      contents: await renderDesktopIcon(markOnDark, size),
+    })),
+  ),
+);
 const macIcon = await renderMacIcon(markOnDark);
 const composerMark = await sharp(lightLettering(mark)).resize(1024, 1024).png().toBuffer();
 const iconAtSize = (size: number) => sharp(icon).resize(size, size).png().toBuffer();
@@ -124,13 +134,14 @@ const composerProject = Buffer.from(
 );
 
 for (const variant of variants) {
-  for (const target of [variant.ios, variant.universal]) outputs.set(target, icon);
+  outputs.set(variant.ios, icon);
+  outputs.set(variant.universal, desktopIcon);
   outputs.set(variant.mac, macIcon);
   outputs.set(variant.appleTouch, appleTouch);
   outputs.set(variant.favicon16, favicon16);
   outputs.set(variant.favicon32, favicon32);
   outputs.set(variant.faviconIco, ico);
-  outputs.set(variant.windowsIco, ico);
+  outputs.set(variant.windowsIco, desktopIco);
   outputs.set(variant.composer + "/Assets/arcwright-mark.png", composerMark);
   outputs.set(variant.composer + "/icon.json", composerProject);
 }

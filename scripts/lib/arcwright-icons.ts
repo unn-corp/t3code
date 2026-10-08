@@ -56,6 +56,16 @@ export async function renderLogoCanvas(
     .toBuffer();
 }
 
+export async function renderDesktopIcon(mark: Buffer, size = 1024): Promise<Buffer> {
+  const mask = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><rect width="${size}" height="${size}" rx="${Math.round(size * 0.22)}" fill="white"/></svg>`,
+  );
+  return sharp(await renderLogoCanvas(mark, size))
+    .composite([{ input: mask, blend: "dest-in" }])
+    .png()
+    .toBuffer();
+}
+
 export async function renderMacIcon(mark: Buffer): Promise<Buffer> {
   // Keep the classic macOS 824px body inside its 1024px canvas.
   const mask = Buffer.from(
