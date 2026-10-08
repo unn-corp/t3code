@@ -12,6 +12,12 @@ An explicit manual nightly with both `publish=true` and `commission=true` can pu
 hardware verification while schedules stay disabled. Required coordinator, updater, retained-runtime,
 and recovery-helper checks still must all pass; missing or failed safety evidence blocks every release.
 
+Desktop launchers can disable the Arcwright Code updater with
+`ARCWRIGHT_CODE_DISABLE_AUTO_UPDATE=1`. Set it to `0` to enable the updater on the
+next launch. This name takes precedence over the legacy `T3CODE_DISABLE_AUTO_UPDATE`
+alias, including when explicitly enabling updates. Automatic installation remains a
+separate saved preference in App updates and retains coordinator admission checks.
+
 ## What a release is
 
 | Item               | Rule                                                                                                                                                         |

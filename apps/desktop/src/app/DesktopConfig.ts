@@ -11,8 +11,16 @@ const trimNonEmptyOption = (value: string): Option.Option<string> => {
 const trimmedString = (name: string) =>
   Config.String(name).pipe(Config.option, Config.map(Option.flatMap(trimNonEmptyOption)));
 
-const optionalBoolean = (name: string) =>
-  Config.Boolean(name).pipe(Config.option, Config.map(Option.getOrElse(() => false)));
+// The fork setting wins even when explicitly false; retain the old name for existing launchers.
+const disableAutoUpdate = Config.Boolean("ARCWRIGHT_CODE_DISABLE_AUTO_UPDATE").pipe(
+  Config.option,
+  Config.flatMap(
+    Option.match({
+      onSome: Config.succeed,
+      onNone: () => Config.Boolean("T3CODE_DISABLE_AUTO_UPDATE").pipe(Config.withDefault(false)),
+    }),
+  ),
+);
 
 const commaSeparatedStrings = (name: string) =>
   trimmedString(name).pipe(
@@ -56,7 +64,7 @@ export const DesktopConfig = Config.all({
     Config.withDefault("http/json"),
   ),
   appImagePath: trimmedString("APPIMAGE"),
-  disableAutoUpdate: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
+  disableAutoUpdate,
 });
 
 export const layerTest = (env: Readonly<Record<string, string | undefined>>) =>

@@ -174,7 +174,7 @@ export const make = Effect.gen(function* () {
     environment.isDevelopment || !environment.isPackaged
       ? "Updates are only available in packaged production builds."
       : config.disableAutoUpdate
-        ? "Updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting."
+        ? "Arcwright Code updates are disabled. Set ARCWRIGHT_CODE_DISABLE_AUTO_UPDATE=0 to enable them."
         : null;
   const commit = yield* readCommit(
     environment.path.join(environment.appRoot, "package.json"),
