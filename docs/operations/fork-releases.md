@@ -444,6 +444,29 @@ Failed or incomplete process reads preserve prior children. If the owner exits w
 activity, the coordinator retains that uncertainty; a replacement runtime's own process census is
 insufficient to clear it. Investigate the recorded owner and children before any external stopped-work
 installation. Never remove leases or registry records just to make an update proceed.
+Linux process probes treat a validated `/proc/<pid>/stat` state `Z` as exited: zombies retain
+their PID and start ticks until reaped but cannot run commands. Active states, reused-PID identity
+checks, unreadable observations, the idle window, and Windows admission remain enforced.
+Using a newer `maintenance check` or `maintenance install` CLI still delegates to the running
+controller. For an older Cloud runtime blocked only by verified zombies:
+
+1. Verify complete activity and process reads, no actual turns, pending work, tools, terminals,
+   leases, unknown observations, or transaction fence. Preserve the original home, coordinator
+   namespace, installed version, environment identity, and owned launcher/server identities.
+2. Orderly stop that verified idle managed runtime through its original launcher lifecycle.
+   Do not stop active agents or signal the zombie children.
+3. Run the verified corrected native CLI's `maintenance fence status` against the original
+   coordinator namespace. Its normal store reconciliation must remove the exited registration and
+   zombie descendants without unresolved uncertainty. An empty registry still blocks installation.
+4. Start the same installed version through the original Cloud start flow. Require the same
+   environment identity, home, coordinator, and current activity protocol, with a fresh process
+   owner and no inherited command blocker. Preserve pairing, data, and account setup.
+5. Let the fresh participant satisfy the five-minute idle window, then use its native controller
+   to check and install the exact reviewed release digest. All normal admission, snapshot,
+   artifact, trial, health-receipt, and recovery checks still apply.
+
+If any prerequisite is uncertain, preserve the blocker and investigate; this repair does not
+replace an artifact or authorize bypassing update admission.
 
 1. Build the baseline from an updater-equipped commit and keep the same signing key as the phone's
    installed app. Never uninstall to bring a phone onto it.

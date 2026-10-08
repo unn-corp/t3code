@@ -99,10 +99,24 @@ async function processCreationIdentityWithTimeout(
         NodeFSP.readFile(`/proc/${pid}/stat`, "utf8"),
         NodeFSP.readFile("/proc/sys/kernel/random/boot_id", "utf8"),
       ]);
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      const ticks = fields[19];
-      if (ticks === undefined || !/^\d+$/.test(ticks))
+      const commEnd = stat.lastIndexOf(")");
+      if (commEnd < 0 || !stat.startsWith(`${pid} (`))
         throw new Error("Unreadable process identity.");
+      const fields = stat
+        .slice(commEnd + 2)
+        .trim()
+        .split(/\s+/);
+      const ticks = fields[19];
+      if (
+        ticks === undefined ||
+        !/^\d+$/.test(ticks) ||
+        !/^[A-Za-z]$/.test(fields[0] ?? "") ||
+        boot.trim() === ""
+      )
+        throw new Error("Unreadable process identity.");
+      // Zombies retain their PID and start ticks until reaped but cannot run
+      // work. Validate the entire identity first so an uncertain read blocks.
+      if (fields[0] === "Z") return null;
       return `${boot.trim()}:${ticks}`;
     } catch (cause) {
       if (isCode(cause, "ENOENT")) return null;

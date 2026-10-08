@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
@@ -15,14 +16,36 @@ import {
 } from "./forkMaintenanceStore.ts";
 import { newJournal } from "./forkMaintenanceJournal.ts";
 
+vi.mock("node:fs/promises", { spy: true });
+const actualFs = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+
 const directories: string[] = [];
 afterEach(async () => {
+  vi.mocked(NodeFSP.readFile).mockImplementation(actualFs.readFile);
   await Promise.all(
     directories
       .splice(0)
       .map((directory) => NodeFSP.rm(directory, { recursive: true, force: true })),
   );
 });
+
+const linuxStat = (pid: number, state: string, ticks = "900", ppid = 1) =>
+  `${pid} (command (with spaces)) ${[state, ppid, ...Array.from({ length: 17 }, () => "0"), ticks, "0"].join(" ")}\n`;
+
+const mockLinuxProcesses = (entries: ReadonlyMap<number, string | Error>) => {
+  vi.mocked(NodeFSP.readFile).mockImplementation((async (file, options) => {
+    const path = String(file);
+    if (path === "/proc/sys/kernel/random/boot_id") return "fixture-boot\n";
+    const match = /^\/proc\/(\d+)\/stat$/.exec(path);
+    if (match) {
+      const entry = entries.get(Number(match[1]));
+      if (entry === undefined) throw Object.assign(new Error("gone"), { code: "ENOENT" });
+      if (entry instanceof Error) throw entry;
+      return entry;
+    }
+    return actualFs.readFile(file, options);
+  }) as typeof NodeFSP.readFile);
+};
 
 /** Simulated process table: a pid is alive only while its start identity matches. */
 function processTable(entries: Record<number, string>) {
@@ -102,6 +125,107 @@ const idle = async (store: CoordinatorStore, id: string) => {
 };
 
 describe("host coordinator", () => {
+  it("clears inherited Linux commands only after their verified zombie exit", async () => {
+    const f = await fixture();
+    const processes = new Map<number, string | Error>([
+      [100, linuxStat(100, "S", "1")],
+      [4243, linuxStat(4243, "S")],
+    ]);
+    mockLinuxProcesses(processes);
+    const store = await CoordinatorStore.open(
+      f.coordinator,
+      (pid) => processCreationIdentity(pid, "linux"),
+      100,
+    );
+    await store.register(
+      {
+        id: "cloud",
+        label: "Cloud",
+        kind: "service",
+        homes: [await f.home("cloud")],
+        updateTarget: true,
+      },
+      0,
+    );
+    await store.confirmBootstrap();
+    await store.observe("cloud", [], 0, [
+      { pid: 4243, started: "fixture-boot:900", label: "command" },
+    ]);
+    await store.observe("cloud", [], 10);
+    expect((await store.status(10)).blockers).toContainEqual(
+      expect.objectContaining({ reason: "commands" }),
+    );
+
+    processes.set(4243, Object.assign(new Error("denied"), { code: "EACCES" }));
+    await store.observe("cloud", [], 20);
+    expect((await store.status(20)).blockers).toContainEqual(
+      expect.objectContaining({ reason: "unknown-participant" }),
+    );
+
+    processes.set(4243, linuxStat(4243, "Z"));
+    await store.observe("cloud", [], 30);
+    const afterExit = await store.status(30);
+    expect(afterExit.participants[0]).toMatchObject({
+      descendants: [],
+      blockers: [],
+      idleSince: 30,
+    });
+    expect(afterExit.blockers).toContainEqual(expect.objectContaining({ reason: "idle-window" }));
+    await store.observe("cloud", [], 300_030);
+    expect((await store.status(300_030)).blockers).toEqual([]);
+  });
+
+  it("reconciles an exited Linux owner with only zombie children without clearing bootstrap safeguards", async () => {
+    const f = await fixture();
+    const home = await f.home("cloud");
+    const processes = new Map<number, string | Error>([
+      [100, linuxStat(100, "S", "1")],
+      [200, linuxStat(200, "S", "2")],
+      [4243, linuxStat(4243, "S")],
+    ]);
+    mockLinuxProcesses(processes);
+    const identify = (pid: number) => processCreationIdentity(pid, "linux");
+    const old = await CoordinatorStore.open(f.coordinator, identify, 100);
+    await old.register(
+      {
+        id: "cloud",
+        label: "Cloud",
+        kind: "service",
+        homes: [home],
+        updateTarget: true,
+      },
+      0,
+    );
+    await old.confirmBootstrap();
+    const coordinatorId = (await old.status(0)).coordinatorId;
+    await old.observe("cloud", [], 0, [
+      { pid: 4243, started: "fixture-boot:900", label: "command" },
+    ]);
+    processes.set(100, linuxStat(100, "Z", "1"));
+    const observer = await CoordinatorStore.open(f.coordinator, identify, 200);
+    expect((await observer.status(10)).participants[0]).toMatchObject({ orphaned: true });
+    processes.set(4243, linuxStat(4243, "Z"));
+    const reconciled = await observer.status(20);
+    expect(reconciled.participants).toEqual([]);
+    expect(reconciled.blockers).toContainEqual(expect.objectContaining({ reason: "bootstrap" }));
+    expect(reconciled).toMatchObject({ coordinatorId, bootstrapped: true });
+    // A normal restart may register the same home with a fresh owner. The old
+    // zombies remain in /proc, but no longer belong to its process census.
+    await observer.register(
+      { id: "cloud-restarted", label: "Cloud", kind: "service", homes: [home], updateTarget: true },
+      20,
+    );
+    await observer.observe("cloud-restarted", [], 20);
+    expect((await observer.status(20)).participants[0]).toMatchObject({
+      id: "cloud-restarted",
+      owner: { pid: 200 },
+      descendants: [],
+      idleSince: 20,
+    });
+    await observer.observe("cloud-restarted", [], 300_020);
+    expect((await observer.status(300_020)).blockers).toEqual([]);
+  });
+
   it("fails closed when an untyped caller omits the transaction journal", async () => {
     const f = await fixture();
     const store = await f.open(100);
@@ -1168,6 +1292,43 @@ describe("host coordinator", () => {
 });
 
 describe("process identity", () => {
+  it("treats a verified Linux zombie reparented to init as exited", async () => {
+    mockLinuxProcesses(new Map([[4243, linuxStat(4243, "Z")]]));
+    expect(await processCreationIdentities([4243], "linux")).toEqual([{ kind: "absent" }]);
+  });
+
+  it("preserves identities for active Linux states and a reused PID", async () => {
+    const states = ["R", "S", "D", "T", "t", "I"];
+    const processes = new Map(
+      states.map((state, index) => [41 + index, linuxStat(41 + index, state)]),
+    );
+    mockLinuxProcesses(processes);
+    expect(
+      await processCreationIdentities(
+        states.map((_, index) => 41 + index),
+        "linux",
+      ),
+    ).toEqual(states.map(() => ({ kind: "present", identity: "fixture-boot:900" })));
+    processes.set(41, linuxStat(41, "R", "901"));
+    expect(await processCreationIdentity(41, "linux")).toBe("fixture-boot:901");
+  });
+
+  it("keeps unreadable or malformed Linux zombie observations uncertain", async () => {
+    mockLinuxProcesses(
+      new Map<number, string | Error>([
+        [41, Object.assign(new Error("denied"), { code: "EACCES" })],
+        [42, linuxStat(42, "Z", "bad-ticks")],
+        [43, linuxStat(44, "Z")],
+        [44, "44 (broken) Z 1"],
+      ]),
+    );
+    const observations = await processCreationIdentities([41, 42, 43, 44, 45], "linux");
+    expect(observations.slice(0, 4).every((observation) => observation.kind === "unreadable")).toBe(
+      true,
+    );
+    expect(observations[4]).toEqual({ kind: "absent" });
+  });
+
   it("distinguishes a real live owner from an exited child on the host OS", async () => {
     // Exercise the actual host process probe using a child captured at launch.
     const child = NodeChildProcess.spawnSync(process.execPath, ["-e", ""], { timeout: 30_000 });
