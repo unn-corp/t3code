@@ -102,6 +102,18 @@ export const make = Effect.gen(function* () {
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
         send: async (method, params, sessionId) => {
+          if (
+            method === "Input.dispatchKeyEvent" &&
+            sessionId === undefined &&
+            !webContents.isFocused()
+          ) {
+            // Chromium sends root keyboard events to the focused guest, even
+            // when the debugger belongs to a different tab. Never take focus
+            // or replay a key into another guest to make this request work.
+            throw new Error(
+              "The requested Browser tab must have focus before pressing keys. Select that tab and focus the page, or use its DOM controls through preview_evaluate.",
+            );
+          }
           if (method === "Input.insertText" && sessionId === undefined) {
             // A guest's CDP input can follow the embedder's focused webview.
             // Its own WebContents inserts in this guest without moving desktop

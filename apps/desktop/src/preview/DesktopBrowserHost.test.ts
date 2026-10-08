@@ -17,7 +17,10 @@ const decodeCdpReply = Schema.decodeUnknownSync(
 const key = { threadId: "thread-1", tabId: "tab-1" };
 
 /** A tab's webContents and debugger, with the debugger's commands left pending until released. */
-const makeDebuggee = (debuggerInsert?: (text: string) => void) => {
+const makeDebuggee = (
+  debuggerInsert?: (text: string) => void,
+  debuggerKey?: (key: string) => void,
+) => {
   const emitter = new NodeEvents.EventEmitter();
   const pending: Array<() => void> = [];
   const commands: Array<{
@@ -39,6 +42,11 @@ const makeDebuggee = (debuggerInsert?: (text: string) => void) => {
           resolve({});
           return;
         }
+        if (method === "Input.dispatchKeyEvent") {
+          debuggerKey?.(String(params?.["key"]));
+          resolve({});
+          return;
+        }
         pending.push(() => resolve({ method }));
       }),
   });
@@ -46,6 +54,7 @@ const makeDebuggee = (debuggerInsert?: (text: string) => void) => {
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
+    isFocused: () => true,
     insertText: async (inserted: string) => {
       text += inserted;
     },
@@ -74,6 +83,82 @@ const takeEvents = (host: DesktopBrowserHost.DesktopBrowserHost["Service"], coun
   );
 
 describe("DesktopBrowserHost", () => {
+  it.effect("rejects a key press while another guest has desktop focus", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const activeKeys: Array<string> = [];
+      const requested = makeDebuggee(undefined, (pressed) => activeKeys.push(pressed));
+      requested.tab.webContents.isFocused = () => false;
+      host.attach(key, requested.tab);
+      host.attach({ ...key, tabId: "tab-2" }, makeDebuggee().tab);
+      const reader = yield* takeEvents(host, 3).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: encodeJson({
+            id: 1,
+            method: "Input.dispatchKeyEvent",
+            params: { type: "rawKeyDown", key: "Enter" },
+            sessionId: "t3-preview-page",
+          }),
+        }),
+      );
+      const reply = (yield* Fiber.join(reader)).at(-1) as { message: string };
+      expect(JSON.parse(reply.message)).toMatchObject({
+        id: 1,
+        error: { message: expect.stringContaining("requested Browser tab must have focus") },
+      });
+      expect(requested.commands).toEqual([]);
+      expect(activeKeys).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("preserves focused-tab Enter and shortcut key events without changing focus", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const requested = makeDebuggee();
+      host.attach(key, requested.tab);
+      const presses = [
+        { type: "rawKeyDown", key: "Control", modifiers: 2 },
+        { type: "rawKeyDown", key: "a", modifiers: 2 },
+        { type: "keyUp", key: "a", modifiers: 2 },
+        { type: "keyUp", key: "Control", modifiers: 0 },
+        { type: "keyDown", key: "Enter", text: "\r", modifiers: 0 },
+        { type: "keyUp", key: "Enter", modifiers: 0 },
+      ];
+      const reader = yield* takeEvents(host, presses.length + 1).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      for (const [index, params] of presses.entries()) {
+        yield* host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id: index + 1,
+              method: "Input.dispatchKeyEvent",
+              params,
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+      }
+      const replies = (yield* Fiber.join(reader)).slice(1);
+      expect(replies).toHaveLength(presses.length);
+      for (const reply of replies) {
+        expect(JSON.parse((reply as { message: string }).message)).toMatchObject({ result: {} });
+      }
+      expect(requested.commands).toEqual(
+        presses.map((params) => ({
+          method: "Input.dispatchKeyEvent",
+          params,
+          sessionId: undefined,
+        })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("types into the requested guest while another guest has desktop focus", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
