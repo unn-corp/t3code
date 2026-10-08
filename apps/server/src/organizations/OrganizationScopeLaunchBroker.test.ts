@@ -12,7 +12,6 @@ import {
 } from "./OrganizationScopeLaunchBroker.ts";
 import {
   organizationLaunchSuspendMarkerPath,
-  createOrganizationLaunchBrokerToken,
   quiesceOrganizationLaunchBroker,
   requestOrganizationLaunchBroker,
 } from "./OrganizationScopeLaunchBrokerProtocol.ts";
@@ -22,55 +21,6 @@ import {
 } from "./OrganizationScopedSandboxHost.ts";
 
 const linuxIt = it.skipIf(HostProcessPlatform.defaultValue() !== "linux");
-
-it.skipIf(HostProcessPlatform.defaultValue() !== "linux")(
-  "serves the hidden CLI broker from an isolated T3 home",
-  async () => {
-    const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-org-broker-cli-"));
-    // Existing releases may retain a safe token after the detached broker exited.
-    // The native command must reuse it and restore the authenticated socket.
-    await createOrganizationLaunchBrokerToken(baseDir);
-    const entry = NodePath.resolve(import.meta.dirname, "../bin.ts");
-    const child = NodeChildProcess.spawn(
-      process.execPath,
-      [entry, "__organization-launch-broker", "--base-dir", baseDir],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    try {
-      await new Promise<void>((resolve, reject) => {
-        let output = "";
-        let error = "";
-        const timer = setTimeout(() => reject(new Error(`Broker CLI timed out: ${error}`)), 10_000);
-        child.stdout?.on("data", (chunk: Buffer) => {
-          output += chunk.toString("utf8");
-          if (output.includes("READY\n")) {
-            clearTimeout(timer);
-            resolve();
-          }
-        });
-        child.stderr?.on("data", (chunk: Buffer) => {
-          error += chunk.toString("utf8");
-        });
-        child.once("error", reject);
-        child.once("exit", () => reject(new Error(`Broker CLI exited: ${error}`)));
-      });
-      NodeAssert.equal(await requestOrganizationLaunchBroker(baseDir, { action: "health" }), true);
-      await NodeFSP.writeFile(organizationLaunchSuspendMarkerPath(baseDir), "{}\n", {
-        mode: 0o600,
-      });
-      await quiesceOrganizationLaunchBroker(baseDir);
-      NodeAssert.deepEqual(
-        await requestOrganizationLaunchBroker(baseDir, { action: "status" }),
-        [],
-      );
-    } finally {
-      child.kill("SIGKILL");
-      if (child.exitCode === null)
-        await new Promise<void>((resolve) => child.once("exit", resolve));
-      await NodeFSP.rm(baseDir, { recursive: true, force: true });
-    }
-  },
-);
 
 linuxIt("keeps one broker owner and fences launches across a trial marker", async () => {
   const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-org-broker-test-"));

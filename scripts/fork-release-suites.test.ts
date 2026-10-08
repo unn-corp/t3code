@@ -75,6 +75,8 @@ describe("the required suites", () => {
       "src/agentDashboard/AgentDashboardContinuousImprovement.test.ts",
       "src/agentDashboard/AgentDashboardPullRequestRollup.test.ts",
       "src/organizations/OrganizationLiveWorkExecutor.test.ts",
+      "src/organizations/OrganizationScopeLaunchBrokerCli.test.ts",
+      "src/maintenance/scopeBrokerBootstrap.test.ts",
       "src/discord/Layers/DiscordBridge.integration.test.ts",
     ])
       assert.include(runtime, file);

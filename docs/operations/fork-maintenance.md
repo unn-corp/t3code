@@ -324,7 +324,7 @@ and account/VM lifecycle automation remain uncommissioned.
 Native Linux server startup also provisions the detached Organization launch
 broker. Preserve its bootstrap in `cli/server.ts` and command registration in
 `binCli.ts`; the launcher cannot quiesce scopes without it. Keep the native broker
-CLI/quiescence regression in `OrganizationScopeLaunchBroker.test.ts` and guarded
+CLI/quiescence regression in `OrganizationScopeLaunchBrokerCli.test.ts` and guarded
 older-home provisioning tests in `maintenance/scopeBrokerBootstrap.test.ts` with
 release update verification. The supported `maintenance scope-broker` operation
 uses a verified corrected CLI only to provision that broker for an existing idle

@@ -207,10 +207,25 @@ it("does not open a coordinator or start a broker on Windows", async () => {
   expect(f.ports.ensure).not.toHaveBeenCalled();
 });
 
-it.effect.skipIf(HostProcessPlatform.defaultValue() !== "linux")(
+it.effect(
   "runs the public operator command against authenticated native status without an install request",
   () =>
     Effect.gen(function* () {
+      if (HostProcessPlatform.defaultValue() !== "linux") {
+        const home = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-scope-unsupported-")),
+        );
+        roots.push(home);
+        const result = yield* Command.runWith(maintenanceCommand, { version: "0.0.0" })([
+          "scope-broker",
+          "--base-dir",
+          home,
+        ]).pipe(Effect.provide(NodeServices.layer), Effect.exit);
+        expect(result).toMatchObject({ _tag: "Failure" });
+        expect(String(result)).toContain("Organization launch broker requires Linux");
+        expect(yield* Effect.promise(() => NodeFSP.readdir(home))).toEqual([]);
+        return;
+      }
       const resources = yield* Effect.promise(async () => {
         const f = await fixture(true);
         const token = await issueOperatorToken(f.home);
