@@ -842,112 +842,114 @@ describe("external recovery of the desktop binary (recover --desktop-plan)", () 
     expect(await runDesktopHandoff(file, io())).toBe(HANDOFF_EXIT.badPlan);
   });
 
-  it("changes nothing when the plan is not exactly the recorded install of this transaction", async () => {
-    type Case = readonly [string, (d: Awaited<ReturnType<typeof device>>) => Promise<void>, string];
-    const open: ReadonlyArray<Case> =
-      HOST_PLATFORM === "win32"
-        ? []
-        : [
-            [
-              "a plan open to other users",
-              (d) => d.desktop!.writePlan(d.desktop!.plan, d.desktop!.planFile, 0o644),
-              "no group or world access",
-            ],
-          ];
-    const cases: ReadonlyArray<Case> = [
-      [
-        "a legacy plan without launch locations",
-        (d) =>
-          d.desktop!.writePlan({ relaunch: { command: d.desktop!.plan.installTarget, args: [] } }),
-        "did not retain",
-      ],
-      [
-        "a relaunch into another home",
-        (d) =>
-          d.desktop!.writePlan({
-            relaunch: {
-              ...d.desktop!.plan.relaunch,
-              environment: { ...d.desktop!.plan.relaunch.environment!, T3CODE_HOME: d.root },
+  type Case = readonly [string, (d: Awaited<ReturnType<typeof device>>) => Promise<void>, string];
+  const openPlans: ReadonlyArray<Case> =
+    HOST_PLATFORM === "win32"
+      ? []
+      : [
+          [
+            "a plan open to other users",
+            (d) => d.desktop!.writePlan(d.desktop!.plan, d.desktop!.planFile, 0o644),
+            "no group or world access",
+          ],
+        ];
+  const invalidInstallPlans: ReadonlyArray<Case> = [
+    [
+      "a legacy plan without launch locations",
+      (d) =>
+        d.desktop!.writePlan({ relaunch: { command: d.desktop!.plan.installTarget, args: [] } }),
+      "did not retain",
+    ],
+    [
+      "a relaunch into another home",
+      (d) =>
+        d.desktop!.writePlan({
+          relaunch: {
+            ...d.desktop!.plan.relaunch,
+            environment: { ...d.desktop!.plan.relaunch.environment!, T3CODE_HOME: d.root },
+          },
+        }),
+      "do not belong",
+    ],
+    [
+      "a relaunch into another coordinator",
+      (d) =>
+        d.desktop!.writePlan({
+          relaunch: {
+            ...d.desktop!.plan.relaunch,
+            environment: {
+              ...d.desktop!.plan.relaunch.environment!,
+              T3CODE_MAINTENANCE_NAMESPACE: d.root,
             },
-          }),
-        "do not belong",
-      ],
-      [
-        "a relaunch into another coordinator",
-        (d) =>
-          d.desktop!.writePlan({
-            relaunch: {
-              ...d.desktop!.plan.relaunch,
-              environment: {
-                ...d.desktop!.plan.relaunch.environment!,
-                T3CODE_MAINTENANCE_NAMESPACE: d.root,
-              },
-            },
-          }),
-        "do not belong",
-      ],
-      ["a revert plan", (d) => d.desktop!.writePlan({ mode: "revert" }), "not an install plan"],
-      [
-        "another transaction's plan",
-        (d) => d.desktop!.writePlan({ transactionId: "tx-other" }),
-        "belongs to transaction tx-other",
-      ],
-      [
-        "another coordinator's plan",
-        (d) => d.desktop!.writePlan({ coordinatorDirectory: NodePath.join(d.root, "elsewhere") }),
-        "different coordinator",
-      ],
-      [
-        "a plan without a previous installer",
-        (d) => d.desktop!.writePlan({ previousInstaller: null }),
-        "no previous installer",
-      ],
-      [
-        "a different owner than the recorded handoff",
-        (d) => d.desktop!.writePlan({ owner: { pid: 4243, started: "boot:4243" } }),
-        "does not match the install handoff",
-      ],
-      [
-        "a different target installer digest",
-        (d) =>
-          d.desktop!.writePlan({
-            installer: { ...d.desktop!.plan.installer, sha256: sha256Hex("other target") },
-          }),
-        "does not match the install handoff",
-      ],
-      [
-        "a different previous installer digest (counterpart)",
-        (d) =>
-          d.desktop!.writePlan({
-            previousInstaller: {
-              ...d.desktop!.plan.previousInstaller!,
-              sha256: sha256Hex("other previous"),
-            },
-          }),
-        "does not match the install handoff",
-      ],
-      [
-        "a malformed digest",
-        (d) =>
-          d.desktop!.writePlan({
-            previousInstaller: { ...d.desktop!.plan.previousInstaller!, sha256: "legacy" },
-          }),
-        "SHA-256",
-      ],
-      ...open,
-      [
-        "a plan that is not a plan",
-        async (d) => void (await NodeFSP.writeFile(d.desktop!.planFile, "{}", { mode: 0o600 })),
-        "was refused",
-      ],
-    ];
-    for (const [name, mutate, message] of cases) {
+          },
+        }),
+      "do not belong",
+    ],
+    ["a revert plan", (d) => d.desktop!.writePlan({ mode: "revert" }), "not an install plan"],
+    [
+      "another transaction's plan",
+      (d) => d.desktop!.writePlan({ transactionId: "tx-other" }),
+      "belongs to transaction tx-other",
+    ],
+    [
+      "another coordinator's plan",
+      (d) => d.desktop!.writePlan({ coordinatorDirectory: NodePath.join(d.root, "elsewhere") }),
+      "different coordinator",
+    ],
+    [
+      "a plan without a previous installer",
+      (d) => d.desktop!.writePlan({ previousInstaller: null }),
+      "no previous installer",
+    ],
+    [
+      "a different owner than the recorded handoff",
+      (d) => d.desktop!.writePlan({ owner: { pid: 4243, started: "boot:4243" } }),
+      "does not match the install handoff",
+    ],
+    [
+      "a different target installer digest",
+      (d) =>
+        d.desktop!.writePlan({
+          installer: { ...d.desktop!.plan.installer, sha256: sha256Hex("other target") },
+        }),
+      "does not match the install handoff",
+    ],
+    [
+      "a different previous installer digest (counterpart)",
+      (d) =>
+        d.desktop!.writePlan({
+          previousInstaller: {
+            ...d.desktop!.plan.previousInstaller!,
+            sha256: sha256Hex("other previous"),
+          },
+        }),
+      "does not match the install handoff",
+    ],
+    [
+      "a malformed digest",
+      (d) =>
+        d.desktop!.writePlan({
+          previousInstaller: { ...d.desktop!.plan.previousInstaller!, sha256: "legacy" },
+        }),
+      "SHA-256",
+    ],
+    ...openPlans,
+    [
+      "a plan that is not a plan",
+      async (d) => void (await NodeFSP.writeFile(d.desktop!.planFile, "{}", { mode: 0o600 })),
+      "was refused",
+    ],
+  ];
+
+  it.each(invalidInstallPlans)(
+    "changes nothing for %s instead of the recorded install plan",
+    async (name, mutate, message) => {
       const d = await device({}, { desktop: true });
       await mutate(d);
       await expect(recover(d), name).rejects.toThrow(message);
       await expectUntouched(d);
-    }
-  });
+    },
+  );
 
   it("changes nothing when the journal never recorded the handoff, or recorded different payloads", async () => {
     const missing = await device({}, { desktop: true });
