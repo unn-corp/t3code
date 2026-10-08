@@ -29,6 +29,7 @@ const wordmarkOnLight = await trimLogo(wordmark);
 const wordmarkOnDark = await trimLogo(lightLettering(wordmark));
 const icon = await renderLogoCanvas(markOnDark, 1024);
 const desktopIcon = await renderDesktopIcon(markOnDark);
+const projectIcon = await renderLogoCanvas(markOnDark, 256, 236 / 256, "#00000000");
 const desktopIco = encodePngIco(
   await Promise.all(
     WINDOWS_ICON_SIZES.map(async (size) => ({
@@ -49,6 +50,8 @@ const appleTouch = await iconAtSize(180);
 const favicon16 = await iconAtSize(16);
 const favicon32 = await iconAtSize(32);
 const outputs = new Map<string, Buffer>([
+  ["favicon.png", projectIcon],
+  ["assets/arcwright/exports/ac-logo-transparent.png", markOnDark],
   [BRAND_ASSET_PATHS.mainLogoMarkOnLightPng, markOnLight],
   [BRAND_ASSET_PATHS.mainLogoMarkOnDarkPng, markOnDark],
   [BRAND_ASSET_PATHS.mainLogoSquareOnDarkPng, lightLettering(mark)],
