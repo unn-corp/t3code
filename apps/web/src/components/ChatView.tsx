@@ -11666,15 +11666,6 @@ export default function ChatView(props: ChatViewProps) {
                         </div>
                       </ComposerSurface.Host>
                       <div className="min-h-0">
-                        {serverUpdateEnvironmentId ? (
-                          <ComposerHostMaintenanceStatus
-                            environmentId={serverUpdateEnvironmentId}
-                            label={versionMismatchServerLabel}
-                            supported={supportsForkMaintenanceAdmission(
-                              serverConfig?.environment.capabilities.forkMaintenance,
-                            )}
-                          />
-                        ) : null}
                         <div
                           data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
                           className="relative z-0"
@@ -11740,6 +11731,17 @@ export default function ChatView(props: ChatViewProps) {
                         </div>
                       </div>
                     </ComposerSurface.Shell>
+                    {/* Keep host notices outside the glass layer so its backdrop
+                        cannot cover the text or grow below the composer. */}
+                    {serverUpdateEnvironmentId ? (
+                      <ComposerHostMaintenanceStatus
+                        environmentId={serverUpdateEnvironmentId}
+                        label={versionMismatchServerLabel}
+                        supported={supportsForkMaintenanceAdmission(
+                          serverConfig?.environment.capabilities.forkMaintenance,
+                        )}
+                      />
+                    ) : null}
                     <div
                       aria-hidden
                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
