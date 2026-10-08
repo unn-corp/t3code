@@ -1,14 +1,9 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
-import { ArrowUpCircleIcon } from "lucide-react";
 import { flushSync } from "react-dom";
 import { isElectron } from "../../env";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
-import { localForkUpdateController, useForkUpdates } from "../../state/forkUpdates";
-import { forkPhaseLabels, forkStatusDescription } from "../forkUpdatePresentation";
 import {
   getArm64IntelBuildWarningDescription,
-  getDesktopUpdateReleaseHistoryUrl,
   shouldShowArm64IntelBuildWarning,
 } from "../desktopUpdate.logic";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
@@ -47,34 +42,5 @@ function ArchitectureWarning() {
   );
 }
 export function SidebarUpdatePill() {
-  return isElectron ? <UpdateEntry /> : null;
-}
-function UpdateEntry() {
-  const { status } = useForkUpdates(localForkUpdateController());
-  return (
-    <div className="flex min-w-0 items-center gap-1">
-      <div className="min-w-0 flex-1">
-        <ForkSidebarUpdateStatus />
-      </div>
-      <Link
-        to="/settings/general"
-        hash="app-updates"
-        aria-label={status ? `App updates: ${forkPhaseLabels[status.phase]}` : "App updates"}
-        title={status ? forkStatusDescription(status) : "App updates"}
-        className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-sidebar-foreground outline-none hover:bg-sidebar-row-hover focus-visible:ring-2"
-      >
-        <ArrowUpCircleIcon className="size-4" />
-      </Link>
-      {status?.targetBuild ? (
-        <a
-          href={getDesktopUpdateReleaseHistoryUrl()}
-          target="_blank"
-          rel="noreferrer"
-          className="shrink-0 text-xs whitespace-nowrap underline"
-        >
-          Release notes
-        </a>
-      ) : null}
-    </div>
-  );
+  return isElectron ? <ForkSidebarUpdateStatus /> : null;
 }

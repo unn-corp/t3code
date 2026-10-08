@@ -118,6 +118,8 @@ describe("DesktopPreReadyPlatform", () => {
         assert.equal(identity.desktopName, "com.t3tools.T3Code.desktop");
         assert.include(identity.desktopEntry ?? "", 'Exec="/Applications/current.AppImage" %U');
         assert.include(identity.desktopEntry ?? "", "Name=Arcwright Code");
+        assert.notInclude(identity.desktopEntry ?? "", "NoDisplay=true");
+        assert.include(identity.desktopEntry ?? "", "StartupWMClass=t3code");
         assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/t3code;");
         assert.include(
           identity.desktopEntry ?? "",

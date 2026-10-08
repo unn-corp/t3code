@@ -723,6 +723,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [
         { name: "Arcwright Code", schemes: ["t3code", "t3code-dev"] },
       ]);
+      assert.equal(
+        ((linux.linux as Record<string, unknown>).desktop as { entry: Record<string, unknown> })
+          .entry["X-AppImage-Integrate"],
+        "false",
+      );
       assert.deepStrictEqual(linux.toolsets, { appimage: "1.0.3" });
       assert.notProperty(mac, "toolsets");
       assert.notProperty(win, "toolsets");

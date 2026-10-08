@@ -64,7 +64,11 @@ Every release carries exactly these, all listed with `sha256` and `bytes` in `fo
 
 - Windows x64 NSIS installer (`T3-Code-<v>-x64.exe`), its blockmap, and the channel feed
   (`latest.yml` or `nightly.yml`).
-- Linux x64 AppImage (`T3-Code-<v>-x86_64.AppImage`) and Debian package (`T3-Code-<v>-amd64.deb`).
+- Linux x64 AppImage (`T3-Code-<v>-x86_64.AppImage`) and Debian package (`T3-Code-<v>-amd64.deb`). AppImages
+  opt out of AppImageLauncher integration and register one stable
+  `com.t3tools.T3Code.desktop` launcher that also handles OAuth URLs. Reuse that
+  desktop ID when pinning or deploying locally; do not create per-build or
+  branded aliases. Development URL handlers remain hidden.
   Both are `desktop` assets for `linux-x64`. Devices tell them apart by exact suffix
   (`forkDesktopAssetFor` in `packages/shared`), so a Debian install is never offered an AppImage.
   The AppImage blockmap and `<channel>-linux.yml` feed ship with them.

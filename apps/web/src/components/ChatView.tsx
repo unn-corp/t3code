@@ -11248,13 +11248,10 @@ export default function ChatView(props: ChatViewProps) {
                 ref={draftHeroTransition.transitionGroupRef}
                 className={cn("chat-composer-lane w-full", isDraftHeroState && "my-auto py-4")}
               >
-                <div
+                <ComposerSurface.VoiceRoot
+                  phase={voiceInputPhase}
                   data-chat-composer-stack="true"
-                  className={cn(
-                    "group/composer-stack chat-composer-voice-root pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)",
-                    voiceInputPhase === "recording" && "chat-voice-recording-active",
-                    voiceInputPhase === "transcribing" && "ring-2 ring-primary/40",
-                  )}
+                  className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
                 >
                   {isDraftHeroState ? (
                     // Keep the headline in the measured stack. Auto margins center
@@ -11571,7 +11568,7 @@ export default function ChatView(props: ChatViewProps) {
                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
                     />
                   </div>
-                </div>
+                </ComposerSurface.VoiceRoot>
               </div>
             </div>
 

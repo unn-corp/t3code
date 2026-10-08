@@ -12,15 +12,9 @@ import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
-// Linux ships as an AppImage, so the .desktop entry users end up with is
-// created by whatever integration tool they use (AppImageLauncher names it
-// appimagekit_<hash>-….desktop) and its filename is not under our control.
-// Electron's app.setAsDefaultProtocolClient resolves the desktop id from
-// setDesktopName, which cannot match those files — so the browser keeps
-// prompting "Choose an application" for every OAuth callback. Instead, write
-// our own handler entry pointing at the current AppImage, refresh the desktop
-// MIME cache so desktop environments recognize that entry as a handler, and
-// use xdg-mime to record it as the scheme default in mimeapps.list.
+// Own a stable desktop id for AppImage launchers and OAuth callbacks. The
+// packaged AppImage opts out of external hash/name-based integration. Native
+// packages retain their installer-owned launcher and use a hidden URL entry.
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 
 export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedError<DesktopLinuxUrlHandlerRegistrationError>()(
@@ -81,13 +75,14 @@ export function escapeDesktopEntryExecArgument(value: string): string {
   return escapeDesktopEntryString(`"${quoted}"`);
 }
 
-// The AppImage integration entry owns the window identity. This
-// hidden URL-only entry must not compete with it for StartupWMClass matching.
+// AppImages share one launcher/portal identity; development and native
+// packages keep their URL-only entry hidden.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
   readonly scheme: string;
   readonly iconPath?: string;
+  readonly launcher?: boolean;
 }): string {
   return [
     "[Desktop Entry]",
@@ -96,7 +91,7 @@ export function renderUrlHandlerDesktopEntry(input: {
     `Exec=${escapeDesktopEntryExecArgument(input.execTarget)} %U`,
     ...(input.iconPath === undefined ? [] : [`Icon=${escapeDesktopEntryString(input.iconPath)}`]),
     "Terminal=false",
-    "NoDisplay=true",
+    ...(input.launcher ? ["StartupWMClass=t3code", "Categories=Development;"] : ["NoDisplay=true"]),
     "StartupNotify=false",
     `MimeType=x-scheme-handler/${input.scheme};`,
     "",
@@ -133,6 +128,7 @@ export const make = Effect.gen(function* () {
       displayName: environment.displayName,
       execTarget,
       scheme,
+      launcher: Option.isSome(environment.appImagePath) && !environment.isDevelopment,
       ...(environment.isPackaged ? { iconPath } : {}),
     });
     // Pre-ready setup normally wrote this already. Avoid truncating a valid

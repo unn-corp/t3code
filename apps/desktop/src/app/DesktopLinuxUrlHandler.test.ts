@@ -181,6 +181,19 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.include(entry, "Icon=/home/al ice/icons/Arcwright Code\\\\x.png");
   });
 
+  it("uses the portal entry as the single visible AppImage launcher", () => {
+    const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+      displayName: "Arcwright Code",
+      execTarget: "/Applications/current.AppImage",
+      scheme: "t3code",
+      launcher: true,
+    });
+    assert.notInclude(entry, "NoDisplay=true");
+    assert.include(entry, "StartupWMClass=t3code");
+    assert.include(entry, "Categories=Development;");
+    assert.include(entry, "MimeType=x-scheme-handler/t3code;");
+  });
+
   it("carries structured context on registration errors", () => {
     const writeError = new DesktopLinuxUrlHandler.DesktopLinuxUrlHandlerRegistrationError({
       step: "write-desktop-entry",
@@ -227,6 +240,8 @@ describe("DesktopLinuxUrlHandler", () => {
           'Exec="/home/alice/Applications/T3-Code.AppImage" %U',
         );
         assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
+        assert.notInclude(recorded.files[0]?.content, "NoDisplay=true");
+        assert.include(recorded.files[0]?.content, "StartupWMClass=t3code");
         assert.deepEqual(recorded.commands, [
           {
             command: "update-desktop-database",
@@ -261,6 +276,7 @@ describe("DesktopLinuxUrlHandler", () => {
       yield* runRegister(recorded, {
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "Arcwright Code (Alpha)",
+          launcher: true,
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
           scheme: "t3code",
           iconPath: "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png",
@@ -290,6 +306,7 @@ describe("DesktopLinuxUrlHandler", () => {
         iconSource: "/tmp/.mount_T3/resources/icon.png",
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "Arcwright Code (Alpha)",
+          launcher: true,
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
           scheme: "t3code",
           iconPath,
