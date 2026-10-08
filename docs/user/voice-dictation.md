@@ -1,7 +1,13 @@
 # Voice dictation
 
-The T3 voice composer records audio locally, sends it to an OpenWhispr Whisper service on the
-connected T3 server, and inserts the returned transcript into the composer. The desktop build can also
+Arcwright Code records audio on the device you are using, uploads the clip through your authenticated
+connection to the composer's environment, and inserts the returned text into the draft. That
+environment processes the clip with its own OpenWhispr Whisper service, just as it does for a
+recording made on that computer. This applies to both the main and annotation composers.
+
+Your client device does not need OpenWhispr or a local transcription service installed. It needs
+microphone access; transcription must be configured on the environment you are accessing. If that
+environment's service is unavailable, dictation reports the problem. The desktop build can also
 send configured start and end keybinds to the focused desktop application on Linux.
 
 ## One-click setup
