@@ -1457,6 +1457,72 @@ it.effect("keeps a host that responds with an operation timeout", () =>
   ),
 );
 
+it.effect(
+  "keeps the server host when its operation timeout reaches the broker after the deadline",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const received = yield* Deferred.make<void>();
+        const requests = requestsFrom(yield* broker.connect(makeHost(), { preferred: true }));
+        yield* Stream.runForEach(requests, (request) =>
+          Effect.gen(function* () {
+            if (request.operation === "waitFor") {
+              yield* Deferred.succeed(received, undefined);
+              // The browser uses the requested deadline too; delivering its failure takes time.
+              yield* Effect.sleep(request.timeoutMs + 1);
+            }
+            yield* broker.respond({
+              clientId: "client-1",
+              connectionId: request.connectionId,
+              requestId: request.requestId,
+              ...(request.operation === "waitFor"
+                ? {
+                    ok: false,
+                    error: { _tag: "PreviewAutomationTimeoutError", message: "Selector timed out" },
+                  }
+                : { ok: true, result: "responsive" }),
+            });
+          }),
+        ).pipe(Effect.forkScoped);
+        const action = yield* broker
+          .invoke<void>({ scope, operation: "waitFor", input: {}, timeoutMs: 1_000 })
+          .pipe(Effect.flip, Effect.forkScoped);
+        yield* Deferred.await(received);
+        yield* TestClock.adjust(1_001);
+        expect(yield* Fiber.join(action)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+        expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe("responsive");
+      }),
+    ),
+);
+
+it.effect(
+  "still evicts an unanswered server host after its response grace without replaying work",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const received = yield* Deferred.make<RoutedRequest>();
+        const operations: string[] = [];
+        const requests = requestsFrom(yield* broker.connect(makeHost(), { preferred: true }));
+        yield* Stream.runForEach(requests, (request) => {
+          operations.push(request.operation);
+          return Deferred.succeed(received, request);
+        }).pipe(Effect.forkScoped);
+        const action = yield* broker
+          .invoke<void>({ scope, operation: "click", input: {}, timeoutMs: 1_000 })
+          .pipe(Effect.flip, Effect.forkScoped);
+        expect((yield* Deferred.await(received)).timeoutMs).toBe(1_000);
+        yield* TestClock.adjust(2_000);
+        expect(yield* Fiber.join(action)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+        expect(
+          yield* broker.invoke<void>({ scope, operation: "status", input: {} }).pipe(Effect.flip),
+        ).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
+        expect(operations).toEqual(["click"]);
+      }),
+    ),
+);
+
 it.effect("keeps the host connected when a background status read times out", () =>
   Effect.scoped(
     Effect.gen(function* () {

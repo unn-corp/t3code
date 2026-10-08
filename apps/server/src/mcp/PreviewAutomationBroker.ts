@@ -716,7 +716,12 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         }
         return yield* new PreviewAutomationRequestQueueClosedError(requestContext);
       }
-      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs));
+      // Browser actions use timeoutMs themselves. Let the server host deliver its
+      // normal timeout response before treating an unanswered request as a dead host.
+      // The browser's deadline and action replay policy stay unchanged.
+      const responseTimeoutMs =
+        timeoutMs + (connection.preferred && input.updateCurrentTab !== false ? 1_000 : 0);
+      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(responseTimeoutMs));
       return yield* Option.match(result, {
         onNone: () =>
           Effect.gen(function* () {
