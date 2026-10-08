@@ -276,6 +276,10 @@ home, import another task's T3 identity, or restart a working server.
 Keep the launcher process alive and retain its PID and private log location.
 Keep every T3 runtime for this OS user on the same maintenance coordinator.
 Honor the provided proxy and keep operator loopback requests local.
+Immediately establish a new task-local administrative operator session through
+the normal startup pairing flow, before its initial five-minute grant expires.
+Keep that session private. Issue a fresh unused link only when its intended
+client is ready to connect; never copy another task's or device's credentials.
 Establish only the operator-provisioned private outbound HTTP/WebSocket route.
 If no route is provisioned, report that requirement instead of exposing a port.
 Wait for T3's environment descriptor through that route and report its ID,
@@ -411,19 +415,58 @@ copy another device's bearer credentials. Check the final connection on the devi
 when access becomes available. The setup helper does not implement a multi-device
 pairing wizard, gateway provisioning, or Cloud task lifecycle management.
 
-Once the VM's own web client is paired, use its **Connections → Create link**
-to pair another client, such as desktop. Keep that new link unused until the
-intended client pairs; links expire after five minutes. In the clarity-relay
-trial, the standalone `pair` command refused maintenance admission while the
-managed server owned its data home. The authenticated pairing HTTP endpoint
-and the web client's Create link flow worked without restarting the server or
-bypassing admission. Do not reset a working server to work around that refusal.
+### First administrative connection and device links
+
+Establish the first administrative connection immediately after starting the VM.
+Its native startup pairing grant is single-use and expires after five minutes.
+An operator can redeem it through the normal VM-local `/api/auth/browser-session`
+flow, verify the new session with `/api/auth/session`, then issue a fresh unused
+grant through `/api/auth/pairing-token`. Preserve the verified session's permitted
+administrative scopes, including `access:write`, when preparing an operator link
+that must create further device links. A standard device grant does not grant
+that permission. This creates a new session in this VM; it does not copy a PC's
+or another VM's login.
+
+Transfer the unused grant privately to the intended client, using the verified
+gateway origin and matching T3 server ID. Operator automation can use an
+encrypted handoff and a private local file; keep plaintext URLs, callback codes,
+cookies, and keys out of chats, screenshots, command arguments, and logs. All
+session files belong to the private running task after publication, never the
+reusable published filesystem.
+
+Once the VM's web client is paired, use **Connections → Create link** for each
+additional client. Create each link just before that device connects and leave
+it unused until then; it also expires after five minutes. An authenticated
+operator can issue a fresh link without restarting T3. The standalone `pair`
+command may refuse admission while the managed server owns its home; use the
+authenticated pairing flow instead of bypassing admission.
+
+If the initial grant expires before any administrative session exists, an
+authorized operator can perform an orderly restart of the **same installed
+build and configured T3 home**. First verify every real T3 runtime is known and
+idle, with no active turns, tools, PTYs, leases, pending or organization work,
+unknown activity, maintenance fence, active transaction, or countdown. Send
+SIGTERM only to the original helper PID whose ownership and start identity were
+recorded; let its normal lifecycle stop its managed children and release the home lock. Stop if a child,
+home owner, or orphan remains uncertain. Resume with the recorded helper's
+`start`, preserving the process home, provider configuration, coordinator,
+tunnel, and saved data, then immediately redeem the new startup grant privately.
+This recovery does not install an update, rerun `setup`, or reset the home.
 
 Each new VM needs one browser sign-in for each account you want to use there.
 Returning to the same VM retains its sessions; expired or revoked sessions need
 reauthorization. T3's existing remote sign-in flow can open authorization on the
 primary client and hand the fresh session to the destination VM. Each VM owns
 its subsequent token renewal; the setup account list never copies login tokens.
+If remote ChatGPT sign-in finishes on a localhost callback page that cannot
+reach the VM, return to that VM's sign-in panel and enter the final redirect URL
+in its **ChatGPT sign-in redirect URL** field, then choose **Connect** in that
+form. Transfer this short-lived URL directly through the private UI; for operator
+automation, use a private file handoff to fill that existing field. The setup
+helper does not automate OAuth. Never paste the URL into a chat. Complete the
+pending flow promptly, and start a new sign-in if it expires. A browser's
+existing ChatGPT login alone does not sign the VM's provider in. Confirm T3 shows
+the intended account signed in, then verify a harmless turn in its cloud project.
 OpenAI documents [VM credential ownership](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms)
 and [separate account sessions](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions).
 Several VMs using one account draw from that account's applicable usage limits;
@@ -436,6 +479,10 @@ completed GPT-6-Luna turns in each VM's repository, and follow-ups in the same
 conversations. The clarity-relay conversation and saved environment name also
 survived a Browser client reload. These pairings are in the test Browser profile;
 other clients need their own pairing. Unnamed and Work remain uncommissioned.
+Additional Personal-only trials in signalskyworks, Photonic, Arcwright-AI, and
+FCM-Fallout-Chat-Mod verified private first-admin handoff, independent sign-in,
+completed GPT-6-Luna repository turns, and saved history after Browser reload.
+These trials do not establish physical-device pairing or Claude sign-in there.
 Installing entries or finishing sign-in alone does not prove that the VM's
 network and provider allow inference. Personal's managed sign-in worked through
 the private HTTP/WebSocket route even though the earlier standalone Codex CLI
@@ -485,7 +532,7 @@ or create a replacement task while diagnosing it.
    task received the change; do not assume it did. Never publish a task's SSH key.
 5. If T3 is connected but a provider needs sign-in, reconnect that provider on the
    recorded VM through **Settings → Providers**. If a device lost authorization,
-   create a fresh device pairing link. A used or expired one-time link is not a
+   create a fresh device pairing link. A used or expired device link is not a
    reason to restart the server. Keep VPN, tunnel, T3 pairing, and provider
    credentials separate when diagnosing which authorization failed.
 6. If the task is unavailable and a replacement is needed, first preserve accessible
