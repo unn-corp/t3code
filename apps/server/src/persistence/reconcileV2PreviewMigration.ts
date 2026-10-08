@@ -67,9 +67,16 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
         `;
       const currentNames = new Map(migrations.map(([id, name]) => [id, name]));
 
-      // Current upstream releases have V2 at 55 and its follow-up migrations
-      // at 56–58. Validate every post-35 entry before moving anything.
-      if (history.some((row) => row.migration_id === 55 && row.name === "OrchestrationV2")) {
+      // Upstream ledgers diverge at pinned threads (36), including installs
+      // that stopped before V2 at 55. Validate every post-35 identity before
+      // moving anything; the regular loader adds V2 when it is not present.
+      if (
+        history.some(
+          (row) =>
+            (row.migration_id === 36 && row.name === "ProjectionThreadsPinned") ||
+            (row.migration_id === 55 && row.name === "OrchestrationV2"),
+        )
+      ) {
         const baseMismatch = history.find(
           (row) => row.migration_id < 36 && currentNames.get(row.migration_id) !== row.name,
         );

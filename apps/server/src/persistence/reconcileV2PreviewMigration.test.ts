@@ -164,6 +164,94 @@ describe("V2 preview upgrade", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect.each([36, 52, 54])(
+    "upgrades a pre-V2 upstream ledger ending at %s without replaying applied columns",
+    (latestId) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 35 });
+        const names = [
+          "ProjectionThreadsPinned",
+          "ProjectionTurnsKeysetIndex",
+          "ProjectionThreadsPinOrderKey",
+          "ProjectionProjectsDefaultThreadEnvMode",
+          "ProjectionProjectFaviconPath",
+          "AuthSessionClientConnection",
+          "ProjectionThreadLinkedPullRequest",
+          "ProjectionThreadsUnsettledAt",
+          "ClearAutomaticProjectModelDefaults",
+          "ProjectionProjectsAutoPull",
+          "RepairAutomaticSettlementTimestamps",
+          "ProjectionProjectIcon",
+          "ProjectionThreadBranchPullRequest",
+          "ProjectionThreadsActiveOrderKey",
+          "ProjectionThreadPullRequests",
+          "ProjectionThreadMessageContext",
+          "ProjectionThreadTitleState",
+          "PullRequestFilesViewed",
+          "ProjectionThreadsAutoSettleDisabledAt",
+        ] as const;
+        const byName = new Map(migrationEntries.map(([, name, migration]) => [name, migration]));
+        yield* Migrator.make({})({
+          loader: Migrator.fromRecord(
+            Object.fromEntries(
+              names
+                .slice(0, latestId - 35)
+                .map((name, index) => [`${index + 36}_${name}`, byName.get(name)!]),
+            ),
+          ),
+        });
+        yield* sql`UPDATE effect_sql_migrations SET created_at = '2026-09-18 00:00:00' WHERE migration_id = 36`;
+        yield* sql`INSERT INTO projection_projects
+          (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+          VALUES ('upstream-project', 'Existing repository', '/workspace/existing', '[]', '2026-09-18', '2026-09-18')`;
+        yield* runMigrations();
+        assert.deepStrictEqual(yield* runMigrations(), []);
+        assert.deepStrictEqual(
+          (yield* sql<{ readonly migration_id: number; readonly name: string }>`
+            SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
+          `).map((row) => [row.migration_id, row.name] as const),
+          migrationManifest,
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id = 38`,
+          [{ created_at: "2026-09-18 00:00:00" }],
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT title FROM projection_projects WHERE project_id = 'upstream-project'`,
+          [{ title: "Existing repository" }],
+        );
+        assert.strictEqual(
+          (yield* sql`SELECT name FROM sqlite_master WHERE name = 'orchestration_v2_legacy_imports'`)
+            .length,
+          1,
+        );
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("rejects an unknown pre-V2 upstream suffix without changing its ledger or schema", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 35 });
+      yield* Migrator.make({})({
+        loader: Migrator.fromRecord({
+          "36_ProjectionThreadsPinned": migrationEntries.find(
+            ([, name]) => name === "ProjectionThreadsPinned",
+          )![2],
+        }),
+      });
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (37, 'UnknownUpstreamMigration')`;
+      const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+      const columns = yield* sql`PRAGMA table_info(projection_threads)`;
+      assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+        history,
+      );
+      assert.deepStrictEqual(yield* sql`PRAGMA table_info(projection_threads)`, columns);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect.each([false, true])(
     "upgrades preview migration 54 with index cleanup %s",
     (withIndexes) =>
