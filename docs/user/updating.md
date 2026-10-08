@@ -142,6 +142,14 @@ initialization over its home.
 
 ## Why installation waits
 
+Check and download reports completion separately from installation; blocked
+installation keeps its waiting reasons visible alongside network errors.
+
+If GitHub temporarily limits release checks, App updates shows when checks can
+resume and keeps the downloaded build. Wait until that time before checking again.
+Installation still needs a fresh release check, so a downloaded build cannot be
+installed while its release cannot be verified.
+
 All agent work in registered fork runtimes belonging to that local OS user must be stopped,
 including desktop, background services, standalone, development, and explicitly
 connected WSL runtimes. Work includes child/delegated agents, compaction,

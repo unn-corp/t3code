@@ -33,6 +33,7 @@ import {
   type ForkReleaseRecord,
   type ForkTargetSelection,
 } from "./forkMaintenance.ts";
+import { ForkFeedRateLimitError } from "./forkMaintenanceFeed.ts";
 import { newJournal, type MaintenanceJournal } from "./forkMaintenanceJournal.ts";
 import type { CoordinatorStorePort } from "./forkMaintenanceStore.ts";
 import {
@@ -190,6 +191,7 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
   let stagedSha256: string | null = null;
   let lastError: string | null = null;
   let consecutiveFailures = 0;
+  let feedRateLimit: ForkFeedRateLimitError | null = null;
   let nextCheckAt: number | null = null;
   let countdown: ForkUpdateCountdown | null = null;
   /** Why automatic installation is waiting (input, uploads, review). Distinct from device blockers: manual installs ignore these. */
@@ -315,11 +317,32 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
     return options.slice(0, 2);
   };
 
+  const feedBlockers = (): ReadonlyArray<ForkActivityBlocker> =>
+    feedRateLimit !== null && ports.now() < feedRateLimit.retryAt
+      ? [{ participantId: "release-feed", reason: "offline", label: feedRateLimit.message }]
+      : [];
+
+  const readFeed = async () => {
+    if (feedRateLimit !== null && ports.now() < feedRateLimit.retryAt) throw feedRateLimit;
+    try {
+      const releases = await ports.feed();
+      feedRateLimit = null;
+      return releases;
+    } catch (cause) {
+      if (cause instanceof ForkFeedRateLimitError) {
+        feedRateLimit = cause;
+        nextCheckAt = Math.max(nextCheckAt ?? 0, cause.retryAt);
+        countdown = null;
+      }
+      throw cause;
+    }
+  };
+
   const status = async (): Promise<ForkUpdateStatus> => {
     await loadPolicy();
     const unavailable = await installer.unavailableReason?.();
     const coordinator = await coordinatorState();
-    const blockers: ForkActivityBlocker[] = [...coordinator.blockers];
+    const blockers: ForkActivityBlocker[] = [...coordinator.blockers, ...feedBlockers()];
     if (unavailable !== null && unavailable !== undefined)
       blockers.push({ participantId: "coordinator", reason: "launcher", label: unavailable });
     const digest = targetDigest();
@@ -374,11 +397,11 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
   const check = () =>
     serialized(async () => {
       await loadPolicy();
-      if (activeTransactionId !== null) return publish();
+      if (activeTransactionId !== null || feedBlockers().length > 0) return publish();
       phase = "checking";
       await publish();
       try {
-        const releases = await ports.feed();
+        const releases = await readFeed();
         consecutiveFailures = 0;
         lastError = null;
         nextCheckAt = ports.now() + forkCheckBackoffMs(0);
@@ -406,7 +429,10 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
       } catch (cause) {
         consecutiveFailures += 1;
         lastError = `Update check failed: ${messageOf(cause)}`;
-        nextCheckAt = ports.now() + forkCheckBackoffMs(consecutiveFailures);
+        nextCheckAt = Math.max(
+          ports.now() + forkCheckBackoffMs(consecutiveFailures),
+          cause instanceof ForkFeedRateLimitError ? cause.retryAt : 0,
+        );
         phase = stagedSha256 !== null ? "staged" : target !== null ? "available" : "idle";
       }
       return publish();
@@ -415,7 +441,8 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
   const stage = () =>
     serialized(async () => {
       await loadPolicy();
-      if (target === null || installer.platform === null) return publish();
+      if (target === null || installer.platform === null || feedBlockers().length > 0)
+        return publish();
       const digest = targetDigest();
       if (digest === null || stagedSha256 === digest) return publish();
       phase = "downloading";
@@ -435,7 +462,11 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
         stagedSha256 = null;
         lastError = `Download failed: ${messageOf(cause)}`;
         consecutiveFailures += 1;
-        nextCheckAt = ports.now() + forkCheckBackoffMs(consecutiveFailures);
+        if (cause instanceof ForkFeedRateLimitError) feedRateLimit = cause;
+        nextCheckAt = Math.max(
+          ports.now() + forkCheckBackoffMs(consecutiveFailures),
+          cause instanceof ForkFeedRateLimitError ? cause.retryAt : 0,
+        );
         phase = "available";
       }
       return publish();
@@ -610,7 +641,7 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
     const fresh = selectForkTarget({
       channel: policy.channel,
       installedVersion: installer.currentBuild.version,
-      releases: await ports.feed().catch((cause: unknown) => {
+      releases: await readFeed().catch((cause: unknown) => {
         throw fail(`Could not confirm the release is still eligible: ${messageOf(cause)}`);
       }),
       pinnedBuild: policy.pinnedBuild,
@@ -669,7 +700,7 @@ export function createForkMaintenanceController(ports: ForkControllerPorts) {
         return publish();
       const gate = evaluateAutomaticInstall({
         now: ports.now(),
-        blockers: await coordinatorBlockers(),
+        blockers: [...(await coordinatorBlockers()), ...feedBlockers()],
         automaticInstallation: policy.automaticInstallation && policy.pinnedBuild === null,
         targetArtifactSha256: stagedSha256,
         interaction: ports.interaction(),

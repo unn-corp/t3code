@@ -83,6 +83,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/forkMaintenanceSnapshot.test.ts",
       "src/forkMaintenanceTransaction.test.ts",
       "src/forkMaintenanceController.test.ts",
+      "src/forkMaintenanceFeed.test.ts",
       "src/buildVersion.test.ts",
       "src/forkRecoveryHelper.test.ts",
       "src/forkDesktopHandoff.test.ts",

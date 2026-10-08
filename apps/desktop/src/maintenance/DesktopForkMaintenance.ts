@@ -54,7 +54,7 @@ import { wslCommandFromStartArgs } from "./wslTransport.ts";
 
 const { logInfo, logError } = DesktopObservability.makeComponentLogger("desktop-maintenance");
 
-/** The desktop keeps its existing check cadence; the managed-host cadence is slower. */
+/** Wake frequently; the controller decides when the release feed is due. */
 const CHECK_INTERVAL = Duration.minutes(4);
 const STARTUP_CHECK_DELAY = Duration.seconds(15);
 const RELEASES_PER_CHECK = 12;
@@ -366,10 +366,10 @@ export const make = Effect.gen(function* () {
   });
 
   const configure = Effect.gen(function* () {
-    const checkAndStage = Effect.promise(() => core.check()).pipe(
+    const checkAndStage = Effect.promise(() => core.checkIfDue()).pipe(
       Effect.catchCause(() => Effect.void),
     );
-    // Four-minute checks after a short startup delay. Activity has its own loop:
+    // Four-minute wakeups respect nextCheckAt. Activity has its own loop:
     // a pending controller action must not prevent acknowledgement of its fence.
     yield* Effect.sleep(STARTUP_CHECK_DELAY).pipe(
       Effect.andThen(checkAndStage.pipe(Effect.repeat(Schedule.spaced(CHECK_INTERVAL)))),

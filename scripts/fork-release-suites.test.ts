@@ -56,6 +56,7 @@ describe("the required suites", () => {
       "Snapshot",
       "Transaction",
       "Controller",
+      "Feed",
       "RecoveryHelper",
     ]) {
       assert.include(coordinator, part);

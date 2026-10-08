@@ -19,12 +19,14 @@ import {
 import { CoordinatorStore } from "@t3tools/shared/forkMaintenanceStore";
 import { newJournal } from "@t3tools/shared/forkMaintenanceJournal";
 import { CURRENT_ACTIVITY_PROTOCOL } from "@t3tools/shared/forkMaintenanceAdmission";
+import { ForkFeedRateLimitError } from "@t3tools/shared/forkMaintenanceFeed";
 
 import { readVerifiedArtifact } from "./artifactCache.ts";
 import { recordInstaller } from "./installerIndex.ts";
 import { HandoffPlan } from "./handoff.ts";
 import {
   createDesktopMaintenance,
+  FORK_CHECK_INTERVAL_MS,
   MAINTENANCE_TRIAL_ENV,
   type DesktopMaintenance,
   type DesktopMaintenanceInput,
@@ -1080,6 +1082,103 @@ describe("DesktopForkMaintenance", () => {
       ),
     ).toBeDefined();
     expect((await core.status()).affectedHomes?.map((entry) => entry.id)).toEqual([device.home]);
+  });
+
+  it("scheduled checks honor the four-hour cadence while explicit checks remain available", async () => {
+    const device = await makeDevice();
+    let listings = 0;
+    const core = device.makeCore({
+      pid: 100,
+      version: "1.0.0",
+      commit: commit("1"),
+      overrides: { feed: async () => ((listings += 1), [OLD.record, NEW.record]) },
+    });
+    await core.start();
+    const first = await core.checkIfDue();
+    // Discovery and the installer's independent recovery-build discovery.
+    expect(listings).toBe(2);
+    expect(first.targetBuild?.version).toBe("1.1.0");
+    expect(first.nextCheckAt).toBe(device.clock.value + FORK_CHECK_INTERVAL_MS);
+    device.clock.value += 4 * MINUTE;
+    await core.checkIfDue();
+    expect(listings).toBe(2);
+    const manual = await core.runAction({ action: "check" });
+    expect(listings).toBe(3);
+    device.clock.value = manual.nextCheckAt! - 1;
+    await core.checkIfDue();
+    expect(listings).toBe(3);
+    device.clock.value += 1;
+    await core.checkIfDue();
+    expect(listings).toBe(4);
+    expect(device.handoffs).toEqual([]);
+    await core.stop();
+  });
+
+  it("scheduled checks respect failure backoff and retry when the injected clock reaches it", async () => {
+    const device = await makeDevice();
+    let listings = 0;
+    let failing = true;
+    const core = device.makeCore({
+      pid: 100,
+      version: "1.0.0",
+      commit: commit("1"),
+      overrides: {
+        feed: async () => {
+          listings += 1;
+          if (failing) throw new Error("isolated feed unavailable");
+          return [OLD.record, NEW.record];
+        },
+      },
+    });
+    await core.start();
+    const failure = await core.checkIfDue();
+    expect(failure.lastError).toContain("isolated feed unavailable");
+    expect(listings).toBe(1);
+    expect(failure.nextCheckAt).toBeGreaterThan(device.clock.value);
+    device.clock.value = failure.nextCheckAt! - 1;
+    await core.checkIfDue();
+    expect(listings).toBe(1);
+    failing = false;
+    device.clock.value += 1;
+    const recovered = await core.checkIfDue();
+    expect(listings).toBe(3);
+    expect(recovered.lastError).toBeNull();
+    expect(recovered.targetBuild?.version).toBe("1.1.0");
+    expect(device.handoffs).toEqual([]);
+    await core.stop();
+  });
+
+  it("preserves a rate limit encountered while staging and avoids feed reads during cooldown", async () => {
+    const device = await makeDevice();
+    let listings = 0;
+    const retryAt = device.clock.value + 60 * MINUTE;
+    const core = device.makeCore({
+      pid: 100,
+      version: "1.0.0",
+      commit: commit("1"),
+      overrides: {
+        feed: async () => {
+          listings += 1;
+          if (listings > 1) throw new ForkFeedRateLimitError(retryAt);
+          return [OLD.record, NEW.record];
+        },
+      },
+    });
+    await core.start();
+    const limited = await core.checkIfDue();
+    expect(listings).toBe(2);
+    expect(limited.nextCheckAt).toBe(retryAt);
+    expect(limited.installable).toBe(false);
+    expect(limited.lastError).toContain("rate limit");
+    expect(limited.blockers).toContainEqual(
+      expect.objectContaining({ participantId: "release-feed", reason: "offline" }),
+    );
+    expect((await core.check()).lastError).toBe(limited.lastError);
+    device.clock.value += 4 * MINUTE;
+    await core.checkIfDue();
+    expect(listings).toBe(2);
+    expect(device.handoffs).toEqual([]);
+    await core.stop();
   });
 
   it("answers concurrent identical requests with one outcome", async () => {

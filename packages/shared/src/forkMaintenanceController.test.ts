@@ -10,6 +10,7 @@ import {
   type PolicyState,
   type PolicyStore,
 } from "./forkMaintenanceController.ts";
+import { ForkFeedRateLimitError } from "./forkMaintenanceFeed.ts";
 import { forkAssetFor, type ForkReleaseRecord } from "./forkMaintenance.ts";
 import { CoordinatorStore } from "./forkMaintenanceStore.ts";
 import { newJournal } from "./forkMaintenanceJournal.ts";
@@ -196,6 +197,8 @@ async function harness(options: { channel?: "stable" | "nightly"; autoInstall?: 
     cohortFails: false,
     authorization: false,
     feedFails: false,
+    feedFailure: null as Error | null,
+    feedReads: 0,
     failTrialHome: null as string | null,
     failRestoredHome: null as string | null,
     snapshotFails: false,
@@ -326,6 +329,8 @@ async function harness(options: { channel?: "stable" | "nightly"; autoInstall?: 
       cancelledTargetSha256: null,
     },
     feed: async () => {
+      behaviour.feedReads += 1;
+      if (behaviour.feedFailure !== null) throw behaviour.feedFailure;
       if (behaviour.feedFails) throw new Error("network unreachable");
       return releases;
     },
@@ -412,6 +417,55 @@ describe("fork maintenance controller", () => {
     const recovered = await h.controller.check();
     expect(recovered.lastError).toBeNull();
     expect(recovered.nextCheckAt).toBe(1_000_000 + 4 * 60 * 60 * 1000);
+  });
+
+  it("honors GitHub's cooldown, preserves the staged target, and never installs from stale eligibility", async () => {
+    const h = await harness({ autoInstall: true });
+    await h.ready();
+    h.clock.value = 1_000_000;
+    await h.idleRuntimes();
+    h.behaviour.feedFailure = new ForkFeedRateLimitError(1_600_000);
+    const limited = await h.controller.check();
+    expect(limited).toMatchObject({
+      targetBuild: { version: "1.0.1", artifactSha256: sha("2") },
+      phase: "waiting",
+      nextCheckAt: 1_600_000,
+      installable: false,
+    });
+    expect(limited.blockers).toContainEqual(
+      expect.objectContaining({ reason: "offline", participantId: "release-feed" }),
+    );
+    const reads = h.behaviour.feedReads;
+    await h.controller.check();
+    await h.controller.stage();
+    expect((await h.controller.tick()).countdown).toBeNull();
+    await expect(h.controller.install(sha("2"))).rejects.toThrow(
+      "Could not confirm the release is still eligible",
+    );
+    expect(h.behaviour.feedReads).toBe(reads);
+    expect(h.events).toEqual(["stage"]);
+    expect((await h.controller.status()).transactionId).toBeNull();
+    h.clock.value = 1_600_000;
+    h.behaviour.feedFailure = null;
+    h.setReleases([]);
+    const refreshed = await h.controller.check();
+    expect(h.behaviour.feedReads).toBe(reads + 1);
+    expect(refreshed).toMatchObject({ targetBuild: null, lastError: null, installable: false });
+    await expect(h.controller.install(sha("2"))).rejects.toThrow("No staged update is ready");
+    expect(h.events).toEqual(["stage"]);
+  });
+
+  it("keeps a discovered target and its rate-limit error without downloading during cooldown", async () => {
+    const h = await harness();
+    await h.controller.check();
+    h.behaviour.feedFailure = new ForkFeedRateLimitError(1_200_000);
+    const limited = await h.controller.check();
+    const staged = await h.controller.stage();
+    expect(staged.targetBuild?.artifactSha256).toBe(sha("2"));
+    expect(staged.lastError).toBe(limited.lastError);
+    expect(staged.nextCheckAt).toBe(1_200_000);
+    expect(staged.installable).toBe(false);
+    expect(h.events).toEqual([]);
   });
 
   it("is hard-blocked by active agents and never offers to stop them", async () => {

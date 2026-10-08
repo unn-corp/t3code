@@ -154,6 +154,8 @@ export interface DesktopMaintenance {
   readonly resumeInterrupted: () => Promise<ForkUpdateStatus>;
   readonly observe: () => Promise<void>;
   readonly check: () => Promise<ForkUpdateStatus>;
+  /** Automatic polling follows the controller's success cadence and failure backoff. */
+  readonly checkIfDue: () => Promise<ForkUpdateStatus>;
   readonly tick: () => Promise<ForkUpdateStatus>;
   readonly status: () => Promise<ForkUpdateStatus>;
   readonly install: (targetArtifactSha256: string) => Promise<ForkUpdateStatus>;
@@ -1046,6 +1048,12 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
       }),
     observe,
     check,
+    checkIfDue: () =>
+      shared("scheduled-check", async () => {
+        const current = await requireController().status();
+        if (current.nextCheckAt != null && now() < current.nextCheckAt) return current;
+        return check();
+      }),
     tick: () =>
       guarded(async () => {
         if (controller === null)

@@ -1,4 +1,4 @@
-// @effect-diagnostics globalTimers:off — a plain AbortController timeout keeps this usable outside Effect runtimes.
+// @effect-diagnostics globalDate:off globalTimers:off — a plain AbortController timeout keeps this usable outside Effect runtimes.
 /**
  * Release discovery over GitHub HTTPS. The accepted trust boundary is the fork's
  * GitHub release origin plus platform signatures and the digests recorded in
@@ -25,12 +25,40 @@ export type FetchLike = (
 ) => Promise<{
   readonly ok: boolean;
   readonly status: number;
+  readonly headers?: { readonly get: (name: string) => string | null };
   readonly text: () => Promise<string>;
 }>;
 
 export class ForkFeedError extends Error {
-  override readonly name = "ForkFeedError";
+  override readonly name: string = "ForkFeedError";
 }
+
+/** GitHub's advertised cooldown is distinct from an ordinary network failure. */
+export class ForkFeedRateLimitError extends ForkFeedError {
+  override readonly name = "ForkFeedRateLimitError";
+  readonly retryAt: number;
+  constructor(retryAt: number) {
+    super(
+      `GitHub's release API rate limit has been reached. Try again after ${new Date(retryAt).toISOString()}.`,
+    );
+    this.retryAt = retryAt;
+  }
+}
+
+const rateLimitRetryAt = (response: Awaited<ReturnType<FetchLike>>, now: number): number | null => {
+  if (response.status !== 403 && response.status !== 429) return null;
+  const remaining = response.headers?.get("x-ratelimit-remaining");
+  const retryAfter = response.headers?.get("retry-after");
+  if (response.status !== 429 && remaining !== "0" && retryAfter == null) return null;
+  const reset = Number(response.headers?.get("x-ratelimit-reset"));
+  const retrySeconds = retryAfter == null ? NaN : Number(retryAfter);
+  const retryDate = retryAfter == null ? NaN : Date.parse(retryAfter);
+  const candidates = [
+    Number.isFinite(reset) && reset > 0 ? reset * 1000 : NaN,
+    Number.isFinite(retrySeconds) && retrySeconds >= 0 ? now + retrySeconds * 1000 : retryDate,
+  ].filter((value) => Number.isFinite(value) && value > now && value <= 8.64e15);
+  return candidates.length === 0 ? now + 60_000 : Math.max(...candidates);
+};
 
 interface ApiAsset {
   readonly name?: unknown;
@@ -52,6 +80,7 @@ async function getText(
   url: string,
   limit: number,
   headers?: Record<string, string>,
+  now: () => number = Date.now,
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -60,8 +89,11 @@ async function getText(
       signal: controller.signal,
       ...(headers === undefined ? {} : { headers }),
     });
-    if (!response.ok)
+    if (!response.ok) {
+      const retryAt = rateLimitRetryAt(response, now());
+      if (retryAt !== null) throw new ForkFeedRateLimitError(retryAt);
       throw new ForkFeedError(`GitHub returned ${response.status} for ${new URL(url).pathname}.`);
+    }
     const text = await response.text();
     if (text.length > limit) throw new ForkFeedError("A release document exceeded its size limit.");
     return text;
@@ -73,7 +105,7 @@ async function getText(
 /** Lists releases and decodes each fork-release.json with the exact contract schema. An undecodable manifest is recorded, never skipped silently. */
 export async function listForkReleases(
   fetcher: FetchLike,
-  options: { readonly perPage?: number } = {},
+  options: { readonly perPage?: number; readonly now?: () => number } = {},
 ): Promise<ReadonlyArray<ForkReleaseRecord>> {
   const listing: unknown = JSON.parse(
     await getText(
@@ -81,6 +113,7 @@ export async function listForkReleases(
       `${FORK_RELEASES_API}?per_page=${options.perPage ?? 30}`,
       MAX_LISTING_BYTES,
       { accept: "application/vnd.github+json" },
+      options.now,
     ),
   );
   if (!Array.isArray(listing))
@@ -108,8 +141,11 @@ export async function listForkReleases(
         manifestError = "The manifest is not served from the fork release origin.";
       else {
         try {
-          manifest = decodeManifest(JSON.parse(await getText(fetcher, url, MAX_MANIFEST_BYTES)));
+          manifest = decodeManifest(
+            JSON.parse(await getText(fetcher, url, MAX_MANIFEST_BYTES, undefined, options.now)),
+          );
         } catch (cause) {
+          if (cause instanceof ForkFeedRateLimitError) throw cause;
           manifestError = cause instanceof Error ? cause.message : "Unreadable manifest.";
         }
       }

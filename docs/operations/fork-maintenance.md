@@ -422,6 +422,16 @@ children (including a lingering code-mode host), reused PIDs, and unknown proces
 observations still hold installation. A completed turn does not prove those
 children have exited; never stop sessions or clear their records to obtain admission.
 
+GitHub feed rate limits are different from ordinary network failures. Respect the
+controller's `nextCheckAt` for desktop automatic checks; four-minute wakeups do not
+override the normal four-hour feed cadence or failure backoff. Explicit checks can
+run sooner unless GitHub's enforced cooldown is still active. Respect the
+advertised reset time and `Retry-After` delay, keep the staged artifact, and report
+an offline blocker while the cooldown is active. Repeated manual checks and install
+requests must not consume more requests during that period. Installation still
+requires a fresh eligible release listing afterward; cached metadata never admits
+an update when the release origin cannot be checked.
+
 ### Resolve an unknown orphan after offline verification
 
 An orphan created by an incomplete process census can remain blocked even when no child PID was
