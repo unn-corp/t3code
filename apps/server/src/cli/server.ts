@@ -8,6 +8,8 @@ import * as CliError from "effect/cli/CliError";
 
 import * as ServerConfig from "../config.ts";
 import { runServer } from "../server.ts";
+import { ensureOrganizationScopeLaunchBroker } from "../organizations/OrganizationScopeLaunchBrokerBootstrap.ts";
+import { OrganizationScopeRecoveryError } from "../organizations/OrganizationScopeRecoveryStore.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
@@ -23,6 +25,21 @@ const runServerCommand = (
   Effect.gen(function* () {
     const logLevel = yield* GlobalFlag.LogLevel;
     const config = yield* resolveServerConfig(flags, logLevel, options);
+    yield* Effect.tryPromise({
+      try: () => ensureOrganizationScopeLaunchBroker(config.baseDir),
+      catch: (cause) =>
+        new OrganizationScopeRecoveryError({
+          code: "unavailable",
+          message:
+            cause instanceof Error ? cause.message : "Organization launch broker unavailable",
+        }),
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Organization launch broker unavailable; scoped execution is held", {
+          message: cause instanceof Error ? cause.message : "Broker startup failed",
+        }),
+      ),
+    );
     return yield* runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config));
   });
 

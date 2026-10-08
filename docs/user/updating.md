@@ -100,6 +100,17 @@ installation still waits for the installations review and all activity checks.
 Use `setup --auto off` or `init --auto off` for manual updates instead. The saved preference survives
 restarts; starting an environment does not change it or an existing home's choice.
 
+If an older managed Linux release rolls back with `scope-quiesce-failed` because
+its native Organization launch broker was not provisioned, finish the installation
+review and wait for its normal idle window. From a verified corrected release's
+CLI, run `t3 maintenance scope-broker --base-dir /path/to/the/existing/home` with
+the existing coordinator namespace. This provisions only the native broker for
+that verified idle home. Retry the running environment's normal update afterward;
+the command neither activates the newer CLI build nor grants installation admission.
+It refuses active or unknown work, a different coordinator/home, and an update in
+progress. Preserve the existing home and credentials; do not skip the quiescence
+barrier or replace its installed runtime manually.
+
 From the VM's terminal, the helper exposes the same controller:
 
 ```sh

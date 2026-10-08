@@ -191,6 +191,15 @@ The launcher's database snapshot (main file, WAL, shared-memory file) remains, t
 the old child exits and kept until commit. Attachments and other files outside SQLite are covered by the
 coordinator's restore points, not by the launcher.
 
+Normal Linux server entry starts the detached native Organization launch broker
+before assembling server layers. Keep both that bootstrap and its CLI command
+registration when moving entry points: the launcher requires authenticated broker
+quiescence even for a fresh home with no Organization work. A missing broker fails
+closed before the database backup. An already-running older release can provision
+it with a verified corrected CLI's `maintenance scope-broker` after the same-home
+native controller and coordinator both prove idle; its existing controller still
+owns the subsequent installation and all admission gates.
+
 ## Desktop and WSL
 
 The desktop app is the single controller for a desktop-managed device. A desktop-managed server proxies

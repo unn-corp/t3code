@@ -124,6 +124,8 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
       "src/cli/update.test.ts",
       "src/maintenance/restartGate.test.ts",
       "src/maintenance/serviceInstaller.test.ts",
+      "src/maintenance/scopeBrokerBootstrap.test.ts",
+      "src/organizations/OrganizationScopeLaunchBroker.test.ts",
       "src/serviceLauncherMaintenance.test.ts",
       "src/auth/RpcAuthorization.test.ts",
       "src/auth/RpcAuthorization.maintenance.test.ts",
@@ -141,6 +143,7 @@ export const SUITES: Readonly<Record<SuiteId, SuiteSpec>> = {
     results: "vitest",
     required: [
       "src/maintenance/DesktopForkMaintenance.test.ts",
+      "src/preload.test.ts",
       "src/maintenance/artifactCache.test.ts",
       "src/maintenance/handoff.test.ts",
       "src/maintenance/installedBuild.test.ts",

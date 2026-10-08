@@ -12,6 +12,7 @@ import {
 } from "./OrganizationScopeLaunchBroker.ts";
 import {
   organizationLaunchSuspendMarkerPath,
+  createOrganizationLaunchBrokerToken,
   quiesceOrganizationLaunchBroker,
   requestOrganizationLaunchBroker,
 } from "./OrganizationScopeLaunchBrokerProtocol.ts";
@@ -20,10 +21,15 @@ import {
   isOrganizationScopedSandboxAvailable,
 } from "./OrganizationScopedSandboxHost.ts";
 
+const linuxIt = it.skipIf(HostProcessPlatform.defaultValue() !== "linux");
+
 it.skipIf(HostProcessPlatform.defaultValue() !== "linux")(
   "serves the hidden CLI broker from an isolated T3 home",
   async () => {
     const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-org-broker-cli-"));
+    // Existing releases may retain a safe token after the detached broker exited.
+    // The native command must reuse it and restore the authenticated socket.
+    await createOrganizationLaunchBrokerToken(baseDir);
     const entry = NodePath.resolve(import.meta.dirname, "../bin.ts");
     const child = NodeChildProcess.spawn(
       process.execPath,
@@ -49,6 +55,14 @@ it.skipIf(HostProcessPlatform.defaultValue() !== "linux")(
         child.once("exit", () => reject(new Error(`Broker CLI exited: ${error}`)));
       });
       NodeAssert.equal(await requestOrganizationLaunchBroker(baseDir, { action: "health" }), true);
+      await NodeFSP.writeFile(organizationLaunchSuspendMarkerPath(baseDir), "{}\n", {
+        mode: 0o600,
+      });
+      await quiesceOrganizationLaunchBroker(baseDir);
+      NodeAssert.deepEqual(
+        await requestOrganizationLaunchBroker(baseDir, { action: "status" }),
+        [],
+      );
     } finally {
       child.kill("SIGKILL");
       if (child.exitCode === null)
@@ -58,7 +72,7 @@ it.skipIf(HostProcessPlatform.defaultValue() !== "linux")(
   },
 );
 
-it("keeps one broker owner and fences launches across a trial marker", async () => {
+linuxIt("keeps one broker owner and fences launches across a trial marker", async () => {
   const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-org-broker-test-"));
   const broker = await serveOrganizationScopeLaunchBroker(baseDir);
   try {
@@ -148,7 +162,7 @@ it("keeps one broker owner and fences launches across a trial marker", async () 
   }
 });
 
-it("revokes the read-only owner probe when the claimed process exits", async () => {
+linuxIt("revokes the read-only owner probe when the claimed process exits", async () => {
   const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-org-broker-owner-"));
   const broker = await serveOrganizationScopeLaunchBroker(baseDir);
   const moduleUrl = new URL("./OrganizationScopeLaunchBroker.ts", import.meta.url).href;

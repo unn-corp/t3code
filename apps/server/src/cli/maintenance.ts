@@ -28,6 +28,7 @@ import {
 } from "../maintenance/operatorClient.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
+import { bootstrapManagedScopeBroker } from "../maintenance/scopeBrokerBootstrap.ts";
 
 const decodeRecoveryRequest = Schema.decodeUnknownEffect(ForkRecoveryRequest);
 class MaintenanceCliError extends Schema.TaggedError<MaintenanceCliError>()("MaintenanceCliError", {
@@ -189,6 +190,28 @@ const repairLockCommand = Command.make("repair-lock", {}).pipe(
     }),
   ),
 );
+const scopeBrokerCommand = Command.make("scope-broker", { baseDir: baseDirFlag }).pipe(
+  Command.withDescription(
+    "Provision the native Organization launch broker for a verified idle managed Linux home, then retry its normal update.",
+  ),
+  Command.withHandler(({ baseDir: flag }) =>
+    Effect.gen(function* () {
+      const home = yield* baseDir(flag);
+      yield* Effect.tryPromise({
+        try: () =>
+          bootstrapManagedScopeBroker({
+            home,
+            namespace: process.env.T3CODE_MAINTENANCE_NAMESPACE,
+          }),
+        catch: (cause) =>
+          new MaintenanceCliError({
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+      yield* Console.log("Organization launch broker is ready. Retry the normal managed update.");
+    }),
+  ),
+);
 const orphanListCommand = Command.make("orphans", { json: jsonFlag }).pipe(
   Command.withDescription(
     "List exact exited participant owners and recorded children for offline operator verification.",
@@ -301,6 +324,7 @@ export const maintenanceCommand = Command.make("maintenance").pipe(
     policyCommand,
     recoverCommand,
     repairLockCommand,
+    scopeBrokerCommand,
     orphanListCommand,
     attestOrphanCommand,
   ]),
