@@ -69,6 +69,7 @@ import {
   FORK_CHECKSUMS_ASSET,
   FORK_MANIFEST_ASSET,
   buildPlan,
+  parseRequiredAndroidRecoveryTags,
   type AndroidCodeAllocation,
   type ForkChannel,
   type PlannedRelease,
@@ -145,6 +146,9 @@ const runPlan = async (values: Args) => {
     ...(values.commission === "true" ? { commission: true } : {}),
     now: new Date(),
     runNumber: Number(values["run-number"] ?? process.env.GITHUB_RUN_NUMBER ?? "0"),
+    requiredAndroidRecoveryTags: parseRequiredAndroidRecoveryTags(
+      values["android-recovery-tags"] ?? "[]",
+    ),
     releases,
     baseline: baseline
       ? {
@@ -664,6 +668,7 @@ const main = async (argv: ReadonlyArray<string>): Promise<number> => {
       commission: { type: "boolean" },
       commit: { type: "string" },
       "run-number": { type: "string" },
+      "android-recovery-tags": { type: "string" },
       out: { type: "string" },
       plan: { type: "string" },
       role: { type: "string" },

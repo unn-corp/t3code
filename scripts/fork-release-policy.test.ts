@@ -18,6 +18,7 @@ import {
   nextStableVersion,
   nightlyVersionFor,
   parseForkVersion,
+  parseRequiredAndroidRecoveryTags,
   planNightly,
   selectPredecessor,
   selectStableSource,
@@ -654,6 +655,71 @@ describe("recovery predecessor", () => {
       outcome.plan.recoverySources.filter((source) => source.channel === "nightly").length,
       3,
     );
+  });
+
+  it("retains an explicitly requested older Android source outside the recent window", () => {
+    const releases = [76, 74, 73, 70, 69].map((run) =>
+      makeRelease({ version: `1.0.1-nightly.20261008.${run}`, commit: sha(`source-${run}`) }),
+    );
+    const old = releases.at(-1)!;
+    const outcome = buildPlan({
+      channel: "nightly",
+      commit: sha("next-with-phone-recovery"),
+      now: NOW,
+      runNumber: 77,
+      releases,
+      requiredAndroidRecoveryTags: [old.tagName, old.tagName, releases[0]!.tagName],
+    });
+    assert.equal(outcome.kind, "release");
+    if (outcome.kind !== "release") return;
+    assert.equal(outcome.plan.predecessor.tag, releases[0]!.tagName);
+    const retained = outcome.plan.recoverySources.filter((source) => source.tag === old.tagName);
+    assert.equal(retained.length, 1);
+    assert.equal(retained[0]!.version, "1.0.1-nightly.20261008.69");
+    assert.equal(retained[0]!.commit, sha("source-69"));
+    assert.equal(outcome.plan.recoverySources.length, 4);
+    assert.isFalse(
+      outcome.plan.recoverySources.some((source) => source.tag === releases[3]!.tagName),
+    );
+  });
+
+  it("refuses required recovery from missing, draft, withdrawn or failed releases", () => {
+    const current = makeRelease({ version: "1.0.1-nightly.20261008.76", commit: sha("current") });
+    const old = { version: "1.0.1-nightly.20261008.69", commit: sha("phone") };
+    const tag = "fork-v1.0.1-nightly.20261008.69";
+    for (const releases of [
+      [current],
+      [current, makeRelease({ ...old, draft: true })],
+      [current, makeRelease({ ...old, body: withWithdrawal("", "unsafe", NOW.toISOString()) })],
+      [current, makeRelease({ ...old, checks: { recovery: false } })],
+    ]) {
+      assert.throws(
+        () =>
+          buildPlan({
+            channel: "nightly",
+            commit: sha("next"),
+            now: NOW,
+            runNumber: 77,
+            releases,
+            requiredAndroidRecoveryTags: [tag],
+          }),
+        "Required Android recovery source is not eligible",
+      );
+    }
+  });
+
+  it("validates bounded JSON recovery-tag input before planning", () => {
+    const tag = "fork-v1.0.1-nightly.20261008.69";
+    assert.deepEqual(parseRequiredAndroidRecoveryTags(JSON.stringify([tag, tag])), [tag]);
+    assert.deepEqual(parseRequiredAndroidRecoveryTags("[]"), []);
+    for (const raw of [
+      '"fork-v1.0.0"',
+      "[null]",
+      '["main"]',
+      "{}",
+      JSON.stringify(Array(9).fill(tag)),
+    ])
+      assert.throws(() => parseRequiredAndroidRecoveryTags(raw));
   });
 
   it("allocates above a hand-installed stable baseline for nightly and stable promotion", () => {

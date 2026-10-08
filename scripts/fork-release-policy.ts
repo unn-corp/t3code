@@ -695,6 +695,20 @@ export interface RecoverySource extends Predecessor {
 
 const RECENT_ANDROID_SOURCES_PER_CHANNEL = 3;
 
+/** Optional, bounded recovery coverage for older builds still installed on commissioned devices. */
+export const parseRequiredAndroidRecoveryTags = (raw: string): ReadonlyArray<string> => {
+  const tags: unknown = JSON.parse(raw);
+  if (
+    !Array.isArray(tags) ||
+    tags.length > 8 ||
+    tags.some((tag) => typeof tag !== "string" || forkVersionFromTag(tag) === null)
+  )
+    throw new Error(
+      "Android recovery tags must be a JSON array of at most eight fork release tags.",
+    );
+  return [...new Set(tags as string[])];
+};
+
 /**
  * Fixes every identity a run needs before anything is built: version, tag, commit, and the
  * recovery predecessor. Later jobs read this and never re-select. Refuses to plan without a
@@ -711,6 +725,8 @@ export const buildPlan = (input: {
   readonly baseline?: Omit<Predecessor, "baseline"> | null;
   /** Explicit commissioning rebuild. Ordinary runs keep duplicate commit suppression. */
   readonly commission?: boolean;
+  /** Additional eligible published tags needed by known older Android installations. */
+  readonly requiredAndroidRecoveryTags?: ReadonlyArray<string>;
 }): PlanOutcome<PlannedRelease> => {
   let outcome: PlanOutcome<ReleasePlan>;
   const commissioningSource = input.commission
@@ -790,6 +806,14 @@ export const buildPlan = (input: {
     );
   }
   const eligible = eligibleReleases(input.releases);
+  const requiredTags = parseRequiredAndroidRecoveryTags(
+    JSON.stringify(input.requiredAndroidRecoveryTags ?? []),
+  );
+  const required = requiredTags.map((tag) => {
+    const record = eligible.find((record) => record.tagName === tag);
+    if (!record) throw new Error(`Required Android recovery source is not eligible: ${tag}`);
+    return record;
+  });
   const recoverySources: RecoverySource[] = [];
   const seen = new Set<string>();
   const add = (source: RecoverySource) => {
@@ -828,6 +852,16 @@ export const buildPlan = (input: {
   // A phone restored to the updater baseline must still be able to resume in-product updates.
   // Native staging requires recovery for its exact installed source, even after ordinary releases exist.
   if (input.baseline) add({ ...input.baseline, channel: null, asset: "" });
+  // An older phone cannot stage the newest candidate without recovery for its exact source.
+  // Explicitly requested sources still pass normal eligibility, pinned rebuild and artifact proof.
+  for (const record of required)
+    add({
+      tag: record.tagName,
+      version: record.manifest!.android.normal.sourceVersion,
+      commit: record.manifest!.android.normal.sourceCommit,
+      channel: record.manifest!.channel,
+      asset: "",
+    });
   // Stable promotion changes the version identity while keeping the promoted source commit.
   if (outcome.plan.source) {
     const promoted = eligible.find((record) => record.tagName === outcome.plan.source!.tag);

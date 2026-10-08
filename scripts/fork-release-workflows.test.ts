@@ -462,6 +462,13 @@ describe("fork-release.yml gating", () => {
     }
   });
 
+  it("passes Android recovery tags as quoted environment data into the pinned plan", () => {
+    const plan = stepNamed(release.jobs.plan!, "Plan");
+    assert.equal(plan.env?.ANDROID_RECOVERY_TAGS, "${{ inputs.android_recovery_tags || '[]' }}");
+    assert.include(plan.run!, '--android-recovery-tags "$ANDROID_RECOVERY_TAGS"');
+    assert.notInclude(plan.run!, "${{ inputs.android_recovery_tags");
+  });
+
   it("passes only the explicit dispatch commissioning input into nightly planning", () => {
     const plan = stepNamed(release.jobs.plan!, "Plan");
     assert.equal(plan.env!.COMMISSION, "${{ inputs.commission }}");

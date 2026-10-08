@@ -38,6 +38,12 @@ on:
         default: false
         type: boolean
 
+      android_recovery_tags:
+        description: "JSON array of older eligible fork release tags still installed on Android devices; adds verified recovery coverage."
+        required: false
+        default: "[]"
+        type: string
+
       commission:
         description: "Publish a fully validated nightly for hardware commissioning while scheduled publishing remains disabled. Requires publish=true."
         required: false
@@ -162,12 +168,13 @@ jobs:
           CHANNEL: ${{ steps.intent.outputs.channel }}
           INPUT_COMMIT: ${{ inputs.commit }}
           COMMISSION: ${{ inputs.commission }}
+          ANDROID_RECOVERY_TAGS: ${{ inputs.android_recovery_tags || '[]' }}
         shell: bash
         run: |
           set -euo pipefail
           commission_flag=
           if [[ "$COMMISSION" == "true" ]]; then commission_flag=--commission; fi
-          node scripts/fork-release.ts plan --channel "$CHANNEL" --commit "${INPUT_COMMIT:-$GITHUB_SHA}" --out fork-release-plan.json $commission_flag
+          node scripts/fork-release.ts plan --channel "$CHANNEL" --commit "${INPUT_COMMIT:-$GITHUB_SHA}" --android-recovery-tags "$ANDROID_RECOVERY_TAGS" --out fork-release-plan.json $commission_flag
 
       - name: Summarize plan
         env:

@@ -305,11 +305,17 @@ interaction still blocks publication.
   apply release-list pagination to it. Once 100 tags exist, that would repeatedly read the same
   response and stall allocation. The REST adapter regression tests cover both 100 and 101 tags.
 - **Recovery APKs.** The manifest retains the primary predecessor plus the newest three eligible
-  exact normal-build identities per channel, the verified updater baseline, and a required promotion
-  source. This fixed window lets recent installs resume with an exact-source recovery APK without
+  exact normal-build identities per channel, the verified updater baseline, a required promotion
+  source, and any explicitly requested older eligible tags. The default window lets recent installs
+  resume with an exact-source recovery APK without
   recursively copying older manifests' recovery matrices. Sources are deduplicated by version and
   commit, rebuilt with `--kind recovery`, and assigned unique codes above the release normal code.
-  A device rolled back to an identity outside this window must first use a still-cached signed
+  For a known older installed phone, add its normal release tag to `android_recovery_tags` on the
+  next manual release. Planning refuses missing, draft, withdrawn, or failed sources; the additional
+  recovery follows the same pinned rebuild, signing, installation-code, and validation gates.
+  Older clients may select only the newest release and cannot request an intermediate version.
+  Do not sideload an otherwise ineligible candidate to bypass their recovery checks.
+  Without explicit coverage, a device rolled back outside this window must first use a still-cached signed
   recovery to reach a retained identity, or use the documented manual bootstrap path; do not assume
   every historical recovery remains available in each new release.
   Extra recovery builds use the current builder against the exact retained source checkout. The
@@ -560,6 +566,13 @@ Do these in order. Each is outside the repository.
 `main`. `publish` defaults to off. Before automatic publishing is commissioned, only an explicit
 nightly with both `publish=true` and `commission=true` may publish. This does not skip validation or
 enable scheduled runs; stable publication still requires the commissioned gate.
+
+`android_recovery_tags` defaults to `[]`. Supply a JSON array of up to eight published eligible
+release tags still installed on supported phones, for example
+`["fork-v1.0.1-nightly.20261007.69"]`. The planner freezes their exact source identities and
+deduplicates them against ordinary coverage. Keep recording actual phone versions before a
+release; this input does not authorize an installation or change a device's saved policy.
+The CLI equivalent is `plan --android-recovery-tags '<JSON array>'`.
 
 **Withdraw or restore.** Actions, Fork release withdrawal, with the version and a reason. Withdrawing
 rewrites only the release notes (a marker line) so devices and installers stop offering it; the tag,
