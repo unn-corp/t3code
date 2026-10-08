@@ -7,10 +7,12 @@
  */
 import {
   DesktopPreviewRecordingInputSchema,
+  DesktopPreviewAnnotationPageSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
 } from "@t3tools/contracts";
 import type {
   DesktopPreviewAnnotationTheme,
+  DesktopPreviewAnnotationSnapshot,
   DesktopPreviewColorScheme,
   DesktopPreviewFavicon,
   DesktopPreviewPointerEvent,
@@ -65,6 +67,8 @@ import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
+  CAPTURE_ANNOTATION_PAGE_CHANNEL,
+  ANNOTATION_PAGE_CAPTURED_CHANNEL,
   ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
@@ -431,6 +435,7 @@ interface BrowserControlSession {
   ) => void;
 }
 
+const decodeAnnotationPage = Schema.decodeUnknownEffect(DesktopPreviewAnnotationPageSchema);
 const isRecordingInput = Schema.is(DesktopPreviewRecordingInputSchema);
 
 type RecordingInputListener = (event: DesktopPreviewRecordingInputEvent) => Effect.Effect<void>;
@@ -2155,6 +2160,114 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
   });
 
+  const captureAnnotationSnapshot = Effect.fn("PreviewManager.captureAnnotationSnapshot")(
+    function* (tabId: string) {
+      return yield* Effect.gen(function* () {
+        const wc = yield* requireWebContents(tabId);
+        const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+        let navigated = false;
+        const onNavigation = (
+          event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
+        ) => {
+          if (event.isMainFrame) navigated = true;
+        };
+        yield* Effect.acquireRelease(
+          Effect.sync(() => wc.on("did-start-navigation", onNavigation)),
+          () => Effect.sync(() => wc.off("did-start-navigation", onNavigation)),
+        );
+        const [rawPage, screenshot] = yield* Effect.all(
+          [
+            Effect.callback<unknown, PreviewManagerError>((resume) => {
+              const onPage = (
+                event: Electron.IpcMainEvent,
+                id: unknown,
+                page: unknown,
+                error: unknown,
+              ) => {
+                if (
+                  id !== requestId ||
+                  event.sender.id !== wc.id ||
+                  event.senderFrame?.routingId !== wc.mainFrame.routingId
+                )
+                  return;
+                wc.ipc.off(ANNOTATION_PAGE_CAPTURED_CHANNEL, onPage);
+                resume(
+                  typeof error === "string"
+                    ? Effect.fail(
+                        new PreviewOperationError({
+                          operation: "captureAnnotationSnapshot.extract",
+                          tabId,
+                          webContentsId: wc.id,
+                          cause: new Error(error),
+                        }),
+                      )
+                    : Effect.succeed(page),
+                );
+              };
+              try {
+                wc.ipc.on(ANNOTATION_PAGE_CAPTURED_CHANNEL, onPage);
+                wc.send(CAPTURE_ANNOTATION_PAGE_CHANNEL, requestId);
+              } catch (cause) {
+                wc.ipc.off(ANNOTATION_PAGE_CAPTURED_CHANNEL, onPage);
+                resume(
+                  Effect.fail(
+                    new PreviewOperationError({
+                      operation: "captureAnnotationSnapshot.extract",
+                      tabId,
+                      webContentsId: wc.id,
+                      cause,
+                    }),
+                  ),
+                );
+              }
+              return Effect.sync(() => wc.ipc.off(ANNOTATION_PAGE_CAPTURED_CHANNEL, onPage));
+            }).pipe(
+              Effect.timeout("8 seconds"),
+              Effect.mapError(
+                (cause) =>
+                  new PreviewOperationError({
+                    operation: "captureAnnotationSnapshot.extract",
+                    tabId,
+                    cause,
+                  }),
+              ),
+            ),
+            captureAnnotationScreenshot(tabId, wc, null),
+          ],
+          { concurrency: 2 },
+        );
+        if (navigated || !screenshot) {
+          return yield* new PreviewOperationError({
+            operation: "captureAnnotationSnapshot",
+            tabId,
+            cause: new Error(
+              navigated
+                ? "The page changed during capture. Try again."
+                : "Could not capture the page screenshot. Try again.",
+            ),
+          });
+        }
+        const page = yield* decodeAnnotationPage(rawPage).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PreviewOperationError({
+                operation: "captureAnnotationSnapshot.decode",
+                tabId,
+                cause,
+              }),
+          ),
+        );
+        return {
+          ...page,
+          screenshot: {
+            ...screenshot,
+            cropRect: { x: 0, y: 0, width: page.width, height: page.height },
+          },
+        };
+      }).pipe(Effect.scoped);
+    },
+  );
+
   const pickElement = Effect.fn("PreviewManager.pickElement")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
     yield* cancelPickElement(tabId);
@@ -3353,6 +3466,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   return {
     cancelPickElement,
     captureScreenshot,
+    captureAnnotationSnapshot,
     closeTab,
     copyArtifactToClipboard,
     createTab,
@@ -3606,6 +3720,9 @@ export class PreviewManager extends Context.Service<
       tabId: string,
     ) => Effect.Effect<PreviewAnnotationSubmissionResult | null, PreviewManagerError>;
     readonly cancelPickElement: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly captureAnnotationSnapshot: (
+      tabId: string,
+    ) => Effect.Effect<DesktopPreviewAnnotationSnapshot, PreviewManagerError>;
     readonly captureScreenshot: (
       tabId: string,
     ) => Effect.Effect<DesktopPreviewScreenshotArtifact, PreviewManagerError>;
@@ -3723,6 +3840,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     pickElement: operations.pickElement,
     cancelPickElement: operations.cancelPickElement,
     captureScreenshot: operations.captureScreenshot,
+    captureAnnotationSnapshot: operations.captureAnnotationSnapshot,
     revealArtifact: operations.revealArtifact,
     copyArtifactToClipboard: operations.copyArtifactToClipboard,
     openPictureInPicture: operations.openPictureInPicture,

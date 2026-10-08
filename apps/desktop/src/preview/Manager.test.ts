@@ -29,6 +29,10 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewManager from "./Manager.ts";
+import {
+  CAPTURE_ANNOTATION_PAGE_CHANNEL,
+  ANNOTATION_PAGE_CAPTURED_CHANNEL,
+} from "./GuestProtocol.ts";
 
 describe("fitPictureInPictureContentSize", () => {
   it("preserves the PiP content area across aspect-ratio changes", () => {
@@ -3933,6 +3937,138 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
         expect(pick.pollUnsafe()).toBeDefined();
         expect(yield* Fiber.join(pick)).toBeNull();
+      }),
+    ),
+  );
+
+  effectIt.effect(
+    "captures independent annotation context and retains it after later navigation",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const page = {
+            pageUrl: "https://example.com/original",
+            pageTitle: "Original",
+            createdAt: "2026-10-08T00:00:00.000Z",
+            width: 800,
+            height: 600,
+            elements: [],
+          };
+          let reply!: (...args: unknown[]) => void;
+          const request = vi.fn((channel: string, id: string) => {
+            if (channel === CAPTURE_ANNOTATION_PAGE_CHANNEL) {
+              reply(
+                { sender: { id: 42 }, senderFrame: { routingId: 42 } },
+                "stale-request",
+                null,
+                null,
+              );
+              reply({ sender: { id: 99 }, senderFrame: { routingId: 42 } }, id, null, null);
+              reply({ sender: { id: 42 }, senderFrame: { routingId: 99 } }, id, null, null);
+              reply({ sender: { id: 42 }, senderFrame: { routingId: 42 } }, id, page, null);
+            }
+          });
+          const capturePage = vi.fn(async () => ({
+            toJPEG: () => Buffer.from("snapshot"),
+            toDataURL: () => "data:image/png;base64,aW1hZ2U=",
+            getSize: () => ({ width: 1600, height: 1200 }),
+          }));
+          const guest = Object.assign(makeTestPreviewWebContents(capturePage, 42), {
+            send: request,
+            ipc: {
+              on: vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
+                if (channel === ANNOTATION_PAGE_CAPTURED_CHANNEL) reply = listener;
+              }),
+              off: vi.fn(),
+            },
+          });
+          fromId.mockReturnValue(guest);
+          yield* manager.createTab("snapshot-tab");
+          yield* manager.registerWebview("snapshot-tab", 42);
+          const snapshot = yield* manager.captureAnnotationSnapshot("snapshot-tab");
+          expect(request).toHaveBeenCalledWith(CAPTURE_ANNOTATION_PAGE_CHANNEL, expect.any(String));
+          expect(guest.ipc.off).toHaveBeenCalledWith(ANNOTATION_PAGE_CAPTURED_CHANNEL, reply);
+          expect(snapshot).toMatchObject({
+            ...page,
+            screenshot: {
+              width: 1600,
+              height: 1200,
+              cropRect: { x: 0, y: 0, width: 800, height: 600 },
+            },
+          });
+          yield* manager.closeTab("snapshot-tab");
+          expect(snapshot.pageUrl).toBe("https://example.com/original");
+          expect(snapshot.screenshot.dataUrl).toBe("data:image/png;base64,aW1hZ2U=");
+        }),
+      ),
+  );
+
+  effectIt.effect("rejects snapshots spanning a page reload and removes the capture listener", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let signalCaptured!: () => void;
+        const captured = new Promise<void>((resolve) => {
+          signalCaptured = resolve;
+        });
+        let finishCapture!: (image: TestCapturedPreviewImage & { toDataURL: () => string }) => void;
+        const page = {
+          pageUrl: "https://example.com",
+          pageTitle: null,
+          createdAt: "2026-10-08T00:00:00.000Z",
+          width: 800,
+          height: 600,
+          elements: [],
+        };
+        const capturePage = vi.fn(
+          () =>
+            new Promise<TestCapturedPreviewImage>((resolve) => {
+              finishCapture = resolve;
+              signalCaptured();
+            }),
+        );
+        let reply!: (...args: unknown[]) => void;
+        let navigation: ((event: { isMainFrame: boolean }) => void) | undefined;
+        const guest = Object.assign(makeTestPreviewWebContents(capturePage, 42), {
+          send: vi.fn((channel: string, id: string) => {
+            if (channel === CAPTURE_ANNOTATION_PAGE_CHANNEL) {
+              reply(
+                { sender: { id: 42 }, senderFrame: { routingId: 42 } },
+                "stale-request",
+                null,
+                null,
+              );
+              reply({ sender: { id: 99 }, senderFrame: { routingId: 42 } }, id, null, null);
+              reply({ sender: { id: 42 }, senderFrame: { routingId: 99 } }, id, null, null);
+              reply({ sender: { id: 42 }, senderFrame: { routingId: 42 } }, id, page, null);
+            }
+          }),
+          ipc: {
+            on: vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
+              if (channel === ANNOTATION_PAGE_CAPTURED_CHANNEL) reply = listener;
+            }),
+            off: vi.fn(),
+          },
+          on: vi.fn((event: string, listener: (event: { isMainFrame: boolean }) => void) => {
+            if (event === "did-start-navigation") navigation = listener;
+          }),
+          off: vi.fn(),
+        });
+        fromId.mockReturnValue(guest);
+        yield* manager.createTab("reload-tab");
+        yield* manager.registerWebview("reload-tab", 42);
+        const capture = yield* manager
+          .captureAnnotationSnapshot("reload-tab")
+          .pipe(Effect.result, Effect.forkChild);
+        yield* Effect.promise(() => captured);
+        navigation?.({ isMainFrame: true });
+        finishCapture({
+          toJPEG: () => Buffer.from("snapshot"),
+          toDataURL: () => "data:image/png;base64,aW1hZ2U=",
+          getSize: () => ({ width: 800, height: 600 }),
+        });
+        const result = yield* Fiber.join(capture);
+        expect(result._tag).toBe("Failure");
+        expect(guest.off).toHaveBeenCalledWith("did-start-navigation", navigation);
       }),
     ),
   );

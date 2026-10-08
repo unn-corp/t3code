@@ -28,8 +28,18 @@ vi.mock("electron", () => ({
 }));
 
 import * as BrowserSession from "./BrowserSession.ts";
+import { ElectronDialog } from "../electron/ElectronDialog.ts";
 
-const layer = BrowserSession.layer.pipe(Layer.provide(NodeServices.layer));
+const dialogLayer = Layer.succeed(ElectronDialog, {
+  showMessageBox: () => Effect.succeed({ response: 1, checkboxChecked: false }),
+  pickFolder: vi.fn(),
+  pickFiles: vi.fn(),
+  showErrorBox: vi.fn(),
+});
+const layer = BrowserSession.layer.pipe(
+  Layer.provide(NodeServices.layer),
+  Layer.provide(dialogLayer),
+);
 
 describe("BrowserSession", () => {
   beforeEach(() => {
@@ -218,7 +228,15 @@ describe("BrowserSession", () => {
         "Failed to derive a desktop preview browser partition for scope environment-a.",
       );
       assert.notInclude(error.message, nativeCause.message);
-    }).pipe(Effect.provide(BrowserSession.layer.pipe(Layer.provide(layerFailingCrypto))));
+    }).pipe(
+      Effect.provide(
+        BrowserSession.layer.pipe(
+          Layer.provide(layerFailingCrypto),
+          Layer.provide(NodeServices.layer),
+          Layer.provide(dialogLayer),
+        ),
+      ),
+    );
   });
 
   it.effect("preserves session scope, partition, and the Electron failure", () =>

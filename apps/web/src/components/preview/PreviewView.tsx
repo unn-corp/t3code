@@ -8,7 +8,6 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  AuthOrchestrationOperateScope,
   DEFAULT_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
@@ -29,7 +28,6 @@ import {
   useThreadRecentHistory,
 } from "~/browserHistoryStore";
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
-import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import {
   rememberPreviewUrl,
@@ -45,10 +43,10 @@ import {
   selectThreadPreviewMiniPlayerTabId,
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
-import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
+import { usePreviewAnnotationEditorStore } from "~/previewAnnotationEditorStore";
 import { PreviewRemoteSurface } from "./PreviewRemoteSurface";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
@@ -115,21 +113,16 @@ export function PreviewView(props: Props) {
   return isAndroidPwa ? <AndroidPreviewView {...props} /> : <DesktopPreviewView {...props} />;
 }
 
-function DesktopPreviewView({
-  threadRef,
-  tabId: requestedTabId,
-  configuredUrls,
-  visible,
-  onSendAnnotation,
-}: Props) {
+function DesktopPreviewView({ threadRef, tabId: requestedTabId, configuredUrls, visible }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
-  const canSendAnnotation =
-    useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) &&
-    Boolean(onSendAnnotation);
+  const annotationOpen = usePreviewAnnotationEditorStore(
+    (state) =>
+      state.session?.threadRef.environmentId === threadRef.environmentId &&
+      state.session.threadRef.threadId === threadRef.threadId,
+  );
+
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
-  const pickActiveRef = useRef<{ cancelled: boolean } | null>(null);
-  const isMountedRef = useRef(true);
   // Kept in sync so the title effect can depend on the stable thread key
   // instead of the thread object, which is recreated on every update.
   const threadRefRef = useRef(threadRef);
@@ -143,7 +136,6 @@ function DesktopPreviewView({
     selectThreadPreviewMiniPlayerTabId(state.byThreadKey, threadRef),
   );
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
-  const addImage = useComposerDraftStore((store) => store.addImage);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const environmentHostname = environmentHttpBaseUrl
     ? new URL(environmentHttpBaseUrl).hostname
@@ -154,13 +146,6 @@ function DesktopPreviewView({
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
   usePreviewSession(threadRef);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
 
   const tabId = requestedTabId ?? previewState.activeTabId;
   const runtimeTabId = tabId
@@ -741,7 +726,6 @@ function DesktopPreviewView({
     (point: { readonly x: number; readonly y: number }) => {
       if (!tabId) return;
       setPickActive(false);
-      pickActiveRef.current = null;
       void (async () => {
         const result = await pickElement({
           environmentId: threadRef.environmentId,
@@ -796,136 +780,29 @@ function DesktopPreviewView({
 
   const handlePickElement = useCallback(() => {
     if (!previewBridge || !runtimeTabId) return;
-    if (pickActiveRef.current) {
-      pickActiveRef.current.cancelled = true;
-      void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
-      return;
-    }
-    // Snapshot whatever the user was focused on (typically the chat
-    // composer textarea or the chrome-row pick button) BEFORE main steals
-    // focus into the guest webContents. We restore it when the pick
-    // resolves so the user's typing context isn't lost — otherwise after
-    // every pick they'd have to click back into the textarea.
-    const previouslyFocused =
-      typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
-    const pickRequest = { cancelled: false };
-    let submitted = false;
-    pickActiveRef.current = pickRequest;
-    setPickActive(true);
+    const editor = usePreviewAnnotationEditorStore.getState();
+    const id = editor.begin(threadRef, runtimeTabId);
+    if (!id) return;
     void (async () => {
       try {
-        await previewBridge.setAnnotationSendEnabled?.(
-          runtimeTabId,
-          Boolean(onSendAnnotation) &&
-            readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
-        );
-        if (pickRequest.cancelled) return;
-        const result = await previewBridge.pickElement(runtimeTabId);
-        if (!result || pickRequest.cancelled) return;
-        // The user has submitted. Nothing that happens after this point (a
-        // second picker click, a tab change, unmount) may discard it, so the
-        // pick stops being cancellable here rather than in `finally`.
-        if (pickActiveRef.current === pickRequest) {
-          pickActiveRef.current = null;
-          if (isMountedRef.current) setPickActive(false);
-          submitted = true;
-        }
-        const { annotation: picked, submission, screenshotFailed = false } = result;
-        // The structured annotation is still sendable when its optional crop
-        // stalls or fails, so tell the user what they lost and keep going
-        // instead of holding the composer for an attachment that never lands.
-        // The stored copy drops the screenshot on failure, otherwise the prompt
-        // would tell the agent a crop is attached when none was sent.
-        const capture = capturePreviewAnnotationScreenshot(picked);
-        // Main reports a crop that failed or timed out on its side; the local
-        // conversion can fail too. Either way the user should hear about it.
-        const cropDropped = screenshotFailed || capture.status === "failed";
-        const annotation = capture.status === "failed" ? { ...picked, screenshot: null } : picked;
-        addPreviewAnnotation(threadRef, annotation);
-        if (cropDropped) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not capture the picked element",
-              // The send path reports its own outcome, so only say what this
-              // handler knows: the crop was dropped.
-              description: "The annotation was kept without the screenshot.",
-            }),
+        if (!previewBridge.captureAnnotationSnapshot)
+          throw new Error("Update the desktop app to capture annotation snapshots.");
+        const snapshot = await previewBridge.captureAnnotationSnapshot(runtimeTabId);
+        // The snapshot belongs to the original thread and capture, even if the
+        // panel, tab, or live page changes before this request returns.
+        usePreviewAnnotationEditorStore.getState().complete(id, snapshot);
+      } catch (error) {
+        usePreviewAnnotationEditorStore
+          .getState()
+          .fail(
+            id,
+            error instanceof Error
+              ? error.message
+              : "Could not capture the page. Close this annotation and try again.",
           );
-        }
-        const screenshotFile = capture.status === "captured" ? capture.file : null;
-        const image =
-          screenshotFile && annotation.screenshot
-            ? ({
-                type: "image",
-                id: annotation.id,
-                name: screenshotFile.name,
-                mimeType: screenshotFile.type,
-                sizeBytes: screenshotFile.size,
-                previewUrl: annotation.screenshot.dataUrl,
-                file: screenshotFile,
-              } satisfies ComposerImageAttachment)
-            : null;
-        if (image) {
-          addImage(threadRef, image);
-        }
-        if (
-          submission === "send" &&
-          readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
-        ) {
-          onSendAnnotation?.(annotation, image);
-        }
-      } catch {
-        // Picker failed (e.g. webview navigated). Treat as silent cancel.
-      } finally {
-        // A submitted pick already released itself above; a cancelled or
-        // failed one releases here. Avoid `setState on unmounted component`
-        // if the panel/thread closed while the pick was in flight.
-        const isCurrentPick = pickActiveRef.current === pickRequest;
-        if (isCurrentPick) {
-          pickActiveRef.current = null;
-          if (isMountedRef.current) setPickActive(false);
-        }
-        // Best-effort: restore focus to whatever the user had before the
-        // pick stole it into the guest webContents. Skip if the previously-
-        // focused element was unmounted or is no longer focusable.
-        if (
-          (isCurrentPick || submitted) &&
-          previouslyFocused &&
-          previouslyFocused.isConnected &&
-          typeof previouslyFocused.focus === "function"
-        ) {
-          try {
-            previouslyFocused.focus({ preventScroll: true });
-          } catch {
-            // Some elements throw on .focus() (detached iframes, etc.).
-          }
-        }
       }
     })();
-  }, [addImage, addPreviewAnnotation, onSendAnnotation, runtimeTabId, threadRef]);
-
-  useEffect(() => {
-    if (!pickActive || !previewBridge || !runtimeTabId) return;
-    void previewBridge
-      .setAnnotationSendEnabled?.(runtimeTabId, canSendAnnotation)
-      .catch(() => undefined);
-  }, [canSendAnnotation, pickActive, runtimeTabId]);
-
-  // If the active tab changes mid-pick (close, thread switch, hot restart),
-  // tell main to tear down the in-flight session AND reset our local toggle
-  // state so the button doesn't get stuck pressed against a stale tab id.
-  useEffect(() => {
-    return () => {
-      if (!pickActiveRef.current) return;
-      pickActiveRef.current.cancelled = true;
-      pickActiveRef.current = null;
-      if (previewBridge && runtimeTabId) {
-        void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
-      }
-      if (isMountedRef.current) setPickActive(false);
-    };
-  }, [runtimeTabId]);
+  }, [runtimeTabId, threadRef]);
 
   // Subscribe only while visible; `toggle-panel` is owned by ChatView's
   // URL-aware handler regardless of whether the panel is currently mounted.
@@ -991,7 +868,7 @@ function DesktopPreviewView({
               : () => setPickActive((active) => !active)
             : undefined
         }
-        pickActive={pickActive}
+        pickActive={pickActive || annotationOpen}
         // Disable when there's no tab (nothing to pick on) OR the page
         // failed to load (a React overlay covers the webview, so the
         // user wouldn't be able to actually click anything underneath).

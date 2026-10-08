@@ -3,6 +3,7 @@ import { ipcRenderer } from "electron";
 import { getElementContext } from "react-grab/primitives";
 import type {
   DesktopPreviewAnnotationTheme,
+  DesktopPreviewAnnotationPage,
   PickedElementPayload,
   PickedElementStackFrame,
   PreviewAnnotationPayload,
@@ -20,6 +21,8 @@ import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
+  CAPTURE_ANNOTATION_PAGE_CHANNEL,
+  ANNOTATION_PAGE_CAPTURED_CHANNEL,
   ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
@@ -426,6 +429,60 @@ async function captureElement(element: Element): Promise<PickedElementPayload> {
     styles: "",
   };
 }
+
+async function captureAnnotationPage(): Promise<DesktopPreviewAnnotationPage> {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const pageUrl = location.href;
+  const pageTitle = document.title?.trim() || null;
+  const createdAt = new Date().toISOString();
+  const candidates = Array.from(document.querySelectorAll("body *"))
+    .filter(
+      (element) =>
+        !isAnnotationNode(element) && !element.matches("script,style,link,meta,noscript"),
+    )
+    .map((element) => ({ element, rect: rectFromDomRect(element.getBoundingClientRect()) }))
+    .filter(({ element, rect }) => {
+      const style = getComputedStyle(element);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.x < width &&
+        rect.y < height &&
+        rect.x + rect.width > 0 &&
+        rect.y + rect.height > 0 &&
+        style.visibility !== "hidden" &&
+        style.display !== "none"
+      );
+    })
+    .sort((a, b) => a.rect.width * a.rect.height - b.rect.width * b.rect.height)
+    .slice(0, 256);
+  const elements = await Promise.all(
+    candidates.map(async ({ element, rect }) => ({
+      id: nextId("snapshot-element"),
+      rect,
+      element: await captureElement(element),
+    })),
+  );
+  return { pageUrl, pageTitle, createdAt, width, height, elements };
+}
+
+// Capture stays inside the preload closure. React context lookup requires a
+// shared page world, so main must reach this handler over IPC rather than
+// executing a function in Electron's separate isolated world.
+ipcRenderer.on(CAPTURE_ANNOTATION_PAGE_CHANNEL, (_event, requestId: unknown) => {
+  if (typeof requestId !== "string") return;
+  void captureAnnotationPage().then(
+    (page) => ipcRenderer.send(ANNOTATION_PAGE_CAPTURED_CHANNEL, requestId, page, null),
+    (error: unknown) =>
+      ipcRenderer.send(
+        ANNOTATION_PAGE_CAPTURED_CHANNEL,
+        requestId,
+        null,
+        error instanceof Error ? error.message : "Could not extract page details.",
+      ),
+  );
+});
 
 function createButton(label: string, title: string): HTMLButtonElement {
   const button = document.createElement("button");

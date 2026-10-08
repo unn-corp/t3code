@@ -7,6 +7,7 @@ import {
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
 } from "@t3tools/contracts";
+import { usePreviewAnnotationEditorStore } from "~/previewAnnotationEditorStore";
 import { act, createElement, Profiler } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -30,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   openPictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   closePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   pickElement: vi.fn(),
+  captureAnnotationSnapshot: vi.fn(),
   addPreviewAnnotation: vi.fn(),
   addImage: vi.fn(),
   toggleAnnotation: null as (() => void) | null,
@@ -219,6 +221,7 @@ vi.mock("./previewBridge", () => ({
   previewBridge: {
     navigate: mocks.navigate,
     pickElement: mocks.pickElement,
+    captureAnnotationSnapshot: mocks.captureAnnotationSnapshot,
     setAnnotationSendEnabled: mocks.setAnnotationSendEnabled,
     cancelPickElement: mocks.cancelPickElement,
     pictureInPicture: {
@@ -342,6 +345,7 @@ function installTestDom() {
 
 describe("PreviewView navigation", () => {
   beforeEach(() => {
+    usePreviewAnnotationEditorStore.setState({ session: null, hydrated: true });
     mocks.navigate.mockClear();
     mocks.rememberPreviewUrl.mockClear();
     mocks.readPreparedConnection.mockClear();
@@ -568,102 +572,26 @@ describe("PreviewView navigation", () => {
     );
   });
 
-  it("forwards Cmd/Ctrl+Enter annotations to the composer send path", async () => {
-    const annotation = {
-      id: "annotation-1",
-      pageUrl: "https://example.com/dashboard",
-      pageTitle: "Dashboard",
-      comment: "Tighten this spacing",
+  it("opens the durable modal immediately and keeps the captured snapshot after the preview unmounts", async () => {
+    const snapshot = {
+      pageUrl: "https://example.com/original",
+      pageTitle: "Original",
+      width: 800,
+      height: 600,
       elements: [],
-      regions: [],
-      strokes: [],
-      styleChanges: [],
-      screenshot: null,
-      createdAt: "2026-07-27T00:00:00.000Z",
+      createdAt: "2026-10-08T00:00:00.000Z",
+      screenshot: {
+        dataUrl: "data:image/png;base64,aW1hZ2U=",
+        width: 800,
+        height: 600,
+        cropRect: { x: 0, y: 0, width: 800, height: 600 },
+      },
     };
-    const onSendAnnotation = vi.fn();
-    mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
-
-    renderToStaticMarkup(
-      <PreviewView
-        threadRef={TEST_THREAD_REF}
-        tabId="tab-1"
-        visible
-        onSendAnnotation={onSendAnnotation}
-      />,
-    );
-    mocks.toggleAnnotation?.();
-
-    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null));
-    expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, annotation);
-  });
-
-  it("retains the annotation locally when its own environment loses access during capture", async () => {
-    const annotation = {
-      id: "annotation-revoked",
-      pageUrl: "https://example.com/dashboard",
-      pageTitle: "Dashboard",
-      comment: "Tighten this spacing",
-      elements: [],
-      regions: [],
-      strokes: [],
-      styleChanges: [],
-      screenshot: null,
-      createdAt: "2026-09-05T00:00:00.000Z",
-    };
-    const onSendAnnotation = vi.fn();
-    let submitPick: (() => void) | undefined;
-    mocks.pickElement.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          submitPick = () => resolve({ annotation, submission: "send" });
-        }),
-    );
-    const document = installTestDom();
-    const { createRoot } = await import("react-dom/client");
-    const root = createRoot(document.createElement("div") as unknown as Element);
-    const view = () => (
-      <PreviewView
-        threadRef={TEST_THREAD_REF}
-        tabId="tab-1"
-        visible
-        onSendAnnotation={onSendAnnotation}
-      />
-    );
-    try {
-      await act(async () => root.render(view()));
-      await act(async () => mocks.toggleAnnotation?.());
-      expect(submitPick).toBeDefined();
-      expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
-
-      mocks.readEnvironmentScope.mockImplementation(
-        (environmentId?: unknown) => environmentId !== TEST_THREAD_REF.environmentId,
-      );
-      await act(async () => root.render(view()));
-      expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, false);
-      await act(async () => submitPick!());
-      expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, annotation);
-      expect(onSendAnnotation).not.toHaveBeenCalled();
-
-      mocks.readEnvironmentScope.mockReturnValue(true);
-      mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
-      await act(async () => root.render(view()));
-      await act(async () => mocks.toggleAnnotation?.());
-      expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
-      expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null);
-    } finally {
-      await act(async () => root.unmount());
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("does not reopen a cancelled picker after the permission update finishes", async () => {
-    let finishUpdate: (() => void) | undefined;
-    mocks.setAnnotationSendEnabled.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishUpdate = resolve;
-        }),
+    let resolveCapture!: (value: typeof snapshot) => void;
+    mocks.captureAnnotationSnapshot.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCapture = resolve;
+      }),
     );
     const document = installTestDom();
     const { createRoot } = await import("react-dom/client");
@@ -673,87 +601,50 @@ describe("PreviewView navigation", () => {
         root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />),
       );
       await act(async () => mocks.toggleAnnotation?.());
-      expect(finishUpdate).toBeDefined();
-      expect(mocks.pickElement).not.toHaveBeenCalled();
-      await act(async () => mocks.toggleAnnotation?.());
-      expect(mocks.cancelPickElement).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID);
-      await act(async () => finishUpdate!());
-      expect(mocks.pickElement).not.toHaveBeenCalled();
+      expect(usePreviewAnnotationEditorStore.getState().session).toMatchObject({
+        status: "capturing",
+        threadRef: TEST_THREAD_REF,
+        tabId: TEST_RUNTIME_TAB_ID,
+      });
+      await act(async () => root.unmount());
+      await act(async () => resolveCapture(snapshot));
+      expect(usePreviewAnnotationEditorStore.getState().session).toMatchObject({
+        status: "ready",
+        snapshot,
+        threadRef: TEST_THREAD_REF,
+      });
+      expect(mocks.cancelPickElement).not.toHaveBeenCalled();
       expect(mocks.addPreviewAnnotation).not.toHaveBeenCalled();
     } finally {
-      await act(async () => root.unmount());
       vi.unstubAllGlobals();
     }
   });
 
-  it("warns when main dropped the crop before handing over the pick", async () => {
-    const annotation = {
-      id: "annotation-3",
-      pageUrl: "https://example.com/dashboard",
-      pageTitle: "Dashboard",
-      comment: "Tighten this spacing",
-      elements: [],
-      regions: [],
-      strokes: [],
-      styleChanges: [],
-      screenshot: null,
-      createdAt: "2026-07-27T00:00:00.000Z",
-    };
-    const onSendAnnotation = vi.fn();
-    mocks.pickElement.mockResolvedValue({ annotation, submission: "send", screenshotFailed: true });
-
-    renderToStaticMarkup(
-      <PreviewView
-        threadRef={TEST_THREAD_REF}
-        tabId="tab-1"
-        visible
-        onSendAnnotation={onSendAnnotation}
-      />,
-    );
+  it("does not replace or silently close an existing annotation when Annotate is clicked again", async () => {
+    mocks.captureAnnotationSnapshot.mockReturnValueOnce(new Promise(() => {}));
+    renderToStaticMarkup(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
     mocks.toggleAnnotation?.();
-
-    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null));
-    // A null screenshot alone looks like a comment-only pick; the flag is what
-    // separates "no crop requested" from "crop lost to a timeout".
-    expect(toastManager.add).toHaveBeenCalledTimes(1);
+    const session = usePreviewAnnotationEditorStore.getState().session;
+    mocks.toggleAnnotation?.();
+    expect(usePreviewAnnotationEditorStore.getState().session).toEqual(session);
+    expect(mocks.captureAnnotationSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.cancelPickElement).not.toHaveBeenCalled();
   });
 
-  it("still sends annotation text when the picked element's crop is malformed", async () => {
-    const annotation = {
-      id: "annotation-2",
-      pageUrl: "https://example.com/dashboard",
-      pageTitle: "Dashboard",
-      comment: "Tighten this spacing",
-      elements: [],
-      regions: [],
-      strokes: [],
-      styleChanges: [],
-      screenshot: {
-        dataUrl: "data:image/png;base64,%%%",
-        width: 10,
-        height: 10,
-        cropRect: { x: 0, y: 0, width: 10, height: 10 },
-      },
-      createdAt: "2026-07-27T00:00:00.000Z",
-    };
-    const onSendAnnotation = vi.fn();
-    mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
-
-    renderToStaticMarkup(
-      <PreviewView
-        threadRef={TEST_THREAD_REF}
-        tabId="tab-1"
-        visible
-        onSendAnnotation={onSendAnnotation}
-      />,
+  it("keeps capture errors in the modal instead of discarding the annotation", async () => {
+    mocks.captureAnnotationSnapshot.mockRejectedValueOnce(
+      new Error("Page reloaded during capture"),
     );
+    renderToStaticMarkup(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
     mocks.toggleAnnotation?.();
-
-    // The forwarded and stored annotation both drop the screenshot, so the
-    // prompt does not claim a crop that was never attached.
-    const sent = { ...annotation, screenshot: null };
-    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));
-    expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, sent);
+    await vi.waitFor(() =>
+      expect(usePreviewAnnotationEditorStore.getState().session).toMatchObject({
+        status: "error",
+        error: "Page reloaded during capture",
+        threadRef: TEST_THREAD_REF,
+      }),
+    );
+    expect(mocks.addPreviewAnnotation).not.toHaveBeenCalled();
     expect(mocks.addImage).not.toHaveBeenCalled();
   });
 });

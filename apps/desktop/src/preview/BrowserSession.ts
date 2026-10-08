@@ -8,6 +8,10 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { ElectronDialog } from "../electron/ElectronDialog.ts";
+import * as MicrophonePermission from "./MicrophonePermission.ts";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 /**
@@ -162,7 +166,14 @@ const encodeScopeForDigest = (scope: string): Uint8Array =>
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
+  const permissionContext = yield* Effect.context<
+    FileSystem.FileSystem | Path.Path | ElectronDialog
+  >();
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
+  const microphonePermissions = new Map<
+    string,
+    Effect.Success<ReturnType<typeof MicrophonePermission.make>>
+  >();
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
     scope = "shared",
@@ -194,31 +205,33 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     return yield* SynchronizedRef.modifyEffect(sessionsRef, (sessions) => {
       const existing = sessions.get(partition);
       if (existing) return Effect.succeed([existing, sessions] as const);
-      return Effect.try({
-        try: () => {
-          const browserSession = session.fromPartition(partition);
-          // The guest keeps Electron's native User-Agent. Rewriting it in any
-          // form — even variants that keep the Electron token — makes Cloudflare
-          // Turnstile fail its integrity check with error 600010 and recreate
-          // the challenge every few seconds, so logins behind it never complete
-          // (#5002). Re-setting the unchanged native string is harmless, so it
-          // is the rewritten string itself that trips the check.
-          browserSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-            callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
-          });
-          browserSession.setPermissionCheckHandler((_webContents, permission) =>
-            ALLOWED_PREVIEW_PERMISSIONS.has(permission),
-          );
-          const next = new Map(sessions);
-          next.set(partition, browserSession);
-          return [browserSession, next] as const;
-        },
-        catch: (cause) =>
-          new BrowserSessionCreationError({
-            scope,
-            partition,
-            cause,
-          }),
+      return Effect.gen(function* () {
+        const browserSession = yield* Effect.try({
+          try: () => {
+            const browserSession = session.fromPartition(partition);
+            // The guest keeps Electron's native User-Agent. Rewriting it in any
+            // form — even variants that keep the Electron token — makes Cloudflare
+            // Turnstile fail its integrity check with error 600010 and recreate
+            // the challenge every few seconds, so logins behind it never complete
+            // (#5002). Re-setting the unchanged native string is harmless, so it
+            // is the rewritten string itself that trips the check.
+            return browserSession;
+          },
+          catch: (cause) =>
+            new BrowserSessionCreationError({
+              scope,
+              partition,
+              cause,
+            }),
+        });
+        const microphonePermission = yield* MicrophonePermission.make(
+          browserSession,
+          ALLOWED_PREVIEW_PERMISSIONS,
+        ).pipe(Effect.provide(permissionContext));
+        microphonePermissions.set(partition, microphonePermission);
+        const next = new Map(sessions);
+        next.set(partition, browserSession);
+        return [browserSession, next] as const;
       });
     });
   });
@@ -234,16 +247,25 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       yield* Effect.forEach(
         selectSessions(sessions, partitions),
         ([partition, browserSession]) =>
-          Effect.tryPromise({
-            try: () =>
-              browserSession.clearStorageData({
-                storages: ["cookies", "localstorage", "indexdb", "serviceworkers"],
-              }),
-            catch: (cause) =>
-              new BrowserSessionStorageClearError({
-                partition,
-                cause,
-              }),
+          Effect.gen(function* () {
+            yield* microphonePermissions
+              .get(partition)!
+              .clear.pipe(
+                Effect.mapError(
+                  (cause) => new BrowserSessionStorageClearError({ partition, cause }),
+                ),
+              );
+            yield* Effect.tryPromise({
+              try: () =>
+                browserSession.clearStorageData({
+                  storages: ["cookies", "localstorage", "indexdb", "serviceworkers"],
+                }),
+              catch: (cause) =>
+                new BrowserSessionStorageClearError({
+                  partition,
+                  cause,
+                }),
+            });
           }),
         { concurrency: "unbounded", discard: true },
       );

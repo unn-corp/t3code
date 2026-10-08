@@ -11,3 +11,6 @@ export const RECORDING_POINTER_CHANNEL = "preview:recording-pointer";
 export const RECORDING_KEY_CHANNEL = "preview:recording-key";
 export const RECORDING_INPUT_CHANNEL = "preview:recording-input";
 export const RECORDING_CONTROLLER_CHANNEL = "preview:recording-controller";
+
+export const CAPTURE_ANNOTATION_PAGE_CHANNEL = "preview:capture-annotation-page";
+export const ANNOTATION_PAGE_CAPTURED_CHANNEL = "preview:annotation-page-captured";

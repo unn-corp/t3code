@@ -18,6 +18,7 @@ import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
+import { PreviewAnnotationEditorHost } from "../components/preview/PreviewAnnotationEditor";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -236,6 +237,7 @@ function RootRouteView() {
           {isAndroidPwa ? <AndroidNotificationCoordinator /> : null}
           <ReopenClosedViewShortcut />
           <ConfirmDialogHost />
+          <PreviewAnnotationEditorHost />
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />

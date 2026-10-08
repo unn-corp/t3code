@@ -175,6 +175,26 @@ the existing cover/unfolded resize checks.
 [OpenWhisprVoiceInput.tsx](../../apps/web/src/components/chat/OpenWhisprVoiceInput.tsx)
 uses the shared client-operation guard; its [interaction tests](../../apps/web/src/components/chat/OpenWhisprVoiceInput.test.tsx)
 cover denied admission, cancelled permission acquisition, and pending transcription.
+Desktop preview annotations use the same recorder in
+[PreviewAnnotationEditor.tsx](../../apps/web/src/components/preview/PreviewAnnotationEditor.tsx).
+The app-root modal owns a frozen screenshot and extracted element metadata, independently of the
+preview tab's navigation or lifetime. The typed snapshot IPC captures both in the desktop process;
+the inspected page never owns the editor or microphone. Keep the draft, original thread, marks,
+and comment in the IndexedDB-backed [editor store](../../apps/web/src/previewAnnotationEditorStore.ts)
+so app reloads restore completed captures. Escape, backdrop clicks, and Close request discard
+approval; only explicit discard or successful attachment/submission clears the session. Capture
+and attachment failures must leave the modal open. Unmounting cancels dictation and late transcripts
+cannot update another session. Keep capture, persistence, dismissal, and send regression tests
+alongside these modules.
+
+Preview-page microphone permissions are separate from the annotation editor's recorder.
+[MicrophonePermission.ts](../../apps/desktop/src/preview/MicrophonePermission.ts), installed by
+[BrowserSession.ts](../../apps/desktop/src/preview/BrowserSession.ts), prompts only for top-level,
+audio-only requests from `http://127.0.0.1:5274`. Both Electron handlers enforce that exact origin
+and media type; video, mixed requests, and subframes remain denied. Store Allow/Deny in the
+partition's own storage directory, keep incognito choices in memory, and reset the choice during
+profile site-data clearing. Keep profile isolation, persistence, navigation-during-prompt, and
+camera-denial checks in [MicrophonePermission.test.ts](../../apps/desktop/src/preview/MicrophonePermission.test.ts).
 
 **Verification and coupling.** Keep the corresponding component, pointer, drag, and draft tests
 with these modules. Verify keyboard and touch interaction, one Send/microphone/prompt, opening

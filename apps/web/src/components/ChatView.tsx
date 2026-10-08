@@ -1,3 +1,4 @@
+import { registerPreviewAnnotationSender } from "../previewAnnotationEditorStore";
 import { supportsForkMaintenanceAdmission } from "@t3tools/contracts";
 import { ComposerHostMaintenanceStatus } from "./chat/ComposerHostMaintenanceStatus";
 import { elementContextToPreviewAnnotation } from "../lib/elementContext";
@@ -405,7 +406,7 @@ import {
   removeInlineContextReference,
   stripInlineContextReferences,
 } from "../lib/composerContextReferences";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+import { encodeComposerMessageContext } from "../lib/composerMessageContext";
 import {
   buildMessageContext,
   previewAnnotationContextLabel,
@@ -9441,15 +9442,12 @@ export default function ChatView(props: ChatViewProps) {
                   message: {
                     messageId: newMessageId(),
                     role: "user",
-                    text:
-                      context && !supportsInlineMessageContext
-                        ? serializeLegacyContextMessage({
-                            text: target.text,
-                            records: context.records,
-                          })
-                        : target.text,
+                    ...encodeComposerMessageContext({
+                      text: target.text,
+                      context,
+                      supportsInlineMessageContext,
+                    }),
                     attachments,
-                    ...(context && supportsInlineMessageContext ? { context } : {}),
                   },
                   modelSelection: target.selection,
                   titleSeed: title,
@@ -9829,7 +9827,19 @@ export default function ChatView(props: ChatViewProps) {
           message: {
             messageId: messageIdForSend,
             role: "user",
-            text: outgoingMessageText,
+            ...encodeComposerMessageContext({
+              text: outgoingMessageText,
+              context: buildOutgoingMessageContext(
+                turnAttachmentsResult.value.map((attachment, index) =>
+                  "id" in attachment && attachment.id !== undefined
+                    ? attachment.id
+                    : composerAttachmentsSnapshot[index]!.id,
+                ),
+              ),
+              supportsInlineMessageContext:
+                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
+                  .capabilities.inlineMessageContext === true,
+            }),
             attachments: turnAttachmentsResult.value,
           },
           modelSelection: ctxSelectedModelSelection,
@@ -10841,6 +10851,13 @@ export default function ChatView(props: ChatViewProps) {
     consumePendingFileDrop,
     pendingSidebarFileDrops,
   ]);
+
+  useEffect(() => {
+    if (!activeThreadRef) return;
+    return registerPreviewAnnotationSender(activeThreadRef, (annotation, image) => {
+      void onSend(undefined, "auto", "foreground", { annotation, image });
+    });
+  }, [activeThreadRef, onSend]);
 
   // Empty state: no active thread
   if (!activeThread) {

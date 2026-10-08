@@ -996,6 +996,22 @@ export const PreviewAnnotationPayloadSchema: Schema.Codec<PreviewAnnotationPaylo
   },
 );
 
+/** Frozen page context used by the app-owned annotation editor. */
+export const DesktopPreviewAnnotationPageSchema = Schema.Struct({
+  pageUrl: Schema.String,
+  pageTitle: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  width: Schema.Number.check(Schema.isGreaterThan(0)),
+  height: Schema.Number.check(Schema.isGreaterThan(0)),
+  elements: Schema.Array(PreviewAnnotationElementTargetSchema).check(Schema.isMaxLength(256)),
+});
+export type DesktopPreviewAnnotationPage = typeof DesktopPreviewAnnotationPageSchema.Type;
+export const DesktopPreviewAnnotationSnapshotSchema = Schema.Struct({
+  ...DesktopPreviewAnnotationPageSchema.fields,
+  screenshot: PreviewAnnotationScreenshotSchema,
+});
+export type DesktopPreviewAnnotationSnapshot = typeof DesktopPreviewAnnotationSnapshotSchema.Type;
+
 export type PreviewAnnotationSubmission = "attach" | "send";
 export const PreviewAnnotationSubmissionSchema: Schema.Codec<PreviewAnnotationSubmission> =
   Schema.Literals(["attach", "send"]);
@@ -1357,6 +1373,8 @@ export interface DesktopPreviewBridge {
   setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;
   /** Keep an open annotation picker's send shortcut in sync with its thread grant. */
   setAnnotationSendEnabled: (tabId: string, enabled: boolean) => Promise<void>;
+  /** Capture frozen viewport pixels and element context for the app-owned editor. */
+  captureAnnotationSnapshot: (tabId: string) => Promise<DesktopPreviewAnnotationSnapshot>;
   /**
    * Activate the in-page element picker for the given tab. Resolves with
    * the picked annotation and its attach/send intent, or `null` when the
