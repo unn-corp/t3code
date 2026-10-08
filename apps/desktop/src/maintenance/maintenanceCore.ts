@@ -944,7 +944,8 @@ export function createDesktopMaintenance(input: DesktopMaintenanceInput): Deskto
     try {
       const opened = await CoordinatorStore.open(
         directory,
-        input.identity ?? ((pid) => processCreationIdentity(pid)),
+        // Preserve the native checker reference so the coordinator batches Windows process probes.
+        input.identity ?? processCreationIdentity,
         input.selfPid ?? process.pid,
       );
       gate = createStoreGate(opened);
