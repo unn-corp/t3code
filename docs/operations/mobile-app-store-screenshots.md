@@ -114,8 +114,9 @@ Run the `Mobile Showcase Screenshots` workflow from GitHub's Actions tab, choose
 `android`, select `light`, `dark`, or `both`, and pick a palette (or `all`, which raises each job's
 timeout from 60 to 300 minutes). The default dispatch captures both appearances of the `t3-code`
 palette and runs iOS and Android concurrently: iPhone and iPad capture on a
-12-vCPU Blacksmith macOS runner, while Android phone, 7-inch tablet, and 10-inch tablet capture on a
-16-vCPU Blacksmith Linux runner with a KVM-accelerated x86_64 emulator.
+GitHub-hosted `macos-26` runner, while Android phone, 7-inch tablet, and 10-inch tablet capture on a
+GitHub-hosted `ubuntu-24.04` runner with a KVM-accelerated x86_64 emulator. This public fork uses
+GitHub-hosted runners for every workflow; upstream's Blacksmith runners are not available to it.
 
 Every job uploads its PNGs even when capture fails, which makes partial runs useful for diagnosis.
 The separate validation step is success-gated: it runs before upload only when capture succeeds. If
