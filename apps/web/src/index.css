@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Reply content must paint above the shell's z-index: 0 glass backdrop. */
+.chat-composer-message-reply {
+  position: relative;
+  z-index: 10;
+}
+
 @property --chat-voice-spinner-reveal-angle {
   syntax: "<angle>";
   inherits: false;

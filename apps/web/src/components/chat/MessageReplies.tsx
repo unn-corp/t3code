@@ -82,7 +82,10 @@ export function ComposerMessageReply({
   onCancel: () => void;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 px-3 py-2" role="status">
+    <div
+      className="chat-composer-message-reply flex min-w-0 items-center gap-2 px-3 py-2"
+      role="status"
+    >
       <ReplyIcon className="size-4 shrink-0" />
       <div className="min-w-0 flex-1">
         <p className="text-xs text-muted-foreground">

@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
+// @effect-diagnostics nodeBuiltinImport:off - Verify the shipped reply foreground style.
+import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 import { MessageId, ThreadId } from "@t3tools/contracts";
 import { act, type MouseEvent } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ChatMessage } from "../../types";
+import { ComposerSurface } from "./ComposerSurface";
 import {
   ComposerMessageReply,
   MessageReplyActions,
@@ -53,6 +57,38 @@ afterEach(async () => {
 });
 
 describe("message reply UI", () => {
+  it("paints the reply text and cancel control above the composer's glass backdrop", async () => {
+    const stylesheet = NodeFS.readFileSync(
+      new NodeURL.URL("../../index.css", import.meta.url),
+      "utf8",
+    );
+    const start = stylesheet.indexOf(".chat-composer-message-reply {");
+    const style = document.createElement("style");
+    style.textContent =
+      start < 0 ? "" : stylesheet.slice(start, stylesheet.indexOf("}", start) + 1);
+    document.head.append(style);
+    try {
+      await act(async () =>
+        root.render(
+          <ComposerSurface.Shell>
+            <ComposerMessageReply
+              target={message("answer", "question").context!.replyTo!}
+              onCancel={vi.fn()}
+            />
+            <ComposerSurface.Host>Composer</ComposerSurface.Host>
+          </ComposerSurface.Shell>,
+        ),
+      );
+      const reply = container.querySelector('[role="status"]')!;
+      const foreground = getComputedStyle(reply);
+      expect(foreground.position).toBe("relative");
+      expect(Number(foreground.zIndex)).toBeGreaterThan(0);
+      expect(reply.textContent).toContain("Text question");
+      expect(reply.querySelector('[aria-label="Cancel reply"]')).not.toBeNull();
+    } finally {
+      style.remove();
+    }
+  });
   it("offers Reply through the native context menu and honors cancellation", async () => {
     const onReply = vi.fn();
     const event = {
