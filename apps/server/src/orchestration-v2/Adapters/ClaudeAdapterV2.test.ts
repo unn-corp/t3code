@@ -5099,6 +5099,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("settles a wake run whose live result races its start, without a second continuation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-race-1"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.offerAndWait(wakeAssistant);
+        assert.lengthOf(harness.continuationRequests, 1);
+
+        // Start the continuation and deliver the wake turn's live result at
+        // the same time, so the result can land while the run is starting.
+        const continuation = yield* harness.runtime
+          .startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-race-2"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Queue.offer(harness.sdkMessages, wakeResult);
+        yield* Fiber.join(continuation);
+
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "wake run terminal");
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+        let quietYields = 0;
+        yield* awaitUntil(() => quietYields++ >= 50, "no follow-up continuation");
+        // The drained wake frames must not be re-buffered into a second
+        // continuation that would wait forever for an already-consumed result.
+        assert.lengthOf(harness.continuationRequests, 1);
+        assert.lengthOf(harness.terminalEvents(), 2);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("does not offer a continuation for notification-only opaque work", () =>
     Effect.scoped(
       Effect.gen(function* () {

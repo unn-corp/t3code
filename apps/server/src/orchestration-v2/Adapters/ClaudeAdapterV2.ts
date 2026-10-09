@@ -7335,6 +7335,32 @@ export function makeClaudeAdapterV2(
                     uuid: promptUuid,
                   });
             const querySession = yield* openQuery(turnInput, nativeThreadId);
+            // A continuation takes the buffered wake output before the turn
+            // becomes active. Once `activeTurn` is set, live frames route to
+            // this turn; a live `result` landing before a later drain would
+            // close it and push the drained frames back into the buffer as a
+            // second continuation that waits forever for a result that was
+            // already consumed. These Ref operations run back to back with no
+            // async boundary, so no live frame can interleave.
+            const drained =
+              userMessage !== null
+                ? ([] as ReadonlyArray<SDKMessage>)
+                : yield* Ref.modify(wakeBuffers, (current) => {
+                    const entry = current.get(nativeThreadId);
+                    if (entry === undefined) {
+                      return [[] as ReadonlyArray<SDKMessage>, current] as const;
+                    }
+                    const updated = new Map(current);
+                    updated.delete(nativeThreadId);
+                    return [entry.messages, updated] as const;
+                  });
+            if (userMessage === null) {
+              yield* Ref.update(requestedContinuations, (current) => {
+                const updated = new Set(current);
+                updated.delete(nativeThreadId);
+                return updated;
+              });
+            }
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
               type: "provider_turn.updated",
@@ -7354,20 +7380,6 @@ export function makeClaudeAdapterV2(
               yield* querySession.query.offer(userMessage);
               return;
             }
-            const drained = yield* Ref.modify(wakeBuffers, (current) => {
-              const entry = current.get(nativeThreadId);
-              if (entry === undefined) {
-                return [[] as ReadonlyArray<SDKMessage>, current] as const;
-              }
-              const updated = new Map(current);
-              updated.delete(nativeThreadId);
-              return [entry.messages, updated] as const;
-            });
-            yield* Ref.update(requestedContinuations, (current) => {
-              const updated = new Set(current);
-              updated.delete(nativeThreadId);
-              return updated;
-            });
             if (drained.length === 0) {
               // Spurious continuation (buffer already lost with a recycled
               // session, or a duplicate request): settle immediately instead
@@ -7390,13 +7402,32 @@ export function makeClaudeAdapterV2(
                 entry.subtype === "task_notification" &&
                 opaqueReplayTombstones.has(entry.task_id),
             );
+            // A live `result` can still close this turn while the replay runs.
+            // The remaining drained frames then belong to a finished turn:
+            // replaying them would re-buffer them and request a continuation
+            // that never receives a result, leaving the thread stuck running.
+            const turnStillActive = Effect.map(
+              Ref.get(activeTurn),
+              (current) => current?.providerTurnId === context.providerTurnId,
+            );
             for (const entry of drained) {
               if (entry.type !== "result") {
+                if (!(yield* turnStillActive)) {
+                  yield* Effect.logWarning("orchestration-v2.claude-wake-replay-after-turn-closed", {
+                    providerSessionId: input.providerSessionId,
+                    nativeThreadId,
+                    providerTurnId: context.providerTurnId,
+                  });
+                  return;
+                }
                 yield* handleSdkMessage({ query: querySession.query, message: entry });
               }
             }
             const lastResult = resultMessages.at(-1);
             if (lastResult !== undefined) {
+              if (!(yield* turnStillActive)) {
+                return;
+              }
               yield* handleSdkMessage({ query: querySession.query, message: lastResult });
               return;
             }
