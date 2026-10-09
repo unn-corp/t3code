@@ -399,7 +399,10 @@ import {
   type ElementContextDraft,
   formatElementContextLabel,
 } from "../lib/elementContext";
-import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
+import {
+  appendPreviewAnnotationPrompt,
+  resolvePreviewAnnotationDispatchMode,
+} from "../lib/previewAnnotation";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
 import {
   ensureInlineContextReferences,
@@ -8550,13 +8553,16 @@ export default function ChatView(props: ChatViewProps) {
 
   const onSend = async (
     e?: { preventDefault: () => void },
-    dispatchMode: ComposerDispatchMode = "auto",
+    requestedDispatchMode: ComposerDispatchMode = "auto",
     submissionIntent: ComposerSubmissionIntent = "foreground",
     directAnnotation?: {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
   ) => {
+    const dispatchMode = directAnnotation
+      ? resolvePreviewAnnotationDispatchMode(requestedDispatchMode)
+      : requestedDispatchMode;
     e?.preventDefault();
     const keepFullHistory = keepFullHistoryOnceRef.current;
     // Typed out in full rather than picked from the menu. Attachments or contexts

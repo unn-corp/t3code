@@ -1,5 +1,13 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { buildElementContextBlock, normalizeElementContextSelection } from "./elementContext";
+
+/** Direct annotations wait for the active turn unless the user explicitly chooses otherwise. */
+export function resolvePreviewAnnotationDispatchMode(
+  mode: ComposerDispatchMode,
+): ComposerDispatchMode {
+  return mode === "auto" ? "queue" : mode;
+}
 
 const TRAILING_PREVIEW_ANNOTATION_BLOCK_PATTERN =
   /\n*<preview_annotation>\n((?:(?!<preview_annotation>)[\s\S])*)\n<\/preview_annotation>\s*$/;

@@ -1,7 +1,19 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { capturePreviewAnnotationScreenshot } from "./previewAnnotation";
+import {
+  capturePreviewAnnotationScreenshot,
+  resolvePreviewAnnotationDispatchMode,
+} from "./previewAnnotation";
+
+describe("direct preview annotation delivery", () => {
+  it("queues default submissions instead of automatically steering a busy provider", () => {
+    expect(resolvePreviewAnnotationDispatchMode("auto")).toBe("queue");
+  });
+  it.each(["queue", "steer", "restart"] as const)("preserves an explicit %s action", (mode) => {
+    expect(resolvePreviewAnnotationDispatchMode(mode)).toBe(mode);
+  });
+});
 
 const annotation: PreviewAnnotationPayload = {
   id: "annotation_1",

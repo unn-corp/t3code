@@ -233,6 +233,10 @@ its brief details. Select a terminal excerpt to open its captured output, or sel
 comment, picked element, or preview annotation to open its full details. Chips read as "Terminal
 excerpt, Terminal 1 lines 3-4" and similar to screen readers.
 
+Sending directly from the annotation editor queues the annotation behind an active turn.
+If the agent is idle, it starts immediately. **Attach to draft** lets you send it later with
+your message using the composer's selected delivery action.
+
 A pull request appears as its icon and number. Its color reflects whether it was open, draft,
 merged, or closed when it was attached. Select it to inspect the captured title and branches,
 then choose **Open pull request** to visit the pull request. On web and desktop, type `#` to browse the newest
