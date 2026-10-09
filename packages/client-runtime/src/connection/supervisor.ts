@@ -274,6 +274,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const intent = yield* Ref.make(initialIntent);
   const signals = yield* Queue.unbounded<SupervisorSignal>();
   const resetRetryState = yield* Ref.make(false);
+  const offlineAttemptRequested = yield* Ref.make(false);
   // Set while a probe of the live session is running, and kept when it fails
   // or times out: something asked whether the connection still works and it
   // closed or failed before answering, so the follow-up reconnect skips the
@@ -393,6 +394,22 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   });
 
   const signal = Effect.fn("EnvironmentSupervisor.signal")(function* (next: SupervisorSignal) {
+    // Browser/WebView connectivity is a hint, not proof that a private host is
+    // unreachable. Honor a retry or foreground return with one bounded attempt
+    // when there is no live session; a failed attempt still waits while offline.
+    if (
+      next._tag === "RetryRequested" ||
+      next._tag === "ConnectRequested" ||
+      (next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason))
+    ) {
+      const currentIntent = yield* Ref.get(intent);
+      if (
+        currentIntent.network === "offline" &&
+        Option.isNone(yield* SubscriptionRef.get(session))
+      ) {
+        yield* Ref.set(offlineAttemptRequested, true);
+      }
+    }
     yield* Queue.offer(signals, next);
   });
 
@@ -880,6 +897,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         pendingRetry = Option.none();
       }
       const currentIntent = yield* Ref.get(intent);
+      const requestedOfflineAttempt = yield* Ref.getAndSet(offlineAttemptRequested, false);
+      const ignoreOffline = replacing || requestedOfflineAttempt;
       if (!currentIntent.desired) {
         resetRetryLadder();
         latestFailure = null;
@@ -888,7 +907,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         yield* waitForSignal;
         continue;
       }
-      if (currentIntent.network === "offline" && !replacing) {
+      if (currentIntent.network === "offline" && !ignoreOffline) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
         const applicationActivated = yield* waitForSignal;
@@ -901,7 +920,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const attempt = failureCount + 1;
       const nextGeneration = generation + 1;
       const outcome: AttemptOutcome = yield* Effect.scoped(
-        runAttempt(attempt, nextGeneration, latestFailure, pendingRetry, replacing),
+        runAttempt(attempt, nextGeneration, latestFailure, pendingRetry, ignoreOffline),
       );
       replacing = false;
       // Consumed on every iteration so a stale marker can never leak into a

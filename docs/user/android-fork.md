@@ -102,6 +102,12 @@ reconnects to your saved computers without opening Connections or creating a new
 taps still open the conversation they refer to. To add or change a computer, use **Settings →
 Connections**; a new installation with no saved computers shows connection setup first.
 
+Cached conversations remain readable while a host is disconnected, but new messages require a
+live connection. If messages stop updating, check that host in **Settings → Connections** and
+keep Tailscale connected. Returning to the app or tapping **Reconnect** checks the host even if
+Android reports the network as offline. If that check fails, the app waits for connectivity or
+another retry; it does not continuously retry an offline network.
+
 The phone is a client of the selected environment. Agents, terminals, repositories, provider
 credentials, and conversation history stay on that environment's computer. The APK does not
 run its own T3 server or automatically discover and gain access to every machine in the tailnet.

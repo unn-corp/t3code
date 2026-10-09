@@ -410,15 +410,72 @@ describe("EnvironmentSupervisor", () => {
       );
 
       yield* harness.wake("application-active-reconnect");
-      yield* awaitState(
+      const resumed = yield* awaitState(
         supervisor.state,
-        (state) => state.phase === "offline" && state.attempt === 1,
+        (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
       );
+      expect(resumed.network).toBe("offline");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
       yield* harness.setNetworkStatus("online");
       yield* awaitState(
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
       );
+    }),
+  );
+
+  it.effect("explicit retry connects when the offline report is wrong", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ networkStatus: "offline" });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      yield* supervisor.retryNow;
+      const ready = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+
+      expect(ready.network).toBe("offline");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }),
+  );
+
+  it.effect("returning to the app checks an environment despite an offline report", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ networkStatus: "offline" });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      yield* Effect.yieldNow;
+      yield* harness.wake("application-active");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }),
+  );
+
+  it.effect("a failed explicit retry while offline does not keep polling", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        networkStatus: "offline",
+        prepare: () => Effect.fail(transient()),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      yield* supervisor.retryNow;
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      yield* TestClock.adjust("2 seconds");
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+
+      yield* harness.setNetworkStatus("online");
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
     }),
   );
 
