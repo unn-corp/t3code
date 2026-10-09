@@ -12,62 +12,65 @@ import { ElectronDialog } from "../electron/ElectronDialog.ts";
 import * as MicrophonePermission from "./MicrophonePermission.ts";
 
 const origin = "http://127.0.0.1:5274";
-const fixture = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-preview-microphone-" });
-  let page = `${origin}/recorder`;
-  const destroyed = vi.fn(() => false);
-  const contents = { getURL: () => page, isDestroyed: destroyed } as unknown as WebContents;
-  const prompt = vi.fn(async (_options: MessageBoxOptions) => ({
-    response: 0,
-    checkboxChecked: false,
-  }));
-  const dialogLayer = Layer.succeed(ElectronDialog, {
-    showMessageBox: (options) => Effect.promise(() => prompt(options)),
-    pickFolder: vi.fn(),
-    pickFiles: vi.fn(),
-    showErrorBox: vi.fn(),
-  });
-  const create = (storagePath: string | null = directory) =>
-    Effect.gen(function* () {
-      const requestSetter = vi.fn<Session["setPermissionRequestHandler"]>();
-      const checkSetter = vi.fn<Session["setPermissionCheckHandler"]>();
-      const session = {
-        storagePath,
-        setPermissionRequestHandler: requestSetter,
-        setPermissionCheckHandler: checkSetter,
-      } as unknown as Session;
-      const policy = yield* MicrophonePermission.make(session, new Set(["clipboard-read"])).pipe(
-        Effect.provide(dialogLayer),
-      );
-      const request = requestSetter.mock.calls[0]![0]!;
-      const check = checkSetter.mock.calls[0]![0]!;
-      const ask = (
-        details: Electron.MediaAccessPermissionRequest = {
-          isMainFrame: true,
-          requestingUrl: page,
-          mediaTypes: ["audio"],
-          securityOrigin: origin,
-        },
-      ) => new Promise<boolean>((resolve) => request(contents, "media", resolve, details));
-      const audioCheck = () =>
-        check(contents, "media", origin, { isMainFrame: true, mediaType: "audio" });
-      return { policy, request, check, ask, audioCheck };
+const fixtureFor = (pageOrigin = origin) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-preview-microphone-" });
+    let page = `${pageOrigin}/recorder`;
+    const destroyed = vi.fn(() => false);
+    const contents = { getURL: () => page, isDestroyed: destroyed } as unknown as WebContents;
+    const prompt = vi.fn(async (_options: MessageBoxOptions) => ({
+      response: 0,
+      checkboxChecked: false,
+    }));
+    const dialogLayer = Layer.succeed(ElectronDialog, {
+      showMessageBox: (options) => Effect.promise(() => prompt(options)),
+      pickFolder: vi.fn(),
+      pickFiles: vi.fn(),
+      showErrorBox: vi.fn(),
     });
-  return {
-    fs,
-    path,
-    directory,
-    create,
-    prompt,
-    contents,
-    destroyed,
-    navigate: (url: string) => {
-      page = url;
-    },
-  };
-});
+    const create = (storagePath: string | null = directory) =>
+      Effect.gen(function* () {
+        const requestSetter = vi.fn<Session["setPermissionRequestHandler"]>();
+        const checkSetter = vi.fn<Session["setPermissionCheckHandler"]>();
+        const session = {
+          storagePath,
+          setPermissionRequestHandler: requestSetter,
+          setPermissionCheckHandler: checkSetter,
+        } as unknown as Session;
+        const policy = yield* MicrophonePermission.make(session, new Set(["clipboard-read"])).pipe(
+          Effect.provide(dialogLayer),
+        );
+        const request = requestSetter.mock.calls[0]![0]!;
+        const check = checkSetter.mock.calls[0]![0]!;
+        const ask = (
+          details: Electron.MediaAccessPermissionRequest = {
+            isMainFrame: true,
+            requestingUrl: page,
+            mediaTypes: ["audio"],
+            securityOrigin: pageOrigin,
+          },
+        ) => new Promise<boolean>((resolve) => request(contents, "media", resolve, details));
+        const audioCheck = () =>
+          check(contents, "media", pageOrigin, { isMainFrame: true, mediaType: "audio" });
+        return { policy, request, check, ask, audioCheck };
+      });
+    return {
+      fs,
+      path,
+      directory,
+      create,
+      prompt,
+      contents,
+      destroyed,
+      navigate: (url: string) => {
+        page = url;
+      },
+    };
+  });
+
+const fixture = fixtureFor();
 
 it.effect("remembers Allow and Deny across recreation in both handlers", () =>
   Effect.gen(function* () {
@@ -227,7 +230,7 @@ it.effect("ignores invalid saved choices and preserves the unrelated permission 
     const { create, fs, path, directory, contents } = yield* fixture;
     yield* fs.writeFileString(
       path.join(directory, "t3code-microphone-permission.json"),
-      '{"origin":"https://example.com","allowed":true}',
+      '{"origin":"file:///tmp/voice.html","allowed":true}',
     );
     const { ask, check, request, audioCheck } = yield* create();
     expect(audioCheck()).toBe(false);
@@ -252,5 +255,152 @@ it.effect("fails closed if persistence fails or the page was destroyed", () =>
     destroyed.mockReturnValue(true);
     expect(yield* Effect.promise(() => valid.ask())).toBe(false);
     expect(prompt).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const tailnetOrigin = "https://artizia-x-plasma.tailbebf90.ts.net:8452";
+
+it.effect("prompts on the tailnet origin and persists its own choice", () =>
+  Effect.gen(function* () {
+    const { create, prompt } = yield* fixtureFor(tailnetOrigin);
+    const first = yield* create();
+    expect(yield* Effect.promise(() => first.ask())).toBe(true);
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: `${tailnetOrigin} wants to use your microphone.`,
+      }),
+    );
+    expect((yield* create()).audioCheck()).toBe(true);
+    yield* first.policy.clear;
+    prompt.mockResolvedValue({ response: 1, checkboxChecked: false });
+    expect(yield* Effect.promise(() => first.ask())).toBe(false);
+    expect((yield* create()).audioCheck()).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("preserves the old local choice without granting the tailnet origin", () =>
+  Effect.gen(function* () {
+    const { create, prompt, navigate, contents, fs, path, directory } = yield* fixture;
+    yield* fs.writeFileString(
+      path.join(directory, "t3code-microphone-permission.json"),
+      JSON.stringify({ origin, allowed: true }),
+    );
+    const { ask, check } = yield* create();
+    navigate(`${tailnetOrigin}/announce/studio`);
+    expect(check(contents, "media", tailnetOrigin, { isMainFrame: true, mediaType: "audio" })).toBe(
+      false,
+    );
+    prompt.mockResolvedValue({ response: 1, checkboxChecked: false });
+    const details = {
+      isMainFrame: true,
+      requestingUrl: tailnetOrigin,
+      securityOrigin: tailnetOrigin,
+      mediaTypes: ["audio"] as ["audio"],
+    };
+    expect(yield* Effect.promise(() => ask(details))).toBe(false);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    const reopened = yield* create();
+    expect(yield* Effect.promise(() => reopened.ask(details))).toBe(false);
+    navigate(`${origin}/recorder`);
+    expect(reopened.audioCheck()).toBe(true);
+    expect(yield* Effect.promise(() => reopened.ask())).toBe(true);
+    expect(prompt).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects a prompt after navigation to the other approved origin", () =>
+  Effect.gen(function* () {
+    const { create, prompt, navigate } = yield* fixture;
+    let resolve!: (value: { response: number; checkboxChecked: boolean }) => void;
+    prompt.mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const { ask } = yield* create();
+    const pending = ask();
+    navigate(tailnetOrigin);
+    resolve({ response: 0, checkboxChecked: false });
+    expect(yield* Effect.promise(() => pending)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("denies camera and mismatched origins on the approved tailnet page", () =>
+  Effect.gen(function* () {
+    const { create, contents, prompt } = yield* fixtureFor(tailnetOrigin);
+    const { ask, check } = yield* create();
+    expect(yield* Effect.promise(() => ask())).toBe(true);
+    for (const mediaTypes of [["video"], ["audio", "video"]] as const) {
+      expect(
+        yield* Effect.promise(() =>
+          ask({ isMainFrame: true, requestingUrl: tailnetOrigin, mediaTypes: [...mediaTypes] }),
+        ),
+      ).toBe(false);
+    }
+    expect(check(contents, "media", tailnetOrigin, { isMainFrame: true, mediaType: "video" })).toBe(
+      false,
+    );
+    for (const requestingUrl of [
+      origin,
+      "https://artizia-x-plasma.tailbebf90.ts.net:8453",
+      "http://artizia-x-plasma.tailbebf90.ts.net:8452",
+      "https://example.com",
+    ]) {
+      expect(
+        yield* Effect.promise(() =>
+          ask({ isMainFrame: true, requestingUrl, mediaTypes: ["audio"] }),
+        ),
+      ).toBe(false);
+      expect(
+        check(contents, "media", requestingUrl, { isMainFrame: true, mediaType: "audio" }),
+      ).toBe(false);
+    }
+    expect(
+      yield* Effect.promise(() =>
+        ask({
+          isMainFrame: true,
+          requestingUrl: tailnetOrigin,
+          securityOrigin: origin,
+          mediaTypes: ["audio"],
+        }),
+      ),
+    ).toBe(false);
+    expect(prompt).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([
+  "https://voice.example.org",
+  "https://another.example.net:9443",
+  "http://localhost:6000",
+])("prompts and remembers a microphone choice on %s", (webpageOrigin) =>
+  Effect.gen(function* () {
+    const { create, prompt } = yield* fixtureFor(webpageOrigin);
+    const first = yield* create();
+    expect(first.audioCheck()).toBe(false);
+    expect(yield* Effect.promise(() => first.ask())).toBe(true);
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: `${webpageOrigin} wants to use your microphone.`,
+      }),
+    );
+    expect((yield* create()).audioCheck()).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([
+  "file:///tmp/voice.html",
+  "data:text/html,voice",
+  "javascript:alert(1)",
+  "about:blank",
+  "null",
+])("rejects opaque or non-web requests from %s", (opaqueOrigin) =>
+  Effect.gen(function* () {
+    const { create, prompt } = yield* fixtureFor(opaqueOrigin);
+    const first = yield* create();
+    expect(yield* Effect.promise(() => first.ask())).toBe(false);
+    expect(first.audioCheck()).toBe(false);
+    expect(prompt).not.toHaveBeenCalled();
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

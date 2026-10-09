@@ -7,21 +7,24 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { ElectronDialog } from "../electron/ElectronDialog.ts";
 
-const MICROPHONE_ORIGIN = "http://127.0.0.1:5274";
-const SavedChoice = Schema.fromJsonString(
-  Schema.Struct({ origin: Schema.Literal(MICROPHONE_ORIGIN), allowed: Schema.Boolean }),
-);
-const decodeChoice = Schema.decodeUnknownOption(SavedChoice);
-const encodeChoice = Schema.encodeSync(SavedChoice);
+const SavedChoice = Schema.Struct({
+  origin: Schema.String,
+  allowed: Schema.Boolean,
+});
+const SavedChoices = Schema.fromJsonString(Schema.Union([SavedChoice, Schema.Array(SavedChoice)]));
+const decodeChoice = Schema.decodeUnknownOption(SavedChoices);
+const encodeChoices = Schema.encodeSync(Schema.fromJsonString(Schema.Array(SavedChoice)));
 const originOf = (url: string | undefined) => {
   try {
-    return url ? new URL(url).origin : null;
+    if (!url) return null;
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.origin : null;
   } catch {
     return null;
   }
 };
-const isCurrentPage = (contents: WebContents | null) =>
-  Boolean(contents && !contents.isDestroyed() && originOf(contents.getURL()) === MICROPHONE_ORIGIN);
+const isCurrentPage = (contents: WebContents | null, origin: string) =>
+  Boolean(contents && !contents.isDestroyed() && originOf(contents.getURL()) === origin);
 
 /** Owns one profile's microphone choice; no page can write this permission file. */
 export const make = (browserSession: Session, allowedPermissions: ReadonlySet<string>) =>
@@ -41,20 +44,29 @@ export const make = (browserSession: Session, allowedPermissions: ReadonlySet<st
           Effect.catch(() => Effect.succeed(Option.none())),
         )
       : Option.none();
-    let choice: boolean | undefined = Option.isSome(saved) ? saved.value.allowed : undefined;
+    const choices = new Map<string, boolean>();
+    if (Option.isSome(saved)) {
+      // Keep choices written by the original single-origin implementation.
+      const entries = Array.isArray(saved.value) ? saved.value : [saved.value];
+      for (const entry of entries) {
+        if (originOf(entry.origin) === entry.origin) choices.set(entry.origin, entry.allowed);
+      }
+    }
     let generation = 0;
-    let pending: Promise<boolean> | null = null;
+    const pending = new Map<string, Promise<boolean>>();
 
-    const requestChoice = (contents: WebContents) => {
+    const requestChoice = (contents: WebContents, origin: string) => {
+      const choice = choices.get(origin);
       if (choice !== undefined) return Promise.resolve(choice);
-      if (pending) return pending;
+      const existing = pending.get(origin);
+      if (existing) return existing;
       const requestedGeneration = generation;
-      pending = runPromise(
+      const request = runPromise(
         Effect.gen(function* () {
           const result = yield* dialog.showMessageBox({
             type: "question",
             title: "Microphone access",
-            message: `${MICROPHONE_ORIGIN} wants to use your microphone.`,
+            message: `${origin} wants to use your microphone.`,
             detail:
               "Your choice is remembered for this browser profile. Camera access stays blocked.",
             buttons: ["Allow microphone", "Deny"],
@@ -64,19 +76,22 @@ export const make = (browserSession: Session, allowedPermissions: ReadonlySet<st
           });
           return yield* gate.withPermits(1)(
             Effect.gen(function* () {
-              if (generation !== requestedGeneration || !isCurrentPage(contents)) return false;
+              if (generation !== requestedGeneration || !isCurrentPage(contents, origin))
+                return false;
               const allowed = result.response === 0;
+              const nextChoices = new Map(choices);
+              nextChoices.set(origin, allowed);
               if (file) {
                 yield* fs.makeDirectory(path.dirname(file), { recursive: true });
                 yield* fs.writeFileString(
                   `${file}.tmp`,
-                  encodeChoice({ origin: MICROPHONE_ORIGIN, allowed }),
+                  encodeChoices([...nextChoices].map(([origin, allowed]) => ({ origin, allowed }))),
                   { mode: 0o600 },
                 );
                 yield* fs.rename(`${file}.tmp`, file);
               }
               if (generation !== requestedGeneration) return false;
-              choice = allowed;
+              choices.set(origin, allowed);
               return allowed;
             }),
           );
@@ -88,9 +103,10 @@ export const make = (browserSession: Session, allowedPermissions: ReadonlySet<st
           ),
         ),
       ).finally(() => {
-        pending = null;
+        pending.delete(origin);
       });
-      return pending;
+      pending.set(origin, request);
+      return request;
     };
 
     browserSession.setPermissionRequestHandler((contents, permission, callback, details) => {
@@ -98,46 +114,47 @@ export const make = (browserSession: Session, allowedPermissions: ReadonlySet<st
         callback(allowedPermissions.has(permission));
         return;
       }
+      const origin = originOf(details?.requestingUrl);
       // Mixed audio/video, missing media types, and subframes are never microphone grants.
       if (
         !details?.isMainFrame ||
-        originOf(details.requestingUrl) !== MICROPHONE_ORIGIN ||
+        origin === null ||
         !("mediaTypes" in details) ||
         details.mediaTypes?.length !== 1 ||
         details.mediaTypes[0] !== "audio" ||
-        (details.securityOrigin !== undefined &&
-          originOf(details.securityOrigin) !== MICROPHONE_ORIGIN) ||
-        !isCurrentPage(contents)
+        (details.securityOrigin !== undefined && originOf(details.securityOrigin) !== origin) ||
+        !isCurrentPage(contents, origin)
       ) {
         callback(false);
         return;
       }
       const requestedGeneration = generation;
-      void requestChoice(contents).then(
+      void requestChoice(contents, origin).then(
         (allowed) =>
-          callback(allowed && generation === requestedGeneration && isCurrentPage(contents)),
+          callback(
+            allowed && generation === requestedGeneration && isCurrentPage(contents, origin),
+          ),
         () => callback(false),
       );
     });
     browserSession.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
       if (permission !== "media") return allowedPermissions.has(permission);
+      const origin = originOf(requestingOrigin);
       return (
-        choice === true &&
+        origin !== null &&
+        choices.get(origin) === true &&
         details?.mediaType === "audio" &&
         details.isMainFrame &&
-        originOf(requestingOrigin) === MICROPHONE_ORIGIN &&
-        (details.requestingUrl === undefined ||
-          originOf(details.requestingUrl) === MICROPHONE_ORIGIN) &&
-        (details.securityOrigin === undefined ||
-          originOf(details.securityOrigin) === MICROPHONE_ORIGIN) &&
-        isCurrentPage(contents)
+        (details.requestingUrl === undefined || originOf(details.requestingUrl) === origin) &&
+        (details.securityOrigin === undefined || originOf(details.securityOrigin) === origin) &&
+        isCurrentPage(contents, origin)
       );
     });
 
     return {
       clear: Effect.suspend(() => {
         generation++;
-        choice = undefined;
+        choices.clear();
         return gate.withPermits(1)(file ? fs.remove(file, { force: true }) : Effect.void);
       }),
     };

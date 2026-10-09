@@ -195,10 +195,12 @@ alongside these modules.
 Preview-page microphone permissions are separate from the annotation editor's recorder.
 [MicrophonePermission.ts](../../apps/desktop/src/preview/MicrophonePermission.ts), installed by
 [BrowserSession.ts](../../apps/desktop/src/preview/BrowserSession.ts), prompts only for top-level,
-audio-only requests from `http://127.0.0.1:5274`. Both Electron handlers enforce that exact origin
-and media type; video, mixed requests, and subframes remain denied. Store Allow/Deny in the
-partition's own storage directory, keep incognito choices in memory, and reset the choice during
-profile site-data clearing. Keep profile isolation, persistence, navigation-during-prompt, and
+audio-only requests from any HTTP(S) webpage origin. Chromium's secure-context requirements
+still apply. Keep each origin's saved choice independent and preserve legacy loopback choices.
+Both Electron handlers enforce the exact requested origin and media type; video, mixed requests,
+and subframes remain denied. Store Allow/Deny in the partition's own storage directory, keep
+incognito choices in memory, and reset choices during profile site-data clearing. Reject opaque
+and non-web origins. Keep profile isolation, persistence, navigation-during-prompt, and
 camera-denial checks in [MicrophonePermission.test.ts](../../apps/desktop/src/preview/MicrophonePermission.test.ts).
 
 **Verification and coupling.** Keep the corresponding component, pointer, drag, and draft tests

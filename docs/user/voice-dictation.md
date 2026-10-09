@@ -24,11 +24,11 @@ the microphone stays on the phone or computer running the client.
 
 ## Requirements
 
-The desktop preview browser can also request microphone access for the local app at
-`http://127.0.0.1:5274`. Choose **Allow microphone** or **Deny** when prompted. The choice is
-saved for that browser profile; incognito choices last only for the session. Camera access is
-blocked. Clear the profile's site data to choose again. This permission is separate from T3's
-composer dictation settings.
+The desktop preview browser lets any webpage request microphone access. Choose **Allow
+microphone** or **Deny** when prompted. Each website address has its own choice saved for that
+browser profile; incognito choices last only for the session. Camera access is blocked. Clear
+the profile's site data to choose again. Websites still need a secure browser context (HTTPS
+or a local development address). This permission is separate from T3's composer dictation settings.
 
 - A connected T3 desktop, web, or PWA client with voice dictation enabled.
 - An OpenWhispr Whisper service on the connected T3 server, listening at `http://127.0.0.1:8178/inference`. The endpoint
