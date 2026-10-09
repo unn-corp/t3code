@@ -1,4 +1,5 @@
 import type { AssetResource } from "@t3tools/contracts";
+import * as ConversationEvidence from "./ConversationEvidence.ts";
 import {
   AssetAttachmentNotFoundError,
   AssetGitHubMediaUrlValidationError,
@@ -319,6 +320,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
     readonly requestedPath: string;
     readonly resource: AssetResource;
     readonly expiresAt: number;
+    readonly requireCanonicalPath?: boolean;
   }) {
     const path = yield* Path.Path;
     const canonicalFile = yield* resolveCanonicalFile(input.requestedPath).pipe(
@@ -326,7 +328,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
       ),
     );
-    if (!canonicalFile) {
+    if (!canonicalFile || (input.requireCanonicalPath && canonicalFile !== input.requestedPath)) {
       return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
     }
     if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
@@ -468,6 +470,28 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let imageDimensions: ImageDimensions | null = null;
 
   switch (input.resource._tag) {
+    case "conversation-evidence": {
+      const evidence = yield* ConversationEvidence.ConversationEvidence;
+      const requestedPath = yield* evidence
+        .resolveFile(input.resource.threadId, input.resource.path)
+        .pipe(
+          Effect.mapError(
+            (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+          ),
+        );
+      if (requestedPath === null)
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      const finalized = yield* finalizeAbsoluteMediaFileAsset({
+        requestedPath,
+        resource: input.resource,
+        expiresAt,
+        requireCanonicalPath: true,
+      });
+      claims = finalized.claims;
+      fileName = finalized.fileName;
+      imageDimensions = finalized.imageDimensions;
+      break;
+    }
     case "media-file": {
       let requestedPath = expandHomePathWith(input.resource.path, path);
       if (!path.isAbsolute(requestedPath)) {

@@ -8,6 +8,16 @@ const attachmentId =
   "11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222-mp4";
 
 describe("resolveMediaSource", () => {
+  it.each(["screenshot.png", "recording.webm"])(
+    "expands managed evidence %s with chat access",
+    (name) => {
+      const path = `/home/user/.t3/userdata/conversation-evidence/${"a".repeat(64)}/${name}`;
+      expect(resolveMediaSource(path, { threadId })).toMatchObject({
+        access: "environment",
+        resource: { _tag: "conversation-evidence", threadId, path },
+      });
+    },
+  );
   describe("direct URLs", () => {
     it("keeps the authored URL and decodes the display name once", () => {
       const href = "https://cdn.example.com/clip%20one%2520%2Emp4?signature=a%2fb#t=2";

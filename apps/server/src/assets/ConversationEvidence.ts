@@ -29,6 +29,10 @@ export class ConversationEvidence extends Context.Service<
   ConversationEvidence,
   {
     readonly directory: (threadId: ThreadId) => Effect.Effect<string, ConversationEvidenceError>;
+    readonly resolveFile: (
+      threadId: ThreadId,
+      filePath: string,
+    ) => Effect.Effect<string | null, ConversationEvidenceError>;
     readonly saveScreenshot: (
       threadId: ThreadId,
       pageUrl: string,
@@ -112,6 +116,31 @@ const make = Effect.gen(function* () {
     const screenshotPath = path.join(target, name);
     yield* fs.writeFile(screenshotPath, bytes, { flag: "wx" });
     return screenshotPath;
+  });
+  const resolveFile = Effect.fn("ConversationEvidence.resolveFile")(function* (
+    threadId: ThreadId,
+    filePath: string,
+  ) {
+    const target = ownedDirectory(threadId);
+    if (!path.isAbsolute(filePath)) return null;
+    const candidate = path.resolve(filePath);
+    const relative = path.relative(target, candidate);
+    if (
+      !relative ||
+      path.isAbsolute(relative) ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`)
+    )
+      return null;
+    if (!(yield* fs.exists(candidate))) return null;
+    yield* checkDirectory(root);
+    yield* checkDirectory(target);
+    if (
+      (yield* fs.realPath(candidate)) !== candidate ||
+      (yield* fs.stat(candidate)).type !== "File"
+    )
+      return null;
+    return candidate;
   });
   const claimRecording = Effect.fn("ConversationEvidence.claimRecording")(function* (
     threadId: ThreadId,
@@ -211,6 +240,8 @@ const make = Effect.gen(function* () {
     return removed;
   });
   return ConversationEvidence.of({
+    resolveFile: (id, filePath) =>
+      resolveFile(id, filePath).pipe(Effect.mapError((e) => failure(id, e))),
     directory: (id) =>
       directory(id).pipe(
         (effect) => withThreadLock(id, effect),

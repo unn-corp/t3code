@@ -1,4 +1,5 @@
 import { ThreadContextDivider } from "./thread-context-divider";
+import { mediaFileAssetResource } from "@t3tools/client-runtime/media-reference";
 import { ThreadHandoffRow } from "./thread-handoff-row";
 import { SecretRequestCard } from "./SecretRequestCard";
 import {
@@ -2437,11 +2438,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return (
         <ThreadMarkdownImage
           environmentId={props.environmentId}
-          resource={{
-            _tag: "media-file",
-            threadId: props.threadId,
-            path: imageSource.path,
-          }}
+          resource={mediaFileAssetResource(props.threadId, imageSource.path)}
           alt={image.alt}
           srcFragment={markdownImageSourceFragment(image.href)}
           actionsSource={media?.source.actionsSource}

@@ -201,6 +201,9 @@ Generated agent browser screenshots and recordings use storage owned by their co
 Agents can save other temporary review outputs there too. Keep permanent deliverables in the
 project or another destination. Only files in managed conversation storage follow these policies.
 
+Images and videos in this storage can be viewed in chat from a paired Tailscale device with
+conversation-read access. You do not need to grant access to the host's other files.
+
 Age limits use file modification times and are checked at startup and hourly. Busy conversations
 wait until work finishes and its terminal shells are closed. Age-based cleanup continues for deleted conversations. Removed evidence
 links stop working, including after unarchiving. Uploaded message attachments, project files,

@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vite-plus/test";
+import { ThreadId } from "@t3tools/contracts";
 
-import { mediaFileReference, mediaReferenceFileName } from "./mediaReference.ts";
+import {
+  mediaFileAssetResource,
+  mediaFileReference,
+  mediaReferenceFileName,
+} from "./mediaReference.ts";
+
+describe("evidence media routing", () => {
+  const threadId = ThreadId.make("thread");
+  it.each(["/home/user/.t3/userdata", "C:\\Users\\user\\.t3\\userdata"])(
+    "routes evidence on %s through chat access",
+    (root) => {
+      const path = `${root}/conversation-evidence/${"a".repeat(64)}/nested/clip.webm`;
+      expect(mediaFileAssetResource(threadId, path)).toEqual({
+        _tag: "conversation-evidence",
+        threadId,
+        path,
+      });
+    },
+  );
+  it.each([
+    "/repo/image.png",
+    "/tmp/conversation-evidence/not-a-thread/image.png",
+    `/tmp/conversation-evidence/${"a".repeat(64)}/../secret.png`,
+  ])("keeps %s behind filesystem access", (path) => {
+    expect(mediaFileAssetResource(threadId, path)._tag).toBe("media-file");
+  });
+});
 
 describe("mediaFileReference", () => {
   it.each([

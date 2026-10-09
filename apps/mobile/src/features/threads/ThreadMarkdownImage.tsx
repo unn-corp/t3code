@@ -181,7 +181,7 @@ export function ThreadMarkdownImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
-    { readonly _tag: "attachment" | "media-file" | "tool-output-image" }
+    { readonly _tag: "attachment" | "media-file" | "conversation-evidence" | "tool-output-image" }
   >;
   readonly alt: string | null;
   readonly srcFragment?: string;

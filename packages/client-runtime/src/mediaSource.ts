@@ -12,13 +12,17 @@ import {
   splitMarkdownLinkSearchAndHash,
 } from "./markdownLinks.ts";
 import {
+  mediaFileAssetResource,
   mediaFileReference,
   mediaReferenceFileName,
   mediaUrlReference,
   type MediaReference,
 } from "./mediaReference.ts";
 
-export type MediaSourceResource = Extract<AssetResource, { readonly _tag: "media-file" }>;
+export type MediaSourceResource = Extract<
+  AssetResource,
+  { readonly _tag: "media-file" | "conversation-evidence" }
+>;
 
 /** What a piece of authored media is and how its bytes can be reached. */
 export type ResolvedMediaSource = {
@@ -99,6 +103,6 @@ export function resolveMediaSource(
   return {
     ...common,
     access: "environment",
-    resource: { _tag: "media-file", threadId: input.threadId, path },
+    resource: mediaFileAssetResource(input.threadId, path),
   };
 }

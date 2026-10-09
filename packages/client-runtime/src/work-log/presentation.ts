@@ -497,7 +497,10 @@ export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): strin
 }
 
 export interface ViewedImageAsset {
-  readonly resource: Extract<AssetResource, { readonly _tag: "media-file" }>;
+  readonly resource: Extract<
+    AssetResource,
+    { readonly _tag: "media-file" | "conversation-evidence" }
+  >;
   readonly alt: string;
   readonly srcFragment: string;
 }

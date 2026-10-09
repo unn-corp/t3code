@@ -387,6 +387,12 @@ limits cover T3-owned commands; provider shells and other applications have sepa
 
 ## Conversation evidence retention
 
+Conversation evidence media uses chat-read authorization and signed exact-file URLs on the
+connected environment, including Tailscale. The server validates the physical per-conversation
+directory before signing; other host media continues to require filesystem-read permission.
+Keep these boundaries covered in `AssetAccess.test.ts`, `RpcAuthorization.test.ts`, and
+the client's asset URL and media routing tests.
+
 **Behavior and entry.** Settings → Storage → Conversation evidence controls environment-wide
 cleanup when a conversation is archived or its evidence reaches the chosen age. Both policies
 start disabled. Saved agent browser screenshots and claimed recordings are owned by their

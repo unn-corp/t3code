@@ -52,7 +52,11 @@ import {
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
 import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
-import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
+import {
+  mediaFileAssetResource,
+  mediaFileReference,
+  mediaUrlReference,
+} from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -1827,6 +1831,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         | "attachment"
         | "workspace-file"
         | "media-file"
+        | "conversation-evidence"
         | "github-media"
         | "tool-output-image";
     }
@@ -1859,7 +1864,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
   const resource = props.resource;
   const path =
-    resource._tag === "media-file"
+    resource._tag === "media-file" || resource._tag === "conversation-evidence"
       ? resource.path
       : resource._tag === "workspace-file" && props.workspaceRoot
         ? `${props.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path}`
@@ -3486,11 +3491,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return (
         <ChatMarkdownAssetImage
           environmentId={threadRef.environmentId}
-          resource={{
-            _tag: "media-file",
-            threadId: threadRef.threadId,
-            path: imageSource.path,
-          }}
+          resource={mediaFileAssetResource(threadRef.threadId, imageSource.path)}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}

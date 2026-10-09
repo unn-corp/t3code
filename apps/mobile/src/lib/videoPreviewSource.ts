@@ -17,7 +17,13 @@ export type MediaVideoPreviewSource = {
       readonly environmentId: EnvironmentId;
       readonly resource: Extract<
         AssetResource,
-        { readonly _tag: "attachment" | "media-file" | "draft-workspace-file" }
+        {
+          readonly _tag:
+            | "attachment"
+            | "media-file"
+            | "conversation-evidence"
+            | "draft-workspace-file";
+        }
       >;
     }
 );
@@ -38,7 +44,7 @@ export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string 
       ? ["media-video", source.uri]
       : source.resource._tag === "attachment"
         ? ["media-video", source.environmentId, "attachment", source.resource.attachmentId]
-        : source.resource._tag === "media-file"
+        : source.resource._tag === "media-file" || source.resource._tag === "conversation-evidence"
           ? [
               "media-video",
               "media-file",

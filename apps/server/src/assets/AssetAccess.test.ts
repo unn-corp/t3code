@@ -34,6 +34,7 @@ import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
+import * as ConversationEvidence from "./ConversationEvidence.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
 import { githubMediaResponse } from "./GitHubMediaFetch.ts";
@@ -116,6 +117,7 @@ const layerTest = Layer.mergeAll(
       ),
   }),
   layerConfig,
+  ConversationEvidence.layer.pipe(Layer.provide(layerConfig)),
   WorkspacePaths.layer,
   ProjectFaviconResolver.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
@@ -126,6 +128,81 @@ const layerTest = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it.effect.skipIf(!symlinksSupported)("rejects evidence symlinks to another conversation", () =>
+    Effect.gen(function* () {
+      const evidence = yield* ConversationEvidence.ConversationEvidence;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const threadId = ThreadId.make("symlink-evidence-thread");
+      const root = yield* evidence.directory(threadId);
+      const foreign = yield* evidence.saveScreenshot(
+        ThreadId.make("foreign-evidence-thread"),
+        "https://example.test",
+        screenshotPng,
+      );
+      const linkedFile = path.join(root, "linked.png");
+      yield* fs.symlink(foreign, linkedFile);
+      const rejected = yield* issueAssetUrl({
+        resource: { _tag: "conversation-evidence", threadId, path: linkedFile },
+      }).pipe(Effect.flip);
+      expect(rejected._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+  it.effect("serves temporary conversation evidence through exact URLs on a tailnet origin", () =>
+    Effect.gen(function* () {
+      const evidence = yield* ConversationEvidence.ConversationEvidence;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const threadId = ThreadId.make("tailnet-evidence-thread");
+      const directory = yield* evidence.directory(threadId);
+      const screenshot = yield* evidence.saveScreenshot(
+        threadId,
+        "https://example.test",
+        screenshotPng,
+      );
+      const recording = path.join(directory, "recording.webm");
+      yield* fs.writeFileString(recording, "recording bytes");
+      const otherScreenshot = yield* evidence.saveScreenshot(
+        ThreadId.make("other-evidence-thread"),
+        "https://example.test",
+        screenshotPng,
+      );
+      const outside = path.join(path.dirname(directory), "private.png");
+      yield* fs.writeFile(outside, screenshotPng);
+      for (const forbiddenPath of [
+        otherScreenshot,
+        outside,
+        path.join(directory, "..", "private.png"),
+      ]) {
+        const failure = yield* issueAssetUrl({
+          resource: { _tag: "conversation-evidence", threadId, path: forbiddenPath },
+        }).pipe(Effect.flip);
+        expect(failure._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+      for (const [filePath, mimeType, contents] of [
+        [screenshot, "image/png", screenshotPng],
+        [recording, "video/webm", new TextEncoder().encode("recording bytes")],
+      ] as const) {
+        const issued = yield* issueAssetUrl({
+          resource: { _tag: "conversation-evidence", threadId, path: filePath },
+        });
+        const remoteUrl = new URL(issued.relativeUrl, "http://100.70.80.90:3773");
+        expect(remoteUrl.hostname).toBe("100.70.80.90");
+        const suffix = remoteUrl.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        const asset = yield* resolveAsset(token, suffix.slice(separator + 1));
+        if (asset?.kind !== "file") throw new Error("Expected remotely served evidence file");
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toContain(mimeType);
+        const bytes = yield* Effect.promise(() => response.arrayBuffer());
+        expect(new Uint8Array(bytes)).toEqual(contents);
+        expect(yield* resolveAsset(token, "other-thread.png")).toBeNull();
+        expect(yield* resolveAsset(token, "../../statev2.sqlite")).toBeNull();
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
   it.effect("loads private media immediately after login with the GitHub credential", () => {
     let lookups = 0;
     const authorizations: Array<string | undefined> = [];

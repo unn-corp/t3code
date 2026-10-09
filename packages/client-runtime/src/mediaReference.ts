@@ -1,6 +1,19 @@
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import type { AssetResource, ThreadId } from "@t3tools/contracts";
 
 import { safeDecodeURIComponent } from "./markdownLinks.ts";
+
+/** Select the chat-readable evidence route; the server verifies ownership and canonical paths. */
+export function mediaFileAssetResource(
+  threadId: ThreadId,
+  path: string,
+): Extract<AssetResource, { _tag: "media-file" | "conversation-evidence" }> {
+  const normalized = path.replaceAll("\\", "/");
+  const evidence =
+    /\/conversation-evidence\/[a-f0-9]{64}\/.+/.test(normalized) &&
+    !normalized.split("/").includes("..");
+  return { _tag: evidence ? "conversation-evidence" : "media-file", threadId, path };
+}
 
 /** The authored media location, never the temporary URL used to load its bytes. */
 export type MediaReference =
