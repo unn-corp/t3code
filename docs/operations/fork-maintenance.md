@@ -376,6 +376,9 @@ state; [provider](../../apps/server/src/provider) and
 Run the relevant checkpoint/provider regression tests when syncing upstream. Model availability
 comes from the live provider catalog, not a documentation snapshot. Confirm whether upstream has
 incorporated equivalent behavior before retaining compatibility patches.
+`ClaudeAdapterV2` continuation turns drain the wake buffer before the turn becomes active and stop
+replaying once a live result has closed the turn; otherwise a race leaves an agent-created run
+`running` forever and every follow-up message stays queued. Keep the wake-race regression test.
 The Git budget and refresh policy are owned by [vcs](../../apps/server/src/vcs) and
 [background](../../apps/server/src/background); checkpoint policy is enforced by the V2
 [CheckpointService](../../apps/server/src/orchestration-v2/CheckpointService.ts). Retain their focused
