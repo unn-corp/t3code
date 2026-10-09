@@ -69,7 +69,6 @@ it.each(["http://100.70.80.90:3773", "https://workstation.example.ts.net"])(
     state.session = {
       authenticated: true,
       scopes: [AuthOrchestrationReadScope],
-      permissions: [AuthOrchestrationReadScope],
     };
     const evidence = {
       ...resource,

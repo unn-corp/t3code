@@ -21,6 +21,12 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## AI message bubbles
+
+Turn on **AI message bubbles** in **Settings → Appearance** to display AI replies as rounded
+chat messages. Turn it off to return to the standard layout. This preference is saved on each
+web, desktop, or fork Android client and also applies while replies stream.
+
 ## Composer context
 
 Git-backed projects show branch and worktree controls below the composer while you create a thread.

@@ -306,6 +306,10 @@ describe("searchSettings", () => {
   });
 
   it("routes appearance settings to their current section", () => {
+    expect(searchSettings("AI message bubbles")[0]).toMatchObject({
+      id: "assistant-message-bubbles",
+      to: "/settings/appearance",
+    });
     expect(searchSettings("theme")[0]).toMatchObject({
       id: "theme",
       to: "/settings/appearance",

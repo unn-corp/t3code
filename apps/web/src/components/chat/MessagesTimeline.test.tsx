@@ -2719,3 +2719,53 @@ describe("MessagesTimeline", () => {
     }
   });
 });
+
+describe("AI message bubble preference", () => {
+  it.each([true, false])(
+    "changes streaming=%s replies without losing their content",
+    async (streaming) => {
+      vi.unstubAllGlobals();
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          observe() {}
+          unobserve() {}
+          disconnect() {}
+        },
+      );
+      const { DEFAULT_CLIENT_SETTINGS } = await import("@t3tools/contracts/settings");
+      const { __setClientSettingsForTests } = await import("~/hooks/useSettings");
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      const entry = buildAssistantTimelineEntry("**Hello** from your agent.");
+      entry.message.streaming = streaming;
+      const renderLayout = async (assistantMessageBubbles: boolean) => {
+        __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, assistantMessageBubbles });
+        await act(async () => {
+          root.render(<MessagesTimeline {...buildProps()} timelineEntries={[entry]} />);
+        });
+      };
+      try {
+        await renderLayout(false);
+        const plain = container.querySelector('[data-assistant-message-style="plain"]');
+        expect(plain?.textContent).toContain("Hello from your agent.");
+        expect(plain?.querySelector("strong")?.textContent).toBe("Hello");
+        await renderLayout(true);
+        const bubble = container.querySelector('[data-assistant-message-style="bubble"]');
+        expect(bubble?.textContent).toContain("Hello from your agent.");
+        expect(bubble?.querySelector("strong")?.textContent).toBe("Hello");
+        await renderLayout(false);
+        expect(container.querySelector('[data-assistant-message-style="bubble"]')).toBeNull();
+        expect(
+          container.querySelector('[data-assistant-message-style="plain"]')?.textContent,
+        ).toContain("Hello from your agent.");
+      } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+      }
+    },
+  );
+});

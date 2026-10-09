@@ -2586,11 +2586,20 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const bubbles = useClientSettings((settings) => settings.assistantMessageBubbles);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
 
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
+      <div
+        data-assistant-message-style={bubbles ? "bubble" : "plain"}
+        className={cn(
+          "relative min-w-0",
+          bubbles
+            ? "w-fit max-w-[95%] rounded-2xl rounded-ss-md border border-border/50 bg-muted/40 px-4 py-3 sm:max-w-[90%]"
+            : "px-1 py-0.5",
+        )}
+      >
         <MessageAuthorHeading>Arcwright Code</MessageAuthorHeading>
         <AssistantCitationSource
           messageId={row.message.id}

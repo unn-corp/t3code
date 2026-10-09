@@ -370,6 +370,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Diff colors"]
         : []),
       ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
+      ...(settings.assistantMessageBubbles !== DEFAULT_UNIFIED_SETTINGS.assistantMessageBubbles
+        ? ["AI message bubbles"]
+        : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
         : []),
@@ -504,6 +507,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.appearanceContrast,
       settings.diffColorScheme,
       settings.chatWidth,
+      settings.assistantMessageBubbles,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
       settings.confirmThreadArchive,
@@ -625,6 +629,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
+      assistantMessageBubbles: DEFAULT_UNIFIED_SETTINGS.assistantMessageBubbles,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
@@ -1048,6 +1053,29 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="appearance-interface" title="Interface">
+        <SettingsRow
+          {...searchableSetting("assistant-message-bubbles")}
+          description="Display AI replies in rounded chat bubbles."
+          resetAction={
+            settings.assistantMessageBubbles !==
+            DEFAULT_UNIFIED_SETTINGS.assistantMessageBubbles ? (
+              <SettingResetButton
+                label="AI message bubbles"
+                onClick={() => updateSettings({ assistantMessageBubbles: false })}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              aria-label="AI message bubbles"
+              checked={settings.assistantMessageBubbles}
+              onCheckedChange={(assistantMessageBubbles) =>
+                updateSettings({ assistantMessageBubbles })
+              }
+            />
+          }
+        />
+
         <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
           description="Adjust the contrast of colors and borders across the interface."

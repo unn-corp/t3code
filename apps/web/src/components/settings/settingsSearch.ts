@@ -226,6 +226,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["red green blue orange additions deletions changes counts palette colorblind"],
   },
   {
+    id: "assistant-message-bubbles",
+    title: "AI message bubbles",
+    to: "/settings/appearance",
+    searchTerms: ["assistant agent text messages conversation thread chat bubble layout"],
+  },
+  {
     id: "chat-width",
     title: "Chat width",
     to: "/settings/appearance",

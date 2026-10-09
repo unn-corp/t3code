@@ -1452,3 +1452,20 @@ describe("ServerSettings.removeAgentCreditsOnMerge", () => {
     ).toBe(true);
   });
 });
+
+describe("ClientSettings AI message bubbles", () => {
+  it("keeps existing clients in the standard layout by default", () => {
+    expect(decodeClientSettings({}).assistantMessageBubbles).toBe(false);
+  });
+  it.each([true, false])("persists the selected layout: %s", (assistantMessageBubbles) => {
+    expect(decodeClientSettings({ assistantMessageBubbles }).assistantMessageBubbles).toBe(
+      assistantMessageBubbles,
+    );
+    expect(decodeClientSettingsPatch({ assistantMessageBubbles })).toEqual({
+      assistantMessageBubbles,
+    });
+  });
+  it("rejects non-boolean preferences", () => {
+    expect(() => decodeClientSettingsPatch({ assistantMessageBubbles: "yes" })).toThrow();
+  });
+});

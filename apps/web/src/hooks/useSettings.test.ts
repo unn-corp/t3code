@@ -160,6 +160,19 @@ describe("client settings hydration", () => {
 });
 
 describe("persistClientSettingsPatch", () => {
+  it("saves and hydrates the AI bubble preference without changing other settings", async () => {
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    await persistClientSettingsPatch({ assistantMessageBubbles: true });
+    const saved = { ...DEFAULT_CLIENT_SETTINGS, assistantMessageBubbles: true };
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledWith(saved);
+    __resetClientSettingsPersistenceForTests();
+    persistenceMocks.getClientSettings.mockResolvedValue(saved);
+    await persistClientSettingsUpdate((current) => current);
+    expect(getClientSettings().assistantMessageBubbles).toBe(true);
+    await persistClientSettingsPatch({ assistantMessageBubbles: false });
+    expect(getClientSettings().assistantMessageBubbles).toBe(false);
+  });
+
   it("waits for settings writes in request order", async () => {
     __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     let finishFirst!: () => void;
