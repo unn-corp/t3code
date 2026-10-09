@@ -1,3 +1,4 @@
+import { messageReplyProviderContext } from "./messageReplies.ts";
 import {
   COMPOSER_CONTEXT_LABEL_MAX_CHARS,
   type ComposerContextId,
@@ -265,9 +266,11 @@ function formatEnvelopeEntry(
 export function projectComposerContextForProvider(input: {
   text: string;
   records: ReadonlyArray<ComposerContextRecord>;
+  replyTo?: import("@t3tools/contracts").MessageReplyTarget | undefined;
 }): string {
+  const prefix = messageReplyProviderContext(input.replyTo);
   const occurrences = collectComposerContextReferences(input.text);
-  if (occurrences.length === 0) return input.text;
+  if (occurrences.length === 0) return prefix + input.text;
   const recordsById = new Map<ComposerContextId, ComposerContextRecord | undefined>();
   for (const record of input.records) {
     // Even callers that bypass the wire schema must not silently select an ambiguous payload.
@@ -293,8 +296,8 @@ export function projectComposerContextForProvider(input: {
     );
     entries.push(entry);
   }
-  if (entries.length === 0) return body;
-  return `${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
+  if (entries.length === 0) return prefix + body;
+  return `${prefix}${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
 }
 
 /** Preserve context bindings when uploads become thread-owned attachments. */

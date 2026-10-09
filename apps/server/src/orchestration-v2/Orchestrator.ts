@@ -439,6 +439,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "prepared-run.progress":
     case "prepared-run.fail":
     case "prepared-run.retry":
+    case "run.reply-target.set":
     case "run.interrupt":
     case "queued-message.promote-to-steer":
     case "queue.resume":
@@ -7690,6 +7691,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           candidate.type === "user_message" && candidate.messageId === queuedMessage.id,
       );
 
+      if (command.context?.replyTo) {
+        if (command.context.replyTo.threadId !== command.threadId) {
+          return yield* new OrchestratorCommandRejectedError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Reply target belongs to another conversation.",
+          });
+        }
+        const replyTo = yield* canonicalReplyTarget(
+          command,
+          command.context.replyTo.messageId,
+          queuedMessage.id,
+        );
+        command = { ...command, context: { ...command.context, replyTo } };
+      }
       const now = yield* DateTime.now;
       const emitEvent = emit(events, command);
       const editedAttachments =
@@ -7740,6 +7756,61 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           () => new OrchestratorProjectionError({ threadId: commandThreadId(command) }),
         ),
       );
+
+  /** Resolve the canonical quote and reject links that would form a cycle. Reads only linked IDs. */
+  const canonicalReplyTarget = (
+    command: OrchestrationV2Command,
+    targetId: MessageId,
+    sourceMessageId?: MessageId,
+    sourceRunId?: RunId,
+  ) =>
+    Effect.gen(function* () {
+      const threadId = commandThreadId(command);
+      const visited = new Set<MessageId>();
+      let id: MessageId | undefined = targetId;
+      let target: OrchestrationV2ConversationMessage | undefined;
+      while (id !== undefined) {
+        if (id === sourceMessageId || visited.has(id)) {
+          return yield* new OrchestratorCommandRejectedError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "A message cannot reply to itself or its descendants.",
+          });
+        }
+        visited.add(id);
+        const records: ProjectionRecords<"messages"> = yield* loadProjectionForCommand(
+          command,
+          ["messages"],
+          { messageIds: [id] },
+        );
+        const message: OrchestrationV2ConversationMessage | undefined = records.messages[0];
+        if (!message) break;
+        if (!target) target = message;
+        if (sourceRunId && message.role === "assistant" && message.runId === sourceRunId) {
+          return yield* new OrchestratorCommandRejectedError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This reply would create a cycle in the current response.",
+          });
+        }
+        const parent: import("@t3tools/contracts").MessageReplyTarget | undefined =
+          message.context?.replyTo;
+        id = parent?.threadId === threadId ? parent.messageId : undefined;
+      }
+      if (!target || target.role === "system") {
+        return yield* new OrchestratorCommandRejectedError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Reply target is not a message in this conversation.",
+        });
+      }
+      return {
+        threadId,
+        messageId: target.id,
+        role: target.role,
+        text: target.text.slice(0, 4000),
+      };
+    });
 
   const preparedRunState = (
     command: Extract<
@@ -10250,7 +10321,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
           });
         }
-        yield* dispatchMessage(command, events, effects);
+        let dispatched = command;
+        if (command.context?.replyTo) {
+          if (command.context.replyTo.threadId !== command.threadId) {
+            return yield* new OrchestratorCommandRejectedError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Reply target belongs to another conversation.",
+            });
+          }
+          const replyTo = yield* canonicalReplyTarget(
+            command,
+            command.context.replyTo.messageId,
+            command.messageId,
+          );
+          dispatched = { ...command, context: { ...command.context, replyTo } };
+        }
+        yield* dispatchMessage(dispatched, events, effects);
         break;
       }
       case "notification.delivery.accept":
@@ -10274,6 +10361,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.user-input.dismiss":
         yield* dispatchThreadUserInputDismiss(command, events, effects);
         break;
+      case "run.reply-target.set": {
+        const projection = yield* loadProjectionForCommand(command, ["runs"], {
+          runIds: [command.runId],
+        });
+        const run = projection.runs[0];
+        if (!run || !["starting", "running"].includes(run.status)) {
+          return yield* new OrchestratorCommandRejectedError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Replies require an active run.",
+          });
+        }
+        const replyTo = yield* canonicalReplyTarget(command, command.messageId, undefined, run.id);
+        if (replyTo.role !== "user") {
+          return yield* new OrchestratorCommandRejectedError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Agents can reply to user messages in this conversation.",
+          });
+        }
+        const now = yield* DateTime.now;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: command.threadId,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...run, replyTo },
+        });
+        break;
+      }
       case "run.interrupt":
         cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
         // Stop also stops every delegated task under the thread once it commits.

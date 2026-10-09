@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import {
   EnvironmentId,
+  MessageId,
   ForwardCompatibleArray,
   NonNegativeInt,
   PositiveInt,
@@ -283,9 +284,19 @@ export type ComposerContextRecord = typeof ComposerContextRecord.Type;
 export const COMPOSER_CONTEXT_MAX_RECORDS = 200;
 const COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS = 16_000_000;
 
-/** Structured context riding on a user message. Undecodable records are dropped, not fatal. */
+/** A bounded display snapshot; the server verifies the target in the same conversation. */
+export const MessageReplyTarget = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  role: Schema.Literals(["user", "assistant"]),
+  text: Schema.String.check(Schema.isMaxLength(4000)),
+});
+export type MessageReplyTarget = typeof MessageReplyTarget.Type;
+
+/** Structured context riding on a conversation message. Undecodable records are dropped, not fatal. */
 export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
+  replyTo: Schema.optional(MessageReplyTarget),
   records: Schema.Array(Schema.Unknown)
     .check(
       Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS),

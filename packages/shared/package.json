@@ -474,6 +474,10 @@
     "./worktreeStorage": {
       "types": "./src/worktreeStorage.ts",
       "import": "./src/worktreeStorage.ts"
+    },
+    "./messageReplies": {
+      "types": "./src/messageReplies.ts",
+      "import": "./src/messageReplies.ts"
     }
   },
   "scripts": {

@@ -212,6 +212,25 @@ The APK native container zeroes handled bars/cutout/IME insets before forwarding
 see [shell inset maintenance](./android-pwa.md#shell-insets-and-folded-layouts). Verify native header
 alignment and keyboard hide after live fold changes as well as browser viewport tests.
 
+## Direct message replies
+
+**Behavior and ownership.** Web/desktop and the fork Android web bundle expose
+right-click/touch Reply, a persisted composer quote, and a focused reply-thread
+dialog. [MessageReplies.tsx](../../apps/web/src/components/chat/MessageReplies.tsx)
+and [messageReplies.ts](../../packages/shared/src/messageReplies.ts) own the UI
+and graph traversal. V2 message context holds links; the event sink links assistant
+output, and `t3_message_reply` lets live agents choose earlier user messages.
+The [composer guide](../user/composer.md#reply-to-a-message) describes use and the
+[internals guide](../internals/composer-context-references.md#direct-message-replies)
+describes persistence and bounded history reads. React Native UI is uncommissioned.
+
+**Verification and coupling.** Keep reply graph, composer persistence, UI action,
+SQL pagination/index, canonical target, queued edit, cycle rejection, provider
+projection, and MCP ownership tests with this feature. New paired hosts must ship
+the reply-chain RPC and MCP tool. Compare upstream reply semantics before merging
+future context, timeline, composer, and tool refactors; do not drop assistant
+context or flatten a focused thread into the whole transcript.
+
 ## Stop, commands, and run recovery
 
 **Behavior and reason.** Stop must remain reachable while work or cancellation is pending.

@@ -1,6 +1,7 @@
 import {
   CommandId,
   type OrchestrationV2Run,
+  type MessageReplyTarget,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
@@ -307,6 +308,72 @@ const layerBase: Layer.Layer<
       });
 
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
+      const replyRuns = new Map(
+        events.flatMap((event) =>
+          event.type === "run.created" || event.type === "run.updated"
+            ? [[event.payload.id, event.payload] as const]
+            : [],
+        ),
+      );
+      const replies = new Map<RunId, MessageReplyTarget>();
+      const incomingMessages = new Map(
+        events.flatMap((event) =>
+          event.type === "message.updated" ? [[event.payload.id, event.payload] as const] : [],
+        ),
+      );
+      const assistantReply = (event: OrchestrationV2DomainEvent) =>
+        Effect.gen(function* () {
+          if (
+            !(
+              (event.type === "message.updated" && event.payload.role === "assistant") ||
+              (event.type === "turn-item.updated" && event.payload.type === "assistant_message")
+            ) ||
+            event.payload.runId === null
+          )
+            return event;
+          const message = event.payload;
+          let run = replyRuns.get(message.runId!);
+          if (!run) {
+            const projection = yield* projectionStore.getThreadRecords(event.threadId, ["runs"], {
+              runIds: [message.runId!],
+            });
+            run = projection.runs[0];
+            if (run) replyRuns.set(run.id, run);
+          }
+          if (!run) return event;
+          let replyTo = replies.get(run.id) ?? run.replyTo;
+          if (!replyTo) {
+            let target = incomingMessages.get(run.userMessageId);
+            if (!target) {
+              const projection = yield* projectionStore.getThreadRecords(
+                event.threadId,
+                ["messages"],
+                { messageIds: [run.userMessageId] },
+              );
+              target = projection.messages[0];
+            }
+            if (!target || target.role === "system") return event;
+            replyTo = {
+              threadId: event.threadId,
+              messageId: target.id,
+              role: target.role,
+              text: target.text.slice(0, 4000),
+            };
+          }
+          replies.set(run.id, replyTo);
+          const context = {
+            ...(("context" in message ? message.context : undefined) ?? {
+              version: 1 as const,
+              records: [],
+            }),
+            replyTo,
+          };
+          if (event.type === "message.updated")
+            return { ...event, payload: { ...event.payload, context } };
+          if (event.type === "turn-item.updated")
+            return { ...event, payload: { ...event.payload, context } };
+          return event;
+        });
       const runOrdinals = new Map(
         events.flatMap((event) =>
           event.type === "run.created" || event.type === "run.updated"
@@ -323,8 +390,8 @@ const layerBase: Layer.Layer<
                   event.payload,
                   event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
                 )
-                .pipe(Effect.map((payload) => ({ ...event, payload })))
-            : Effect.succeed(event),
+                .pipe(Effect.flatMap((payload) => assistantReply({ ...event, payload })))
+            : assistantReply(event),
         { concurrency: 1 },
       );
     };

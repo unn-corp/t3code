@@ -1965,6 +1965,27 @@ const makeCoreWsRpcLayer = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),
+        [ORCHESTRATION_V2_WS_METHODS.getMessageReplyChain]: (input) =>
+          threadManagement
+            .getThreadRecords(input.threadId, ["messages"], {
+              messageReplyChainId: input.messageId,
+              messageOffset: input.offset ?? 0,
+              messageLimit: 101,
+            })
+            .pipe(
+              Effect.map(({ messages }) => ({
+                messages: messages.slice(0, 100),
+                nextOffset: messages.length > 100 ? (input.offset ?? 0) + 100 : null,
+              })),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: "Failed to load reply thread",
+                    cause,
+                  }),
+              ),
+            ),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
           threadManagement.getTurnItem(input).pipe(
             Effect.mapError(

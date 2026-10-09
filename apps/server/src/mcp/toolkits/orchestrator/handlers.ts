@@ -106,6 +106,13 @@ const handlers = {
         return yield* service.update(scope, input);
       }),
   ),
+  t3_message_reply: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.replyToMessage(scope, input);
+    }),
+  ),
   t3_thread_send: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     (input) =>

@@ -1,3 +1,5 @@
+import { replyContext } from "@t3tools/shared/messageReplies";
+import { ComposerMessageReply } from "./chat/MessageReplies";
 import { registerPreviewAnnotationSender } from "../previewAnnotationEditorStore";
 import { elementContextToPreviewAnnotation } from "../lib/elementContext";
 import { type WorktreeSetupSnapshot } from "@t3tools/contracts";
@@ -1630,6 +1632,9 @@ export default function ChatView(props: ChatViewProps) {
   const interruptThreadTurn = useOrchestrationCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
+  const getMessageReplyChain = useAtomCommand(threadEnvironment.getMessageReplyChain, {
+    reportFailure: false,
+  });
   const loadEarlierThreadHistory = useAtomCommand(threadEnvironment.loadEarlierHistory, {
     label: "load earlier thread history",
     reportFailure: false,
@@ -1798,6 +1803,44 @@ export default function ChatView(props: ChatViewProps) {
     const draft = store.getComposerDraft(composerDraftTarget);
     return draft ? composerDraftHasUserContent({ ...draft, prompt: "" }) : false;
   });
+  const composerReplyTo = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.replyTo ?? null,
+  );
+  const setComposerReplyTo = useComposerDraftStore((store) => store.setReplyTo);
+  const buildReplyMessageContext = useCallback(
+    (input: Parameters<typeof buildMessageContext>[0]) =>
+      replyContext(buildMessageContext(input), composerReplyTo),
+    [composerReplyTo],
+  );
+  const loadMessageReplyChain = useCallback(
+    async (messageId: MessageId, offset: number) => {
+      const result = await getMessageReplyChain({
+        environmentId,
+        input: { threadId, messageId, offset },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      return {
+        messages: result.value.messages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          text: message.text,
+          context: message.context,
+          attachments: message.attachments,
+          runId: message.runId,
+          streaming: message.streaming,
+          createdBy: message.createdBy,
+          creationSource: message.creationSource,
+          ...(message.scheduledTaskId ? { scheduledTaskId: message.scheduledTaskId } : {}),
+          ...(message.senderThreadId ? { senderThreadId: message.senderThreadId } : {}),
+          createdAt: DateTime.formatIso(message.createdAt),
+          updatedAt: DateTime.formatIso(message.updatedAt),
+        })),
+        nextOffset: result.value.nextOffset,
+      };
+    },
+    [getMessageReplyChain, environmentId, threadId],
+  );
+
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
@@ -4523,6 +4566,11 @@ export default function ChatView(props: ChatViewProps) {
       const target = queuedEditDraftTargetFor(request.runId);
       clearComposerDraftContent(target);
       setComposerDraftPrompt(target, request.text);
+      setComposerReplyTo(
+        target,
+        serverProjection?.messages.find((message) => message.id === request.messageId)?.context
+          ?.replyTo ?? null,
+      );
       setEditingQueuedRun({
         threadId: activeThread.id,
         runId: request.runId,
@@ -4542,7 +4590,21 @@ export default function ChatView(props: ChatViewProps) {
       serverProjection,
       scheduleComposerFocus,
       setComposerDraftPrompt,
+      setComposerReplyTo,
     ],
+  );
+  const replyToChatMessage = useCallback(
+    (message: ChatMessage) => {
+      if (message.role === "system" || !canOperateThread) return;
+      setComposerReplyTo(composerDraftTarget, {
+        threadId,
+        messageId: message.id,
+        role: message.role,
+        text: message.text.slice(0, 4000),
+      });
+      scheduleComposerFocus();
+    },
+    [canOperateThread, composerDraftTarget, threadId, setComposerReplyTo, scheduleComposerFocus],
   );
   const cancelEditingQueuedRun = useCallback(() => {
     if (editingQueuedRun === null) return;
@@ -8730,6 +8792,7 @@ export default function ChatView(props: ChatViewProps) {
               attachments: uploads,
               context: {
                 version: 1,
+                ...(composerReplyTo ? { replyTo: composerReplyTo } : {}),
                 records: [
                   ...new Map(
                     [
@@ -8740,7 +8803,7 @@ export default function ChatView(props: ChatViewProps) {
                             (attachment) => attachment.id === record.attachmentId,
                           ),
                       ),
-                      ...(buildMessageContext({
+                      ...(buildReplyMessageContext({
                         terminalContexts: composerTerminalContexts.filter(
                           (context) => context.text.trim().length > 0,
                         ),
@@ -8889,7 +8952,7 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.resetCursorState();
       const followUpSent = await onSubmitPlanFollowUp({
         text: followUp.text,
-        context: buildMessageContext({
+        context: buildReplyMessageContext({
           terminalContexts: sendableComposerTerminalContexts,
           reviewComments: composerReviewComments,
           previewAnnotations: composerPreviewAnnotations,
@@ -8898,6 +8961,7 @@ export default function ChatView(props: ChatViewProps) {
         interactionMode: followUp.interactionMode,
       });
       if (!followUpSent) {
+        setComposerReplyTo(composerDraftTarget, composerReplyTo);
         promptRef.current = followUpPromptSnapshot;
         composerTerminalContextsRef.current = [...followUpTerminalContexts];
         restorePlanFollowUpComposer({
@@ -9009,7 +9073,7 @@ export default function ChatView(props: ChatViewProps) {
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
     const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>
-      buildMessageContext({
+      buildReplyMessageContext({
         terminalContexts: composerTerminalContextsSnapshot,
         reviewComments: composerReviewCommentsSnapshot,
         previewAnnotations: composerPreviewAnnotationsSnapshot,
@@ -9421,6 +9485,7 @@ export default function ChatView(props: ChatViewProps) {
             );
             setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
             setComposerDraftThreadContexts(composerDraftTarget, composerThreadContextsSnapshot);
+            setComposerReplyTo(composerDraftTarget, composerReplyTo);
             if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
               promptRef.current = messageTextForSend;
               composerRef.current.resetCursorState({
@@ -9813,6 +9878,7 @@ export default function ChatView(props: ChatViewProps) {
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
         setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
         setComposerDraftThreadContexts(composerDraftTarget, composerThreadContextsSnapshot);
+        setComposerReplyTo(composerDraftTarget, composerReplyTo);
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
           prompt: promptForSend,
@@ -11137,6 +11203,10 @@ export default function ChatView(props: ChatViewProps) {
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 footer={paintOnlyDisplayedTimeline ? null : threadStatusLine}
                 listRef={legendListRef}
+                onReplyToMessage={
+                  paintOnlyDisplayedTimeline || !canOperateThread ? undefined : replyToChatMessage
+                }
+                loadReplyChain={paintOnlyDisplayedTimeline ? undefined : loadMessageReplyChain}
                 timelineEntries={displayedTimeline.entries}
                 providerStatuses={
                   environmentById.get(
@@ -11286,6 +11356,12 @@ export default function ChatView(props: ChatViewProps) {
                     <ComposerSurface.Shell
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
                     >
+                      {composerReplyTo && (
+                        <ComposerMessageReply
+                          target={composerReplyTo}
+                          onCancel={() => setComposerReplyTo(composerDraftTarget, null)}
+                        />
+                      )}
                       <ComposerSurface.Host
                         inert={isSavingQueuedEdit}
                         aria-busy={isSavingQueuedEdit}

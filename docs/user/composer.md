@@ -12,6 +12,24 @@ becomes an attachment when inserting it would exceed the message limit. On a
 hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
 to keep a large paste editable in the composer instead.
 
+## Reply to a message
+
+On web and desktop, right-click an agent message and choose **Reply to message**.
+The reply button beside a message also works on touch devices, including the fork
+Android client after its web bundle is rebuilt. A removable quote appears above
+the composer; its selection survives reloads and conversation switches. Sending
+keeps the reply link with your message and gives the agent the quoted context.
+
+Click a message's reply indicator to open a focused thread containing its linked
+ancestors and replies, using the same chat formatting and attachment previews.
+Unrelated messages stay in the main conversation. Long reply threads offer
+**Load more replies**. You can reply from this view too.
+
+Agent responses link to the user message that started their turn. Agents with the
+Arcwright Code MCP tools can explicitly reply to an earlier user message in their
+own active conversation. These controls are not yet implemented in the upstream
+React Native client.
+
 ## Attach files
 
 Attach up to 100 files per message. Each image can be up to 10 MiB, with at most

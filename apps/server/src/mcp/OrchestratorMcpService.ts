@@ -1,3 +1,7 @@
+import type {
+  OrchestratorMcpMessageReplyInput,
+  OrchestratorMcpMessageReplyResult,
+} from "@t3tools/contracts";
 import {
   type EnvironmentId,
   CommandId,
@@ -174,6 +178,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadReadInput,
   ) => Effect.Effect<OrchestratorMcpThreadReadResult, OrchestratorMcpFailure>;
+  readonly replyToMessage: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpMessageReplyInput,
+  ) => Effect.Effect<OrchestratorMcpMessageReplyResult, OrchestratorMcpFailure>;
   readonly sendToThread: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadSendInput,
@@ -2395,6 +2403,27 @@ const make = Effect.gen(function* () {
           nextPosition: page.at(-1)?.position ?? null,
           hasMore: timeline.hasMore,
         } satisfies OrchestratorMcpThreadReadResult;
+      }),
+    replyToMessage: (callerScope, input) =>
+      Effect.gen(function* () {
+        yield* requireCapability(callerScope);
+        const scope = yield* requireThreadScope(callerScope, "t3_message_reply");
+        const parent = yield* threadManagement
+          .getThreadRecords(scope.thread.threadId, ["runs"])
+          .pipe(Effect.mapError((error) => failure("orchestration_error", errorMessage(error))));
+        yield* assertLiveCaller(scope, parent);
+        const run = ThreadManagementService.latestActiveRun(parent)!;
+        const key = yield* requestKey(input.clientRequestId);
+        yield* threadManagement
+          .dispatch({
+            type: "run.reply-target.set",
+            commandId: stableCommandId({ scope, requestKey: key, operation: "message-reply" }),
+            threadId: parent.thread.id,
+            runId: run.id,
+            messageId: input.messageId,
+          })
+          .pipe(Effect.mapError((error) => failure("orchestration_error", errorMessage(error))));
+        return { threadId: parent.thread.id, runId: run.id, messageId: input.messageId };
       }),
     sendToThread: (scope, input) =>
       Effect.gen(function* () {

@@ -113,6 +113,7 @@ import Migration0095 from "./Migrations/055_OrchestrationV2.ts";
 import Migration0096 from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
 import Migration0097 from "./Migrations/057_ScheduledTaskWebhooks.ts";
 import Migration0098 from "./Migrations/058_WebhookRelayDeliveries.ts";
+import Migration0099 from "./Migrations/099_MessageReplyIndex.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -223,6 +224,7 @@ export const migrationEntries = [
   [96, "RemoveRedundantProjectionIndexes", Migration0096],
   [97, "ScheduledTaskWebhooks", Migration0097],
   [98, "WebhookRelayDeliveries", Migration0098],
+  [99, "MessageReplyIndex", Migration0099],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

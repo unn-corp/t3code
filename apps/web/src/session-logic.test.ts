@@ -1811,3 +1811,28 @@ it("renders automatic completion as a work entry instead of a user bubble", () =
     })[0]?.kind,
   ).toBe("message");
 });
+
+it("keeps assistant reply links when building the visible timeline", () => {
+  const fixture = makeStreamingTimelineFixture();
+  const item = fixture.visibleTurnItems.find((row) => row.item.type === "assistant_message")!;
+  const replyTo = {
+    threadId: fixture.threadId,
+    messageId: MessageId.make("earlier-user"),
+    role: "user" as const,
+    text: "Earlier question",
+  };
+  const entries = deriveTimelineEntriesFromVisibleTurnItems({
+    visibleTurnItems: [
+      {
+        ...item,
+        item: {
+          ...item.item,
+          context: { version: 1, records: [], replyTo },
+        } as OrchestrationV2TurnItem,
+      },
+    ],
+    optimisticMessages: [],
+  });
+  const entry = entries.find((entry) => entry.kind === "message");
+  expect(entry?.kind === "message" ? entry.message.context?.replyTo : undefined).toEqual(replyTo);
+});

@@ -138,7 +138,9 @@ describe("V2 preview upgrade", () => {
       ]);
       assert.deepStrictEqual(
         executed,
-        migrationManifest.filter(([id]) => id >= 36 && id <= 94 && !alreadyApplied.has(id)),
+        migrationManifest.filter(
+          ([id]) => ((id >= 36 && id <= 94) || id >= 99) && !alreadyApplied.has(id),
+        ),
       );
       assert.deepStrictEqual(yield* runMigrations(), []);
       const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`

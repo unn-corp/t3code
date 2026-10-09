@@ -16,6 +16,8 @@ import {
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
   WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
+  clientRpcRequiredScopes,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -31,6 +33,15 @@ import {
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
+  it("requires conversation read permission for reply-chain history on both clients and hosts", () => {
+    expect(requiredScopeForRpcMethod(ORCHESTRATION_V2_WS_METHODS.getMessageReplyChain)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(clientRpcRequiredScopes(ORCHESTRATION_V2_WS_METHODS.getMessageReplyChain, {})).toEqual([
+      AuthOrchestrationReadScope,
+    ]);
+  });
+
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });

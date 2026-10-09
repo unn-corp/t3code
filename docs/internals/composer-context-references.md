@@ -204,3 +204,25 @@ them back through the same importer the paste path uses.
 
 Context produced by other panels reaches the caret through `setContextInsertionHandler`: a
 mounted composer registers an inserter for its draft and the store falls back to appending.
+
+## Direct message replies
+
+`OrchestrationMessageContext.replyTo` stores the source thread/message IDs and a
+bounded 4,000-character quote. It is independent of inline `records`. The server
+verifies same-conversation targets, replaces client quotes with canonical text,
+and rejects self/descendant cycles. Composer drafts persist the selected target;
+queued edits preserve, change, or remove it alongside other context.
+
+Provider turn-start and steer projections add the quoted target as context data.
+The central V2 event sink attaches the initiating user-message link to assistant
+conversation and timeline events, or uses the active run's explicit `replyTo`.
+This shared boundary applies across provider adapters.
+
+`orchestration.getMessageReplyChain` requires orchestration read scope and returns
+100 connected messages with an offset cursor. SQLite recursively follows parents
+and children inside one thread, using migration 99's reply-parent expression index.
+It hydrates only the selected page. The web dialog reuses the existing chat row
+components, loads further pages on request, and discards results when closed or
+when switching conversations. New hosts are required for this query and tool;
+older hosts show the local loaded chain with a query error instead of claiming
+complete history.

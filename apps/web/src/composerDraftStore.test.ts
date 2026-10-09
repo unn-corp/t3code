@@ -3542,3 +3542,45 @@ describe("composerDraftStore attachment references", () => {
     );
   });
 });
+
+describe("composerDraftStore message replies", () => {
+  beforeEach(resetComposerDraftStore);
+  afterEach(resetComposerDraftStore);
+  it("retains a reply-only draft across reloads and isolates it by environment", async () => {
+    await useComposerDraftStore.persist.clearStorage();
+    vi.useFakeTimers();
+    try {
+      const threadId = ThreadId.make("reply-draft");
+      const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+      const replyTo = {
+        threadId,
+        messageId: MessageId.make("reply-source"),
+        role: "assistant" as const,
+        text: "Earlier response",
+      };
+      useComposerDraftStore.getState().setReplyTo(threadRef, replyTo);
+      expect(
+        composerDraftHasUserContent(useComposerDraftStore.getState().getComposerDraft(threadRef)),
+      ).toBe(true);
+      expect(
+        useComposerDraftStore
+          .getState()
+          .getComposerDraft(scopeThreadRef(EnvironmentId.make("remote"), threadId))?.replyTo,
+      ).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.replyTo).toEqual(replyTo);
+      useComposerDraftStore.getState().setPrompt(threadRef, "A follow-up");
+      useComposerDraftStore.getState().setReplyTo(threadRef, null);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("A follow-up");
+      useComposerDraftStore.getState().setReplyTo(threadRef, replyTo);
+      useComposerDraftStore.getState().clearComposerContent(threadRef);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.replyTo ?? null).toBeNull();
+      expect(composerDraftHasUserContent(draftFor(threadId, TEST_ENVIRONMENT_ID))).toBe(false);
+    } finally {
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+    }
+  });
+});

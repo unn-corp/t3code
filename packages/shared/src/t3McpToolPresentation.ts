@@ -143,6 +143,9 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   t3_thread_list: tool(["List", "Listing", "Listed", "Arcwright Code threads"], "thread-list"),
   t3_thread_read: tool(["Read", "Reading", "Read", "an Arcwright Code thread"], "thread-read"),
+  t3_thread_export: tool(["Export", "Exporting", "Exported", "a conversation"], "thread-read"),
+  t3_thread_limits: tool(["Read", "Reading", "Read", "thread limits"], "thread-read"),
+  t3_message_reply: tool(["Reply", "Replying", "Replied", "to a chat message"], "thread-send"),
   t3_thread_send: tool(["Send", "Sending", "Sent", "to an Arcwright Code thread"], "thread-send"),
   t3_thread_wait: tool(
     ["Wait", "Waiting", "Waited", "for an Arcwright Code thread"],

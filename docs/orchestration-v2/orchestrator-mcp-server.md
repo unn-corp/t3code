@@ -491,6 +491,16 @@ orchestration_error
 - Durable delegated-task command and finalization:
   `apps/server/src/orchestration-v2/Orchestrator.ts`
 
+## Direct chat replies
+
+`t3_message_reply` accepts a user `messageId` from `t3_thread_read` and optional
+`clientRequestId`. It sets the reply target for subsequent assistant output in
+the caller's current active run; it does not create a new turn or send another
+message. The caller must be a live provider session in its own conversation.
+Foreign, assistant, missing, terminal-run, and cyclic targets are rejected.
+Provider instructions explain calling the tool before writing the normal answer.
+Without an override, assistant output links to the initiating user message.
+
 ## Verification
 
 The integration test uses the real MCP toolkit registration, V2 orchestrator,
