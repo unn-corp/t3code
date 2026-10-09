@@ -32,6 +32,7 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
     linuxWmClass: "t3code",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
+    urlHandlerExecTarget: Option.none(),
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
     path,
     ...overrides,
@@ -255,6 +256,21 @@ describe("DesktopLinuxUrlHandler", () => {
       });
     },
   );
+
+  it.effect("preserves a configured wrapper when registering an AppImage", () => {
+    const recorded = emptyRecording();
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        environment: { urlHandlerExecTarget: Option.some("/home/alice/.local/bin/arcwright-code") },
+      });
+      assert.include(recorded.files[0]?.content, 'Exec="/home/alice/.local/bin/arcwright-code" %U');
+      assert.notInclude(
+        recorded.files[0]?.content,
+        'Exec="/home/alice/Applications/T3-Code.AppImage"',
+      );
+      assert.equal(recorded.commands.at(-1)?.command, "xdg-mime");
+    });
+  });
 
   it.effect("falls back to the process executable outside an AppImage", () => {
     const recorded = emptyRecording();

@@ -49,6 +49,7 @@ export const DesktopConfig = Config.all({
   devServerUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option),
   appUserModelIdOverride: trimmedString("T3CODE_DESKTOP_APP_USER_MODEL_ID"),
   devRemoteT3ServerEntryPath: trimmedString("T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH"),
+  sshArchiveVersion: trimmedString("ARCWRIGHT_CODE_SSH_ARCHIVE_VERSION"),
   configuredBackendPort: Config.Port("T3CODE_PORT").pipe(Config.option),
   commitHashOverride: trimmedString("T3CODE_COMMIT_HASH"),
   desktopLanHostOverride: trimmedString("T3CODE_DESKTOP_LAN_HOST"),
@@ -63,6 +64,7 @@ export const DesktopConfig = Config.all({
   otlpProtocol: Config.schema(OtlpProtocol, "T3CODE_OTLP_PROTOCOL").pipe(
     Config.withDefault("http/json"),
   ),
+  urlHandlerExecTarget: trimmedString("T3CODE_URL_HANDLER_EXEC_TARGET"),
   appImagePath: trimmedString("APPIMAGE"),
   disableAutoUpdate,
 });

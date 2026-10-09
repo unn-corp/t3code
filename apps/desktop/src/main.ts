@@ -19,8 +19,10 @@ import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
+
+import { resolveDesktopSshCliRunner } from "./ssh/DesktopSshCliRunner.ts";
+import { DesktopConfig } from "./app/DesktopConfig.ts";
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as ElectronApp from "./electron/ElectronApp.ts";
@@ -102,26 +104,20 @@ const layerDesktopEnvironment = Layer.unwrap(
   }),
 );
 
-// The remote runs the exact release this app is on from its self-contained
-// archive. Development points the remote at a source checkout instead.
-const resolveDesktopSshCliRunner = (
-  environment: DesktopEnvironment.DesktopEnvironment["Service"],
-): RemoteT3RunnerOptions => {
-  const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteT3ServerEntryPath);
-  if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
-    return {
-      nodeScriptPath: devRemoteEntryPath,
-      nodeEngineRange: serverPackageJson.engines.node,
-    };
-  }
-  return { archiveVersion: environment.appVersion };
-};
-
 const layerDesktopSshEnvironment = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const config = yield* DesktopConfig;
     return DesktopSshEnvironment.layer({
-      resolveCliRunner: Effect.succeed(resolveDesktopSshCliRunner(environment)),
+      resolveCliRunner: Effect.succeed(
+        resolveDesktopSshCliRunner({
+          isDevelopment: environment.isDevelopment,
+          appVersion: environment.appVersion,
+          nodeScriptPath: Option.getOrUndefined(environment.devRemoteT3ServerEntryPath),
+          nodeEngineRange: serverPackageJson.engines.node,
+          archiveVersion: Option.getOrUndefined(config.sshArchiveVersion),
+        }),
+      ),
     });
   }),
 );

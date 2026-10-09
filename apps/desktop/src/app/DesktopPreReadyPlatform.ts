@@ -97,7 +97,10 @@ export const make = Effect.gen(function* () {
               isDevelopment: linux.isDevelopment,
               appVersion: Electron.app.getVersion(),
             }).displayName,
-            execTarget: process.env.APPIMAGE?.trim() || process.execPath,
+            execTarget:
+              process.env.T3CODE_URL_HANDLER_EXEC_TARGET?.trim() ||
+              process.env.APPIMAGE?.trim() ||
+              process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             launcher: Boolean(process.env.APPIMAGE?.trim()) && !linux.isDevelopment,
             ...(iconPath === undefined ? {} : { iconPath }),

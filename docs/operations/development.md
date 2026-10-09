@@ -26,6 +26,17 @@ assets must be rebuilt into the APK and do not use Metro.
 Flags go directly after the task name, for example `vp run dev --home-dir /tmp/t3code-dev`.
 Add `--browser` to open a browser automatically.
 
+### SSH from local desktop builds
+
+An unpublished local AppImage has no matching downloadable CLI archive. Set
+`ARCWRIGHT_CODE_SSH_ARCHIVE_VERSION` in its launch environment to an exact available
+remote runtime version. SSH uses that pin; the desktop retains its local build identity.
+The normal host compatibility checks still apply. Published builds use their own exact
+archive version by default, and development source runners retain precedence.
+For a launcher wrapper that supplies this pin or handles AppImage extraction, export
+`T3CODE_URL_HANDLER_EXEC_TARGET` with its absolute path. Both startup registration
+paths preserve that wrapper as the desktop entry and URL handler target.
+
 ### State and ports
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
