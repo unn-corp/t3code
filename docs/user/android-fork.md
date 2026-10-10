@@ -85,8 +85,9 @@ interface. Some features also require an updated fork server on each connected h
 3. On a desktop host, enable **Tailscale HTTPS** in **Settings → Connections** and create a pairing
    link. On a command-line host, start `t3 serve --tailscale-serve`, or run `t3 pair --tailscale`
    for an existing server. Use the `t3` binary built from this fork.
-4. Open the Android app's **Settings → Connections → Add environment** and enter the full pairing
-   link. Repeat for each host. A link should use a reachable address such as
+4. Open the Android app's **Settings → Connections → Add environment**, tap **Scan QR code**,
+   and allow camera access. Scan the host's pairing QR code, review the filled fields, and add
+   the environment. You can also paste the full pairing link. Repeat for each host. A link should use a reachable address such as
    `https://machine.tailnet.ts.net/`, rather than the host's `localhost` address.
 
 The app uses the phone's existing Tailscale VPN; it does not manage the VPN itself. Direct private-network

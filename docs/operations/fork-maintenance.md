@@ -78,6 +78,9 @@ the runbook cover release APK behavior. Test in-place, same-key installation and
 connections, system permission changes, cover/unfolded dimensions, and live resize. Changes to
 shared Settings or client-runtime require an APK rebuild. Never uninstall to upgrade; losing the
 signing identity prevents normal in-place replacement.
+Pairing QR scanning uses the bundled web client and the shell's existing camera permission
+boundary. Verify desktop QR decoding, permission denial, and camera release on cancellation;
+check the camera on a phone before commissioning the APK.
 
 ## Phone alerts
 

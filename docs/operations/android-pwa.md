@@ -178,6 +178,10 @@ Choose the layer that owns the behavior:
 Paths beginning with `app/` in the table are relative to `apps/android-pwa`.
 Edits in `apps/mobile` change the upstream Expo client, not this APK.
 
+For pairing QR changes, run `vp test run apps/web/src/android/pairingQr.test.ts apps/web/src/components/settings/PairingQrScanner.test.tsx`.
+After rebuilding, check camera permission denial, cancellation, and scanning a desktop Tailscale
+pairing link on a test phone. The decoded fields must be reviewed before connecting.
+
 Use `isAndroidPwa` for web behavior that belongs only to the Android package. Ordinary web,
 installed browser PWA, desktop, and upstream mobile paths should retain their own behavior.
 Rebuild with the helper after changing web or native sources; direct Gradle builds do not refresh

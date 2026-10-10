@@ -149,6 +149,8 @@ import { AnimatedHeight } from "../AnimatedHeight";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Textarea } from "../ui/textarea";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
+import { isAndroidPwa } from "../../env";
+import { PairingQrScanner } from "./PairingQrScanner";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
   createServerPairingCredential,
@@ -2264,6 +2266,7 @@ export function ConnectionsSettings() {
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
+  const [isScanningPairingQr, setIsScanningPairingQr] = useState(false);
   // Set when the dialog adds a route to a saved machine instead of a new one.
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
@@ -2972,6 +2975,15 @@ export function ConnectionsSettings() {
     }
     setSavedBackendHost(value);
   }, []);
+  const closePairingScanner = useCallback(() => setIsScanningPairingQr(false), []);
+  const handlePairingQrScan = useCallback(
+    (url: string) => {
+      handleSavedBackendHostChange(url);
+      setSavedBackendError(null);
+      setIsScanningPairingQr(false);
+    },
+    [handleSavedBackendHostChange],
+  );
 
   const renderConnectionModeCard = (input: {
     readonly mode: "remote" | "ssh";
@@ -3082,6 +3094,17 @@ export function ConnectionsSettings() {
   };
   const renderRemoteModeBody = () => (
     <div className="space-y-4">
+      {isAndroidPwa && isScanningPairingQr ? (
+        <PairingQrScanner onScan={handlePairingQrScan} onClose={closePairingScanner} />
+      ) : isAndroidPwa ? (
+        <Button
+          variant="outline"
+          disabled={isAddingSavedBackend}
+          onClick={() => setIsScanningPairingQr(true)}
+        >
+          Scan QR code
+        </Button>
+      ) : null}
       {relayRouteOffer !== null ? (
         <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
           <p className="text-xs text-muted-foreground">
@@ -4179,6 +4202,7 @@ export function ConnectionsSettings() {
               open={addBackendDialogOpen}
               onOpenChange={(open) => {
                 setAddBackendDialogOpen(open);
+                if (!open) setIsScanningPairingQr(false);
                 if (open) {
                   setRouteTarget(null);
                 } else {
