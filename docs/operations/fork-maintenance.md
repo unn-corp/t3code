@@ -42,7 +42,9 @@ a sparse checkout; missing root metadata can stop every build before dependency 
 The fork is named **Arcwright Code** across web, Electron, the standalone Android APK, and
 Expo mobile variants. The transparent masters in [assets/arcwright](../../assets/arcwright)
 own the wordmark and AC lightning mark; [the asset guide](../../assets/README.md) explains
-regeneration and verification. Header images, launchers, splash screens, notifications, and
+regeneration and verification. Linux desktop registration uses content-derived icon filenames so KDE and other desktop caches do not retain a previous logo. Keep pre-ready and URL-handler registration on the same icon identity.
+
+Header images, launchers, splash screens, notifications, and
 widgets must use these shared outputs. Keep installed package IDs, signing identities, URL
 schemes, legacy data folders, and recovery artifact names compatible when changing display names.
 Installed Android, Windows and Linux application names are exactly **Arcwright Code**. Channel

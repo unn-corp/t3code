@@ -8,6 +8,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
+import { desktopLauncherIconName } from "./DesktopLauncherIcon.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -118,7 +119,7 @@ export const make = Effect.gen(function* () {
     environment.linuxDesktopEntryName,
   );
   const iconsDir = environment.path.join(environment.linuxApplicationsDir, "..", "icons");
-  const iconPath = environment.path.join(iconsDir, `${environment.linuxDesktopEntryName}.png`);
+  let iconPath = environment.path.join(iconsDir, `${environment.linuxDesktopEntryName}.png`);
 
   const writeDesktopEntry = Effect.gen(function* () {
     // Inside the mounted AppImage, process.execPath points at a transient
@@ -221,6 +222,24 @@ export const make = Effect.gen(function* () {
   const register = Effect.gen(function* () {
     if (environment.platform !== "linux") {
       return;
+    }
+    if (environment.isPackaged) {
+      const { png } = yield* assets.iconPaths;
+      if (Option.isSome(png)) {
+        yield* fileSystem.readFile(png.value).pipe(
+          Effect.tap((bytes) =>
+            Effect.sync(() => {
+              iconPath = environment.path.join(
+                iconsDir,
+                desktopLauncherIconName(environment.linuxDesktopEntryName, bytes),
+              );
+            }),
+          ),
+          Effect.catch((error) =>
+            logWarning("URL handler icon digest failed", { category: error.reason._tag }),
+          ),
+        );
+      }
     }
     yield* writeDesktopEntry;
     if (!environment.isPackaged) return;

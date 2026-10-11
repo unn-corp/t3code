@@ -14,6 +14,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
+import { desktopLauncherIconName } from "./DesktopLauncherIcon.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 
 interface RecordedRegistration {
@@ -86,6 +87,7 @@ const layerHandler = (
           resolveResourcePath: () => Effect.succeedNone,
         }),
         FileSystem.layerNoop({
+          readFile: () => Effect.succeed(new Uint8Array([1, 2, 3])),
           copyFile: (source, destination) =>
             input.iconCopyError
               ? Effect.fail(input.iconCopyError)
@@ -316,7 +318,7 @@ describe("DesktopLinuxUrlHandler", () => {
 
   it.effect("installs a persistent icon even when the desktop entry is already current", () => {
     const recorded = emptyRecording();
-    const iconPath = "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png";
+    const iconPath = `/home/alice/.local/share/icons/${desktopLauncherIconName("com.t3tools.T3Code.desktop", new Uint8Array([1, 2, 3]))}`;
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         iconSource: "/tmp/.mount_T3/resources/icon.png",

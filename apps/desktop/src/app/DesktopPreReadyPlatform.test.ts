@@ -49,6 +49,7 @@ vi.mock("node:fs", () => ({
   copyFileSync: copyFileSyncMock,
 }));
 
+import { desktopLauncherIconName } from "./DesktopLauncherIcon.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 
 describe("DesktopPreReadyPlatform", () => {
@@ -105,7 +106,9 @@ describe("DesktopPreReadyPlatform", () => {
       let desktopEntry = previousEntry;
       let iconInstalled = false;
       copyFileSyncMock.mockImplementation((_source: string, destination: string) => {
-        iconInstalled = destination === "/xdg/icons/com.t3tools.T3Code.desktop.png";
+        iconInstalled =
+          destination ===
+          `/xdg/icons/${desktopLauncherIconName("com.t3tools.T3Code.desktop", new TextEncoder().encode("{}"))}`;
       });
       setDesktopNameMock.mockImplementation((name: string) => {
         desktopName = name;
@@ -138,7 +141,7 @@ describe("DesktopPreReadyPlatform", () => {
           assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/t3code;");
           assert.include(
             identity.desktopEntry ?? "",
-            "Icon=/xdg/icons/com.t3tools.T3Code.desktop.png",
+            `Icon=/xdg/icons/${desktopLauncherIconName("com.t3tools.T3Code.desktop", new TextEncoder().encode("{}"))}`,
           );
           assert.isTrue(identity.iconInstalled);
         }),
