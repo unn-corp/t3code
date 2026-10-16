@@ -669,6 +669,36 @@ describe("host coordinator", () => {
     expect((await store.status(0)).participants).toEqual([]);
   });
 
+  it("clears a lock left by an earlier boot once per boot, even when its pid was reused", async () => {
+    // pid 200 now belongs to an unrelated process of the current boot.
+    const f = await fixture({ 100: "boot-b:1", 200: "boot-b:7" });
+    const store = await f.open(100);
+    const lockPath = NodePath.join(f.coordinator, "registry.lock");
+    await NodeFSP.writeFile(NodePath.join(f.coordinator, "boot-boot-a.claim"), "{}");
+    await NodeFSP.writeFile(lockPath, JSON.stringify({ pid: 200, started: "boot-a:2" }));
+    expect((await store.status(0)).participants).toEqual([]);
+    await expect(NodeFSP.access(lockPath)).rejects.toThrow();
+    const claims = (await NodeFSP.readdir(f.coordinator)).filter((name) => name.endsWith(".claim"));
+    expect(claims).toEqual(["boot-boot-b.claim"]);
+    // The claimant can clear again within its boot; the claim stays its own.
+    await NodeFSP.writeFile(lockPath, JSON.stringify({ pid: 200, started: "boot-a:3" }));
+    expect((await store.status(0)).participants).toEqual([]);
+  });
+
+  it("leaves an earlier boot's lock to the process holding this boot's claim", async () => {
+    const f = await fixture({ 100: "boot-b:1", 300: "boot-b:3" });
+    const store = await f.open(100);
+    const lockPath = NodePath.join(f.coordinator, "registry.lock");
+    const stale = JSON.stringify({ pid: 200, started: "boot-a:2" });
+    await NodeFSP.writeFile(lockPath, stale);
+    await NodeFSP.writeFile(
+      NodePath.join(f.coordinator, "boot-boot-b.claim"),
+      JSON.stringify({ pid: 300, started: "boot-b:3" }),
+    );
+    await expect(store.status(0)).rejects.toThrow("offline repair");
+    expect(await NodeFSP.readFile(lockPath, "utf8")).toBe(stale);
+  });
+
   it("releases admission only against a durable terminal journal", async () => {
     const f = await fixture();
     const store = await f.open(100);

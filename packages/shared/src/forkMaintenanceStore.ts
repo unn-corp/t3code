@@ -342,6 +342,8 @@ const safeName = (value: string) => {
     throw new Error("Invalid identifier.");
   return value;
 };
+/** The boot component of a Linux `boot:ticks` creation identity; other platforms' identities have none. */
+const bootOf = (started: string) => /^([a-zA-Z0-9_-]+):\d+$/.exec(started)?.[1];
 
 export type ReceiptSlot = "trial" | "restored";
 
@@ -500,6 +502,13 @@ export class CoordinatorStore {
         await new Promise((resolve) => setTimeout(resolve, 10));
         return this.locked(run, attempt + 1);
       }
+      const clearance = await this.clearPreviousBootLock(owner, lockPath);
+      if (clearance === "cleared") return this.locked(run, attempt + 1);
+      // Another process of this boot holds the claim and is clearing the lock.
+      if (clearance === "claimed-elsewhere" && attempt < 100) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return this.locked(run, attempt + 1);
+      }
       throw new Error("Exited coordinator lock requires offline repair.", { cause });
     }
     await NodeFSP.unlink(candidate);
@@ -529,6 +538,50 @@ export class CoordinatorStore {
   }
   private save(registry: Registry) {
     return this.atomicWrite(NodePath.join(this.directory, "registry.json"), registry);
+  }
+
+  /**
+   * A lock recorded under an earlier boot cannot be held: every process of that boot is gone. One
+   * process per boot wins an exclusive claim and is the only automatic remover of such a lock, so
+   * its removal never races another remover, and a newer lock is only ever published after it.
+   * Exited owners from the current boot still require `repairExitedLock`.
+   */
+  private async clearPreviousBootLock(
+    owner: Owner,
+    lockPath: string,
+  ): Promise<"cleared" | "claimed-elsewhere" | "not-previous-boot"> {
+    const ownerBoot = bootOf(owner.started);
+    const currentBoot = bootOf(this.owner.started);
+    if (ownerBoot === undefined || currentBoot === undefined || ownerBoot === currentBoot)
+      return "not-previous-boot";
+    const claimPath = NodePath.join(this.directory, `boot-${currentBoot}.claim`);
+    const candidate = NodePath.join(this.directory, `.claim-${NodeCrypto.randomUUID()}`);
+    const handle = await NodeFSP.open(candidate, "wx", 0o600);
+    try {
+      await handle.writeFile(JSON.stringify(this.owner));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    try {
+      await NodeFSP.link(candidate, claimPath);
+    } catch (cause) {
+      if (!isCode(cause, "EEXIST")) throw cause;
+      // Claims are published whole, like the lock, so a held claim always decodes.
+      const claimant = decodeOwner(JSON.parse(await NodeFSP.readFile(claimPath, "utf8")));
+      if (!this.owns(claimant)) return "claimed-elsewhere";
+    } finally {
+      await NodeFSP.unlink(candidate);
+    }
+    await NodeFSP.unlink(lockPath).catch((cause) => {
+      if (!isCode(cause, "ENOENT")) throw cause;
+    });
+    // Earlier boots' claims can no longer guard anything.
+    for (const name of await NodeFSP.readdir(this.directory)) {
+      if (/^boot-.+\.claim$/.test(name) && name !== NodePath.basename(claimPath))
+        await NodeFSP.unlink(NodePath.join(this.directory, name)).catch(() => undefined);
+    }
+    return "cleared";
   }
 
   /** Removes a lock whose owner is proven exited. Offline operator action; never automatic. */
